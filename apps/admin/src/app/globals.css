@@ -1,0 +1,480 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+    
+    /* WhatsApp Green as Primary */
+    --primary: 142 72% 42%;
+    --primary-foreground: 0 0% 100%;
+    
+    --secondary: 142 20% 96%;
+    --secondary-foreground: 142 30% 20%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 142 40% 94%;
+    --accent-foreground: 142 30% 20%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 142 72% 42%;
+    --radius: 0.75rem;
+    
+    /* WhatsApp Brand Extended Palette */
+    --whatsapp-50: 142 76% 97%;
+    --whatsapp-100: 142 72% 92%;
+    --whatsapp-200: 142 68% 82%;
+    --whatsapp-300: 142 64% 68%;
+    --whatsapp-400: 142 60% 52%;
+    --whatsapp-500: 142 72% 42%;
+    --whatsapp-600: 142 76% 36%;
+    --whatsapp-700: 142 70% 28%;
+    --whatsapp-800: 142 65% 22%;
+    --whatsapp-900: 142 60% 16%;
+    
+    /* Status Colors */
+    --status-online: 142 76% 42%;
+    --status-offline: 0 0% 60%;
+    --status-connecting: 45 100% 51%;
+    --status-error: 0 84% 60%;
+    
+    /* Chart Colors */
+    --chart-1: 142 72% 42%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+  }
+
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 0 0% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 0 0% 98%;
+    --popover: 222 47% 8%;
+    --popover-foreground: 0 0% 98%;
+    
+    /* WhatsApp Green - Brighter for Dark Mode */
+    --primary: 142 70% 45%;
+    --primary-foreground: 142 80% 10%;
+    
+    --secondary: 222 40% 14%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 222 40% 14%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 142 40% 16%;
+    --accent-foreground: 142 70% 92%;
+    --destructive: 0 62.8% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 222 40% 16%;
+    --input: 222 40% 16%;
+    --ring: 142 70% 45%;
+    
+    /* Dark mode chart colors */
+    --chart-1: 142 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* ============================================
+   CUSTOM UTILITIES & EFFECTS
+   ============================================ */
+
+/* Gradient Backgrounds */
+.gradient-bg {
+  background: linear-gradient(135deg, hsl(var(--whatsapp-500)) 0%, hsl(var(--whatsapp-700)) 100%);
+}
+
+.gradient-bg-subtle {
+  background: linear-gradient(135deg, hsl(var(--whatsapp-50)) 0%, hsl(var(--whatsapp-100)) 100%);
+}
+
+.dark .gradient-bg-subtle {
+  background: linear-gradient(135deg, hsl(var(--whatsapp-900)) 0%, hsl(var(--whatsapp-800)) 100%);
+}
+
+/* Glassmorphism */
+.glass {
+  backdrop-filter: blur(16px) saturate(180%);
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.dark .glass {
+  background: rgba(10, 15, 25, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-subtle {
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.dark .glass-subtle {
+  background: rgba(10, 15, 25, 0.5);
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4); }
+  50% { box-shadow: 0 0 20px 10px hsl(var(--primary) / 0.1); }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes slide-up {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+@keyframes scale-in {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.animate-scale-in {
+  animation: scale-in 0.2s ease-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted-foreground) / 0.1) 50%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Online/Offline pulse */
+@keyframes online-pulse {
+  0%, 100% { 
+    transform: scale(1);
+    box-shadow: 0 0 0 0 hsl(var(--status-online) / 0.7);
+  }
+  50% { 
+    transform: scale(1.05);
+    box-shadow: 0 0 0 8px hsl(var(--status-online) / 0);
+  }
+}
+
+.animate-online {
+  animation: online-pulse 2s ease-in-out infinite;
+}
+
+/* ============================================
+   COMPONENT STYLES
+   ============================================ */
+
+/* Stat Card Hover Effect */
+.stat-card {
+  @apply transition-all duration-300;
+}
+
+.stat-card:hover {
+  @apply shadow-lg -translate-y-1;
+  box-shadow: 0 10px 40px -10px hsl(var(--primary) / 0.15);
+}
+
+/* Message Bubbles */
+.message-sent {
+  @apply bg-primary text-primary-foreground rounded-2xl rounded-br-sm;
+}
+
+.message-received {
+  @apply bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm;
+}
+
+/* Scrollbar Styling */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  @apply bg-border rounded-full;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}
+
+/* Focus Ring */
+.focus-ring {
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+}
+
+/* ============================================
+   MOBILE RESPONSIVE UTILITIES
+   ============================================ */
+
+/* Touch Targets - Minimum 44px for accessibility */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.touch-target-sm {
+  min-height: 36px;
+  min-width: 36px;
+}
+
+/* Mobile Sidebar Toggle */
+@media (max-width: 768px) {
+  .sidebar-mobile-hidden {
+    transform: translateX(-100%);
+  }
+  
+  .sidebar-mobile-visible {
+    transform: translateX(0);
+  }
+}
+
+/* Bottom Sheet for Mobile Dialogs */
+@media (max-width: 640px) {
+  .bottom-sheet {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    border-radius: 24px 24px 0 0;
+    animation: slide-up-sheet 0.3s ease-out;
+  }
+}
+
+@keyframes slide-up-sheet {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* Mobile-first card styles */
+@media (max-width: 640px) {
+  .card-mobile {
+    @apply rounded-none border-x-0;
+  }
+  
+  .container-mobile {
+    @apply px-4;
+  }
+}
+
+/* Responsive Text */
+.text-responsive-sm {
+  @apply text-sm md:text-base;
+}
+
+.text-responsive-lg {
+  @apply text-base md:text-lg lg:text-xl;
+}
+
+/* ============================================
+   DARK MODE REFINEMENTS
+   ============================================ */
+
+/* Enhanced shadows for dark mode */
+.dark .shadow-enhanced {
+  box-shadow: 
+    0 4px 6px -1px rgba(0, 0, 0, 0.4),
+    0 2px 4px -2px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* Dark mode border consistency */
+.dark .border-subtle {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Dark mode hover states */
+.dark .hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
+
+/* Dark mode input focus */
+.dark input:focus,
+.dark textarea:focus,
+.dark select:focus {
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.3);
+}
+
+/* ============================================
+   PERFORMANCE UTILITIES
+   ============================================ */
+
+/* GPU-accelerated animations */
+.gpu-accelerated {
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Lazy loading placeholder */
+.lazy-placeholder {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted-foreground) / 0.05) 20%,
+    hsl(var(--muted-foreground) / 0.05) 80%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Content visibility for long lists */
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 100px;
+}
+
+/* ============================================
+   WHATSAPP CHAT ENHANCEMENTS
+   ============================================ */
+
+/* Chat bubble tail */
+.bubble-tail-sent::after {
+  content: '';
+  position: absolute;
+  right: -8px;
+  bottom: 0;
+  border: 8px solid transparent;
+  border-left-color: hsl(var(--primary));
+  border-bottom-color: hsl(var(--primary));
+}
+
+.bubble-tail-received::after {
+  content: '';
+  position: absolute;
+  left: -8px;
+  bottom: 0;
+  border: 8px solid transparent;
+  border-right-color: hsl(var(--secondary));
+  border-bottom-color: hsl(var(--secondary));
+}
+
+/* Message status colors */
+.status-pending {
+  @apply text-muted-foreground;
+}
+
+.status-sent {
+  @apply text-muted-foreground;
+}
+
+.status-delivered {
+  @apply text-blue-500;
+}
+
+.status-read {
+  @apply text-blue-500;
+}
+
+.status-failed {
+  @apply text-destructive;
+}
+
+/* ============================================
+   UTILITY CLASSES
+   ============================================ */
+
+/* Truncate with ellipsis */
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Safe area padding for mobile */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+/* Hide scrollbar but keep functionality */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

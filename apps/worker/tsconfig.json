@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "strictNullChecks": false,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../../packages/engines" },
+    { "path": "../../packages/database" },
+    { "path": "../../packages/sdk" }
+  ]
+}

@@ -1,0 +1,529 @@
+// This is your Prisma schema file
+// Learn more at: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// Multi-tenant hierarchy
+// ============================================
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  plan      String   @default("free") // free, pro, enterprise
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspaces Workspace[]
+  users      User[]
+  roles      Role[]
+  userRoles  UserRole[]
+  auditLogs  AuditLog[]
+
+  @@map("organizations")
+}
+
+model Workspace {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  slug           String
+  description    String?
+  settings       Json     @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  profiles     Profile[]
+  accounts     Account[]
+
+  @@unique([organizationId, slug])
+  @@map("workspaces")
+}
+
+model Account {
+  id          String   @id @default(uuid())
+  workspaceId String
+  name        String
+  description String?
+  settings    Json     @default("{}")
+  status      String   @default("ACTIVE") // ACTIVE, DELETED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  profiles  Profile[]
+
+  @@index([workspaceId])
+  @@map("accounts")
+}
+
+// ============================================
+// Authentication
+// ============================================
+
+model User {
+  id             String   @id @default(uuid())
+  organizationId String
+  email          String   @unique
+  passwordHash   String
+  name           String
+  role           String   @default("member") // owner, admin, member, viewer
+  isActive       Boolean  @default(true)
+  preferences    Json     @default("{}") // notification preferences
+  lastLoginAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Two-Factor Authentication
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean  @default(false)
+  backupCodes      String[] @default([])
+
+  organization        Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  apiKeys             ApiKey[]
+  userRoles           UserRole[]
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  assignedConversations Conversation[] @relation("AssignedAgent")
+  sessions            Session[]
+  pushSubscriptions   PushSubscription[]
+
+  @@map("users")
+}
+
+model ApiKey {
+  id          String    @id @default(uuid())
+  userId      String
+  name        String
+  keyHash     String    @unique
+  prefix      String    // First 8 chars for identification
+  permissions String[]  @default([])
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+// ============================================
+// WhatsApp Profiles (Devices)
+// ============================================
+
+model Profile {
+  id              String   @id @default(uuid())
+  workspaceId     String?
+  accountId       String?
+  displayName     String?
+  phoneNumber     String?
+  pushName        String?
+  profilePicUrl   String?
+  status          String   @default("DISCONNECTED")
+  sessionData     String?
+  webhookUrl      String?
+  webhookSecret   String?
+  settings        Json     @default("{}")
+  messageDelayMs  Int      @default(1500)
+  dailyMessageLimit Int?
+  dailyMessageCount Int    @default(0)
+  dailyResetAt    DateTime?
+  lastConnectedAt DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace     Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  account       Account?      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  messages      Message[]
+  contacts      Contact[]
+  conversations Conversation[]
+  broadcasts    Broadcast[]
+  templates     Template[]
+  automations   Automation[]
+  webhooks      Webhook[]
+  scheduledMessages ScheduledMessage[]
+  knowledgeDocuments KnowledgeDocument[]
+
+  @@map("profiles")
+}
+
+// ============================================
+// Messaging
+// ============================================
+
+model Conversation {
+  id             String   @id @default(uuid())
+  profileId      String
+  contactId      String?
+  assignedUserId String?
+  jid            String   // WhatsApp JID
+  name           String?
+  type           String   @default("user") // user, group, broadcast
+  unreadCount    Int      @default(0)
+  metadata       Json     @default("{}")
+  lastMessageAt  DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  profile      Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  contact      Contact?  @relation(fields: [contactId], references: [id])
+  assignedUser User?     @relation("AssignedAgent", fields: [assignedUserId], references: [id])
+  messages     Message[]
+
+  @@unique([profileId, jid])
+  @@map("conversations")
+}
+
+// ============================================
+// Webhooks
+// ============================================
+
+model Webhook {
+  id        String   @id @default(uuid())
+  profileId String
+  url       String
+  events    String[] @default([])
+  secret    String
+  headers   Json     @default("{}")
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  logs    WebhookLog[]
+
+  @@map("webhooks")
+}
+
+model WebhookLog {
+  id         String   @id @default(uuid())
+  webhookId  String
+  event      String
+  payload    Json
+  statusCode Int?
+  success    Boolean  @default(false)
+  response   String?
+  createdAt  DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+  @@map("webhook_logs")
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  profileId      String
+  conversationId String
+  messageId      String   // WhatsApp message ID
+  direction      String   // incoming, outgoing
+  senderJid      String
+  type           String   // text, image, video, audio, document, location, contact
+  content        Json
+  quotedMessageId String?
+  status         String   @default("pending") // pending, sent, delivered, read, failed
+  timestamp      DateTime
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  profile      Profile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, timestamp])
+  @@map("messages")
+}
+
+// ============================================
+// Contacts
+// ============================================
+
+model Contact {
+  id           String   @id @default(uuid())
+  profileId    String
+  phone        String
+  name         String?
+  whatsappName String?
+  avatarUrl    String?
+  tags         String[] @default([])
+  metadata     Json     @default("{}")
+  isBlocked    Boolean  @default(false)
+  lastMessageAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([profileId, phone])
+  @@map("contacts")
+}
+
+// ============================================
+// Broadcast
+// ============================================
+
+model Broadcast {
+  id          String   @id @default(uuid())
+  profileId   String
+  name        String
+  message     Json     // Message content
+  recipients  Json     // {type: 'tags' | 'contacts' | 'csv', value: [...]}
+  status      String   @default("draft") // draft, scheduled, running, paused, completed, failed
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  settings    Json     @default("{}") // delay, batch_size, etc
+  stats       Json     @default("{}") // sent, delivered, failed, etc
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("broadcasts")
+}
+
+// ============================================
+// Templates
+// ============================================
+
+model Template {
+  id          String   @id @default(uuid())
+  profileId   String
+  name        String
+  category    String?  // marketing, utility, notification
+  messageType String   // text, image, video, document
+  content     Json
+  variables   String[] @default([])
+  usageCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, name])
+  @@map("templates")
+}
+
+// ============================================
+// Automation
+// ============================================
+
+model Automation {
+  id            String   @id @default(uuid())
+  profileId     String
+  name          String
+  isActive      Boolean  @default(true)
+  priority      Int      @default(0)
+  triggerType   String   // keyword, regex, new_contact, schedule, webhook
+  triggerConfig Json
+  conditions    Json     @default("[]")
+  actions       Json
+  cooldownSecs  Int      @default(0)
+  maxTriggersPerDay Int?
+  stats         Json     @default("{}") // trigger_count, last_triggered, etc
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@map("automations")
+}
+
+// ============================================
+// RBAC (Role-Based Access Control)
+// ============================================
+
+model Role {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String
+  description    String?
+  permissions    String[] @default([])
+  isSystem       Boolean  @default(false) // System roles cannot be deleted
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users        UserRole[]
+
+  @@unique([organizationId, name])
+  @@map("roles")
+}
+
+model UserRole {
+  id             String   @id @default(uuid())
+  userId         String
+  roleId         String
+  organizationId String
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@map("user_roles")
+}
+
+// ============================================
+// Audit Logging
+// ============================================
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  action         String   // e.g., auth.login, profile.create
+  userId         String?
+  organizationId String?
+  resourceType   String?  // e.g., profile, message, broadcast
+  resourceId     String?
+  metadata       Json     @default("{}")
+  ip             String?
+  userAgent      String?
+  timestamp      DateTime @default(now())
+
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, timestamp])
+  @@index([userId, timestamp])
+  @@index([action, timestamp])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  type        String   // message, connection, disconnection, broadcast, automation, system
+  title       String
+  body        String
+  metadata    Json?    // extra data (profileId, messageId, link, etc.)
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+// ============================================
+// Scheduled Messages
+// ============================================
+
+model ScheduledMessage {
+  id          String   @id @default(uuid())
+  profileId   String
+  to          String   // Phone number or JID
+  type        String   // text, image, video, audio, document
+  content     Json     // Message content (text, media options)
+  scheduledAt DateTime // When to send
+  status      String   @default("pending") // pending, sent, failed, cancelled
+  sentAt      DateTime?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([status, scheduledAt])
+  @@index([profileId, status])
+  @@map("scheduled_messages")
+}
+
+// ============================================
+// Active Sessions
+// ============================================
+
+model Session {
+  id          String   @id @default(uuid())
+  userId      String
+  tokenHash   String   @unique
+  ipAddress   String?
+  userAgent   String?
+  lastActiveAt DateTime @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ============================================
+// AI Knowledge Base
+// ============================================
+
+model KnowledgeDocument {
+  id          String   @id @default(uuid())
+  profileId   String
+  name        String
+  type        String   // txt, pdf, csv
+  size        Int      // bytes
+  chunkCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  profile Profile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  chunks  KnowledgeChunk[]
+
+  @@index([profileId])
+  @@map("knowledge_documents")
+}
+
+model KnowledgeChunk {
+  id         String @id @default(uuid())
+  documentId String
+  content    String // Text chunk
+  position   Int    // Order within document
+  metadata   Json?  // Extra data (page, heading, etc.)
+
+  document KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("knowledge_chunks")
+}
+
+// ============================================
+// System Settings (key-value config store)
+// ============================================
+
+model SystemSettings {
+  id        String   @id @default("default")
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+// ============================================
+// Push Subscriptions (Web Push API)
+// ============================================
+
+model PushSubscription {
+  id        String   @id @default(uuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String   // Client public key
+  auth      String   // Auth secret
+  userAgent String?  // Browser info for display
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}

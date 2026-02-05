@@ -1,0 +1,27 @@
+{
+  "name": "@multiwa/engines",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MultiWA WhatsApp Engine Adapters",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@multiwa/core": "workspace:*",
+    "@whiskeysockets/baileys": "^6.7.0",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.26.0"
+  },
+  "devDependencies": {
+    "@types/hapi__boom": "^9.0.1",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

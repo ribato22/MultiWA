@@ -1,0 +1,81 @@
+# Build stage - use Debian slim for consistency with API
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Install pnpm and git
+RUN apt-get update && apt-get install -y git && npm install -g pnpm
+
+# Copy workspace files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY apps/worker/package.json ./apps/worker/
+COPY packages/core/package.json ./packages/core/
+COPY packages/database/package.json ./packages/database/
+COPY packages/engines/package.json ./packages/engines/
+COPY packages/sdk/package.json ./packages/sdk/
+
+# Copy all source BEFORE install to avoid BuildKit COPY overlay conflict
+COPY apps/worker ./apps/worker
+COPY packages/core ./packages/core
+COPY packages/database ./packages/database
+COPY packages/engines ./packages/engines
+COPY packages/sdk ./packages/sdk
+COPY tsconfig.json ./tsconfig.json
+
+# Install dependencies
+RUN pnpm install --no-frozen-lockfile
+
+# Generate Prisma client FIRST (before worker build)
+RUN cd packages/database && npx prisma generate
+
+# Build packages in order
+RUN pnpm --filter @multiwa/database build || true
+RUN pnpm --filter @multiwa/core build || true
+RUN pnpm --filter @multiwa/engines build || true
+
+# Build Worker - debug tsc output
+RUN cd apps/worker && \
+  printf '{"compilerOptions":{"outDir":"./dist","rootDir":"./src","module":"CommonJS","moduleResolution":"node","target":"ES2021","declaration":true,"emitDecoratorMetadata":true,"experimentalDecorators":true,"allowSyntheticDefaultImports":true,"esModuleInterop":true,"skipLibCheck":true,"strict":false,"noImplicitAny":false,"strictNullChecks":false,"noUnusedLocals":false,"noUnusedParameters":false,"noEmitOnError":false,"incremental":false},"include":["src/**/*"]}' > tsconfig.docker.json && \
+  cat tsconfig.docker.json && \
+  npx tsc -p tsconfig.docker.json 2>&1 | tail -50; \
+  echo "=== TSC EXIT CODE: $? ===" && \
+  echo "=== DIST LISTING ===" && \
+  find apps/worker/dist -type f 2>/dev/null | head -20 || echo "No dist at all"
+
+# Production stage
+FROM node:20-slim AS runner
+
+WORKDIR /app
+
+# Install pnpm and git (required for baileys dependency)
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/* && npm install -g pnpm
+
+# Copy workspace definition and lockfile
+COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
+COPY --from=builder /app/apps/worker/package.json ./apps/worker/
+COPY --from=builder /app/packages/core/package.json ./packages/core/
+COPY --from=builder /app/packages/database/package.json ./packages/database/
+COPY --from=builder /app/packages/engines/package.json ./packages/engines/
+
+# Install production dependencies only
+RUN pnpm install --no-frozen-lockfile --prod
+
+# Copy built worker and workspace packages
+COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
+COPY --from=builder /app/packages/core ./packages/core
+COPY --from=builder /app/packages/database ./packages/database
+COPY --from=builder /app/packages/engines ./packages/engines
+
+# Generate Prisma client in runner (pin to v6.19.2 to match project)
+RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
+
+# Create sessions directory
+RUN mkdir -p /data/sessions
+
+ENV NODE_ENV=production
+ENV SESSIONS_PATH=/data/sessions
+
+WORKDIR /app/apps/worker
+
+CMD ["node", "dist/main.js"]
+

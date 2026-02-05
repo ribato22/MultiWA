@@ -1,0 +1,153 @@
+# MultiWA Gateway V1.0.0 - Development Docker Compose
+# All services run in Docker for consistent Prisma connectivity
+
+services:
+  # ==============================================
+  # PostgreSQL Database
+  # ==============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: multiwa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: multiwa
+      POSTGRES_PASSWORD: multiwa123
+      POSTGRES_DB: multiwa_gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - multiwa-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U multiwa -d multiwa_gateway"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==============================================
+  # Redis (Cache + Queue)
+  # ==============================================
+  redis:
+    image: redis:7-alpine
+    container_name: multiwa-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - multiwa-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==============================================
+  # MinIO (S3-compatible storage for media)
+  # ==============================================
+  minio:
+    image: minio/minio:latest
+    container_name: multiwa-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - multiwa-network
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ==============================================
+  # API Service (NestJS with Chromium for whatsapp-web.js)
+  # ==============================================
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: multiwa-api
+    restart: unless-stopped
+    shm_size: '1gb'
+    working_dir: /app/apps/api
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://multiwa:multiwa123@postgres:5432/multiwa_gateway?schema=public
+      REDIS_URL: redis://redis:6379
+      API_PORT: 3333
+      API_HOST: 0.0.0.0
+      JWT_SECRET: dev-jwt-secret-change-in-production
+      CORS_ORIGINS: http://localhost:3001,http://admin:3001,http://localhost:3333
+      # S3/MinIO configuration for media uploads
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_URL: http://localhost:9000
+      S3_ACCESS_KEY: minio
+      S3_SECRET_KEY: minio123
+      S3_BUCKET: multiwa-media
+      S3_REGION: us-east-1
+      # Puppeteer/Chromium configuration for whatsapp-web.js
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      SESSIONS_DIR: /data/sessions
+    ports:
+      - "3333:3333"
+    volumes:
+      - sessions_data:/data/sessions
+    networks:
+      - multiwa-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["node", "dist/main.js"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3333/api/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+  # ==============================================
+  # Admin Dashboard (Next.js)
+  # ==============================================
+  admin:
+    image: node:20-alpine
+    container_name: multiwa-admin
+    restart: unless-stopped
+    working_dir: /app
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3333
+      INTERNAL_API_URL: http://api:3333
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    networks:
+      - multiwa-network
+    depends_on:
+      - api
+    command: sh -c "apk add --no-cache git && corepack enable && pnpm install && cd apps/admin && pnpm run dev"
+
+networks:
+  multiwa-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  sessions_data:

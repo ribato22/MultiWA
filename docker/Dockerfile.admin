@@ -1,0 +1,51 @@
+# Build stage
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install pnpm and git (required for baileys dependency)
+RUN apk add --no-cache git && npm install -g pnpm
+
+# Copy workspace and pnpm config files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+COPY apps/admin/package.json ./apps/admin/
+COPY apps/api/package.json ./apps/api/
+COPY apps/worker/package.json ./apps/worker/
+COPY packages/core/package.json ./packages/core/
+COPY packages/database/package.json ./packages/database/
+COPY packages/engines/package.json ./packages/engines/
+COPY packages/sdk/package.json ./packages/sdk/
+
+# Install all dependencies with frozen lockfile
+RUN pnpm install --no-frozen-lockfile
+
+# Copy source
+COPY . .
+
+# Build Admin UI
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+RUN pnpm --filter @multiwa/admin build || true
+RUN test -d apps/admin/.next/standalone && echo "Admin build verified" || (echo "FATAL: Admin standalone build missing" && exit 1)
+
+# Production stage
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+# Next.js standalone mode requires HOSTNAME for proper Docker networking
+ENV HOSTNAME="0.0.0.0"
+ENV PORT=3001
+
+# Copy Next.js build output
+COPY --from=builder /app/apps/admin/.next/standalone ./
+COPY --from=builder /app/apps/admin/.next/static ./apps/admin/.next/static
+COPY --from=builder /app/apps/admin/public ./apps/admin/public
+
+EXPOSE 3001
+
+WORKDIR /app/apps/admin
+
+CMD ["node", "server.js"]

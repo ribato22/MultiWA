@@ -1,0 +1,52 @@
+{
+  "name": "n8n-nodes-multiwa",
+  "version": "1.0.0",
+  "description": "n8n nodes for MultiWA WhatsApp Business API Gateway",
+  "keywords": [
+    "n8n-community-node-package",
+    "n8n-node",
+    "whatsapp",
+    "multiwa",
+    "messaging"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "MultiWA Team",
+    "email": "dev@multiwa.io"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/multiwa/n8n-nodes-multiwa"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc && cp -f src/nodes/MultiWA/multiwa.svg dist/nodes/MultiWA/ 2>/dev/null || true",
+    "dev": "tsc --watch",
+    "lint": "eslint .",
+    "lintfix": "eslint . --fix"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/MultiWAApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/MultiWA/MultiWA.node.js",
+      "dist/nodes/MultiWA/MultiWATrigger.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "eslint": "^8.0.0",
+    "gulp": "^4.0.2",
+    "n8n-workflow": "^1.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

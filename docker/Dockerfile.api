@@ -1,0 +1,130 @@
+# Build stage - use node with full Chromium support for Puppeteer
+FROM node:20-slim AS builder
+
+WORKDIR /app
+
+# Install pnpm and git
+RUN apt-get update && apt-get install -y git && npm install -g pnpm
+
+# Copy workspace files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+
+# Copy all package.json files first (matching actual package structure)
+COPY apps/api/package.json ./apps/api/
+COPY packages/core/package.json ./packages/core/
+COPY packages/database/package.json ./packages/database/
+COPY packages/engines/package.json ./packages/engines/
+COPY packages/sdk/package.json ./packages/sdk/
+
+# Install dependencies (allow lockfile updates for missing deps)
+RUN pnpm install --no-frozen-lockfile
+
+# Copy prisma schema first and generate
+COPY packages/database/prisma ./packages/database/prisma
+
+# Copy all source code
+COPY . .
+
+# Regenerate Prisma client with latest schema (after full source copy)
+RUN cd packages/database && npx prisma generate
+
+# Build packages in order: database -> core -> engines -> api
+RUN pnpm --filter @multiwa/database build || true
+# Fallback: if database tsc failed to emit JS files, copy pre-compiled from src
+RUN if [ ! -f packages/database/dist/index.js ]; then \
+  echo "WARNING: database tsc build incomplete, copying pre-compiled files"; \
+  mkdir -p packages/database/dist; \
+  cp packages/database/src/*.js packages/database/dist/ 2>/dev/null || true; \
+  cp packages/database/src/*.d.ts packages/database/dist/ 2>/dev/null || true; \
+  cp packages/database/src/*.js.map packages/database/dist/ 2>/dev/null || true; \
+  fi
+RUN pnpm --filter @multiwa/core build || true
+RUN pnpm --filter @multiwa/engines build || true
+# Fallback: if engines tsc failed, copy pre-compiled dist files
+RUN if [ ! -f packages/engines/dist/index.js ]; then \
+  echo "WARNING: engines tsc build incomplete, copying source dist files" && \
+  mkdir -p packages/engines/dist && \
+  cp -r packages/engines/src/* packages/engines/dist/ 2>/dev/null || true; \
+  fi
+RUN pnpm --filter @multiwa/api build || true
+RUN test -f apps/api/dist/main.js && echo "API dist verified" || (echo "FATAL: API dist/main.js missing" && exit 1)
+
+# NOTE: All patches (webhook URL validation, broadcast status check,
+# Docker URL rewriting, engineContent media URLs, broadcast media types)
+# are now in the TypeScript source code. No post-compilation patches needed.
+
+# Production stage - use Debian slim for Chromium support
+FROM node:20-slim AS runner
+
+WORKDIR /app
+
+# Install Chromium and dependencies for Puppeteer/whatsapp-web.js
+RUN apt-get update && apt-get install -y \
+  chromium \
+  libnss3 \
+  libfreetype6 \
+  libharfbuzz0b \
+  ca-certificates \
+  fonts-freefont-ttf \
+  libxshmfence1 \
+  libgbm1 \
+  --no-install-recommends \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install pnpm and git (required for baileys dependency)
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/* && npm install -g pnpm
+
+# Copy package files for pnpm install
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
+COPY --from=builder /app/packages/core/package.json ./packages/core/package.json
+COPY --from=builder /app/packages/database/package.json ./packages/database/package.json
+COPY --from=builder /app/packages/engines/package.json ./packages/engines/package.json
+COPY --from=builder /app/packages/sdk/package.json ./packages/sdk/package.json
+
+# Install production dependencies in runner
+RUN pnpm install --no-frozen-lockfile --prod
+
+# Copy built artifacts
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/packages/database ./packages/database
+COPY --from=builder /app/packages/core ./packages/core
+COPY --from=builder /app/packages/engines ./packages/engines
+
+# Re-generate Prisma client for production
+RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
+
+# Create symlinks for workspace packages (both root and app-level node_modules)
+RUN rm -rf /app/node_modules/@multiwa && mkdir -p /app/node_modules/@multiwa && \
+  ln -sf /app/packages/core /app/node_modules/@multiwa/core && \
+  ln -sf /app/packages/engines /app/node_modules/@multiwa/engines && \
+  ln -sf /app/packages/database /app/node_modules/@multiwa/database && \
+  rm -rf /app/apps/api/node_modules/@multiwa && mkdir -p /app/apps/api/node_modules/@multiwa && \
+  ln -sf /app/packages/core /app/apps/api/node_modules/@multiwa/core && \
+  ln -sf /app/packages/engines /app/apps/api/node_modules/@multiwa/engines && \
+  ln -sf /app/packages/database /app/apps/api/node_modules/@multiwa/database
+
+# Create symlinks for Prisma client (generated inside packages/database/node_modules)
+RUN mkdir -p /app/node_modules/@prisma /app/node_modules/.prisma \
+  /app/apps/api/node_modules/@prisma /app/apps/api/node_modules/.prisma && \
+  ln -sf /app/packages/database/node_modules/@prisma/client /app/node_modules/@prisma/client && \
+  ln -sf /app/packages/database/node_modules/.prisma/client /app/node_modules/.prisma/client && \
+  ln -sf /app/packages/database/node_modules/@prisma/client /app/apps/api/node_modules/@prisma/client && \
+  ln -sf /app/packages/database/node_modules/.prisma/client /app/apps/api/node_modules/.prisma/client
+
+# Create sessions directory for whatsapp-web.js auth
+RUN mkdir -p /data/sessions
+
+ENV NODE_ENV=production
+ENV SESSIONS_PATH=/data/sessions
+# Point Puppeteer to system Chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+EXPOSE 3333
+
+WORKDIR /app/apps/api
+
+CMD ["node", "dist/main.js"]

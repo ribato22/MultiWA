@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Compiled output leaked into src (prevent recurrence)
+apps/api/src/**/*.js
+apps/api/src/**/*.d.ts
+apps/api/src/**/*.js.map
+apps/admin/src/**/*.js
+apps/admin/src/**/*.d.ts
+apps/admin/src/**/*.d.ts.map
+apps/admin/src/**/*.js.map
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+
+# SSL Certificates
+*.pem
+*.key
+*.crt
+docker/nginx/ssl/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+
+# WhatsApp sessions (sensitive — contains auth tokens)
+sessions/
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Plugins runtime data
+plugins/*/node_modules/
+
+# Temporary
+tmp/
+temp/
+
+# Gemini / AI assistant
+.gemini/
+
+# Agent workflows (contains server-specific credentials and paths)
+.agent/
+packages/database/.env

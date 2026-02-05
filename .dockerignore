@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/.next
+**/dist
+.git
+.pnpm-store
+.turbo
+sessions
+*.md
+!**/README.md
+.vscode
+.idea

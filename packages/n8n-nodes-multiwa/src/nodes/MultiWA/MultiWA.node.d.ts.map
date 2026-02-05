@@ -1,0 +1,1 @@
+{"version":3,"file":"MultiWA.node.d.ts","sourceRoot":"","sources":["MultiWA.node.ts"],"names":[],"mappings":"AAAA,OAAO,EACL,iBAAiB,EACjB,kBAAkB,EAClB,SAAS,EACT,oBAAoB,EAErB,MAAM,cAAc,CAAC;AAEtB,qBAAa,OAAQ,YAAW,SAAS;IACvC,WAAW,EAAE,oBAAoB,CAkR/B;IAEI,OAAO,CAAC,IAAI,EAAE,iBAAiB,GAAG,OAAO,CAAC,kBAAkB,EAAE,EAAE,CAAC;CAiGxE"}
