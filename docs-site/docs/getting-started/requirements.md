@@ -70,4 +70,4 @@ S3_SECRET_KEY=...
 
 ---
 
-[← Project Overview](/docs/getting-started/project-overview) · [Documentation Index](/docs/getting-started/project-overview) · [Quick Start →](/docs/getting-started/quick-start)
+[← Project Overview](/getting-started/project-overview) · [Documentation Index](/getting-started/project-overview) · [Quick Start →](/getting-started/quick-start)

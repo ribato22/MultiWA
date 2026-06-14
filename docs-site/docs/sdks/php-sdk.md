@@ -177,4 +177,4 @@ public function send(MultiWA $client)
 
 ---
 
-[← Python SDK](/docs/sdks/python-sdk) · [Documentation Index](/docs/getting-started/project-overview) · [n8n Integration →](/docs/sdks/n8n-integration)
+[← Python SDK](/sdks/python-sdk) · [Documentation Index](/getting-started/project-overview) · [n8n Integration →](/sdks/n8n-integration)

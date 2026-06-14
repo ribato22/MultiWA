@@ -109,4 +109,4 @@ For groups, use the full JID: `123456789-123456@g.us`
 
 ---
 
-[← Webhook Events](/docs/api/webhook-events) · [Documentation Index](/docs/getting-started/project-overview) · [Groups →](/docs/features/groups)
+[← Webhook Events](/api/webhook-events) · [Documentation Index](/getting-started/project-overview) · [Groups →](/features/groups)

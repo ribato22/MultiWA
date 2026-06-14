@@ -146,4 +146,4 @@ Receive WhatsApp events in real-time:
 
 ---
 
-[← PHP SDK](/docs/sdks/php-sdk) · [Documentation Index](/docs/getting-started/project-overview) · [Docker Deployment →](/docs/operations/deployment-docker)
+[← PHP SDK](/sdks/php-sdk) · [Documentation Index](/getting-started/project-overview) · [Docker Deployment →](/operations/deployment-docker)

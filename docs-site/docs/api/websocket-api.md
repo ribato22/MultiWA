@@ -165,4 +165,4 @@ ws.onclose = () => {
 
 ---
 
-[← API Specification](/docs/api/api-specification) · [Documentation Index](/docs/getting-started/project-overview) · [Webhook Events →](/docs/api/webhook-events)
+[← API Specification](/api/api-specification) · [Documentation Index](/getting-started/project-overview) · [Webhook Events →](/api/webhook-events)

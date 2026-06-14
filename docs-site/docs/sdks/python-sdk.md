@@ -159,4 +159,4 @@ contact: Contact = client.contacts.get(...)
 
 ---
 
-[← Automation](/docs/features/automation) · [Documentation Index](/docs/getting-started/project-overview) · [PHP SDK →](/docs/sdks/php-sdk)
+[← Automation](/features/automation) · [Documentation Index](/getting-started/project-overview) · [PHP SDK →](/sdks/php-sdk)

@@ -83,4 +83,4 @@ Engine Event → EngineManager → EventsGateway → WebSocket/Webhook
 
 ---
 
-[← Database Design](/docs/architecture/database-design) · [Documentation Index](/docs/getting-started/project-overview) · [API Specification →](/docs/api/api-specification)
+[← Database Design](/architecture/database-design) · [Documentation Index](/getting-started/project-overview) · [API Specification →](/api/api-specification)

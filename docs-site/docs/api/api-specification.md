@@ -156,4 +156,4 @@ curl -X POST http://localhost:3001/api/bulk/send \
 
 ---
 
-[← Engine Abstraction](/docs/architecture/engine-abstraction) · [Documentation Index](/docs/getting-started/project-overview) · [WebSocket API →](/docs/api/websocket-api)
+[← Engine Abstraction](/architecture/engine-abstraction) · [Documentation Index](/getting-started/project-overview) · [WebSocket API →](/api/websocket-api)

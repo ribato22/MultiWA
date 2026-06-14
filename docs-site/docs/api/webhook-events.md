@@ -109,4 +109,4 @@ After 5 failed attempts, the webhook is marked as failing.
 
 ---
 
-[← WebSocket API](/docs/api/websocket-api) · [Documentation Index](/docs/getting-started/project-overview) · [Messaging →](/docs/features/messaging)
+[← WebSocket API](/api/websocket-api) · [Documentation Index](/getting-started/project-overview) · [Messaging →](/features/messaging)

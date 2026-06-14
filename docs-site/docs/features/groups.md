@@ -202,4 +202,4 @@ client.groups.add_participants(
 
 ---
 
-[← Messaging](/docs/features/messaging) · [Documentation Index](/docs/getting-started/project-overview) · [Automation →](/docs/features/automation)
+[← Messaging](/features/messaging) · [Documentation Index](/getting-started/project-overview) · [Automation →](/features/automation)

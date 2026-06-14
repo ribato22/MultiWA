@@ -104,4 +104,4 @@ Provide a robust, scalable, and developer-friendly WhatsApp API that rivals comm
 
 ---
 
-[← Documentation Index](/docs/getting-started/project-overview) · [Next: Requirements →](/docs/getting-started/requirements)
+[← Documentation Index](/getting-started/project-overview) · [Next: Requirements →](/getting-started/requirements)

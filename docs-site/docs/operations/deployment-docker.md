@@ -190,4 +190,4 @@ docker compose exec -T db psql -U postgres multiwa < backup.sql
 
 ---
 
-[← n8n Integration](/docs/sdks/n8n-integration) · [Documentation Index](/docs/getting-started/project-overview) · [Development Guide →](/docs/operations/development)
+[← n8n Integration](/sdks/n8n-integration) · [Documentation Index](/getting-started/project-overview) · [Development Guide →](/operations/development)

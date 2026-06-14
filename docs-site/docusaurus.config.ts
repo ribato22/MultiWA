@@ -34,7 +34,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/ribato22/MultiWA/tree/main/docs-site/',
-          routeBasePath: 'docs',
+          routeBasePath: '/',
         },
         blog: false,
         theme: {
@@ -78,15 +78,15 @@ const config: Config = {
           items: [
             {
               label: 'Quick Start',
-              to: '/docs/getting-started/quick-start',
+              to: '/getting-started/quick-start',
             },
             {
               label: 'API Reference',
-              to: '/docs/api/api-specification',
+              to: '/api/api-specification',
             },
             {
               label: 'Docker Deployment',
-              to: '/docs/operations/deployment-docker',
+              to: '/operations/deployment-docker',
             },
           ],
         },

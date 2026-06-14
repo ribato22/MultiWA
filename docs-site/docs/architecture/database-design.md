@@ -125,4 +125,4 @@ enum MessageType {
 
 ---
 
-[← System Architecture](/docs/architecture/system-architecture) · [Documentation Index](/docs/getting-started/project-overview) · [Engine Abstraction →](/docs/architecture/engine-abstraction)
+[← System Architecture](/architecture/system-architecture) · [Documentation Index](/getting-started/project-overview) · [Engine Abstraction →](/architecture/engine-abstraction)

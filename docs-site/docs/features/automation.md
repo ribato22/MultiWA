@@ -117,4 +117,4 @@ POST /api/messages/schedule
 
 ---
 
-[← Groups](/docs/features/groups) · [Documentation Index](/docs/getting-started/project-overview) · [Python SDK →](/docs/sdks/python-sdk)
+[← Groups](/features/groups) · [Documentation Index](/getting-started/project-overview) · [Python SDK →](/sdks/python-sdk)

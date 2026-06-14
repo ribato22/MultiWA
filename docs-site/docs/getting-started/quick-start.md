@@ -102,10 +102,10 @@ curl -X POST http://localhost:3001/api/messages/text \
 
 ## Next Steps
 
-- [API Specification](/docs/api/api-specification) - Full API reference
-- [Python SDK](/docs/sdks/python-sdk) - Python integration
-- [Docker Deployment](/docs/operations/deployment-docker) - Production setup
+- [API Specification](/api/api-specification) - Full API reference
+- [Python SDK](/sdks/python-sdk) - Python integration
+- [Docker Deployment](/operations/deployment-docker) - Production setup
 
 ---
 
-[← Requirements](/docs/getting-started/requirements) · [Documentation Index](/docs/getting-started/project-overview) · [System Architecture →](/docs/architecture/system-architecture)
+[← Requirements](/getting-started/requirements) · [Documentation Index](/getting-started/project-overview) · [System Architecture →](/architecture/system-architecture)
