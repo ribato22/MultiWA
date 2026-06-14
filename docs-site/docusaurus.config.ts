@@ -12,7 +12,7 @@ const config: Config = {
   },
 
   url: 'https://ribato22.github.io',
-  baseUrl: '/MultiWA/',
+  baseUrl: '/MultiWA/docs/',
 
   organizationName: 'ribato22',
   projectName: 'MultiWA',

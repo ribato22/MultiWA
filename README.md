@@ -223,7 +223,7 @@ curl -X POST http://localhost:3333/api/v1/accounts/YOUR_ACCOUNT_ID/profiles/YOUR
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-> 📚 See [full documentation](https://ribato22.github.io/MultiWA/) for detailed guides, API reference, webhook events, and more. Source docs are in the [`docs/`](docs/) directory.
+> 📚 See the [full documentation site](https://ribato22.github.io/MultiWA/docs/) for detailed guides, API reference, webhook events, and more. Source docs are in the [`docs/`](docs/) directory.
 
 ---
 
@@ -378,7 +378,7 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 ## 🔗 Links
 
-- 📖 [Documentation](https://ribato22.github.io/MultiWA/) · [Source](docs/)
+- 📖 [Documentation](https://ribato22.github.io/MultiWA/docs/) · [Source](docs/)
 - 🐛 [Report a Bug](https://github.com/ribato22/MultiWA/issues/new?template=bug_report.yml)
 - 💡 [Request a Feature](https://github.com/ribato22/MultiWA/issues/new?template=feature_request.yml)
 - 🔒 [Security Policy](SECURITY.md)

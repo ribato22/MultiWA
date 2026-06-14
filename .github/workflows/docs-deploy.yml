@@ -1,11 +1,19 @@
 name: Deploy Docs
 
+# Publishes a combined GitHub Pages site:
+#   /        -> the custom landing page (index.html + style.css from repo root)
+#   /docs/   -> the Docusaurus documentation site (built from docs-site/)
+# Requires the repository Pages source to be set to "GitHub Actions".
+
 on:
   push:
     branches: [main]
     paths:
       - 'docs-site/**'
       - 'docs/**'
+      - 'index.html'
+      - 'style.css'
+      - '.github/workflows/docs-deploy.yml'
   workflow_dispatch:
 
 permissions:
@@ -20,9 +28,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs-site
     steps:
       - uses: actions/checkout@v4
 
@@ -31,17 +36,29 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
+        working-directory: docs-site
         run: npm ci
 
-      - name: Build website
+      - name: Build Docusaurus (baseUrl /MultiWA/docs/)
+        working-directory: docs-site
         run: npx docusaurus build
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
+      - name: Assemble combined site
+        run: |
+          set -e
+          rm -rf _site
+          mkdir -p _site/docs
+          # Landing page at the site root
+          cp index.html style.css _site/
+          # Docusaurus build under /docs
+          cp -r docs-site/build/. _site/docs/
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs-site/build
+          path: _site
 
   deploy:
     environment:
