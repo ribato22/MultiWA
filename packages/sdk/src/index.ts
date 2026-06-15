@@ -9,4 +9,5 @@ export { TemplateClient } from './clients/templates';
 export { BroadcastClient } from './clients/broadcast';
 export { WebhookClient } from './clients/webhooks';
 export { AutomationClient } from './clients/automation';
+export { verifyWebhookSignature } from './webhooks-verify';
 export * from './types';

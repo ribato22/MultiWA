@@ -5,6 +5,7 @@ Official Python SDK for MultiWA - WhatsApp Business API Gateway.
 """
 
 from .client import MultiWA, AsyncMultiWA
+from .webhooks import verify_webhook_signature
 from .types import (
     Message,
     MessageResult,
@@ -26,4 +27,5 @@ __all__ = [
     "Template",
     "Profile",
     "Webhook",
+    "verify_webhook_signature",
 ]

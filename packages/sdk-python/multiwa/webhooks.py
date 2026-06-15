@@ -4,10 +4,33 @@ MultiWA Python SDK - Webhooks Client
 Client for managing webhook configurations.
 """
 
-from typing import Optional, List, Dict, Any
+import hashlib
+import hmac
+from typing import Optional, List, Dict, Any, Union
+
 import httpx
 
 from .types import Webhook
+
+
+def verify_webhook_signature(
+    payload: Union[str, bytes],
+    signature: Optional[str],
+    secret: str,
+) -> bool:
+    """Verify a MultiWA webhook HMAC-SHA256 signature.
+
+    MultiWA signs every webhook with HMAC-SHA256 over the **raw request body**
+    and sends it in the ``X-MultiWA-Signature`` header as ``sha256=<hex>``.
+    Pass the RAW body — a re-serialized object will not match.
+
+    Returns ``True`` when the signature is valid, ``False`` otherwise.
+    """
+    if not signature or not secret:
+        return False
+    body = payload.encode() if isinstance(payload, str) else payload
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 class WebhooksClient:

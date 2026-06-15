@@ -16,6 +16,24 @@ class WebhooksClient
         private readonly HttpClient $http
     ) {}
 
+    /**
+     * Verify a MultiWA webhook HMAC-SHA256 signature.
+     *
+     * MultiWA signs every webhook with HMAC-SHA256 over the RAW request body and
+     * sends it in the `X-MultiWA-Signature` header as `sha256=<hex>`. Pass the raw
+     * body (e.g. `file_get_contents('php://input')`) — not a re-encoded array.
+     *
+     * @return bool True when the signature is valid.
+     */
+    public static function verifySignature(string $payload, ?string $signature, string $secret): bool
+    {
+        if ($signature === null || $signature === '' || $secret === '') {
+            return false;
+        }
+        $expected = 'sha256=' . hash_hmac('sha256', $payload, $secret);
+        return hash_equals($expected, $signature);
+    }
+
     public function create(
         string $profileId,
         string $url,
