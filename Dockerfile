@@ -53,8 +53,12 @@ RUN pnpm --filter @multiwa/api build || true
 RUN test -f apps/api/dist/main.js && echo "✅ API build OK" || (echo "❌ API build failed" && exit 1)
 
 # Build Admin Dashboard
+# Both URLs are baked into the Next.js build: NEXT_PUBLIC_API_URL for the
+# browser, INTERNAL_API_URL for the server-side proxy over the Docker network.
 ARG NEXT_PUBLIC_API_URL=http://localhost:3333
+ARG INTERNAL_API_URL=http://api:3333
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV INTERNAL_API_URL=$INTERNAL_API_URL
 RUN pnpm --filter @multiwa/admin build || true
 
 
@@ -120,7 +124,11 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 EXPOSE 3333
 
 WORKDIR /app/apps/api
-CMD ["node", "dist/main.js"]
+# On startup, sync the database schema before booting the API. There is no
+# migrations directory, so use `prisma db push` (idempotent: creates tables on a
+# fresh DB, no-op when the schema already matches). The schema lives at
+# /app/packages/database/prisma/schema.prisma and DATABASE_URL comes from env.
+CMD ["sh", "-c", "cd /app/packages/database && prisma db push --skip-generate || echo 'prisma db push failed; starting API anyway'; cd /app/apps/api && exec node dist/main.js"]
 
 
 # ── Stage 3: Admin Dashboard Runtime ─────────

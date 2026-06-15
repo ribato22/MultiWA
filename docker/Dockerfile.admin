@@ -23,8 +23,12 @@ RUN pnpm install --no-frozen-lockfile
 COPY . .
 
 # Build Admin UI
+# NEXT_PUBLIC_API_URL → browser requests; INTERNAL_API_URL → server-side proxy
+# over the Docker network. Both are baked into the Next.js build.
 ARG NEXT_PUBLIC_API_URL
+ARG INTERNAL_API_URL=http://api:3333
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV INTERNAL_API_URL=$INTERNAL_API_URL
 
 RUN pnpm --filter @multiwa/admin build || true
 RUN test -d apps/admin/.next/standalone && echo "Admin build verified" || (echo "FATAL: Admin standalone build missing" && exit 1)

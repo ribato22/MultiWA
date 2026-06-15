@@ -90,7 +90,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3333/api/docs"]
+      # Node-based check: the API image ships node (not wget); 127.0.0.1 avoids
+      # localhost resolving to IPv6 ::1 inside the container.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3333/api/docs', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -105,22 +107,28 @@ services:
       dockerfile: Dockerfile
       target: admin
       args:
+        # NEXT_PUBLIC_API_URL → browser (client-side) requests
+        # INTERNAL_API_URL → server-side proxy over the Docker network.
+        # Both are baked into the Next.js build, so they must be build args.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+        INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:3333}
     container_name: multiwa-admin
     restart: unless-stopped
     environment:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3333}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://api:3333}
     ports:
       - "${ADMIN_PORT:-3001}:3001"
     depends_on:
       api:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3001 || exit 1"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
     networks:
       - multiwa
 
