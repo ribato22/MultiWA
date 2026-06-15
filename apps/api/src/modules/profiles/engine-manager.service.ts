@@ -288,7 +288,41 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       },
       onReady: async (phone: string, pushName: string) => {
         this.logger.log(`Profile ${profileId} connected: ${phone} (${pushName})`);
-        
+
+        // Phone number guard: if user initially registered the profile with a
+        // specific phone number, refuse to silently overwrite it with a
+        // different WhatsApp account. The frontend listens for
+        // 'connection:status' status='error' and shows the toast.
+        const existing = await prisma.profile.findUnique({
+          where: { id: profileId },
+          select: { phoneNumber: true, displayName: true },
+        });
+        const expected = (existing?.phoneNumber || '').replace(/\D/g, '');
+        const actual = (phone || '').replace(/\D/g, '');
+        if (expected && expected !== actual) {
+          this.logger.warn(
+            `Profile ${profileId}: scanned WA number ${actual} does not match expected ${expected}. Disconnecting.`,
+          );
+          this.eventsGateway.emitConnectionStatus(
+            profileId,
+            'error',
+            `Scanned number does not match this profile. Expected ${expected}, got ${actual}.`,
+          );
+          // Disconnect the just-linked engine; user can rescan with the correct device.
+          try {
+            const instance2 = this.engines.get(profileId);
+            await instance2?.engine.disconnect();
+          } catch (err) {
+            this.logger.warn(`Failed to disconnect mismatched engine: ${(err as Error).message}`);
+          }
+          this.engines.delete(profileId);
+          await prisma.profile.update({
+            where: { id: profileId },
+            data: { status: 'DISCONNECTED' },
+          });
+          return;
+        }
+
         // Update engine instance status
         const instance = this.engines.get(profileId);
         if (instance) {

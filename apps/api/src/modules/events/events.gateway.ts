@@ -104,13 +104,25 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   // Emit connection status (matches frontend: socket.on('connection:status', data))
-  emitConnectionStatus(profileId: string, status: string, phoneNumber?: string) {
+  // For status='error', the third argument is a human-readable reason instead of
+  // a phone number; the payload exposes it as the `reason` field so the frontend
+  // can surface it in a recoverable error alert.
+  emitConnectionStatus(profileId: string, status: string, phoneOrReason?: string) {
     this.logger.log(`Emitting connection:status '${status}' for profile: ${profileId}`);
-    this.server.to(`profile:${profileId}`).emit('connection:status', { 
-      profileId, 
+    const payload: Record<string, unknown> = {
+      profileId,
       status,
-      phoneNumber,
-    });
+    };
+    if (phoneOrReason !== undefined) {
+      if (status === 'error') {
+        payload.reason = phoneOrReason;
+      } else {
+        payload.phoneNumber = phoneOrReason;
+        // Legacy compatibility: some clients read `phone` instead of `phoneNumber`.
+        payload.phone = phoneOrReason;
+      }
+    }
+    this.server.to(`profile:${profileId}`).emit('connection:status', payload);
   }
 
   // Legacy emit methods for compatibility
