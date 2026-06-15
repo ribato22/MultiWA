@@ -47,7 +47,7 @@ If you want to send and receive WhatsApp messages from your own backend without 
 | Feature | MultiWA | WhatsApp Cloud API | Evolution API |
 |---------|---------|-------------------|---------------|
 | **Self-hosted** | ✅ Full control | ❌ Meta-hosted | ✅ |
-| **Multi-engine** | ✅ whatsapp-web.js, Baileys | ❌ Single | ❌ Fixed |
+| **Multi-engine** | ✅ whatsapp-web.js (Baileys adapter experimental) | ❌ Single | ❌ Fixed |
 | **Admin Dashboard** | ✅ Full-featured | ❌ None | ⚠️ Basic |
 | **Visual Automation** | ✅ Drag & drop builder | ❌ | ❌ |
 | **Knowledge Base AI** | ✅ OpenAI / Google AI | ❌ | ❌ |
@@ -113,7 +113,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 
 ### Core
 - 📱 **Multi-Session Management** — Connect unlimited WhatsApp accounts
-- 🔌 **Pluggable Engine Adapters** — Switch between whatsapp-web.js and Baileys
+- 🔌 **Pluggable Engine Adapters** — Clean engine interface; whatsapp-web.js by default, a Baileys adapter is included (per-profile engine selection is being wired)
 - 📨 **Unified Messaging API** — Send text, media, documents, contacts, locations
 - 📡 **Real-time WebSocket** — Live session status, QR codes, and events via Socket.IO
 - 🔐 **JWT Authentication** — Secure API access with refresh tokens
@@ -140,7 +140,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 ### Enterprise
 - 🛡️ **Security** — Helmet, CSP, rate limiting, encryption at rest
 - 🐳 **Docker** — Production-ready containers with health checks
-- ⚙️ **Worker** — BullMQ background jobs (messages, automation, webhooks, scheduled)
+- ⚙️ **Background Worker** — BullMQ worker scaffolding (a durable async send queue is on the roadmap; today message sending and scheduling run in the API process)
 - 🔒 **GDPR** — Data export and deletion endpoints
 - 🔌 **Plugin System** — Extend with custom plugins
 
