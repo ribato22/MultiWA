@@ -47,7 +47,8 @@
     "web-push": "^3.6.7",
     "@fastify/helmet": "^11.1.0",
     "@nestjs/event-emitter": "^2.0.0",
-    "@nestjs/schedule": "^4.0.0"
+    "@nestjs/schedule": "^4.0.0",
+    "@nestjs/throttler": "^6.4.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.0",

@@ -19,7 +19,7 @@ import { ApiKeyStrategy } from './strategies/api-key.strategy';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get('JWT_SECRET', 'default-secret-change-me'),
+        secret: config.get('JWT_SECRET'),
         signOptions: {
           expiresIn: config.get('JWT_EXPIRES_IN', '7d'),
         },

@@ -3,6 +3,7 @@
 
 import { Controller, Post, Body, Get, Patch, Delete, UseGuards, Request, Param, Headers } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { TwoFactorService } from './two-factor.service';
 import { SessionsService } from './sessions.service';
@@ -20,6 +21,7 @@ export class AuthController {
   ) {}
 
   @Post('register')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'Register a new user and organization' })
   @ApiResponse({ status: 201, description: 'User registered successfully', type: TokenResponseDto })
   async register(@Body() dto: RegisterDto): Promise<TokenResponseDto> {
@@ -27,6 +29,7 @@ export class AuthController {
   }
 
   @Post('login')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @AllowInDemo()
   @ApiOperation({ summary: 'Login with email and password' })
   @ApiResponse({ status: 200, description: 'Login successful (or requires 2FA)' })
@@ -41,6 +44,7 @@ export class AuthController {
   }
 
   @Post('2fa/verify')
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @AllowInDemo()
   @ApiOperation({ summary: 'Complete login with 2FA verification code' })
   @ApiResponse({ status: 200, description: 'Login successful', type: TokenResponseDto })
@@ -55,6 +59,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @AllowInDemo()
   @ApiOperation({ summary: 'Refresh access token' })
   @ApiResponse({ status: 200, description: 'Token refreshed', type: TokenResponseDto })

@@ -6,6 +6,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { DemoGuard } from './common/guards/demo.guard';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthModule } from './modules/auth/auth.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { ProfilesModule } from './modules/profiles/profiles.module';
@@ -46,6 +47,8 @@ import { WebSocketModule } from './modules/websocket/websocket.module';
 
 @Module({
   imports: [
+    // Rate limiting — global default; tighten per-route with @Throttle()
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
     // Configuration
     ConfigModule.forRoot({
       isGlobal: true,
@@ -100,6 +103,10 @@ import { WebSocketModule } from './modules/websocket/websocket.module';
   ],
   controllers: [RootController, HealthController],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: DemoGuard,

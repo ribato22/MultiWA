@@ -8,8 +8,43 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module';
 
+// Fail fast on missing/weak security secrets so a production deploy can never
+// silently run with a forgeable JWT secret or an ephemeral encryption key.
+function validateSecurityConfig() {
+  const isProd = process.env.NODE_ENV === 'production';
+  const KNOWN_WEAK = new Set([
+    '',
+    'default-secret-change-me',
+    'change-this-refresh-secret',
+    'change-this-to-a-random-secret',
+    'your-secure-generated-secret-key-here',
+  ]);
+  const crypto = require('crypto');
+  for (const name of ['JWT_SECRET', 'JWT_REFRESH_SECRET']) {
+    const v = process.env[name];
+    if (!v || KNOWN_WEAK.has(v)) {
+      if (isProd) {
+        throw new Error(
+          `${name} is missing or a known default. Set a strong value in production, e.g. \`openssl rand -base64 48\`.`,
+        );
+      }
+      // Dev convenience: generate an ephemeral secret so local runs work, loudly.
+      process.env[name] = crypto.randomBytes(48).toString('base64');
+      console.warn(
+        `⚠️  [security] ${name} unset/default — generated an ephemeral dev secret (tokens reset on restart). NEVER do this in production.`,
+      );
+    }
+  }
+  if (isProd && !process.env.ENCRYPTION_KEY) {
+    throw new Error(
+      'ENCRYPTION_KEY must be set in production (32-byte hex). Auto-generation is disabled because a new key on each restart makes previously-encrypted secrets undecryptable.',
+    );
+  }
+}
+
 async function bootstrap() {
   try {
+    validateSecurityConfig();
     console.log('🔧 [1/7] Creating NestJS application...');
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,

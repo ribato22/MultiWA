@@ -16,10 +16,17 @@ const AUTH_TAG_LENGTH = 16;
 function getEncryptionKey(): Buffer {
   let key = process.env.ENCRYPTION_KEY;
   if (!key) {
-    // Auto-generate a key and inform the user
+    if (process.env.NODE_ENV === 'production') {
+      // Never auto-generate in production: a fresh key each restart makes every
+      // previously-encrypted secret (S3/SMTP/etc.) permanently undecryptable.
+      throw new Error(
+        'ENCRYPTION_KEY is required in production. Set a stable 32-byte hex key (e.g. `openssl rand -hex 32`).',
+      );
+    }
+    // Dev only: generate an ephemeral key so local runs work, loudly.
     key = crypto.randomBytes(32).toString('hex');
     process.env.ENCRYPTION_KEY = key;
-    console.log('[SettingsService] Auto-generated ENCRYPTION_KEY. Add to .env for persistence:', key);
+    console.warn('[SettingsService] ENCRYPTION_KEY unset — generated an ephemeral dev key (set ENCRYPTION_KEY in .env for persistence; required in production).');
   }
   // Accept hex-encoded 64-char keys or raw 32-char keys
   if (key.length === 64) {
