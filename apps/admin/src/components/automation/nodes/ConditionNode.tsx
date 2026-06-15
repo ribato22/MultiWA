@@ -2,6 +2,7 @@
 
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
+import { Zap, Check, X } from 'lucide-react';
 
 interface ConditionNodeData {
   label: string;
@@ -11,107 +12,65 @@ interface ConditionNodeData {
 }
 
 const operatorLabels: Record<string, string> = {
-  'equals': '=',
-  'not_equals': '≠',
-  'contains': '∋',
-  'starts_with': 'starts',
-  'ends_with': 'ends',
-  'regex': '/./',
-  'greater_than': '>',
-  'less_than': '<',
+  equals: '=',
+  not_equals: '≠',
+  contains: '∋',
+  starts_with: 'starts',
+  ends_with: 'ends',
+  regex: '/./',
+  greater_than: '>',
+  less_than: '<',
 };
 
 export const ConditionNode = memo(({ data, selected }: NodeProps<ConditionNodeData>) => {
   return (
     <div
-      style={{
-        padding: '16px 20px',
-        borderRadius: '14px',
-        background: selected 
-          ? 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)'
-          : 'linear-gradient(135deg, #fffbeb 0%, #fef9c3 100%)',
-        border: `2px solid ${selected ? '#f59e0b' : '#fcd34d'}`,
-        minWidth: '200px',
-        boxShadow: selected 
-          ? '0 8px 24px rgba(245, 158, 11, 0.25)' 
-          : '0 2px 12px rgba(0,0,0,0.08)',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-      }}
+      className={`
+        px-5 py-4 rounded-2xl min-w-[200px]
+        bg-amber-500/10 border-2
+        transition-all duration-200
+        ${selected
+          ? 'border-amber-500 shadow-lg shadow-amber-500/25'
+          : 'border-amber-500/40 shadow-md shadow-black/20'}
+      `}
     >
       <Handle
         type="target"
         position={Position.Top}
         style={{
-          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+          background: '#f59e0b',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
+          border: '2px solid hsl(217 33% 17%)',
           boxShadow: '0 2px 6px rgba(245, 158, 11, 0.4)',
         }}
       />
-      
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        marginBottom: '6px',
-      }}>
-        <div style={{
-          width: '24px', height: '24px', borderRadius: '6px',
-          backgroundColor: '#f59e0b15', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '12px',
-        }}>
-          ⚡
-        </div>
-        <span style={{ 
-          fontSize: '10px', 
-          textTransform: 'uppercase', 
-          color: '#b45309',
-          fontWeight: 700,
-          letterSpacing: '0.05em',
-        }}>
+
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-amber-500/20 text-amber-300">
+          <Zap className="w-3.5 h-3.5" aria-hidden="true" />
+        </span>
+        <span className="text-[10px] uppercase font-bold tracking-wider text-amber-300">
           Condition
         </span>
       </div>
-      <div style={{ 
-        fontSize: '13px', 
-        fontWeight: 600,
-        color: '#92400e',
-      }}>
+      <div className="text-sm font-semibold text-foreground">
         {data.label || 'If...'}
       </div>
-      <div style={{
-        fontSize: '11px',
-        color: '#a16207',
-        marginTop: '4px',
-        fontFamily: 'monospace',
-        backgroundColor: 'rgba(245, 158, 11, 0.1)',
-        padding: '4px 8px',
-        borderRadius: '6px',
-      }}>
+      <div className="text-[11px] font-mono text-amber-200 mt-1 bg-amber-500/15 border border-amber-500/30 px-2 py-1 rounded-md">
         {data.field} {operatorLabels[data.operator]} &quot;{data.value}&quot;
       </div>
-      
+
       {/* True/False branch labels */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        fontSize: '10px',
-        marginTop: '10px',
-        fontWeight: 600,
-      }}>
-        <span style={{ 
-          color: '#16a34a', 
-          backgroundColor: '#dcfce7', 
-          padding: '2px 8px', 
-          borderRadius: '4px',
-        }}>✓ Yes</span>
-        <span style={{ 
-          color: '#dc2626', 
-          backgroundColor: '#fee2e2', 
-          padding: '2px 8px', 
-          borderRadius: '4px',
-        }}>✗ No</span>
+      <div className="flex justify-between text-[10px] mt-2.5 font-semibold">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-primary/15 text-primary border border-primary/30">
+          <Check className="w-2.5 h-2.5" aria-hidden="true" />
+          Yes
+        </span>
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-destructive/15 text-destructive border border-destructive/30">
+          <X className="w-2.5 h-2.5" aria-hidden="true" />
+          No
+        </span>
       </div>
 
       {/* True branch */}
@@ -121,10 +80,10 @@ export const ConditionNode = memo(({ data, selected }: NodeProps<ConditionNodeDa
         id="true"
         style={{
           left: '30%',
-          background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+          background: '#22c55e',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
+          border: '2px solid hsl(217 33% 17%)',
           boxShadow: '0 2px 6px rgba(34, 197, 94, 0.4)',
         }}
       />
@@ -135,10 +94,10 @@ export const ConditionNode = memo(({ data, selected }: NodeProps<ConditionNodeDa
         id="false"
         style={{
           left: '70%',
-          background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+          background: '#ef4444',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
+          border: '2px solid hsl(217 33% 17%)',
           boxShadow: '0 2px 6px rgba(239, 68, 68, 0.4)',
         }}
       />

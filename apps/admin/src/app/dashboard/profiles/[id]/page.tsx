@@ -1,4 +1,10 @@
-// MultiWA Admin - Enhanced Profile Detail with QR Code & Reconnection
+// MultiWA Admin — Profile Detail (Session 2 Tier A redesign)
+// Dark OLED design system, Lucide icons, accessible QR flow with step
+// indicator, server-side phone-mismatch surfaced as an inline alert.
+//
+// Tokens reference: design-system/multiwa-admin/MASTER.md
+// Per-page rules: design-system/multiwa-admin/pages/profile-detail.md
+//
 // apps/admin/src/app/dashboard/profiles/[id]/page.tsx
 
 'use client';
@@ -9,7 +15,6 @@ import Link from 'next/link';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   AlertDialog,
@@ -22,6 +27,24 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import {
+  ArrowLeft,
+  ShieldCheck,
+  ScanLine,
+  Wifi,
+  MessageCircle,
+  PlugZap,
+  RefreshCw,
+  Power,
+  Trash2,
+  AlertTriangle,
+  Smartphone,
+  Activity,
+  Clock,
+  Inbox,
+  WifiOff,
+  Loader2,
+} from 'lucide-react';
 
 interface Profile {
   id: string;
@@ -39,12 +62,118 @@ interface Profile {
   };
 }
 
+type WireStatus = 'connected' | 'disconnected' | 'connecting' | 'error' | 'qr_ready' | string;
+
+const fmtPhone = (raw: string | null | undefined): string => {
+  if (!raw) return '—';
+  const digits = raw.replace(/\D/g, '');
+  // Group: 2 + 3-4 + 4 + remainder
+  if (digits.length <= 4) return digits;
+  if (digits.length <= 8) return `${digits.slice(0, 4)} ${digits.slice(4)}`;
+  return `+${digits.slice(0, 2)} ${digits.slice(2, 6)} ${digits.slice(6, 10)} ${digits.slice(10)}`.trim();
+};
+
+const ChipDot = ({ color }: { color: string }) => (
+  <span
+    aria-hidden
+    className="inline-block w-1.5 h-1.5 rounded-full"
+    style={{ background: color }}
+  />
+);
+
+function StatusBadge({ status }: { status: WireStatus }) {
+  const s = (status || '').toLowerCase();
+  let label = 'Disconnected';
+  let bg = 'rgb(100 116 139 / 0.18)'; // slate-500/18
+  let fg = 'rgb(148 163 184)'; // slate-400
+  let border = 'rgb(100 116 139 / 0.35)';
+  let pulse = false;
+
+  if (s === 'connected') {
+    label = 'Connected';
+    bg = 'rgb(34 197 94 / 0.15)'; // green-500/15
+    fg = 'rgb(74 222 128)'; // green-400
+    border = 'rgb(34 197 94 / 0.35)';
+  } else if (s === 'connecting' || s === 'qr_ready') {
+    label = 'Connecting';
+    bg = 'rgb(245 158 11 / 0.15)';
+    fg = 'rgb(251 191 36)';
+    border = 'rgb(245 158 11 / 0.35)';
+    pulse = true;
+  } else if (s === 'error') {
+    label = 'Error';
+    bg = 'rgb(239 68 68 / 0.15)';
+    fg = 'rgb(248 113 113)';
+    border = 'rgb(239 68 68 / 0.35)';
+  }
+
+  return (
+    <span
+      role="status"
+      aria-label={`Profile status: ${label}`}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border"
+      style={{ background: bg, color: fg, borderColor: border }}
+    >
+      <span
+        aria-hidden
+        className={pulse ? 'inline-block w-1.5 h-1.5 rounded-full' : 'inline-block w-1.5 h-1.5 rounded-full'}
+        style={{
+          background: fg,
+          animation: pulse ? 'mw-spin 2s ease-in-out infinite' : undefined,
+        }}
+      />
+      {label}
+    </span>
+  );
+}
+
+function StepIndicator({ step }: { step: 1 | 2 | 3 }) {
+  const steps = [
+    { n: 1, label: 'Authenticate', Icon: ShieldCheck },
+    { n: 2, label: 'Scan QR', Icon: ScanLine },
+    { n: 3, label: 'Online', Icon: Wifi },
+  ];
+  return (
+    <ol className="flex items-center justify-center gap-2 text-xs">
+      {steps.map(({ n, label, Icon }, i) => {
+        const isActive = step === n;
+        const isDone = step > n;
+        const active = isActive || isDone;
+        return (
+          <li key={n} className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors"
+              style={{
+                background: active ? 'rgb(34 197 94 / 0.12)' : 'rgb(51 65 85 / 0.4)',
+                borderColor: active ? 'rgb(34 197 94 / 0.4)' : 'rgb(51 65 85)',
+                color: active ? 'rgb(74 222 128)' : 'rgb(148 163 184)',
+              }}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span className="font-medium">
+                {n}. {label}
+              </span>
+            </div>
+            {i < steps.length - 1 && (
+              <span
+                aria-hidden
+                className="block w-6 h-px"
+                style={{ background: step > n ? 'rgb(34 197 94 / 0.5)' : 'rgb(51 65 85)' }}
+              />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 export default function ProfileDetailPage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  
+
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [qrCode, setQrCode] = useState<string | null>(null);
@@ -53,6 +182,7 @@ export default function ProfileDetailPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [connectionAttempts, setConnectionAttempts] = useState(0);
+  const [errorReason, setErrorReason] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const accountIdRef = useRef<string | null>(null);
 
@@ -61,42 +191,47 @@ export default function ProfileDetailPage() {
 
   // WebSocket connection for real-time updates
   useEffect(() => {
-    // Determine WebSocket URL based on environment
     const wsUrl = getSocketUrl();
-
-    // Connect to WebSocket server with /ws namespace (must match backend EventsGateway)
     const socket = io(`${wsUrl}/ws`, {
       transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
       timeout: 15000,
       forceNew: true,
     });
-
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('WebSocket connected for profile:', profileId);
-      // Join this profile's room to receive QR updates
       socket.emit('join', { profileId });
     });
 
-    // Listen for QR code updates (backend sends { profileId, qrCode })
     socket.on('qr:update', (data: { profileId: string; qrCode: string }) => {
-      console.log('QR update received:', data.profileId, data.qrCode?.substring(0, 50));
       if (data.profileId === profileId && data.qrCode) {
         setQrCode(data.qrCode);
-        console.log('QR Code set!');
+        setErrorReason(null);
       }
     });
 
-    // Listen for connection status updates
-    socket.on('connection:status', (data: { profileId: string; status: string; phone?: string }) => {
-      console.log('Connection status update:', data);
-      if (data.profileId === profileId) {
+    socket.on(
+      'connection:status',
+      (data: {
+        profileId: string;
+        status: string;
+        phone?: string;
+        phoneNumber?: string;
+        reason?: string;
+      }) => {
+        if (data.profileId !== profileId) return;
         if (data.status === 'connected') {
           setQrCode(null);
           setConnecting(false);
+          setErrorReason(null);
           fetchProfile();
-          toast({ title: 'Connected!', description: `Phone: ${data.phone || 'Active'}` });
+          toast({
+            title: 'Connected',
+            description: `Linked to ${fmtPhone(data.phone || data.phoneNumber)}`,
+          });
         } else if (data.status === 'disconnected') {
           setConnecting(false);
           setQrCode(null);
@@ -104,22 +239,22 @@ export default function ProfileDetailPage() {
         } else if (data.status === 'error') {
           setConnecting(false);
           setQrCode(null);
+          setErrorReason(data.reason || 'Connection failed. Please try again.');
           fetchProfile();
-          toast({ title: 'Connection failed', description: 'Please try connecting again', variant: 'destructive' });
+          toast({
+            title: 'Connection rejected',
+            description: data.reason || 'Please try connecting again',
+            variant: 'destructive',
+          });
         }
-      }
-    });
-
-    socket.on('disconnect', () => {
-      console.log('WebSocket disconnected');
-    });
+      },
+    );
 
     return () => {
       socket.disconnect();
     };
   }, [profileId]);
 
-  // Get account ID helper (cached to avoid repeated requests)
   const getAccountId = async (): Promise<string | null> => {
     if (accountIdRef.current) return accountIdRef.current;
     const token = localStorage.getItem('accessToken');
@@ -128,13 +263,12 @@ export default function ProfileDetailPage() {
     });
     if (!res.ok) return null;
     const data = await res.json();
-    const accounts = Array.isArray(data) ? data : (data.data || []);
+    const accounts = Array.isArray(data) ? data : data.data || [];
     const id = accounts[0]?.id || null;
     if (id) accountIdRef.current = id;
     return id;
   };
 
-  // Fetch profile
   const fetchProfile = useCallback(async () => {
     try {
       const token = localStorage.getItem('accessToken');
@@ -149,11 +283,10 @@ export default function ProfileDetailPage() {
         const data = await res.json();
         const profileData = data.data || data;
         setProfile(profileData);
-        
-        // If connected, clear QR code
         if (profileData.status?.toLowerCase() === 'connected') {
           setQrCode(null);
           setConnecting(false);
+          setErrorReason(null);
         }
       } else if (res.status === 404) {
         setProfile(null);
@@ -165,11 +298,11 @@ export default function ProfileDetailPage() {
     }
   }, [profileId]);
 
-  // Start connection / Get QR Code
   const handleConnect = async () => {
     setConnecting(true);
     setQrCode(null);
-    setConnectionAttempts(prev => prev + 1);
+    setErrorReason(null);
+    setConnectionAttempts((prev) => prev + 1);
 
     try {
       const token = localStorage.getItem('accessToken');
@@ -180,15 +313,13 @@ export default function ProfileDetailPage() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-
       const data = await res.json();
-      console.log('Connect response:', data);
 
       if (data.qrCode) {
         setQrCode(data.qrCode);
-        toast({ title: 'QR Code ready', description: 'Scan with WhatsApp to connect' });
+        toast({ title: 'QR Code ready', description: 'Scan with WhatsApp to link' });
       } else if (data.status === 'connected') {
-        toast({ title: 'Already connected!' });
+        toast({ title: 'Already connected' });
         fetchProfile();
       }
     } catch (error) {
@@ -198,19 +329,19 @@ export default function ProfileDetailPage() {
     }
   };
 
-  // Disconnect profile
   const handleDisconnect = async () => {
     setDisconnecting(true);
     try {
       const token = localStorage.getItem('accessToken');
       const accountId = await getAccountId();
       if (!accountId) throw new Error('No account found');
-
-      const res = await fetch(`/api/v1/accounts/${accountId}/profiles/${profileId}/disconnect`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
+      const res = await fetch(
+        `/api/v1/accounts/${accountId}/profiles/${profileId}/disconnect`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
       if (res.ok) {
         toast({ title: 'Profile disconnected' });
         fetchProfile();
@@ -223,19 +354,16 @@ export default function ProfileDetailPage() {
     }
   };
 
-  // Delete profile
   const handleDelete = async () => {
     setDeleting(true);
     try {
       const token = localStorage.getItem('accessToken');
       const accountId = await getAccountId();
       if (!accountId) throw new Error('No account found');
-
       const res = await fetch(`/api/v1/accounts/${accountId}/profiles/${profileId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
-
       if (res.ok) {
         toast({ title: 'Profile deleted' });
         router.push('/dashboard/profiles');
@@ -249,286 +377,408 @@ export default function ProfileDetailPage() {
     }
   };
 
-  // Initial load
   useEffect(() => {
     fetchProfile();
   }, [fetchProfile]);
 
-  // Auto-connect if action=connect in URL
+  // Auto-connect via ?action=connect URL flag
   useEffect(() => {
-    if (autoConnect && profile && profile.status?.toLowerCase() !== 'connected' && !connecting && connectionAttempts === 0) {
+    if (
+      autoConnect &&
+      profile &&
+      profile.status?.toLowerCase() !== 'connected' &&
+      !connecting &&
+      connectionAttempts === 0
+    ) {
       handleConnect();
     }
   }, [autoConnect, profile, connecting, connectionAttempts]);
 
-  // Poll for connection status when QR is displayed (only while connecting, not after connected)
+  // Poll profile while waiting for QR scan (WebSocket primary, polling fallback)
   useEffect(() => {
     if (!connecting) return;
-    // Don't poll if already connected
     if (profile?.status?.toLowerCase() === 'connected') return;
-
-    const interval = setInterval(async () => {
-      await fetchProfile();
-    }, 5000); // Poll every 5 seconds (reduced from 3s)
-
-    // Timeout after 2 minutes
+    const interval = setInterval(() => {
+      fetchProfile();
+    }, 5000);
     const timeout = setTimeout(() => {
       setQrCode(null);
       setConnecting(false);
-      toast({ title: 'QR Code expired', description: 'Please try again', variant: 'destructive' });
+      toast({
+        title: 'QR Code expired',
+        description: 'Please refresh and try again',
+        variant: 'destructive',
+      });
     }, 120000);
-
     return () => {
       clearInterval(interval);
       clearTimeout(timeout);
     };
   }, [connecting, profile?.status, fetchProfile]);
 
-  // Status badge styling
-  const getStatusBadge = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case 'connected':
-        return <Badge className="bg-green-500 hover:bg-green-600">Connected</Badge>;
-      case 'connecting':
-      case 'qr_ready':
-        return <Badge className="bg-yellow-500 hover:bg-yellow-600">Connecting</Badge>;
-      default:
-        return <Badge variant="secondary">Disconnected</Badge>;
-    }
-  };
+  // ───────────────────── render ─────────────────────
 
-  // Loading state
+  // Loading skeleton
   if (loading) {
     return (
-      <div className="max-w-3xl mx-auto space-y-6">
-        <Skeleton className="h-6 w-32" />
-        <div className="bg-card rounded-2xl border border-border p-6">
-          <div className="flex items-center gap-4 mb-6">
+      <div className="space-y-6">
+        <Skeleton className="h-5 w-40" />
+        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 space-y-4">
+          <div className="flex items-center gap-4">
             <Skeleton className="w-16 h-16 rounded-full" />
-            <div className="space-y-2">
+            <div className="space-y-2 flex-1">
               <Skeleton className="h-6 w-48" />
               <Skeleton className="h-4 w-32" />
             </div>
+            <Skeleton className="h-6 w-24 rounded-full" />
           </div>
-          <Skeleton className="h-32" />
+          <Skeleton className="h-64" />
         </div>
       </div>
     );
   }
 
-  // Not found
+  // Not found state (Lucide icon, design-system tokens)
   if (!profile) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-12">
-        <div className="text-6xl mb-4">😕</div>
-        <h2 className="text-xl font-semibold text-foreground mb-2">Profile Not Found</h2>
-        <p className="text-muted-foreground mb-6">
-          The profile you're looking for doesn't exist or has been deleted.
+      <div className="max-w-2xl mx-auto text-center py-16">
+        <div
+          className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-6"
+          style={{ background: 'rgb(51 65 85 / 0.5)' }}
+        >
+          <Inbox className="w-8 h-8 text-slate-400" />
+        </div>
+        <h2 className="text-xl font-semibold text-slate-100 mb-2">Profile not found</h2>
+        <p className="text-sm text-slate-400 mb-6">
+          The profile you&apos;re looking for doesn&apos;t exist or has been deleted.
         </p>
         <Link href="/dashboard/profiles">
-          <Button className="bg-[#25D366] hover:bg-[#128C7E]">← Back to Profiles</Button>
+          <Button className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium">
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to profiles
+          </Button>
         </Link>
       </div>
     );
   }
 
-  const isConnected = profile.status?.toLowerCase() === 'connected';
+  const status = (profile.status || '').toLowerCase();
+  const isConnected = status === 'connected';
+  const isConnecting = connecting && !isConnected;
+  const flowStep: 1 | 2 | 3 = isConnected ? 3 : qrCode ? 2 : 1;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="space-y-6">
       {/* Breadcrumb */}
-      <nav className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Link href="/dashboard/profiles" className="hover:text-foreground transition-colors">Profiles</Link>
-        <span>/</span>
-        <span className="text-foreground">{profile.displayName || 'Unnamed'}</span>
+      <nav
+        aria-label="Breadcrumb"
+        className="flex items-center gap-2 text-sm text-slate-400"
+      >
+        <Link
+          href="/dashboard/profiles"
+          className="flex items-center gap-1.5 hover:text-slate-100 transition-colors"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          Profiles
+        </Link>
+        <span className="text-slate-600">/</span>
+        <span className="text-slate-100 font-medium">
+          {profile.displayName || 'Unnamed'}
+        </span>
       </nav>
 
-      {/* Profile Header Card */}
-      <div className="bg-card rounded-2xl border border-border overflow-hidden">
-        <div className="p-6 border-b border-border bg-secondary/30">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#25D366] to-[#128C7E] flex items-center justify-center text-white text-2xl font-bold">
-              {(profile.displayName || 'P')[0].toUpperCase()}
-            </div>
-            <div className="flex-1">
-              <h1 className="text-xl font-bold text-foreground">{profile.displayName || 'Unnamed Profile'}</h1>
-              <p className="text-muted-foreground">{profile.phoneNumber || 'Not connected'}</p>
-            </div>
-            {getStatusBadge(profile.status)}
+      {/* Hero card */}
+      <section
+        aria-label="Profile summary"
+        className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden"
+      >
+        <div className="p-6 flex items-start gap-4">
+          <div
+            aria-hidden
+            className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-semibold shrink-0"
+            style={{
+              background: 'linear-gradient(135deg, #22C55E 0%, #16A34A 100%)',
+              color: '#0F172A',
+            }}
+          >
+            {(profile.displayName || 'P')[0].toUpperCase()}
           </div>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl font-semibold text-slate-100 truncate">
+              {profile.displayName || 'Unnamed profile'}
+            </h1>
+            <div className="flex items-center gap-2 mt-1">
+              <Smartphone className="w-3.5 h-3.5 text-slate-500" />
+              <span
+                className="text-sm text-slate-300 tracking-tight"
+                style={{ fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, "Fira Code", Menlo, monospace)' }}
+              >
+                {fmtPhone(profile.phoneNumber)}
+              </span>
+            </div>
+          </div>
+          <StatusBadge status={profile.status} />
         </div>
 
-        {/* QR Code Section */}
-        {(qrCode || connecting) && !isConnected && (
-          <div className="p-6 border-b border-border bg-secondary/10">
-            <div className="text-center">
-              <h3 className="text-lg font-semibold text-foreground mb-2">Scan QR Code with WhatsApp</h3>
-              <p className="text-sm text-muted-foreground mb-4">
-                Open WhatsApp → Settings → Linked Devices → Link a Device
-              </p>
-              
-              {qrCode ? (
-                <div className="inline-block p-4 bg-white rounded-2xl shadow-lg">
-                  <img 
-                    src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
-                    alt="QR Code"
-                    className="w-64 h-64"
-                  />
-                </div>
-              ) : (
-                <div className="inline-flex items-center justify-center w-64 h-64 bg-secondary rounded-2xl">
-                  <div className="text-center">
-                    <svg className="w-12 h-12 mx-auto animate-spin text-muted-foreground" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    <p className="text-sm text-muted-foreground mt-2">Generating QR Code...</p>
-                  </div>
-                </div>
-              )}
-              
-              <p className="text-xs text-muted-foreground mt-4">
-                QR Code will expire in 2 minutes
-              </p>
-
-              <Button 
-                variant="outline" 
-                onClick={handleConnect}
-                className="mt-4"
-              >
-                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Refresh QR Code
-              </Button>
-            </div>
+        {/* Step indicator (visible when not yet connected) */}
+        {!isConnected && (
+          <div className="px-6 pb-5">
+            <StepIndicator step={flowStep} />
           </div>
         )}
 
-        {/* Profile Details */}
-        <div className="p-6">
-          <h3 className="text-sm font-medium text-muted-foreground mb-4">Profile Details</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-secondary/30 rounded-xl p-4">
-              <p className="text-xs text-muted-foreground">Status</p>
-              <p className="font-medium text-foreground capitalize">{(profile.status || 'unknown').replace('_', ' ')}</p>
-            </div>
-            <div className="bg-secondary/30 rounded-xl p-4">
-              <p className="text-xs text-muted-foreground">Created</p>
-              <p className="font-medium text-foreground">
-                {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : '-'}
+        {/* Phone mismatch alert */}
+        {errorReason && (
+          <div
+            role="alert"
+            className="mx-6 mb-5 rounded-xl border p-4 flex items-start gap-3"
+            style={{
+              background: 'rgb(239 68 68 / 0.08)',
+              borderColor: 'rgb(239 68 68 / 0.35)',
+            }}
+          >
+            <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: 'rgb(248 113 113)' }} />
+            <div className="flex-1">
+              <p className="text-sm font-semibold" style={{ color: 'rgb(252 165 165)' }}>
+                Wrong WhatsApp account scanned
+              </p>
+              <p className="text-sm mt-1" style={{ color: 'rgb(254 202 202)' }}>
+                {errorReason}
+              </p>
+              <p className="text-xs mt-2" style={{ color: 'rgb(252 165 165 / 0.8)' }}>
+                Disconnect this device on your phone (WhatsApp → Settings → Linked Devices)
+                and scan again with the correct number.
               </p>
             </div>
-            <div className="bg-secondary/30 rounded-xl p-4">
-              <p className="text-xs text-muted-foreground">Messages Today</p>
-              <p className="font-medium text-foreground">
-                {profile.dailyMessageCount || 0} / {profile.dailyMessageLimit || 1000}
-              </p>
-            </div>
-            <div className="bg-secondary/30 rounded-xl p-4">
-              <p className="text-xs text-muted-foreground">Session</p>
-              <p className="font-medium text-foreground">
-                {profile.sessionData?.name || (isConnected ? 'Active' : 'None')}
-              </p>
+            <button
+              type="button"
+              onClick={() => setErrorReason(null)}
+              className="text-xs px-3 py-1.5 rounded-md transition-colors"
+              style={{
+                background: 'rgb(239 68 68 / 0.2)',
+                color: 'rgb(252 165 165)',
+              }}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* QR section (visible when connecting or QR ready, and not connected) */}
+        {(qrCode || isConnecting) && !isConnected && (
+          <div className="px-6 pb-6">
+            <div
+              className="rounded-xl border border-slate-800 bg-slate-950/40 p-6"
+              aria-busy={isConnecting && !qrCode}
+              aria-live="polite"
+            >
+              <div className="text-center">
+                <h2 className="text-base font-semibold text-slate-100">
+                  Scan QR with WhatsApp
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  WhatsApp on phone → Settings → Linked Devices → Link a Device
+                </p>
+
+                <div className="mt-5 inline-flex items-center justify-center">
+                  {qrCode ? (
+                    <div className="p-4 bg-white rounded-xl shadow-lg">
+                      <img
+                        src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
+                        alt="WhatsApp QR code"
+                        className="w-64 h-64"
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className="flex items-center justify-center w-64 h-64 rounded-xl border border-slate-800"
+                      style={{ background: 'rgb(15 23 42 / 0.6)' }}
+                    >
+                      <div className="text-center" role="status" aria-label="Generating QR code">
+                        <Loader2 className="w-12 h-12 mx-auto text-primary mw-spin" aria-hidden="true" />
+                        <p className="text-xs text-slate-400 mt-3">Generating QR code…</p>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          First boot can take up to 30 seconds
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-500 mt-4 flex items-center justify-center gap-1.5">
+                  <Clock className="w-3 h-3" />
+                  QR expires in about 2 minutes
+                </p>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleConnect}
+                  className="mt-4 border-slate-700 text-slate-200 hover:bg-slate-800 hover:text-slate-100"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-2" />
+                  Refresh QR
+                </Button>
+              </div>
             </div>
           </div>
-        </div>
+        )}
+      </section>
 
-        {/* Actions */}
-        <div className="p-6 bg-secondary/30 border-t border-border">
-          <div className="flex flex-wrap gap-3">
-            {isConnected ? (
+      {/* Detail metrics */}
+      <section
+        aria-label="Profile details"
+        className="grid grid-cols-2 md:grid-cols-4 gap-3"
+      >
+        <DetailCell icon={Activity} label="Status">
+          <span className="capitalize">{(profile.status || 'unknown').replace('_', ' ')}</span>
+        </DetailCell>
+        <DetailCell icon={Clock} label="Created">
+          {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : '—'}
+        </DetailCell>
+        <DetailCell icon={MessageCircle} label="Messages today">
+          <span className="font-mono">
+            {profile.dailyMessageCount || 0} / {profile.dailyMessageLimit || 1000}
+          </span>
+        </DetailCell>
+        <DetailCell icon={Wifi} label="Session">
+          {profile.sessionData?.name || (isConnected ? 'Active' : 'None')}
+        </DetailCell>
+      </section>
+
+      {/* Actions bar */}
+      <section
+        aria-label="Profile actions"
+        className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 flex flex-wrap items-center gap-3"
+      >
+        {isConnected ? (
+          <>
+            <Link href={`/dashboard/chat?profile=${profileId}`}>
+              <Button className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium">
+                <MessageCircle className="w-4 h-4 mr-2" />
+                Open Chat
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              className="border-slate-700 text-slate-200 hover:bg-slate-800"
+            >
+              {disconnecting ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
+                  Disconnecting…
+                </>
+              ) : (
+                <>
+                  <WifiOff className="w-4 h-4 mr-2" />
+                  Disconnect
+                </>
+              )}
+            </Button>
+          </>
+        ) : (
+          <Button
+            onClick={handleConnect}
+            disabled={connecting}
+            className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium"
+          >
+            {connecting ? (
               <>
-                <Link href={`/dashboard/chat?profile=${profileId}`}>
-                  <Button className="bg-[#25D366] hover:bg-[#128C7E]">
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                    Open Chat
-                  </Button>
-                </Link>
-                <Button 
-                  variant="outline" 
-                  onClick={handleDisconnect}
-                  disabled={disconnecting}
-                  className="text-yellow-600 border-yellow-600 hover:bg-yellow-50"
-                >
-                  {disconnecting ? 'Disconnecting...' : 'Disconnect'}
-                </Button>
+                <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
+                Connecting…
               </>
             ) : (
-              <Button 
-                onClick={handleConnect}
-                disabled={connecting}
-                className="bg-[#25D366] hover:bg-[#128C7E]"
-              >
-                {connecting ? (
-                  <>
-                    <svg className="w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                    Connecting...
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" />
-                    </svg>
-                    Connect WhatsApp
-                  </>
-                )}
-              </Button>
+              <>
+                <PlugZap className="w-4 h-4 mr-2" />
+                Connect WhatsApp
+              </>
             )}
-            
-            <Button 
-              variant="outline" 
-              onClick={() => setShowDeleteDialog(true)}
-              className="text-red-600 border-red-600 hover:bg-red-50 ml-auto"
-            >
-              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
-              Delete
-            </Button>
-          </div>
-        </div>
-      </div>
+          </Button>
+        )}
 
-      {/* Usage Tips */}
+        <Button
+          variant="outline"
+          onClick={() => setShowDeleteDialog(true)}
+          className="ml-auto border-red-500/40 text-red-300 hover:bg-red-500/10"
+        >
+          <Trash2 className="w-4 h-4 mr-2" />
+          Delete profile
+        </Button>
+      </section>
+
+      {/* Quick tips (only when connected) */}
       {isConnected && (
-        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-2xl p-4 border border-blue-100 dark:border-blue-800">
-          <h4 className="font-medium text-blue-900 dark:text-blue-300 mb-2">💡 Quick Tips</h4>
-          <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
+        <section
+          aria-label="Quick tips"
+          className="rounded-xl border p-4"
+          style={{
+            background: 'rgb(14 165 233 / 0.06)',
+            borderColor: 'rgb(14 165 233 / 0.25)',
+          }}
+        >
+          <h3
+            className="text-sm font-semibold mb-2 flex items-center gap-2"
+            style={{ color: 'rgb(125 211 252)' }}
+          >
+            <Activity className="w-4 h-4" />
+            What you can do next
+          </h3>
+          <ul className="text-sm space-y-1.5" style={{ color: 'rgb(186 230 253)' }}>
             <li>• Use the Chat page to send and receive messages</li>
-            <li>• Set up Webhooks to receive message notifications</li>
-            <li>• Create Templates for quick message sending</li>
-            <li>• Configure Automation for automatic responses</li>
+            <li>• Set up Webhooks to receive real-time message events</li>
+            <li>• Create Templates for repeated message patterns</li>
+            <li>• Configure Automation for AI-powered replies</li>
           </ul>
-        </div>
+        </section>
       )}
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete confirmation */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
+        <AlertDialogContent className="bg-slate-900 border-slate-800">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Profile?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete "{profile.displayName}" and all associated data including messages and contacts. This action cannot be undone.
+            <AlertDialogTitle className="text-slate-100">Delete this profile?</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-400">
+              This will permanently delete{' '}
+              <strong className="text-slate-200">{profile.displayName || 'this profile'}</strong>{' '}
+              along with all associated messages and contacts. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogCancel className="bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
               onClick={handleDelete}
               disabled={deleting}
-              className="bg-red-600 hover:bg-red-700"
+              className="bg-red-600 hover:bg-red-700 text-white"
             >
-              {deleting ? 'Deleting...' : 'Delete Profile'}
+              {deleting ? 'Deleting…' : 'Delete profile'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function DetailCell({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof Activity;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+      <div className="flex items-center gap-2 text-xs text-slate-400 mb-1.5">
+        <Icon className="w-3.5 h-3.5" />
+        {label}
+      </div>
+      <div className="text-sm font-medium text-slate-100">{children}</div>
     </div>
   );
 }

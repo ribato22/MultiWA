@@ -4,6 +4,25 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Lock,
+  LogOut,
+  Link2,
+  Unplug,
+  Send,
+  Inbox,
+  Search,
+  Download,
+  ClipboardList,
+  ActivitySquare,
+  CheckSquare,
+  Edit3,
+  XSquare,
+  type LucideIcon,
+} from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,17 +58,18 @@ interface AuditLog {
   createdAt: string;
 }
 
-// Action categories with colors
-const ACTION_TYPES: Record<string, { label: string; color: string; icon: string }> = {
-  'create': { label: 'Created', color: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400', icon: '➕' },
-  'update': { label: 'Updated', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400', icon: '✏️' },
-  'delete': { label: 'Deleted', color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400', icon: '🗑️' },
-  'login': { label: 'Login', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400', icon: '🔐' },
-  'logout': { label: 'Logout', color: 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400', icon: '🚪' },
-  'connect': { label: 'Connected', color: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400', icon: '🔗' },
-  'disconnect': { label: 'Disconnected', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400', icon: '🔌' },
-  'send': { label: 'Sent', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400', icon: '📤' },
-  'receive': { label: 'Received', color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-400', icon: '📥' },
+// Action categories with theme tokens + Lucide icons
+type ActionInfo = { label: string; className: string; Icon: LucideIcon };
+const ACTION_TYPES: Record<string, ActionInfo> = {
+  create:     { label: 'Created',      className: 'bg-primary/15 text-primary border border-primary/30',         Icon: Plus },
+  update:     { label: 'Updated',      className: 'bg-sky-500/15 text-sky-300 border border-sky-500/30',         Icon: Pencil },
+  delete:     { label: 'Deleted',      className: 'bg-destructive/15 text-destructive border border-destructive/30', Icon: Trash2 },
+  login:      { label: 'Login',        className: 'bg-violet-500/15 text-violet-300 border border-violet-500/30', Icon: Lock },
+  logout:     { label: 'Logout',       className: 'bg-secondary text-muted-foreground border border-border',     Icon: LogOut },
+  connect:    { label: 'Connected',    className: 'bg-primary/15 text-primary border border-primary/30',         Icon: Link2 },
+  disconnect: { label: 'Disconnected', className: 'bg-orange-500/15 text-orange-300 border border-orange-500/30', Icon: Unplug },
+  send:       { label: 'Sent',         className: 'bg-sky-500/15 text-sky-300 border border-sky-500/30',         Icon: Send },
+  receive:    { label: 'Received',     className: 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/30', Icon: Inbox },
 };
 
 // Resource types
@@ -135,8 +155,12 @@ export default function AuditPage() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
-  const getActionInfo = (action: string) => {
-    return ACTION_TYPES[action] || { label: action, color: 'bg-gray-100 text-gray-800', icon: '📋' };
+  const getActionInfo = (action: string): ActionInfo => {
+    return ACTION_TYPES[action] || {
+      label: action,
+      className: 'bg-secondary text-muted-foreground border border-border',
+      Icon: ClipboardList,
+    };
   };
 
   // Filter logs by search
@@ -173,10 +197,8 @@ export default function AuditPage() {
             Track all actions and changes in your organization
           </p>
         </div>
-        <Button variant="outline">
-          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
+        <Button variant="outline" className="gap-2 cursor-pointer">
+          <Download className="w-4 h-4" aria-hidden="true" />
           Export CSV
         </Button>
       </div>
@@ -184,14 +206,16 @@ export default function AuditPage() {
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1 max-w-md">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+            aria-hidden="true"
+          />
           <Input
             placeholder="Search by user, action, or resource..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="pl-10"
+            aria-label="Search audit logs"
           />
         </div>
 
@@ -224,23 +248,35 @@ export default function AuditPage() {
       {/* Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-foreground">{logs.length}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-300">
+            <ActivitySquare className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{logs.length}</div>
           <div className="text-sm text-muted-foreground">Total Events</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-green-600">
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <CheckSquare className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-primary tabular-nums">
             {logs.filter(l => l.action === 'create').length}
           </div>
           <div className="text-sm text-muted-foreground">Created</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-blue-600">
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
+            <Edit3 className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-sky-300 tabular-nums">
             {logs.filter(l => l.action === 'update').length}
           </div>
           <div className="text-sm text-muted-foreground">Updated</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-red-600">
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-destructive/15 text-destructive">
+            <XSquare className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-destructive tabular-nums">
             {logs.filter(l => l.action === 'delete').length}
           </div>
           <div className="text-sm text-muted-foreground">Deleted</div>
@@ -250,14 +286,17 @@ export default function AuditPage() {
       {/* Logs Table */}
       {filteredLogs.length === 0 ? (
         <div className="bg-card rounded-2xl border border-border p-12 text-center">
-          <div className="text-6xl mb-4">📋</div>
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-secondary/60 text-muted-foreground">
+            <ClipboardList className="w-8 h-8" aria-hidden="true" />
+          </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No Audit Logs</h3>
           <p className="text-muted-foreground">
             No activity recorded for the selected filters
           </p>
         </div>
       ) : (
-        <div className="bg-card rounded-xl border border-border overflow-hidden">
+        <>
+        <div className="hidden md:block bg-card rounded-xl border border-border overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -272,23 +311,25 @@ export default function AuditPage() {
             <TableBody>
               {filteredLogs.map(log => {
                 const actionInfo = getActionInfo(log.action);
+                const ActionIcon = actionInfo.Icon;
                 return (
                   <TableRow key={log.id}>
-                    <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
+                    <TableCell className="text-muted-foreground text-sm whitespace-nowrap tabular-nums">
                       {formatTime(log.createdAt)}
                     </TableCell>
                     <TableCell>
                       <div className="font-medium text-foreground">{log.userName}</div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary" className={`${actionInfo.color}`}>
-                        {actionInfo.icon} {actionInfo.label}
+                      <Badge variant="secondary" className={`gap-1.5 ${actionInfo.className}`}>
+                        <ActionIcon className="w-3 h-3" aria-hidden="true" />
+                        {actionInfo.label}
                       </Badge>
                     </TableCell>
                     <TableCell>
                       <span className="capitalize text-foreground">{log.resource}</span>
                       {log.resourceId && (
-                        <span className="text-xs text-muted-foreground ml-1">
+                        <span className="text-xs text-muted-foreground ml-1 font-mono">
                           ({log.resourceId.slice(0, 8)}...)
                         </span>
                       )}
@@ -301,7 +342,7 @@ export default function AuditPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm font-mono">
-                      {log.ipAddress || '-'}
+                      {log.ipAddress || <span className="text-muted-foreground/60">—</span>}
                     </TableCell>
                   </TableRow>
                 );
@@ -309,19 +350,58 @@ export default function AuditPage() {
             </TableBody>
           </Table>
         </div>
+
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-2">
+          {filteredLogs.map(log => {
+            const actionInfo = getActionInfo(log.action);
+            const ActionIcon = actionInfo.Icon;
+            return (
+              <div key={log.id} className="bg-card border border-border rounded-xl p-4 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Badge variant="secondary" className={`gap-1.5 ${actionInfo.className}`}>
+                    <ActionIcon className="w-3 h-3" aria-hidden="true" />
+                    {actionInfo.label}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {formatTime(log.createdAt)}
+                  </span>
+                </div>
+                <div>
+                  <div className="text-sm font-medium text-foreground">{log.userName}</div>
+                  <div className="text-xs text-muted-foreground capitalize">
+                    {log.resource}
+                    {log.resourceId && (
+                      <span className="ml-1 font-mono">({log.resourceId.slice(0, 8)}...)</span>
+                    )}
+                  </div>
+                </div>
+                {log.details && (
+                  <div className="text-xs text-muted-foreground line-clamp-2">
+                    {Object.entries(log.details).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                  </div>
+                )}
+                {log.ipAddress && (
+                  <div className="text-xs text-muted-foreground font-mono">{log.ipAddress}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        </>
       )}
 
       {/* Pagination placeholder */}
       {filteredLogs.length > 0 && (
         <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground tabular-nums">
             Showing {filteredLogs.length} of {logs.length} events
           </p>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled>
+            <Button variant="outline" size="sm" disabled className="cursor-pointer">
               Previous
             </Button>
-            <Button variant="outline" size="sm" disabled>
+            <Button variant="outline" size="sm" disabled className="cursor-pointer">
               Next
             </Button>
           </div>

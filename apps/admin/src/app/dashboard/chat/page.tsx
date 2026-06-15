@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { api, Profile, Conversation } from '@/lib/api';
@@ -20,6 +21,29 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Check,
+  CheckCheck,
+  AlertCircle,
+  ArrowLeft,
+  Clock,
+  MessageCircle,
+  User,
+  Users,
+  Smartphone,
+  Link as LinkIcon,
+  Search,
+  MoreVertical,
+  Info,
+  Sticker,
+  Bell,
+  BellOff,
+  Trash2,
+  Paperclip,
+  Loader2,
+  Send,
+  X,
+} from 'lucide-react';
 
 // Message interface
 interface Message {
@@ -91,27 +115,19 @@ const formatTime = (timestamp: string) => {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
-// Message status icon
+// Message status icon (Lucide-based; reads better at small sizes)
 const MessageStatus = ({ status }: { status: string }) => {
   switch (status) {
     case 'pending':
-      return <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="4 2"/></svg>;
+      return <Clock className="w-3.5 h-3.5 text-muted-foreground" aria-label="Pending" />;
     case 'sent':
-      return <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>;
+      return <Check className="w-3.5 h-3.5 text-muted-foreground" aria-label="Sent" />;
     case 'delivered':
-      return (
-        <svg className="w-4 h-4 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M2 13l4 4L16 7" /><path d="M8 13l4 4L22 7" />
-        </svg>
-      );
+      return <CheckCheck className="w-3.5 h-3.5 text-muted-foreground" aria-label="Delivered" />;
     case 'read':
-      return (
-        <svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M2 13l4 4L16 7" /><path d="M8 13l4 4L22 7" />
-        </svg>
-      );
+      return <CheckCheck className="w-3.5 h-3.5" style={{ color: 'rgb(56 189 248)' }} aria-label="Read" />;
     case 'failed':
-      return <svg className="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+      return <AlertCircle className="w-3.5 h-3.5 text-red-400" aria-label="Failed" />;
     default:
       return null;
   }
@@ -119,6 +135,9 @@ const MessageStatus = ({ status }: { status: string }) => {
 
 export default function ChatPage() {
   const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [mobileView, setMobileView] = useState<'list' | 'messages'>('list');
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
@@ -158,6 +177,17 @@ export default function ChatPage() {
   useEffect(() => {
     loadProfiles();
   }, []);
+
+  // URL → state sync. On mount or URL change, hydrate selected conversation.
+  useEffect(() => {
+    const convId = searchParams.get('conv');
+    if (!convId) return;
+    const found = conversations.find(c => c.id === convId);
+    if (found && (!selectedConversation || selectedConversation.id !== convId)) {
+      setSelectedConversation(found);
+      setMobileView('messages');
+    }
+  }, [searchParams, conversations]);
 
   // WebSocket connection for real-time message status updates
   useEffect(() => {
@@ -435,7 +465,7 @@ export default function ChatPage() {
       }
     } catch (error) {
       setMessages(prev => prev.map(m =>
-        m.id === tempId ? { ...m, status: 'failed', content: { text: `❌ Failed to send ${file.name}` } } : m
+        m.id === tempId ? { ...m, status: 'failed', content: { text: `Failed to send ${file.name}` } } : m
       ));
       toast({ title: `Failed to send ${file.name}`, variant: 'destructive' });
     }
@@ -492,6 +522,19 @@ export default function ChatPage() {
     setShowEmojiPicker(false);
     inputRef.current?.focus();
   };
+
+  const handleSelectConversation = useCallback((conv: Conversation) => {
+    setSelectedConversation(conv);
+    setMobileView('messages');
+    const params = new URLSearchParams(window.location.search);
+    params.set('conv', conv.id);
+    router.replace(`/dashboard/chat?${params.toString()}`, { scroll: false });
+  }, [router]);
+
+  const handleBackToList = useCallback(() => {
+    setMobileView('list');
+    router.replace('/dashboard/chat', { scroll: false });
+  }, [router]);
 
   // Filter and sort conversations (pinned first)
   const filteredConversations = conversations
@@ -590,7 +633,7 @@ export default function ChatPage() {
   return (
     <div className="h-[calc(100vh-120px)] flex bg-card rounded-2xl border border-border overflow-hidden">
       {/* Conversation Sidebar */}
-      <div className="w-96 border-r border-border flex flex-col">
+      <div className={`${mobileView === 'list' ? 'flex' : 'hidden'} lg:flex w-full lg:w-96 border-r border-border flex-col`}>
         {/* Sidebar Header */}
         <div className="p-4 border-b border-border bg-secondary/30">
           <Select value={selectedProfile} onValueChange={setSelectedProfile}>
@@ -601,7 +644,10 @@ export default function ChatPage() {
               {profiles.map(profile => (
                 <SelectItem key={profile.id} value={profile.id}>
                   <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${profile.status === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`} />
+                    <span
+                      className={`w-2 h-2 rounded-full ${profile.status === 'connected' ? 'bg-primary' : 'bg-muted-foreground/40'}`}
+                      aria-hidden="true"
+                    />
                     {profile.displayName || profile.name || 'Unnamed'}
                   </div>
                 </SelectItem>
@@ -610,14 +656,16 @@ export default function ChatPage() {
           </Select>
 
           <div className="relative">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+              aria-hidden="true"
+            />
             <Input
               placeholder="Search or start new chat"
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="pl-10"
+              aria-label="Search conversations"
             />
           </div>
         </div>
@@ -626,21 +674,21 @@ export default function ChatPage() {
         <div className="flex-1 overflow-y-auto">
           {filteredConversations.length === 0 ? (
             <div className="p-8 text-center">
-              <div className="text-4xl mb-3">💬</div>
+              <div className="flex items-center justify-center w-16 h-16 rounded-full bg-muted mx-auto mb-3"><MessageCircle className="w-8 h-8 text-muted-foreground" /></div>
               <p className="text-sm text-muted-foreground">No conversations yet</p>
             </div>
           ) : (
             filteredConversations.map(conv => (
               <div
                 key={conv.id}
-                onClick={() => setSelectedConversation(conv)}
+                onClick={() => handleSelectConversation(conv)}
                 className={`flex items-center gap-3 p-4 cursor-pointer hover:bg-secondary/50 transition-colors border-b border-border ${
                   selectedConversation?.id === conv.id ? 'bg-secondary' : ''
                 }`}
               >
                 <Avatar className="w-12 h-12">
                   <AvatarImage src={conv.avatar} />
-                  <AvatarFallback className="bg-[#25D366] text-white">
+                  <AvatarFallback className="bg-primary/15 text-primary border border-primary/30">
                     {getInitials(getDisplayName(conv))}
                   </AvatarFallback>
                 </Avatar>
@@ -665,15 +713,15 @@ export default function ChatPage() {
                             : conv.lastMessage.type === 'audio' ? '🎵 Audio'
                             : conv.lastMessage.type === 'document' ? '📄 Document'
                             : conv.lastMessage.type === 'location' ? `📍 ${conv.lastMessage.content?.name || 'Location'}`
-                            : conv.lastMessage.type === 'vcard' || conv.lastMessage.type === 'contact' ? '👤 Contact'
-                            : conv.lastMessage.type === 'sticker' ? '🏷️ Sticker'
+                            : conv.lastMessage.type === 'vcard' || conv.lastMessage.type === 'contact' ? 'Contact'
+                            : conv.lastMessage.type === 'sticker' ? 'Sticker'
                             : conv.lastMessage.type === 'poll' ? '📊 Poll'
                             : conv.lastMessage.type === 'ptt' ? '🎙️ Voice message'
-                            : '💬 Message')
+                            : 'Message')
                         : 'No messages'}
                     </p>
                     {conv.unreadCount > 0 && (
-                      <Badge className="bg-[#25D366] text-white text-xs ml-2">
+                      <Badge className="bg-primary text-primary-foreground text-xs ml-2">
                         {conv.unreadCount}
                       </Badge>
                     )}
@@ -686,14 +734,32 @@ export default function ChatPage() {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col">
+      <div className={`${mobileView === 'messages' ? 'flex' : 'hidden'} lg:flex flex-col flex-1`}>
         {selectedConversation ? (
           <>
+            {/* Mobile-only local header with back button */}
+            <div className="lg:hidden flex items-center gap-2 px-3 py-2 border-b border-border bg-card">
+              <button
+                type="button"
+                onClick={handleBackToList}
+                aria-label="Back to conversation list"
+                className="inline-flex items-center justify-center min-h-[44px] min-w-[44px] p-2 rounded-lg hover:bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
+              >
+                <ArrowLeft className="w-5 h-5" aria-hidden="true" />
+              </button>
+              {selectedConversation && (
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-foreground truncate">
+                    {getDisplayName(selectedConversation)}
+                  </div>
+                </div>
+              )}
+            </div>
             {/* Chat Header */}
             <div className="p-4 border-b border-border bg-secondary/30 flex items-center gap-4">
               <Avatar className="w-10 h-10">
                 <AvatarImage src={selectedConversation.avatar} />
-                <AvatarFallback className="bg-[#25D366] text-white">
+                <AvatarFallback className="bg-primary/15 text-primary border border-primary/30">
                   {getInitials(getDisplayName(selectedConversation))}
                 </AvatarFallback>
               </Avatar>
@@ -706,18 +772,18 @@ export default function ChatPage() {
                 </p>
               </div>
               <div className="relative">
-                <Button variant="ghost" size="sm" onClick={() => setShowThreeDotMenu(!showThreeDotMenu)}>
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                  </svg>
+                <Button variant="ghost" size="sm" onClick={() => setShowThreeDotMenu(!showThreeDotMenu)} aria-label="More options">
+                  <MoreVertical className="w-5 h-5" aria-hidden="true" />
                 </Button>
                 {showThreeDotMenu && (
                   <div className="absolute right-0 top-10 bg-card border border-border rounded-xl shadow-lg py-1 z-20 w-48">
                     <button onClick={() => { setShowThreeDotMenu(false); setShowContactInfo(!showContactInfo); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
-                      <span>👤</span> Contact Info
+                      <User className="w-4 h-4 inline mr-1.5 -mt-0.5" /> Contact Info
                     </button>
                     <button onClick={() => { setShowThreeDotMenu(false); handleToggleMute(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
-                      <span>{(selectedConversation as any)?.metadata?.isMuted ? '🔔' : '🔇'}</span>
+                      {(selectedConversation as any)?.metadata?.isMuted
+                        ? <Bell className="w-4 h-4" aria-hidden="true" />
+                        : <BellOff className="w-4 h-4" aria-hidden="true" />}
                       {(selectedConversation as any)?.metadata?.isMuted ? 'Unmute Notifications' : 'Mute Notifications'}
                     </button>
                     <button onClick={() => { setShowThreeDotMenu(false); handleTogglePin(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
@@ -755,11 +821,11 @@ export default function ChatPage() {
                     {msg.direction === 'outgoing' && (
                       <div className="flex items-center mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {showDeleteConfirm === (msg.messageId || msg.id) ? (
-                          <div className="flex items-center gap-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-border p-1">
+                          <div className="flex items-center gap-1 bg-card rounded-lg shadow-lg border border-border p-1">
                             <button
                               onClick={() => handleDeleteMessage(msg.messageId || msg.id)}
                               disabled={deletingMessageId === (msg.messageId || msg.id)}
-                              className="text-xs px-2 py-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
+                              className="text-xs px-2 py-1 text-red-400 hover:bg-red-500/10 dark:hover:bg-red-900/20 rounded transition-colors"
                             >
                               {deletingMessageId === (msg.messageId || msg.id) ? '...' : 'Delete'}
                             </button>
@@ -773,12 +839,10 @@ export default function ChatPage() {
                         ) : (
                           <button
                             onClick={() => setShowDeleteConfirm(msg.messageId || msg.id)}
-                            className="p-1.5 rounded-full hover:bg-red-50 dark:hover:bg-red-900/20 text-muted-foreground hover:text-red-500 transition-colors"
+                            className="p-1.5 rounded-full hover:bg-red-500/10 dark:hover:bg-red-900/20 text-muted-foreground hover:text-red-500 transition-colors"
                             title="Delete message"
                           >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                            </svg>
+                            <Trash2 className="w-4 h-4" aria-hidden="true" />
                           </button>
                         )}
                       </div>
@@ -786,8 +850,8 @@ export default function ChatPage() {
                     <div
                       className={`max-w-[70%] rounded-2xl px-4 py-2 overflow-hidden ${
                         msg.direction === 'outgoing'
-                          ? 'bg-[#DCF8C6] dark:bg-[#005C4B] text-foreground rounded-br-sm'
-                          : 'bg-white dark:bg-gray-800 text-foreground rounded-bl-sm shadow-sm'
+                          ? 'bg-[rgb(34 197 94 / 0.18)] dark:bg-[rgb(22 163 74 / 0.30)] text-foreground rounded-br-sm'
+                          : 'bg-card text-foreground rounded-bl-sm shadow-sm'
                       }`}
                     >
                       {/* Message Content */}
@@ -894,7 +958,7 @@ export default function ChatPage() {
                         return (
                           <div className="bg-secondary/50 rounded-lg p-3">
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-xl">👤</div>
+                              <div className="w-10 h-10 rounded-full bg-sky-500/15 flex items-center justify-center"><User className="w-5 h-5 text-sky-400" /></div>
                               <div>
                                 <p className="font-medium">{displayName || 'Contact'}</p>
                                 {phone && <p className="text-xs text-muted-foreground">{phone}</p>}
@@ -985,7 +1049,7 @@ export default function ChatPage() {
             </div>
 
             {/* Message Input */}
-            <div className="p-4 border-t border-border bg-secondary/30">
+            <div className="p-4 border-t border-border bg-secondary/30 pb-safe">
               <div className="flex items-center gap-3">
                 {/* Emoji Button */}
                 <div className="relative">
@@ -1040,9 +1104,7 @@ export default function ChatPage() {
                     className="text-muted-foreground hover:text-foreground"
                     onClick={() => { setShowAttachMenu(!showAttachMenu); setShowEmojiPicker(false); }}
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                    </svg>
+                    <Paperclip className="w-5 h-5" aria-hidden="true" />
                   </Button>
                   {showAttachMenu && (
                     <div className="absolute bottom-12 left-0 bg-card border border-border rounded-2xl shadow-xl z-20 p-3 w-56">
@@ -1054,7 +1116,7 @@ export default function ChatPage() {
                           { icon: '🎥', label: 'Video', accept: 'video/*' },
                           { icon: '📄', label: 'Document', accept: '.pdf,.doc,.docx,.xls,.xlsx' },
                           { icon: '🎵', label: 'Audio', accept: 'audio/*' },
-                          { icon: '👤', label: 'Contact' },
+                          { icon: 'user', label: 'Contact' },
                         ].map(item => (
                           <button
                             key={item.label}
@@ -1111,16 +1173,12 @@ export default function ChatPage() {
                     className="text-muted-foreground hover:text-foreground"
                     title="Schedule message"
                   >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                    </svg>
+                    <Clock className="w-5 h-5" aria-hidden="true" />
                   </Button>
                   {showSchedulePicker && (
                     <div className="absolute bottom-12 right-0 bg-card border border-border rounded-2xl shadow-xl z-20 p-4 w-72">
                       <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                        <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                        </svg>
+                        <Clock className="w-4 h-4 text-primary" aria-hidden="true" />
                         Schedule Message
                       </h4>
                       <input
@@ -1135,7 +1193,7 @@ export default function ChatPage() {
                           size="sm"
                           disabled={!scheduleDateTime || scheduling}
                           onClick={handleScheduleMessage}
-                          className="flex-1 bg-[#25D366] hover:bg-[#128C7E] text-white text-xs"
+                          className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground text-xs"
                         >
                           {scheduling ? 'Scheduling...' : '⏰ Schedule'}
                         </Button>
@@ -1156,19 +1214,13 @@ export default function ChatPage() {
                 <Button
                   onClick={handleSend}
                   disabled={!messageInput.trim() || sending}
-                  className="bg-[#25D366] hover:bg-[#128C7E]"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground min-h-[44px] min-w-[44px] md:min-h-9 md:min-w-9"
                   size="sm"
+                  aria-label="Send message"
                 >
-                  {sending ? (
-                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                    </svg>
-                  )}
+                  {sending
+                    ? <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
+                    : <Send className="w-5 h-5" aria-hidden="true" />}
                 </Button>
               </div>
             </div>
@@ -1177,10 +1229,8 @@ export default function ChatPage() {
           /* No Conversation Selected */
           <div className="flex-1 flex items-center justify-center bg-secondary/10">
             <div className="text-center">
-              <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-secondary/50 flex items-center justify-center">
-                <svg className="w-12 h-12 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
+              <div className="w-24 h-24 mx-auto mb-6 rounded-full bg-secondary/50 text-muted-foreground flex items-center justify-center">
+                <MessageCircle className="w-12 h-12" aria-hidden="true" />
               </div>
               <h3 className="text-xl font-semibold text-foreground mb-2">MultiWA Chat</h3>
               <p className="text-muted-foreground max-w-sm mx-auto">
@@ -1193,14 +1243,12 @@ export default function ChatPage() {
 
       {/* Contact Info Sidebar */}
       {showContactInfo && selectedConversation && (
-        <div className="w-80 border-l border-border flex flex-col bg-card">
+        <div className="fixed inset-0 z-40 lg:relative lg:inset-auto lg:z-auto w-full lg:w-80 bg-card border-l border-border flex flex-col">
           {/* Header */}
           <div className="p-4 border-b border-border bg-secondary/30 flex items-center justify-between">
             <h3 className="font-semibold text-foreground">Contact Info</h3>
-            <Button variant="ghost" size="sm" onClick={() => setShowContactInfo(false)}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
+            <Button variant="ghost" size="sm" onClick={() => setShowContactInfo(false)} aria-label="Close contact info">
+              <X className="w-4 h-4" aria-hidden="true" />
             </Button>
           </div>
 
@@ -1208,7 +1256,7 @@ export default function ChatPage() {
           <div className="p-6 text-center border-b border-border">
             <Avatar className="w-20 h-20 mx-auto mb-3">
               <AvatarImage src={(selectedConversation as any).avatar} />
-              <AvatarFallback className="bg-[#25D366] text-white text-2xl">
+              <AvatarFallback className="bg-primary/20 text-primary text-2xl border border-primary/30">
                 {getInitials(getDisplayName(selectedConversation))}
               </AvatarFallback>
             </Avatar>
@@ -1219,7 +1267,7 @@ export default function ChatPage() {
               {formatPhone(selectedConversation.jid || '')}
             </p>
             <Badge className="mt-2" variant="outline">
-              {selectedConversation.type === 'group' ? '👥 Group' : '👤 Personal'}
+              {selectedConversation.type === 'group' ? (<><Users className='w-3.5 h-3.5 inline mr-1' />Group</>) : (<><User className='w-3.5 h-3.5 inline mr-1' />Personal</>)}
             </Badge>
           </div>
 
@@ -1227,7 +1275,7 @@ export default function ChatPage() {
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {/* Phone */}
             <div className="bg-secondary/30 rounded-xl p-3">
-              <p className="text-xs text-muted-foreground mb-1">📱 Phone</p>
+              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5"><Smartphone className="w-3 h-3" /> Phone</p>
               <p className="text-sm font-medium text-foreground">
                 {formatPhone(selectedConversation.jid || '')}
               </p>
@@ -1235,7 +1283,7 @@ export default function ChatPage() {
 
             {/* JID */}
             <div className="bg-secondary/30 rounded-xl p-3">
-              <p className="text-xs text-muted-foreground mb-1">🔗 WhatsApp ID</p>
+              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5"><LinkIcon className="w-3 h-3" /> WhatsApp ID</p>
               <p className="text-xs font-mono text-foreground break-all">
                 {selectedConversation.jid}
               </p>
@@ -1243,7 +1291,7 @@ export default function ChatPage() {
 
             {/* Messages Count */}
             <div className="bg-secondary/30 rounded-xl p-3">
-              <p className="text-xs text-muted-foreground mb-1">💬 Messages</p>
+              <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5"><MessageCircle className="w-3 h-3" /> Messages</p>
               <p className="text-sm font-medium text-foreground">
                 {messages.length} messages in this conversation
               </p>
@@ -1285,7 +1333,7 @@ export default function ChatPage() {
                 className="w-full justify-start gap-2 text-sm"
                 onClick={() => window.open(`/dashboard/contacts?phone=${encodeURIComponent(selectedConversation?.jid?.split('@')[0] || '')}`, '_self')}
               >
-                👤 View in Contacts
+                View in Contacts
               </Button>
             </div>
           </div>

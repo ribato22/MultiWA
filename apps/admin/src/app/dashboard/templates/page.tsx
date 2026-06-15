@@ -4,6 +4,23 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Plus,
+  Search,
+  MoreVertical,
+  Pencil,
+  Copy,
+  Trash2,
+  CheckCheck,
+  Hand,
+  PartyPopper,
+  Bell,
+  MessageCircle,
+  Clock3,
+  HeartHandshake,
+  FileText,
+  type LucideIcon,
+} from 'lucide-react';
 import { api, Profile, Template } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,14 +52,15 @@ import {
 import { useToast } from '@/hooks/use-toast';
 
 // Template categories
-const CATEGORIES = [
-  { value: 'greeting', label: 'Greeting', icon: '👋' },
-  { value: 'promotion', label: 'Promotion', icon: '🎉' },
-  { value: 'notification', label: 'Notification', icon: '🔔' },
-  { value: 'support', label: 'Support', icon: '💬' },
-  { value: 'reminder', label: 'Reminder', icon: '⏰' },
-  { value: 'thankyou', label: 'Thank You', icon: '🙏' },
-  { value: 'other', label: 'Other', icon: '📝' },
+type Category = { value: string; label: string; Icon: LucideIcon; tone: string };
+const CATEGORIES: Category[] = [
+  { value: 'greeting',     label: 'Greeting',     Icon: Hand,           tone: 'text-amber-400' },
+  { value: 'promotion',    label: 'Promotion',    Icon: PartyPopper,    tone: 'text-pink-400' },
+  { value: 'notification', label: 'Notification', Icon: Bell,           tone: 'text-sky-400' },
+  { value: 'support',      label: 'Support',      Icon: MessageCircle,  tone: 'text-violet-400' },
+  { value: 'reminder',     label: 'Reminder',     Icon: Clock3,         tone: 'text-orange-400' },
+  { value: 'thankyou',     label: 'Thank You',    Icon: HeartHandshake, tone: 'text-rose-400' },
+  { value: 'other',        label: 'Other',        Icon: FileText,       tone: 'text-muted-foreground' },
 ];
 
 // Variable hints
@@ -223,10 +241,8 @@ export default function TemplatesPage() {
           <h1 className="text-2xl font-bold text-foreground">Templates</h1>
           <p className="text-muted-foreground mt-1">Create and manage message templates</p>
         </div>
-        <Button onClick={openCreateModal} className="bg-[#25D366] hover:bg-[#128C7E]">
-          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
+        <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+          <Plus className="w-4 h-4" aria-hidden="true" />
           Create Template
         </Button>
       </div>
@@ -247,14 +263,16 @@ export default function TemplatesPage() {
         </Select>
 
         <div className="relative flex-1 max-w-md">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+            aria-hidden="true"
+          />
           <Input
             placeholder="Search templates..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="pl-10"
+            aria-label="Search templates"
           />
         </div>
 
@@ -264,11 +282,17 @@ export default function TemplatesPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Categories</SelectItem>
-            {CATEGORIES.map(cat => (
-              <SelectItem key={cat.value} value={cat.value}>
-                {cat.icon} {cat.label}
-              </SelectItem>
-            ))}
+            {CATEGORIES.map(cat => {
+              const Icon = cat.Icon;
+              return (
+                <SelectItem key={cat.value} value={cat.value}>
+                  <span className="inline-flex items-center gap-2">
+                    <Icon className={`w-3.5 h-3.5 ${cat.tone}`} aria-hidden="true" />
+                    {cat.label}
+                  </span>
+                </SelectItem>
+              );
+            })}
           </SelectContent>
         </Select>
       </div>
@@ -302,12 +326,15 @@ export default function TemplatesPage() {
       {/* Templates Grid */}
       {filteredTemplates.length === 0 ? (
         <div className="bg-card rounded-2xl border border-border p-12 text-center">
-          <div className="text-6xl mb-4">📝</div>
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <FileText className="w-8 h-8" aria-hidden="true" />
+          </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No Templates Yet</h3>
           <p className="text-muted-foreground mb-6">
             Create message templates to save time and ensure consistency
           </p>
-          <Button onClick={openCreateModal} className="bg-[#25D366] hover:bg-[#128C7E]">
+          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+            <Plus className="w-4 h-4" aria-hidden="true" />
             Create Your First Template
           </Button>
         </div>
@@ -315,42 +342,47 @@ export default function TemplatesPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredTemplates.map(template => {
             const category = CATEGORIES.find(c => c.value === template.category) || CATEGORIES[6];
+            const CategoryIcon = category.Icon;
             const content = typeof template.content === 'object' ? template.content.text || '' : template.content;
-            
+
             return (
               <div
                 key={template.id}
-                className="bg-card rounded-xl border border-border p-5 hover:shadow-lg transition-all duration-200 group"
+                className="bg-card rounded-xl border border-border p-5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5 transition-all duration-200 group focus-within:border-primary/40"
               >
                 {/* Header */}
                 <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">{category.icon}</span>
-                    <Badge variant="secondary" className="text-xs">
-                      {category.label}
-                    </Badge>
-                  </div>
+                  <Badge variant="secondary" className="text-xs gap-1.5">
+                    <CategoryIcon className={`w-3.5 h-3.5 ${category.tone}`} aria-hidden="true" />
+                    {category.label}
+                  </Badge>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                        </svg>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+                        aria-label="Template actions"
+                      >
+                        <MoreVertical className="w-4 h-4" aria-hidden="true" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openEditModal(template)}>
-                        ✏️ Edit
+                      <DropdownMenuItem onClick={() => openEditModal(template)} className="gap-2 cursor-pointer">
+                        <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                        Edit
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleDuplicate(template)}>
-                        📋 Duplicate
+                      <DropdownMenuItem onClick={() => handleDuplicate(template)} className="gap-2 cursor-pointer">
+                        <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                        Duplicate
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem 
+                      <DropdownMenuItem
                         onClick={() => handleDelete(template)}
-                        className="text-red-600"
+                        className="gap-2 cursor-pointer text-destructive focus:text-destructive focus:bg-destructive/10"
                       >
-                        🗑️ Delete
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -390,7 +422,7 @@ export default function TemplatesPage() {
 
       {/* Create/Edit Modal */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="sm:max-w-[600px]">
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingTemplate ? 'Edit Template' : 'Create Template'}
@@ -403,10 +435,11 @@ export default function TemplatesPage() {
           <div className="space-y-4 py-4">
             {/* Name */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Template Name <span className="text-red-500">*</span>
+              <label htmlFor="template-name" className="text-sm font-medium text-foreground">
+                Template Name <span className="text-destructive" aria-label="required">*</span>
               </label>
               <Input
+                id="template-name"
                 placeholder="e.g., Welcome Message"
                 value={formData.name}
                 onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
@@ -415,20 +448,26 @@ export default function TemplatesPage() {
 
             {/* Category */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Category</label>
+              <label htmlFor="template-category" className="text-sm font-medium text-foreground">Category</label>
               <Select
                 value={formData.category}
                 onValueChange={v => setFormData(prev => ({ ...prev, category: v }))}
               >
-                <SelectTrigger>
+                <SelectTrigger id="template-category">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {CATEGORIES.map(cat => (
-                    <SelectItem key={cat.value} value={cat.value}>
-                      {cat.icon} {cat.label}
-                    </SelectItem>
-                  ))}
+                  {CATEGORIES.map(cat => {
+                    const Icon = cat.Icon;
+                    return (
+                      <SelectItem key={cat.value} value={cat.value}>
+                        <span className="inline-flex items-center gap-2">
+                          <Icon className={`w-3.5 h-3.5 ${cat.tone}`} aria-hidden="true" />
+                          {cat.label}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
@@ -436,14 +475,15 @@ export default function TemplatesPage() {
             {/* Content */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">
-                  Message Content <span className="text-red-500">*</span>
+                <label htmlFor="template-content" className="text-sm font-medium text-foreground">
+                  Message Content <span className="text-destructive" aria-label="required">*</span>
                 </label>
                 <span className="text-xs text-muted-foreground">
                   {formData.content.length} characters
                 </span>
               </div>
               <Textarea
+                id="template-content"
                 placeholder="Type your message here...&#10;&#10;Use {{name}} for personalization"
                 value={formData.content}
                 onChange={e => setFormData(prev => ({ ...prev, content: e.target.value }))}
@@ -477,9 +517,9 @@ export default function TemplatesPage() {
             {/* Preview */}
             {formData.content && (
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Preview</label>
-                <div className="bg-[#DCF8C6] dark:bg-[#025144] rounded-lg p-4 max-w-[80%] ml-auto">
-                  <p className="text-sm whitespace-pre-wrap">
+                <span className="text-sm font-medium text-foreground">Preview</span>
+                <div className="bg-[rgb(34_197_94_/_0.18)] border border-primary/20 rounded-lg p-4 max-w-[80%] ml-auto">
+                  <p className="text-sm whitespace-pre-wrap text-foreground">
                     {formData.content
                       .replace(/\{\{name\}\}/g, 'John')
                       .replace(/\{\{phone\}\}/g, '+62812345678')
@@ -487,12 +527,10 @@ export default function TemplatesPage() {
                       .replace(/\{\{time\}\}/g, new Date().toLocaleTimeString())}
                   </p>
                   <div className="flex items-center justify-end gap-1 mt-1">
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-[10px] text-muted-foreground tabular-nums">
                       {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
-                    <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z" />
-                    </svg>
+                    <CheckCheck className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" aria-label="Read" />
                   </div>
                 </div>
               </div>
@@ -500,13 +538,13 @@ export default function TemplatesPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowModal(false)}>
+            <Button variant="outline" onClick={() => setShowModal(false)} className="cursor-pointer">
               Cancel
             </Button>
-            <Button 
-              onClick={handleSave} 
+            <Button
+              onClick={handleSave}
               disabled={saving}
-              className="bg-[#25D366] hover:bg-[#128C7E]"
+              className="cursor-pointer"
             >
               {saving ? 'Saving...' : editingTemplate ? 'Update Template' : 'Create Template'}
             </Button>

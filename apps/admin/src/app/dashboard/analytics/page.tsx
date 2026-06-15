@@ -4,6 +4,14 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import {
+  MessageSquare,
+  Users,
+  Megaphone,
+  Zap,
+  TrendingUp,
+  Bot,
+} from 'lucide-react';
 import { api, Profile, DashboardStats, Automation } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -41,7 +49,8 @@ function BarChart({ data, label, color }: { data: number[]; label: string; color
   );
 }
 
-// Donut chart component (SVG)
+// Donut chart component (SVG). Note: the chart shapes themselves are SVG primitives
+// — Lucide doesn't ship donut/bar chart primitives, so these stay as raw <svg>.
 function DonutChart({ segments, size = 120 }: { segments: { label: string; value: number; color: string }[]; size?: number }) {
   const total = segments.reduce((s, seg) => s + seg.value, 0) || 1;
   const r = size / 2 - 10;
@@ -50,8 +59,8 @@ function DonutChart({ segments, size = 120 }: { segments: { label: string; value
 
   return (
     <div className="flex items-center gap-4">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth="8" className="text-gray-200 dark:text-gray-700" />
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Donut chart">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth="8" className="text-border" />
         {segments.map((seg, i) => {
           const pct = seg.value / total;
           const dashArray = `${pct * c} ${c}`;
@@ -74,16 +83,16 @@ function DonutChart({ segments, size = 120 }: { segments: { label: string; value
           offset += pct * c;
           return el;
         })}
-        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="text-xl font-bold fill-current text-foreground">
+        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" className="text-xl font-bold fill-current text-foreground tabular-nums">
           {total}
         </text>
       </svg>
       <div className="space-y-1">
         {segments.map((seg, i) => (
           <div key={i} className="flex items-center gap-2 text-sm">
-            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: seg.color }} />
+            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: seg.color }} aria-hidden="true" />
             <span className="text-muted-foreground">{seg.label}</span>
-            <span className="font-medium text-foreground">{seg.value}</span>
+            <span className="font-medium text-foreground tabular-nums">{seg.value}</span>
           </div>
         ))}
       </div>
@@ -233,42 +242,43 @@ export default function AnalyticsPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-card rounded-xl border border-border p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-              <span className="text-xl">💬</span>
+            <div className="w-10 h-10 rounded-xl bg-sky-500/15 text-sky-300 flex items-center justify-center">
+              <MessageSquare className="w-5 h-5" aria-hidden="true" />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Total Messages</p>
-              <p className="text-2xl font-bold text-foreground">{(stats?.messages?.total || 0).toLocaleString()}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">{(stats?.messages?.total || 0).toLocaleString()}</p>
             </div>
           </div>
-          <p className="text-xs text-emerald-600 dark:text-emerald-400">
-            📈 {stats?.messages?.today || 0} today
+          <p className="inline-flex items-center gap-1.5 text-xs text-primary tabular-nums">
+            <TrendingUp className="w-3 h-3" aria-hidden="true" />
+            {stats?.messages?.today || 0} today
           </p>
         </div>
 
         <div className="bg-card rounded-xl border border-border p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-              <span className="text-xl">👥</span>
+            <div className="w-10 h-10 rounded-xl bg-primary/15 text-primary flex items-center justify-center">
+              <Users className="w-5 h-5" aria-hidden="true" />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Total Contacts</p>
-              <p className="text-2xl font-bold text-foreground">{(stats?.contacts?.total || 0).toLocaleString()}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">{(stats?.contacts?.total || 0).toLocaleString()}</p>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground tabular-nums">
             Across {stats?.profiles?.total || 0} profiles
           </p>
         </div>
 
         <div className="bg-card rounded-xl border border-border p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-              <span className="text-xl">📢</span>
+            <div className="w-10 h-10 rounded-xl bg-violet-500/15 text-violet-300 flex items-center justify-center">
+              <Megaphone className="w-5 h-5" aria-hidden="true" />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Broadcasts Sent</p>
-              <p className="text-2xl font-bold text-foreground">{(stats?.broadcasts?.total || 0).toLocaleString()}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">{(stats?.broadcasts?.total || 0).toLocaleString()}</p>
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -278,15 +288,15 @@ export default function AnalyticsPage() {
 
         <div className="bg-card rounded-xl border border-border p-5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-              <span className="text-xl">⚡</span>
+            <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-300 flex items-center justify-center">
+              <Zap className="w-5 h-5" aria-hidden="true" />
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Automations</p>
-              <p className="text-2xl font-bold text-foreground">{automations.length}</p>
+              <p className="text-2xl font-bold text-foreground tabular-nums">{automations.length}</p>
             </div>
           </div>
-          <p className="text-xs text-emerald-600 dark:text-emerald-400">
+          <p className="text-xs text-primary tabular-nums">
             {automationStats.active} active
           </p>
         </div>
@@ -303,7 +313,7 @@ export default function AnalyticsPage() {
           <BarChart
             data={messageChartData}
             label={`${messageChartData.reduce((a, b) => a + b, 0).toLocaleString()} total`}
-            color="#3b82f6"
+            color="#38bdf8"
           />
         </div>
 
@@ -329,7 +339,7 @@ export default function AnalyticsPage() {
           <DonutChart
             segments={[
               { label: 'Connected', value: stats?.profiles?.connected || 0, color: '#22c55e' },
-              { label: 'Disconnected', value: (stats?.profiles?.total || 0) - (stats?.profiles?.connected || 0), color: '#ef4444' },
+              { label: 'Disconnected', value: (stats?.profiles?.total || 0) - (stats?.profiles?.connected || 0), color: '#f87171' },
             ]}
           />
         </div>
@@ -340,13 +350,13 @@ export default function AnalyticsPage() {
           <DonutChart
             segments={[
               { label: 'Active', value: automationStats.active, color: '#22c55e' },
-              { label: 'Inactive', value: automationStats.inactive, color: '#94a3b8' },
+              { label: 'Inactive', value: automationStats.inactive, color: '#64748b' },
             ]}
           />
           <div className="mt-4 pt-4 border-t border-border">
             <div className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">Total Triggers</span>
-              <span className="font-semibold text-foreground">{automationStats.totalTriggers.toLocaleString()}</span>
+              <span className="font-semibold text-foreground tabular-nums">{automationStats.totalTriggers.toLocaleString()}</span>
             </div>
           </div>
         </div>
@@ -356,8 +366,10 @@ export default function AnalyticsPage() {
           <h3 className="font-semibold text-foreground mb-4">Top Automations</h3>
           {automations.length === 0 ? (
             <div className="text-center py-8">
-              <span className="text-4xl">🤖</span>
-              <p className="text-sm text-muted-foreground mt-2">No automations yet</p>
+              <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary/60 text-muted-foreground">
+                <Bot className="w-6 h-6" aria-hidden="true" />
+              </div>
+              <p className="text-sm text-muted-foreground">No automations yet</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -367,10 +379,10 @@ export default function AnalyticsPage() {
                 .map((auto, i) => (
                   <div key={auto.id} className="flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-sm font-medium text-muted-foreground w-5">{i + 1}.</span>
+                      <span className="text-sm font-medium text-muted-foreground w-5 tabular-nums">{i + 1}.</span>
                       <span className="text-sm text-foreground truncate">{auto.name}</span>
                     </div>
-                    <span className="text-sm font-medium text-foreground flex-shrink-0 ml-2">{auto.stats?.triggerCount || 0}×</span>
+                    <span className="text-sm font-medium text-foreground flex-shrink-0 ml-2 tabular-nums">{auto.stats?.triggerCount || 0}×</span>
                   </div>
                 ))}
             </div>

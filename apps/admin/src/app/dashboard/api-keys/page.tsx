@@ -4,6 +4,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Plus,
+  Copy,
+  Info,
+  Key,
+  KeyRound,
+  AlertTriangle,
+  Loader2,
+} from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -197,27 +206,23 @@ export default function ApiKeysPage() {
             Manage API keys for external integrations
           </p>
         </div>
-        <Button 
-          onClick={() => setShowCreateModal(true)} 
-          className="bg-[#25D366] hover:bg-[#128C7E]"
+        <Button
+          onClick={() => setShowCreateModal(true)}
+          className="gap-2 cursor-pointer"
         >
-          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
+          <Plus className="w-4 h-4" aria-hidden="true" />
           Create API Key
         </Button>
       </div>
 
       {/* Info Banner */}
-      <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-200 dark:border-blue-800">
+      <div className="bg-sky-500/10 rounded-xl p-4 border border-sky-500/30">
         <div className="flex items-start gap-3">
-          <svg className="w-5 h-5 text-blue-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
+          <Info className="w-5 h-5 text-sky-300 mt-0.5 flex-shrink-0" aria-hidden="true" />
           <div>
-            <h4 className="font-medium text-blue-900 dark:text-blue-100">API Documentation</h4>
-            <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-              Use your API key in the <code className="bg-blue-100 dark:bg-blue-800 px-1 rounded">X-API-Key</code> header 
+            <h4 className="font-medium text-sky-200">API Documentation</h4>
+            <p className="text-sm text-sky-200/80 mt-1">
+              Use your API key in the <code className="bg-sky-500/20 text-sky-200 px-1.5 py-0.5 rounded text-xs font-mono">X-API-Key</code> header
               or as Bearer token to authenticate requests.
             </p>
           </div>
@@ -227,20 +232,24 @@ export default function ApiKeysPage() {
       {/* API Keys Table */}
       {apiKeys.length === 0 ? (
         <div className="bg-card rounded-2xl border border-border p-12 text-center">
-          <div className="text-6xl mb-4">🔑</div>
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <KeyRound className="w-8 h-8" aria-hidden="true" />
+          </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No API Keys</h3>
           <p className="text-muted-foreground mb-6">
             Create an API key to integrate with external services
           </p>
-          <Button 
-            onClick={() => setShowCreateModal(true)} 
-            className="bg-[#25D366] hover:bg-[#128C7E]"
+          <Button
+            onClick={() => setShowCreateModal(true)}
+            className="gap-2 cursor-pointer"
           >
+            <Plus className="w-4 h-4" aria-hidden="true" />
             Create Your First API Key
           </Button>
         </div>
       ) : (
-        <div className="bg-card rounded-xl border border-border overflow-hidden">
+        <>
+        <div className="hidden md:block bg-card rounded-xl border border-border overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -260,7 +269,7 @@ export default function ApiKeysPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <code className="text-xs bg-secondary/50 px-2 py-1 rounded font-mono">
+                      <code className="text-xs bg-secondary/60 border border-border/60 text-foreground px-2 py-1 rounded font-mono">
                         {apiKey.key}
                       </code>
                       <Button
@@ -270,12 +279,10 @@ export default function ApiKeysPage() {
                           copyToClipboard(apiKey.key);
                           toast({ title: 'Key prefix copied. Full key is only available at creation time.' });
                         }}
-                        className="h-7 w-7 p-0"
-                        title="Copy key prefix (full key only shown at creation)"
+                        className="h-7 w-7 p-0 cursor-pointer"
+                        aria-label="Copy key prefix (full key only shown at creation)"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
+                        <Copy className="w-4 h-4" aria-hidden="true" />
                       </Button>
                     </div>
                   </TableCell>
@@ -293,13 +300,13 @@ export default function ApiKeysPage() {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {apiKey.lastUsed 
+                  <TableCell className="text-muted-foreground text-sm tabular-nums">
+                    {apiKey.lastUsed
                       ? new Date(apiKey.lastUsed).toLocaleDateString()
-                      : 'Never'
+                      : <span className="text-muted-foreground/60">Never</span>
                     }
                   </TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
+                  <TableCell className="text-muted-foreground text-sm tabular-nums">
                     {new Date(apiKey.createdAt).toLocaleDateString()}
                   </TableCell>
                   <TableCell className="text-right">
@@ -307,7 +314,7 @@ export default function ApiKeysPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => confirmDelete(apiKey)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
                     >
                       Revoke
                     </Button>
@@ -317,6 +324,61 @@ export default function ApiKeysPage() {
             </TableBody>
           </Table>
         </div>
+
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-2">
+          {apiKeys.map(apiKey => (
+            <div key={apiKey.id} className="bg-card border border-border rounded-xl p-4 space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="font-medium text-foreground min-w-0 truncate">{apiKey.name}</div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => confirmDelete(apiKey)}
+                  className="text-destructive hover:text-destructive hover:bg-destructive/10 -mt-1 -mr-2 cursor-pointer flex-shrink-0"
+                >
+                  Revoke
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="text-xs bg-secondary/60 border border-border/60 text-foreground px-2 py-1 rounded font-mono truncate flex-1">
+                  {apiKey.key}
+                </code>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    copyToClipboard(apiKey.key);
+                    toast({ title: 'Key prefix copied. Full key is only available at creation time.' });
+                  }}
+                  className="h-8 w-8 p-0 cursor-pointer flex-shrink-0"
+                  aria-label="Copy key prefix"
+                >
+                  <Copy className="w-4 h-4" aria-hidden="true" />
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(apiKey.permissions || []).slice(0, 3).map(p => (
+                  <Badge key={p} variant="secondary" className="text-xs">
+                    {p.split(':')[0]}
+                  </Badge>
+                ))}
+                {(apiKey.permissions || []).length > 3 && (
+                  <Badge variant="outline" className="text-xs">
+                    +{(apiKey.permissions || []).length - 3}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
+                <span>
+                  Last used: {apiKey.lastUsed ? new Date(apiKey.lastUsed).toLocaleDateString() : '—'}
+                </span>
+                <span>{new Date(apiKey.createdAt).toLocaleDateString()}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        </>
       )}
 
       {/* Usage Example */}
@@ -344,10 +406,11 @@ export default function ApiKeysPage() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Key Name <span className="text-red-500">*</span>
+              <label htmlFor="apikey-name" className="text-sm font-medium text-foreground">
+                Key Name <span className="text-destructive" aria-label="required">*</span>
               </label>
               <Input
+                id="apikey-name"
                 placeholder="e.g., Production Integration"
                 value={formData.name}
                 onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
@@ -356,22 +419,22 @@ export default function ApiKeysPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">Permissions</label>
+                <span className="text-sm font-medium text-foreground">Permissions</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={selectAllPermissions}
-                  className="text-xs"
+                  className="text-xs cursor-pointer"
                 >
                   {formData.permissions.length === PERMISSIONS.length ? 'Deselect All' : 'Select All'}
                 </Button>
               </div>
-              
-              <div className="border border-border rounded-lg divide-y divide-border">
+
+              <div className="border border-border rounded-lg divide-y divide-border bg-secondary/30">
                 {Object.entries(groupedPermissions).map(([group, perms]) => (
                   <div key={group} className="p-3">
-                    <div className="text-xs font-medium text-muted-foreground uppercase mb-2">{group}</div>
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{group}</div>
                     <div className="space-y-2">
                       {perms.map(perm => (
                         <div key={perm.value} className="flex items-center gap-2">
@@ -393,15 +456,25 @@ export default function ApiKeysPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateModal(false)}>
+            <Button variant="outline" onClick={() => setShowCreateModal(false)} className="cursor-pointer">
               Cancel
             </Button>
-            <Button 
-              onClick={handleCreate} 
+            <Button
+              onClick={handleCreate}
               disabled={saving}
-              className="bg-[#25D366] hover:bg-[#128C7E]"
+              className="gap-2 cursor-pointer"
             >
-              {saving ? 'Creating...' : 'Create Key'}
+              {saving ? (
+                <>
+                  <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
+                  Creating...
+                </>
+              ) : (
+                <>
+                  <Key className="w-4 h-4" aria-hidden="true" />
+                  Create Key
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -411,19 +484,20 @@ export default function ApiKeysPage() {
       <Dialog open={showKeyModal} onOpenChange={setShowKeyModal}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>🎉 API Key Created</DialogTitle>
+            <DialogTitle className="inline-flex items-center gap-2">
+              <KeyRound className="w-5 h-5 text-primary" aria-hidden="true" />
+              API Key Created
+            </DialogTitle>
             <DialogDescription>
-              Copy your API key now. You won't be able to see it again!
+              Copy your API key now. You won&apos;t be able to see it again.
             </DialogDescription>
           </DialogHeader>
 
           <div className="py-4">
-            <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4 border border-yellow-200 dark:border-yellow-800 mb-4">
-              <div className="flex items-center gap-2 text-yellow-800 dark:text-yellow-200">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <span className="font-medium">Save this key securely!</span>
+            <div className="bg-amber-500/10 rounded-lg p-4 border border-amber-500/30 mb-4">
+              <div className="flex items-center gap-2 text-amber-300">
+                <AlertTriangle className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                <span className="font-medium">Save this key securely.</span>
               </div>
             </div>
 
@@ -432,18 +506,20 @@ export default function ApiKeysPage() {
                 value={newKey}
                 readOnly
                 className="font-mono text-sm"
+                aria-label="Generated API key"
               />
               <Button
                 onClick={() => copyToClipboard(newKey)}
-                className="bg-[#25D366] hover:bg-[#128C7E]"
+                className="gap-2 cursor-pointer"
               >
+                <Copy className="w-4 h-4" aria-hidden="true" />
                 Copy
               </Button>
             </div>
           </div>
 
           <DialogFooter>
-            <Button onClick={() => setShowKeyModal(false)}>
+            <Button onClick={() => setShowKeyModal(false)} className="cursor-pointer">
               Done
             </Button>
           </DialogFooter>
@@ -456,13 +532,16 @@ export default function ApiKeysPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Revoke API Key?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will immediately revoke the API key "{keyToDelete?.name}". 
+              This will immediately revoke the API key &quot;{keyToDelete?.name}&quot;.
               Any integrations using this key will stop working.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogCancel className="cursor-pointer">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
+            >
               Revoke Key
             </AlertDialogAction>
           </AlertDialogFooter>

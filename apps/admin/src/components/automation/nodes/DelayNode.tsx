@@ -2,6 +2,7 @@
 
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
+import { Timer } from 'lucide-react';
 
 interface DelayNodeData {
   label: string;
@@ -9,101 +10,70 @@ interface DelayNodeData {
   unit: 'seconds' | 'minutes' | 'hours' | 'days';
 }
 
+const unitLabels: Record<string, string> = {
+  seconds: 's',
+  minutes: 'm',
+  hours: 'h',
+  days: 'd',
+};
+
+const unitFull: Record<string, string> = {
+  seconds: 'seconds',
+  minutes: 'minutes',
+  hours: 'hours',
+  days: 'days',
+};
+
 export const DelayNode = memo(({ data, selected }: NodeProps<DelayNodeData>) => {
-  const unitLabels: Record<string, string> = {
-    seconds: 's',
-    minutes: 'm',
-    hours: 'h',
-    days: 'd',
-  };
-
-  const unitFull: Record<string, string> = {
-    seconds: 'seconds',
-    minutes: 'minutes',
-    hours: 'hours',
-    days: 'days',
-  };
-
   return (
     <div
-      style={{
-        padding: '16px 20px',
-        borderRadius: '14px',
-        background: selected 
-          ? 'linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%)'
-          : 'linear-gradient(135deg, #f1f5f9 0%, #f8fafc 100%)',
-        border: `2px solid ${selected ? '#64748b' : '#94a3b8'}`,
-        minWidth: '140px',
-        boxShadow: selected 
-          ? '0 8px 24px rgba(100, 116, 139, 0.25)' 
-          : '0 2px 12px rgba(0,0,0,0.08)',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        textAlign: 'center',
-      }}
+      className={`
+        px-5 py-4 rounded-2xl min-w-[140px] text-center
+        bg-secondary/40 border-2
+        transition-all duration-200
+        ${selected
+          ? 'border-slate-400 shadow-lg shadow-slate-500/20'
+          : 'border-slate-500/40 shadow-md shadow-black/20'}
+      `}
     >
       <Handle
         type="target"
         position={Position.Top}
         style={{
-          background: 'linear-gradient(135deg, #64748b, #475569)',
+          background: '#64748b',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
+          border: '2px solid hsl(217 33% 17%)',
           boxShadow: '0 2px 6px rgba(100, 116, 139, 0.4)',
         }}
       />
-      
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        marginBottom: '8px',
-      }}>
-        <div style={{
-          width: '24px', height: '24px', borderRadius: '6px',
-          backgroundColor: '#64748b15', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '12px',
-        }}>
-          ⏱️
-        </div>
-        <span style={{ 
-          fontSize: '10px', 
-          textTransform: 'uppercase', 
-          color: '#475569',
-          fontWeight: 700,
-          letterSpacing: '0.05em',
-        }}>
+
+      <div className="flex items-center justify-center gap-2 mb-2">
+        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-slate-500/20 text-slate-300">
+          <Timer className="w-3.5 h-3.5" aria-hidden="true" />
+        </span>
+        <span className="text-[10px] uppercase font-bold tracking-wider text-slate-300">
           Delay
         </span>
       </div>
-      <div style={{ 
-        fontSize: '22px', 
-        fontWeight: 700,
-        color: '#334155',
-        lineHeight: 1,
-      }}>
+      <div className="text-[22px] font-bold text-foreground leading-none tabular-nums">
         {data.duration}
-        <span style={{ fontSize: '13px', fontWeight: 500, color: '#64748b', marginLeft: '2px' }}>
+        <span className="text-[13px] font-medium text-muted-foreground ml-0.5">
           {unitLabels[data.unit]}
         </span>
       </div>
-      <div style={{
-        fontSize: '10px',
-        color: '#94a3b8',
-        marginTop: '4px',
-      }}>
+      <div className="text-[10px] text-muted-foreground mt-1">
         Wait {data.duration} {unitFull[data.unit]}
       </div>
-      
+
       <Handle
         type="source"
         position={Position.Bottom}
         style={{
-          background: 'linear-gradient(135deg, #64748b, #475569)',
+          background: '#64748b',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
+          border: '2px solid hsl(217 33% 17%)',
           boxShadow: '0 2px 6px rgba(100, 116, 139, 0.4)',
         }}
       />

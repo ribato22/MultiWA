@@ -4,6 +4,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Plus,
+  RefreshCw,
+  Search,
+  SearchX,
+  MessageCircle,
+  Trash2,
+  Lightbulb,
+  Users,
+  Tag,
+} from 'lucide-react';
 import { api, Contact, Profile } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -107,7 +118,7 @@ export default function ContactsPage() {
       const res = await api.syncContactsFromWhatsApp(selectedProfile);
       if (res.data) {
         toast({
-          title: '✅ Contacts synced from WhatsApp',
+          title: 'Contacts synced from WhatsApp',
           description: `Synced: ${res.data.synced}, Created: ${res.data.created}, Updated: ${res.data.updated}`,
         });
         fetchContacts(); // Refresh the list
@@ -217,7 +228,14 @@ export default function ContactsPage() {
                 {profiles.map(profile => (
                   <SelectItem key={profile.id} value={profile.id}>
                     <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full ${profile.status === 'connected' ? 'bg-green-500' : 'bg-gray-400'}`} />
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          profile.status === 'connected'
+                            ? 'bg-primary shadow-[0_0_0_3px_rgb(34_197_94_/_0.15)]'
+                            : 'bg-muted-foreground/40'
+                        }`}
+                        aria-hidden="true"
+                      />
                       {profile.displayName || profile.name || 'Unnamed'}
                     </div>
                   </SelectItem>
@@ -230,25 +248,18 @@ export default function ContactsPage() {
             className="gap-2"
             onClick={handleSyncFromWhatsApp}
             disabled={syncing || !selectedProfile}
+            aria-label="Sync contacts from WhatsApp"
           >
-            {syncing ? (
-              <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            )}
+            <RefreshCw
+              className={`w-4 h-4 ${syncing ? 'mw-spin' : ''}`}
+              aria-hidden="true"
+            />
             {syncing ? 'Syncing...' : 'Sync from WhatsApp'}
           </Button>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
+              <Plus className="w-5 h-5" aria-hidden="true" />
               Add Contact
             </Button>
           </DialogTrigger>
@@ -318,14 +329,16 @@ export default function ContactsPage() {
 
       {/* Stats Bar */}
       {!loading && contacts.length > 0 && (
-        <div className="flex items-center gap-6 py-3 px-4 bg-secondary/30 rounded-xl text-sm">
-          <div>
-            <span className="font-semibold text-foreground">{contacts.length}</span>
-            <span className="text-muted-foreground ml-1">Total contacts</span>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 px-4 bg-secondary/40 border border-border/60 rounded-xl text-sm">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
+            <span className="font-semibold text-foreground tabular-nums">{contacts.length}</span>
+            <span className="text-muted-foreground">Contacts</span>
           </div>
-          <div>
-            <span className="font-semibold text-primary">{allTags.length}</span>
-            <span className="text-muted-foreground ml-1">Tags</span>
+          <div className="flex items-center gap-2">
+            <Tag className="w-4 h-4 text-primary" aria-hidden="true" />
+            <span className="font-semibold text-primary tabular-nums">{allTags.length}</span>
+            <span className="text-muted-foreground">Tags</span>
           </div>
         </div>
       )}
@@ -334,14 +347,16 @@ export default function ContactsPage() {
       {!loading && contacts.length > 0 && (
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
-            <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+              aria-hidden="true"
+            />
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search contacts..."
               className="pl-10"
+              aria-label="Search contacts"
             />
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -375,12 +390,15 @@ export default function ContactsPage() {
         <EmptyContacts />
       ) : filteredContacts.length === 0 ? (
         <div className="bg-card rounded-2xl p-12 border border-border text-center">
-          <div className="text-5xl mb-4">🔍</div>
+          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-secondary/60 text-muted-foreground">
+            <SearchX className="w-7 h-7" aria-hidden="true" />
+          </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No matches found</h3>
           <p className="text-muted-foreground">Try adjusting your search or filters</p>
         </div>
       ) : (
-        <div className="bg-card rounded-2xl border border-border overflow-hidden">
+        <>
+        <div className="hidden md:block bg-card rounded-2xl border border-border overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow>
@@ -403,9 +421,9 @@ export default function ContactsPage() {
                       </AvatarFallback>
                     </Avatar>
                   </TableCell>
-                  <TableCell className="font-medium">{contact.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{contact.phone}</TableCell>
-                  <TableCell className="text-muted-foreground">{contact.email || '-'}</TableCell>
+                  <TableCell className="font-medium text-foreground">{contact.name}</TableCell>
+                  <TableCell className="text-muted-foreground font-mono text-xs">{contact.phone}</TableCell>
+                  <TableCell className="text-muted-foreground">{contact.email || <span className="text-muted-foreground/60">—</span>}</TableCell>
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {(contact.tags || []).slice(0, 3).map(tag => (
@@ -421,23 +439,25 @@ export default function ContactsPage() {
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button variant="ghost" size="sm" asChild>
+                    <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        asChild
+                        aria-label={`Message ${contact.name}`}
+                      >
                         <a href={`/dashboard/messages?to=${contact.phone}`}>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                          </svg>
+                          <MessageCircle className="w-4 h-4" aria-hidden="true" />
                         </a>
                       </Button>
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="text-destructive hover:text-destructive"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => handleDeleteContact(contact.id)}
+                        aria-label={`Delete ${contact.name}`}
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
+                        <Trash2 className="w-4 h-4" aria-hidden="true" />
                       </Button>
                     </div>
                   </TableCell>
@@ -446,23 +466,71 @@ export default function ContactsPage() {
             </TableBody>
           </Table>
         </div>
+
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-2">
+          {filteredContacts.map(contact => (
+            <div key={contact.id} className="bg-card border border-border rounded-xl p-4 flex items-start gap-3">
+              <Avatar className="w-10 h-10 flex-shrink-0">
+                <AvatarImage src={contact.avatar} />
+                <AvatarFallback className="bg-primary/10 text-primary">
+                  {contact.name?.charAt(0)?.toUpperCase() || '?'}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-medium text-foreground truncate">{contact.name}</div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10 -mt-1 -mr-2 cursor-pointer"
+                    onClick={() => handleDeleteContact(contact.id)}
+                    aria-label={`Delete ${contact.name}`}
+                  >
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                  </Button>
+                </div>
+                <div className="text-sm text-muted-foreground font-mono">{contact.phone}</div>
+                {contact.email && (
+                  <div className="text-sm text-muted-foreground truncate">{contact.email}</div>
+                )}
+                {(contact.tags || []).length > 0 && (
+                  <div className="flex gap-1 flex-wrap mt-2">
+                    {(contact.tags || []).slice(0, 3).map(tag => (
+                      <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
+                    ))}
+                    {(contact.tags?.length || 0) > 3 && (
+                      <Badge variant="outline" className="text-xs">
+                        +{(contact.tags?.length || 0) - 3}
+                      </Badge>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+        </>
       )}
 
       {/* Quick Tips */}
       {!loading && contacts.length > 0 && (
         <div className="bg-card rounded-2xl p-6 border border-border">
-          <h3 className="font-semibold text-foreground mb-3">💡 Tips</h3>
+          <h3 className="flex items-center gap-2 font-semibold text-foreground mb-3">
+            <Lightbulb className="w-4 h-4 text-primary" aria-hidden="true" />
+            Tips
+          </h3>
           <ul className="space-y-2 text-sm text-muted-foreground">
             <li className="flex items-start gap-2">
-              <span className="text-primary">•</span>
+              <span className="text-primary mt-0.5" aria-hidden="true">•</span>
               Use tags to organize contacts into groups for broadcasts
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-primary">•</span>
+              <span className="text-primary mt-0.5" aria-hidden="true">•</span>
               Import contacts via CSV from the API
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-primary">•</span>
+              <span className="text-primary mt-0.5" aria-hidden="true">•</span>
               Contacts are auto-saved when people message your profiles
             </li>
           </ul>
@@ -471,4 +539,3 @@ export default function ContactsPage() {
     </div>
   );
 }
-

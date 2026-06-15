@@ -4,6 +4,29 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Plus,
+  X,
+  Send,
+  Users,
+  User,
+  Pencil,
+  FileText,
+  RotateCw,
+  Trash2,
+  Lightbulb,
+  AlertTriangle,
+  CheckCircle2,
+  Megaphone,
+  Mail,
+  Calendar,
+  BarChart3,
+  Image as ImageIcon,
+  Video,
+  Music,
+  MessageSquare,
+  type LucideIcon,
+} from 'lucide-react';
 import { api, Contact, Profile } from '@/lib/api';
 import TemplatePicker from '@/components/templates/TemplatePicker';
 import { Button } from '@/components/ui/button';
@@ -56,13 +79,21 @@ interface GroupItem {
 type RecipientTab = 'manual' | 'contacts' | 'groups';
 type MessageType = 'text' | 'image' | 'video' | 'audio' | 'document';
 
-const MESSAGE_TYPES: { value: MessageType; label: string; icon: string }[] = [
-  { value: 'text', label: 'Text', icon: '💬' },
-  { value: 'image', label: 'Image', icon: '🖼️' },
-  { value: 'video', label: 'Video', icon: '🎥' },
-  { value: 'audio', label: 'Audio', icon: '🎵' },
-  { value: 'document', label: 'Document', icon: '📄' },
+const MESSAGE_TYPES: { value: MessageType; label: string; Icon: LucideIcon }[] = [
+  { value: 'text',     label: 'Text',     Icon: MessageSquare },
+  { value: 'image',    label: 'Image',    Icon: ImageIcon },
+  { value: 'video',    label: 'Video',    Icon: Video },
+  { value: 'audio',    label: 'Audio',    Icon: Music },
+  { value: 'document', label: 'Document', Icon: FileText },
 ];
+
+const MEDIA_ICON_MAP: Record<MessageType, LucideIcon> = {
+  text: MessageSquare,
+  image: ImageIcon,
+  video: Video,
+  audio: Music,
+  document: FileText,
+};
 
 export default function BroadcastPage() {
   const { toast } = useToast();
@@ -103,7 +134,7 @@ export default function BroadcastPage() {
     setNewBroadcast(prev => ({ ...prev, message: processedContent }));
     setMessageType('text');
     setShowTemplatePicker(false);
-    toast({ title: `✅ Template "${template.name}" applied` });
+    toast({ title: `Template "${template.name}" applied` });
   };
 
   useEffect(() => {
@@ -308,7 +339,7 @@ export default function BroadcastPage() {
           const profileData = await profileRes.json();
           if (profileData.status !== 'connected') {
             toast({ 
-              title: '❌ WhatsApp not connected', 
+              title: 'WhatsApp not connected',
               description: `Profile is ${profileData.status}. Please connect WhatsApp first from the Profiles page.`,
               variant: 'destructive' 
             });
@@ -512,16 +543,16 @@ export default function BroadcastPage() {
   };
 
   const getStatusBadge = (status: Broadcast['status']) => {
-    const statusConfig: Record<string, { color: string; label: string }> = {
-      draft: { color: 'bg-gray-500', label: 'Draft' },
-      scheduled: { color: 'bg-blue-500', label: 'Scheduled' },
-      running: { color: 'bg-yellow-500', label: 'Sending' },
-      paused: { color: 'bg-orange-500', label: 'Paused' },
-      completed: { color: 'bg-green-500', label: 'Completed' },
-      failed: { color: 'bg-red-500', label: 'Failed' },
+    const statusConfig: Record<string, { className: string; label: string }> = {
+      draft:     { className: 'bg-secondary text-muted-foreground border border-border', label: 'Draft' },
+      scheduled: { className: 'bg-sky-500/15 text-sky-300 border border-sky-500/30',     label: 'Scheduled' },
+      running:   { className: 'bg-amber-500/15 text-amber-300 border border-amber-500/30', label: 'Sending' },
+      paused:    { className: 'bg-orange-500/15 text-orange-300 border border-orange-500/30', label: 'Paused' },
+      completed: { className: 'bg-primary/15 text-primary border border-primary/30',     label: 'Completed' },
+      failed:    { className: 'bg-destructive/15 text-destructive border border-destructive/30', label: 'Failed' },
     };
-    const config = statusConfig[status] || { color: 'bg-gray-500', label: status };
-    return <Badge className={`${config.color} text-white`}>{config.label}</Badge>;
+    const config = statusConfig[status] || statusConfig.draft;
+    return <Badge className={config.className} variant="secondary">{config.label}</Badge>;
   };
 
   const filteredContacts = contacts.filter(c =>
@@ -565,10 +596,8 @@ export default function BroadcastPage() {
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2" disabled={profiles.length === 0}>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
+            <Button className="gap-2 cursor-pointer" disabled={profiles.length === 0}>
+              <Plus className="w-5 h-5" aria-hidden="true" />
               New Broadcast
             </Button>
           </DialogTrigger>
@@ -609,73 +638,88 @@ export default function BroadcastPage() {
               {/* Message Type Selector */}
               <div className="space-y-2">
                 <Label>Message Type</Label>
-                <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg">
-                  {MESSAGE_TYPES.map(mt => (
-                    <button
-                      key={mt.value}
-                      onClick={() => { setMessageType(mt.value); if (mt.value === 'text') clearMedia(); }}
-                      className={`flex-1 text-sm py-2 px-2 rounded-md transition-colors font-medium ${
-                        messageType === mt.value
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {mt.icon} {mt.label}
-                    </button>
-                  ))}
+                <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg" role="tablist" aria-label="Message type">
+                  {MESSAGE_TYPES.map(mt => {
+                    const Icon = mt.Icon;
+                    const active = messageType === mt.value;
+                    return (
+                      <button
+                        key={mt.value}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => { setMessageType(mt.value); if (mt.value === 'text') clearMedia(); }}
+                        className={`flex-1 inline-flex items-center justify-center gap-1.5 text-sm py-2 px-2 rounded-md transition-colors font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 ${
+                          active
+                            ? 'bg-card text-foreground shadow-sm ring-1 ring-border'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>{mt.label}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
               {/* Media Upload (shown for non-text types) */}
-              {messageType !== 'text' && (
-                <div className="space-y-2">
-                  <Label>Media File *</Label>
-                  {!mediaFile ? (
-                    <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-border rounded-xl cursor-pointer hover:border-primary/50 hover:bg-secondary/30 transition-colors">
-                      <div className="flex flex-col items-center text-muted-foreground">
-                        <span className="text-2xl mb-1">
-                          {messageType === 'image' ? '🖼️' : messageType === 'video' ? '🎥' : messageType === 'audio' ? '🎵' : '📄'}
-                        </span>
-                        <span className="text-sm">Click to select {messageType} file</span>
-                        <span className="text-xs mt-1">
-                          {messageType === 'image' && 'JPG, PNG, GIF, WebP (max 5MB)'}
-                          {messageType === 'video' && 'MP4, WebM (max 16MB)'}
-                          {messageType === 'audio' && 'MP3, OGG, WAV (max 5MB)'}
-                          {messageType === 'document' && 'PDF, DOC, XLS, PPT, TXT, ZIP (max 10MB)'}
-                        </span>
-                      </div>
-                      <input
-                        type="file"
-                        className="hidden"
-                        accept={
-                          messageType === 'image' ? 'image/*' :
-                          messageType === 'video' ? 'video/*' :
-                          messageType === 'audio' ? 'audio/*' :
-                          '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip'
-                        }
-                        onChange={handleFileChange}
-                      />
-                    </label>
-                  ) : (
-                    <div className="flex items-center gap-3 p-3 bg-secondary/30 rounded-xl">
-                      {mediaPreview ? (
-                        <img src={mediaPreview} alt="Preview" className="w-16 h-16 object-cover rounded-lg" />
-                      ) : (
-                        <div className="w-16 h-16 bg-secondary rounded-lg flex items-center justify-center text-2xl">
-                          {messageType === 'video' ? '🎥' : messageType === 'audio' ? '🎵' : '📄'}
+              {messageType !== 'text' && (() => {
+                const MediaIcon = MEDIA_ICON_MAP[messageType];
+                return (
+                  <div className="space-y-2">
+                    <Label>Media File *</Label>
+                    {!mediaFile ? (
+                      <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-border rounded-xl cursor-pointer hover:border-primary/50 hover:bg-secondary/30 transition-colors focus-within:border-primary/60">
+                        <div className="flex flex-col items-center text-muted-foreground">
+                          <MediaIcon className="w-6 h-6 mb-1" aria-hidden="true" />
+                          <span className="text-sm">Click to select {messageType} file</span>
+                          <span className="text-xs mt-1">
+                            {messageType === 'image' && 'JPG, PNG, GIF, WebP (max 5MB)'}
+                            {messageType === 'video' && 'MP4, WebM (max 16MB)'}
+                            {messageType === 'audio' && 'MP3, OGG, WAV (max 5MB)'}
+                            {messageType === 'document' && 'PDF, DOC, XLS, PPT, TXT, ZIP (max 10MB)'}
+                          </span>
                         </div>
-                      )}
-                      <div className="flex-1 min-w-0 overflow-hidden">
-                        <p className="text-sm font-medium text-foreground truncate max-w-[340px]" title={mediaFile.name}>{mediaFile.name}</p>
-                        <p className="text-xs text-muted-foreground">{(mediaFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept={
+                            messageType === 'image' ? 'image/*' :
+                            messageType === 'video' ? 'video/*' :
+                            messageType === 'audio' ? 'audio/*' :
+                            '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip'
+                          }
+                          onChange={handleFileChange}
+                        />
+                      </label>
+                    ) : (
+                      <div className="flex items-center gap-3 p-3 bg-secondary/40 border border-border/60 rounded-xl">
+                        {mediaPreview ? (
+                          <img src={mediaPreview} alt={`Preview of ${mediaFile.name}`} className="w-16 h-16 object-cover rounded-lg" />
+                        ) : (
+                          <div className="w-16 h-16 bg-secondary rounded-lg flex items-center justify-center text-muted-foreground">
+                            <MediaIcon className="w-7 h-7" aria-hidden="true" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                          <p className="text-sm font-medium text-foreground truncate max-w-[340px]" title={mediaFile.name}>{mediaFile.name}</p>
+                          <p className="text-xs text-muted-foreground">{(mediaFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={clearMedia}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                          aria-label="Remove file"
+                        >
+                          <X className="w-4 h-4" aria-hidden="true" />
+                        </Button>
                       </div>
-                      <Button variant="ghost" size="sm" onClick={clearMedia} className="text-red-500 hover:text-red-600">
-                        ✕
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Message / Caption */}
               <div className="space-y-2">
@@ -683,10 +727,12 @@ export default function BroadcastPage() {
                   <Label htmlFor="message">{messageType === 'text' ? 'Message *' : `Caption${messageType === 'audio' ? ' (not supported)' : ' (optional)'}`}</Label>
                   {messageType === 'text' && newBroadcast.profileId && (
                     <button
+                      type="button"
                       onClick={() => setShowTemplatePicker(true)}
-                      className="px-3 py-1 rounded-lg text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-800/40 transition-colors flex items-center gap-1"
+                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-sky-500/15 text-sky-300 hover:bg-sky-500/25 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-sky-500/50"
                     >
-                      📋 Use Template
+                      <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                      Use Template
                     </button>
                   )}
                 </div>
@@ -706,22 +752,28 @@ export default function BroadcastPage() {
               {/* Recipients Section with Tabs */}
               <div className="space-y-3">
                 <Label>Recipients *</Label>
-                <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg">
-                  {(['manual', 'contacts', 'groups'] as RecipientTab[]).map(tab => (
-                    <button
-                      key={tab}
-                      onClick={() => setRecipientTab(tab)}
-                      className={`flex-1 text-sm py-2 px-3 rounded-md transition-colors font-medium ${
-                        recipientTab === tab
-                          ? 'bg-background text-foreground shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      {tab === 'manual' && '✏️ Manual'}
-                      {tab === 'contacts' && `👤 Contacts${contacts.length > 0 ? ` (${contacts.length})` : ''}`}
-                      {tab === 'groups' && `👥 Groups${groups.length > 0 ? ` (${groups.length})` : ''}`}
-                    </button>
-                  ))}
+                <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg" role="tablist" aria-label="Recipient source">
+                  {(['manual', 'contacts', 'groups'] as RecipientTab[]).map(tab => {
+                    const active = recipientTab === tab;
+                    return (
+                      <button
+                        key={tab}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setRecipientTab(tab)}
+                        className={`flex-1 inline-flex items-center justify-center gap-1.5 text-sm py-2 px-3 rounded-md transition-colors font-medium cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 ${
+                          active
+                            ? 'bg-card text-foreground shadow-sm ring-1 ring-border'
+                            : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        {tab === 'manual' && (<><Pencil className="w-3.5 h-3.5" aria-hidden="true" /> Manual</>)}
+                        {tab === 'contacts' && (<><User className="w-3.5 h-3.5" aria-hidden="true" /> Contacts{contacts.length > 0 ? ` (${contacts.length})` : ''}</>)}
+                        {tab === 'groups' && (<><Users className="w-3.5 h-3.5" aria-hidden="true" /> Groups{groups.length > 0 ? ` (${groups.length})` : ''}</>)}
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Manual Tab */}
@@ -797,8 +849,9 @@ export default function BroadcastPage() {
                       </div>
                     )}
                     {selectedContacts.size > 0 && (
-                      <p className="text-xs text-primary font-medium">
-                        ✅ {selectedContacts.size} contact{selectedContacts.size !== 1 ? 's' : ''} selected
+                      <p className="inline-flex items-center gap-1.5 text-xs text-primary font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        {selectedContacts.size} contact{selectedContacts.size !== 1 ? 's' : ''} selected
                       </p>
                     )}
                   </div>
@@ -847,15 +900,19 @@ export default function BroadcastPage() {
                                   {group.participantCount ? `${group.participantCount} members` : 'Group'}
                                 </div>
                               </div>
-                              <Badge variant="outline" className="text-xs">👥</Badge>
+                              <Badge variant="outline" className="text-xs gap-1">
+                                <Users className="w-3 h-3" aria-hidden="true" />
+                                Group
+                              </Badge>
                             </label>
                           );
                         })}
                       </div>
                     )}
                     {selectedGroups.size > 0 && (
-                      <p className="text-xs text-primary font-medium">
-                        ✅ {selectedGroups.size} group{selectedGroups.size !== 1 ? 's' : ''} selected
+                      <p className="inline-flex items-center gap-1.5 text-xs text-primary font-medium">
+                        <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        {selectedGroups.size} group{selectedGroups.size !== 1 ? 's' : ''} selected
                       </p>
                     )}
                   </div>
@@ -863,18 +920,20 @@ export default function BroadcastPage() {
 
                 {/* Total count */}
                 {getTotalRecipientCount() > 0 && (
-                  <div className="flex items-center gap-2 p-2 bg-primary/5 rounded-lg">
+                  <div className="flex items-center gap-2 p-2 bg-primary/10 border border-primary/20 rounded-lg">
+                    <Mail className="w-4 h-4 text-primary" aria-hidden="true" />
                     <span className="text-sm font-medium text-primary">
-                      📨 Total: {getTotalRecipientCount()} recipient{getTotalRecipientCount() !== 1 ? 's' : ''}
+                      Total: {getTotalRecipientCount()} recipient{getTotalRecipientCount() !== 1 ? 's' : ''}
                     </span>
                   </div>
                 )}
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleCreateBroadcast} disabled={sending}>
-                {sending ? (uploadProgress || 'Sending...') : `🚀 Send to ${getTotalRecipientCount()} recipient${getTotalRecipientCount() !== 1 ? 's' : ''}`}
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)} className="cursor-pointer">Cancel</Button>
+              <Button onClick={handleCreateBroadcast} disabled={sending} className="gap-2 cursor-pointer">
+                <Send className="w-4 h-4" aria-hidden="true" />
+                {sending ? (uploadProgress || 'Sending...') : `Send to ${getTotalRecipientCount()} recipient${getTotalRecipientCount() !== 1 ? 's' : ''}`}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -883,15 +942,17 @@ export default function BroadcastPage() {
 
       {/* No connected profiles warning */}
       {profiles.length === 0 && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl p-6">
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-6">
           <div className="flex items-start gap-3">
-            <span className="text-2xl">⚠️</span>
+            <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-400">
+              <AlertTriangle className="w-5 h-5" aria-hidden="true" />
+            </div>
             <div>
-              <h3 className="font-semibold text-amber-800 dark:text-amber-300">No Connected Profiles</h3>
-              <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">
+              <h3 className="font-semibold text-amber-300">No Connected Profiles</h3>
+              <p className="text-sm text-amber-200/80 mt-1">
                 You need at least one connected WhatsApp profile to send broadcasts.
               </p>
-              <Button variant="outline" size="sm" className="mt-3" asChild>
+              <Button variant="outline" size="sm" className="mt-3 cursor-pointer" asChild>
                 <a href="/dashboard/profiles/new">Connect Profile</a>
               </Button>
             </div>
@@ -909,23 +970,31 @@ export default function BroadcastPage() {
         return (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-card rounded-2xl p-5 border border-border">
-          <div className="text-2xl mb-1">📊</div>
-          <div className="text-2xl font-bold text-foreground">{totalBroadcasts}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 text-sky-400">
+            <BarChart3 className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{totalBroadcasts}</div>
           <div className="text-sm text-muted-foreground">Total Broadcasts</div>
         </div>
         <div className="bg-card rounded-2xl p-5 border border-border">
-          <div className="text-2xl mb-1">📨</div>
-          <div className="text-2xl font-bold text-foreground">{totalSent}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-400">
+            <Mail className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{totalSent}</div>
           <div className="text-sm text-muted-foreground">Messages Sent</div>
         </div>
         <div className="bg-card rounded-2xl p-5 border border-border">
-          <div className="text-2xl mb-1">✅</div>
-          <div className="text-2xl font-bold text-green-600">{deliveryRate}%</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <CheckCircle2 className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-primary tabular-nums">{deliveryRate}%</div>
           <div className="text-sm text-muted-foreground">Delivery Rate</div>
         </div>
         <div className="bg-card rounded-2xl p-5 border border-border">
-          <div className="text-2xl mb-1">📅</div>
-          <div className="text-2xl font-bold text-foreground">{scheduledCount}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+            <Calendar className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{scheduledCount}</div>
           <div className="text-sm text-muted-foreground">Scheduled</div>
         </div>
       </div>
@@ -939,7 +1008,9 @@ export default function BroadcastPage() {
         </div>
         {broadcasts.length === 0 ? (
           <div className="p-12 text-center">
-            <div className="text-5xl mb-4">📢</div>
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+              <Megaphone className="w-8 h-8" aria-hidden="true" />
+            </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">No broadcasts yet</h3>
             <p className="text-muted-foreground mb-4">
               Create your first broadcast to reach multiple contacts at once
@@ -989,7 +1060,7 @@ export default function BroadcastPage() {
                     const profileData = await profileRes.json();
                     if (profileData.status !== 'connected') {
                       toast({ 
-                        title: '❌ WhatsApp not connected', 
+                        title: 'WhatsApp not connected',
                         description: `Profile "${profileData.displayName || 'Unknown'}" is ${profileData.status}. Please connect WhatsApp first from the Profiles page.`,
                         variant: 'destructive' 
                       });
@@ -1094,18 +1165,18 @@ export default function BroadcastPage() {
               };
 
               return (
-              <div key={broadcast.id} className="p-4 flex items-center justify-between hover:bg-secondary/30 transition-colors">
-                <div>
-                  <div className="font-medium text-foreground">{broadcast.name}</div>
+              <div key={broadcast.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-secondary/30 transition-colors group">
+                <div className="min-w-0">
+                  <div className="font-medium text-foreground truncate">{broadcast.name}</div>
                   <div className="text-sm text-muted-foreground">
-                    {recipientCount} recipients • {new Date(broadcast.createdAt).toLocaleDateString()}
+                    {recipientCount} recipients · {new Date(broadcast.createdAt).toLocaleDateString()}
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right text-sm">
-                    <div className="text-green-600">{sentCount} sent</div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  <div className="text-right text-sm tabular-nums">
+                    <div className="text-primary">{sentCount} sent</div>
                     {failedCount > 0 && (
-                      <div className="text-red-600">{failedCount} failed</div>
+                      <div className="text-destructive">{failedCount} failed</div>
                     )}
                   </div>
                   {getStatusBadge(broadcast.status)}
@@ -1115,10 +1186,11 @@ export default function BroadcastPage() {
                       size="sm"
                       onClick={handleSendExisting}
                       disabled={sending}
-                      className="bg-green-600 hover:bg-green-700"
-                      title="Send this broadcast now"
+                      className="gap-1.5 cursor-pointer"
+                      aria-label="Send this broadcast now"
                     >
-                      ▶️ Send
+                      <Send className="w-3.5 h-3.5" aria-hidden="true" />
+                      Send
                     </Button>
                   )}
                   {['completed', 'failed'].includes(broadcast.status) && (
@@ -1127,19 +1199,21 @@ export default function BroadcastPage() {
                       size="sm"
                       onClick={handleSendExisting}
                       disabled={sending}
-                      title="Resend this broadcast"
+                      className="gap-1.5 cursor-pointer"
+                      aria-label="Resend this broadcast"
                     >
-                      🔄 Resend
+                      <RotateCw className="w-3.5 h-3.5" aria-hidden="true" />
+                      Resend
                     </Button>
                   )}
                   <Button
                     variant="ghost"
                     size="sm"
                     onClick={handleDelete}
-                    className="text-red-500 hover:text-red-600 hover:bg-red-50"
-                    title="Delete broadcast"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                    aria-label={`Delete broadcast ${broadcast.name}`}
                   >
-                    🗑️
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </Button>
                 </div>
               </div>
@@ -1151,22 +1225,25 @@ export default function BroadcastPage() {
 
       {/* Tips */}
       <div className="bg-card rounded-2xl p-6 border border-border">
-        <h3 className="font-semibold text-foreground mb-3">💡 Broadcast Tips</h3>
+        <h3 className="flex items-center gap-2 font-semibold text-foreground mb-3">
+          <Lightbulb className="w-4 h-4 text-primary" aria-hidden="true" />
+          Broadcast Tips
+        </h3>
         <ul className="space-y-2 text-sm text-muted-foreground">
           <li className="flex items-start gap-2">
-            <span className="text-primary">•</span>
+            <span className="text-primary mt-0.5" aria-hidden="true">•</span>
             You can select recipients from your Contacts or Groups — no need to type numbers manually
           </li>
           <li className="flex items-start gap-2">
-            <span className="text-primary">•</span>
+            <span className="text-primary mt-0.5" aria-hidden="true">•</span>
             Keep messages concise - shorter messages have higher engagement
           </li>
           <li className="flex items-start gap-2">
-            <span className="text-primary">•</span>
+            <span className="text-primary mt-0.5" aria-hidden="true">•</span>
             Messages are sent with a 1.5s delay between each to avoid rate limiting
           </li>
           <li className="flex items-start gap-2">
-            <span className="text-primary">•</span>
+            <span className="text-primary mt-0.5" aria-hidden="true">•</span>
             Always comply with WhatsApp&apos;s messaging policies to avoid account restrictions
           </li>
         </ul>

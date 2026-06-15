@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { Plus, RefreshCw, Lightbulb, Smartphone, Wifi, WifiOff } from 'lucide-react';
 import { api, Profile } from '@/lib/api';
 import { ProfileCard, ProfileGrid } from '@/components/ui/profile-card';
 import { Button } from '@/components/ui/button';
@@ -99,22 +100,17 @@ export default function ProfilesPage() {
             size="sm"
             onClick={() => fetchProfiles(true)}
             disabled={refreshing}
+            aria-label="Refresh profile list"
           >
-            <svg 
-              className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} 
-              fill="none" 
-              stroke="currentColor" 
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+            <RefreshCw
+              className={`w-4 h-4 mr-2 ${refreshing ? 'mw-spin' : ''}`}
+              aria-hidden="true"
+            />
             Refresh
           </Button>
           <Link href="/dashboard/profiles/new">
             <Button className="gap-2">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
+              <Plus className="w-5 h-5" aria-hidden="true" />
               Add Profile
             </Button>
           </Link>
@@ -123,22 +119,25 @@ export default function ProfilesPage() {
 
       {/* Stats Bar */}
       {!loading && profiles.length > 0 && (
-        <div className="flex items-center gap-6 py-3 px-4 bg-secondary/30 rounded-xl text-sm">
-          <div>
-            <span className="font-semibold text-foreground">{profiles.length}</span>
-            <span className="text-muted-foreground ml-1">Total profiles</span>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 px-4 bg-secondary/40 border border-border/60 rounded-xl text-sm">
+          <div className="flex items-center gap-2">
+            <Smartphone className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
+            <span className="font-semibold text-foreground tabular-nums">{profiles.length}</span>
+            <span className="text-muted-foreground">Total</span>
           </div>
-          <div>
-            <span className="font-semibold text-emerald-600">
+          <div className="flex items-center gap-2">
+            <Wifi className="w-4 h-4 text-primary" aria-hidden="true" />
+            <span className="font-semibold text-primary tabular-nums">
               {profiles.filter(p => p.status === 'connected').length}
             </span>
-            <span className="text-muted-foreground ml-1">Connected</span>
+            <span className="text-muted-foreground">Connected</span>
           </div>
-          <div>
-            <span className="font-semibold text-gray-500">
+          <div className="flex items-center gap-2">
+            <WifiOff className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
+            <span className="font-semibold text-muted-foreground tabular-nums">
               {profiles.filter(p => p.status === 'disconnected').length}
             </span>
-            <span className="text-muted-foreground ml-1">Disconnected</span>
+            <span className="text-muted-foreground">Disconnected</span>
           </div>
         </div>
       )}
@@ -173,18 +172,21 @@ export default function ProfilesPage() {
       {/* Quick Tips */}
       {!loading && profiles.length > 0 && (
         <div className="bg-card rounded-2xl p-6 border border-border">
-          <h3 className="font-semibold text-foreground mb-3">💡 Tips</h3>
+          <h3 className="flex items-center gap-2 font-semibold text-foreground mb-3">
+            <Lightbulb className="w-4 h-4 text-primary" aria-hidden="true" />
+            Tips
+          </h3>
           <ul className="space-y-2 text-sm text-muted-foreground">
             <li className="flex items-start gap-2">
-              <span className="text-primary">•</span>
+              <span className="text-primary mt-0.5" aria-hidden="true">•</span>
               Keep your phone connected to the internet for stable messaging
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-primary">•</span>
+              <span className="text-primary mt-0.5" aria-hidden="true">•</span>
               Profiles auto-reconnect when your server restarts
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-primary">•</span>
+              <span className="text-primary mt-0.5" aria-hidden="true">•</span>
               Use the API to send messages programmatically
             </li>
           </ul>
@@ -193,4 +195,3 @@ export default function ProfilesPage() {
     </div>
   );
 }
-

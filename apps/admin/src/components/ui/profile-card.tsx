@@ -3,9 +3,9 @@
 
 'use client';
 
+import { Plug, Power, Eye, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusType } from "@/components/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -106,45 +106,37 @@ export function ProfileCard({
       {/* Actions */}
       <div className="flex items-center gap-3 mt-6 pt-4 border-t border-border">
         {status === 'offline' ? (
-          <Button 
-            className="flex-1"
+          <Button
+            className="flex-1 gap-2 cursor-pointer"
             onClick={() => onConnect?.(id)}
           >
-            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
+            <Plug className="w-4 h-4" aria-hidden="true" />
             Connect
           </Button>
         ) : status === 'online' ? (
-          <Button 
+          <Button
             variant="outline"
-            className="flex-1"
+            className="flex-1 gap-2 cursor-pointer"
             onClick={() => onDisconnect?.(id)}
           >
-            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-            </svg>
+            <Power className="w-4 h-4" aria-hidden="true" />
             Disconnect
           </Button>
         ) : (
-          <Button variant="outline" className="flex-1" disabled>
-            <svg className="w-4 h-4 mr-2 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
+          <Button variant="outline" className="flex-1 gap-2" disabled>
+            <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
             Connecting...
           </Button>
         )}
-        
-        <Button 
-          variant="ghost" 
+
+        <Button
+          variant="ghost"
           size="icon"
           onClick={() => onView?.(id)}
-          className="flex-shrink-0"
+          className="flex-shrink-0 cursor-pointer"
+          aria-label={`View ${name} details`}
         >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
+          <Eye className="w-5 h-5" aria-hidden="true" />
         </Button>
       </div>
     </div>

@@ -5,6 +5,40 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import {
+  Plus,
+  Search,
+  Wrench,
+  Bot,
+  Trash2,
+  Upload,
+  Loader2,
+  X,
+  MapPin,
+  CheckCircle2,
+  AlertTriangle,
+  User,
+  UserPlus,
+  Inbox,
+  MessageSquare,
+  Image as ImageIcon,
+  Video,
+  Music,
+  FileText,
+  BarChart3,
+  Tag,
+  Tags,
+  UserCog,
+  Webhook as WebhookIcon,
+  Timer,
+  Regex,
+  Type as TypeIcon,
+  Pencil,
+  PlayCircle,
+  PauseCircle,
+  Activity,
+  type LucideIcon,
+} from 'lucide-react';
 import { api, Profile, Automation } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,29 +64,31 @@ import {
 import { useToast } from '@/hooks/use-toast';
 
 // Trigger types
-const TRIGGER_TYPES = [
-  { value: 'keyword', label: 'Keyword Match', icon: '🔤', description: 'Trigger when message contains specific keywords' },
-  { value: 'regex', label: 'Pattern Match', icon: '🔣', description: 'Trigger using regular expression pattern' },
-  { value: 'new_contact', label: 'New Contact', icon: '👤', description: 'Trigger when a new contact messages' },
-  { value: 'all', label: 'All Messages', icon: '📨', description: 'Trigger on every incoming message' },
+type TriggerDef = { value: string; label: string; Icon: LucideIcon; tone: string; description: string };
+const TRIGGER_TYPES: TriggerDef[] = [
+  { value: 'keyword',     label: 'Keyword Match', Icon: TypeIcon, tone: 'text-primary',      description: 'Trigger when message contains specific keywords' },
+  { value: 'regex',       label: 'Pattern Match', Icon: Regex,    tone: 'text-violet-300',   description: 'Trigger using regular expression pattern' },
+  { value: 'new_contact', label: 'New Contact',   Icon: UserPlus, tone: 'text-sky-300',      description: 'Trigger when a new contact messages' },
+  { value: 'all',         label: 'All Messages',  Icon: Inbox,    tone: 'text-amber-300',    description: 'Trigger on every incoming message' },
 ];
 
 // Action types
-const ACTION_TYPES = [
-  { value: 'reply', label: 'Send Reply', icon: '💬', description: 'Send an automatic reply message' },
-  { value: 'send_image', label: 'Send Image', icon: '🖼️', description: 'Send an image with optional caption' },
-  { value: 'send_video', label: 'Send Video', icon: '🎬', description: 'Send a video with optional caption' },
-  { value: 'send_audio', label: 'Send Audio', icon: '🎵', description: 'Send audio file or voice note' },
-  { value: 'send_document', label: 'Send Document', icon: '📄', description: 'Send a document file' },
-  { value: 'send_poll', label: 'Send Poll', icon: '📊', description: 'Send an interactive poll' },
-  { value: 'send_location', label: 'Send Location', icon: '📍', description: 'Send a location pin' },
-  { value: 'send_contact', label: 'Send Contact', icon: '👤', description: 'Send a contact card (vCard)' },
-  { value: 'add_tag', label: 'Add Tag', icon: '🏷️', description: 'Add a tag to the contact' },
-  { value: 'remove_tag', label: 'Remove Tag', icon: '🏷️', description: 'Remove a tag from the contact' },
-  { value: 'assign_agent', label: 'Assign Agent', icon: '🧑‍💼', description: 'Assign conversation to a team member' },
-  { value: 'ai_reply', label: 'AI Reply', icon: '🤖', description: 'Generate AI-powered reply using OpenAI' },
-  { value: 'webhook', label: 'Call Webhook', icon: '🌐', description: 'Send data to external URL' },
-  { value: 'delay', label: 'Add Delay', icon: '⏱️', description: 'Wait before next action' },
+type ActionDef = { value: string; label: string; Icon: LucideIcon; tone: string; description: string };
+const ACTION_TYPES: ActionDef[] = [
+  { value: 'reply',         label: 'Send Reply',     Icon: MessageSquare, tone: 'text-primary',    description: 'Send an automatic reply message' },
+  { value: 'send_image',    label: 'Send Image',     Icon: ImageIcon,     tone: 'text-sky-300',    description: 'Send an image with optional caption' },
+  { value: 'send_video',    label: 'Send Video',     Icon: Video,         tone: 'text-rose-300',   description: 'Send a video with optional caption' },
+  { value: 'send_audio',    label: 'Send Audio',     Icon: Music,         tone: 'text-amber-300',  description: 'Send audio file or voice note' },
+  { value: 'send_document', label: 'Send Document',  Icon: FileText,      tone: 'text-violet-300', description: 'Send a document file' },
+  { value: 'send_poll',     label: 'Send Poll',      Icon: BarChart3,     tone: 'text-violet-300', description: 'Send an interactive poll' },
+  { value: 'send_location', label: 'Send Location',  Icon: MapPin,        tone: 'text-emerald-300',description: 'Send a location pin' },
+  { value: 'send_contact',  label: 'Send Contact',   Icon: User,          tone: 'text-sky-300',    description: 'Send a contact card (vCard)' },
+  { value: 'add_tag',       label: 'Add Tag',        Icon: Tag,           tone: 'text-primary',    description: 'Add a tag to the contact' },
+  { value: 'remove_tag',    label: 'Remove Tag',     Icon: Tags,          tone: 'text-orange-300', description: 'Remove a tag from the contact' },
+  { value: 'assign_agent',  label: 'Assign Agent',   Icon: UserCog,       tone: 'text-violet-300', description: 'Assign conversation to a team member' },
+  { value: 'ai_reply',      label: 'AI Reply',       Icon: Bot,           tone: 'text-sky-300',    description: 'Generate AI-powered reply using OpenAI' },
+  { value: 'webhook',       label: 'Call Webhook',   Icon: WebhookIcon,   tone: 'text-amber-300',  description: 'Send data to external URL' },
+  { value: 'delay',         label: 'Add Delay',      Icon: Timer,         tone: 'text-muted-foreground', description: 'Wait before next action' },
 ];
 
 export default function AutomationPage() {
@@ -292,14 +328,13 @@ export default function AutomationPage() {
         </div>
         <div className="flex items-center gap-2">
           <Link href="/dashboard/automation/builder">
-            <Button variant="outline" className="gap-2">
-              🔧 Visual Builder
+            <Button variant="outline" className="gap-2 cursor-pointer">
+              <Wrench className="w-4 h-4" aria-hidden="true" />
+              Visual Builder
             </Button>
           </Link>
-          <Button onClick={openCreateModal} className="bg-[#25D366] hover:bg-[#128C7E]">
-            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
+          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+            <Plus className="w-4 h-4" aria-hidden="true" />
             Create Automation
           </Button>
         </div>
@@ -321,14 +356,16 @@ export default function AutomationPage() {
         </Select>
 
         <div className="relative flex-1 max-w-md">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+            aria-hidden="true"
+          />
           <Input
             placeholder="Search automations..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="pl-10"
+            aria-label="Search automations"
           />
         </div>
       </div>
@@ -336,19 +373,31 @@ export default function AutomationPage() {
       {/* Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-foreground">{automations.length}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
+            <Bot className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{automations.length}</div>
           <div className="text-sm text-muted-foreground">Total Automations</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-green-600">{activeCount}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <PlayCircle className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-primary tabular-nums">{activeCount}</div>
           <div className="text-sm text-muted-foreground">Active</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-foreground">{automations.length - activeCount}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-muted-foreground/10 text-muted-foreground">
+            <PauseCircle className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{automations.length - activeCount}</div>
           <div className="text-sm text-muted-foreground">Inactive</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-foreground">{totalTriggers}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-300">
+            <Activity className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{totalTriggers}</div>
           <div className="text-sm text-muted-foreground">Total Triggers</div>
         </div>
       </div>
@@ -356,12 +405,15 @@ export default function AutomationPage() {
       {/* Automations List */}
       {filteredAutomations.length === 0 ? (
         <div className="bg-card rounded-2xl border border-border p-12 text-center">
-          <div className="text-6xl mb-4">🤖</div>
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <Bot className="w-8 h-8" aria-hidden="true" />
+          </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No Automations Yet</h3>
           <p className="text-muted-foreground mb-6">
             Create automated workflows to respond to messages automatically
           </p>
-          <Button onClick={openCreateModal} className="bg-[#25D366] hover:bg-[#128C7E]">
+          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+            <Plus className="w-4 h-4" aria-hidden="true" />
             Create Your First Automation
           </Button>
         </div>
@@ -369,22 +421,29 @@ export default function AutomationPage() {
         <div className="space-y-4">
           {filteredAutomations.map(automation => {
             const trigger = TRIGGER_TYPES.find(t => t.value === automation.triggerType) || TRIGGER_TYPES[0];
-            
+            const TriggerIcon = trigger.Icon;
+
             return (
               <div
                 key={automation.id}
-                className="bg-card rounded-xl border border-border p-5 hover:shadow-lg transition-all duration-200"
+                className="bg-card rounded-xl border border-border p-5 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 transition-all duration-200 group"
               >
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                   {/* Left side */}
-                  <div className="flex items-start gap-4 flex-1">
-                    <div className="w-12 h-12 rounded-xl bg-secondary/50 flex items-center justify-center text-2xl">
-                      {trigger.icon}
+                  <div className="flex items-start gap-4 flex-1 min-w-0">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-secondary/60 border border-border/60 flex-shrink-0">
+                      <TriggerIcon className={`w-5 h-5 ${trigger.tone}`} aria-hidden="true" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
                         <h3 className="font-semibold text-foreground truncate">{automation.name}</h3>
-                        <Badge variant={automation.isActive ? 'default' : 'secondary'} className={automation.isActive ? 'bg-green-500' : ''}>
+                        <Badge
+                          variant="secondary"
+                          className={automation.isActive
+                            ? 'gap-1.5 bg-primary/15 text-primary border border-primary/30'
+                            : 'gap-1.5 bg-secondary text-muted-foreground border border-border'}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${automation.isActive ? 'bg-primary' : 'bg-muted-foreground/60'}`} aria-hidden="true" />
                           {automation.isActive ? 'Active' : 'Inactive'}
                         </Badge>
                       </div>
@@ -397,13 +456,13 @@ export default function AutomationPage() {
                           </span>
                         )}
                       </p>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
                         <span>Actions: {automation.actions?.length || 0}</span>
-                        <span>•</span>
+                        <span aria-hidden="true">·</span>
                         <span>Triggered: {automation.stats?.triggerCount || 0} times</span>
                         {automation.stats?.lastTriggered && (
                           <>
-                            <span>•</span>
+                            <span aria-hidden="true">·</span>
                             <span>Last: {new Date(automation.stats.lastTriggered).toLocaleString()}</span>
                           </>
                         )}
@@ -412,21 +471,23 @@ export default function AutomationPage() {
                   </div>
 
                   {/* Right side - Actions */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-shrink-0">
                     <Switch
                       checked={automation.isActive}
                       onCheckedChange={() => handleToggle(automation)}
+                      aria-label={`Toggle ${automation.name}`}
                     />
-                    <Button variant="outline" size="sm" onClick={() => openEditModal(automation)}>
+                    <Button variant="outline" size="sm" onClick={() => openEditModal(automation)} className="cursor-pointer">
                       Edit
                     </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleDelete(automation)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                      aria-label={`Delete ${automation.name}`}
                     >
-                      Delete
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
@@ -453,12 +514,12 @@ export default function AutomationPage() {
             {[1, 2, 3].map(s => (
               <div key={s} className="flex items-center flex-1">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-                  s <= step ? 'bg-[#25D366] text-white' : 'bg-secondary text-muted-foreground'
+                  s <= step ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground'
                 }`}>
                   {s}
                 </div>
                 {s < 3 && (
-                  <div className={`flex-1 h-1 mx-2 rounded ${s < step ? 'bg-[#25D366]' : 'bg-secondary'}`} />
+                  <div className={`flex-1 h-1 mx-2 rounded ${s < step ? 'bg-primary' : 'bg-secondary'}`} />
                 )}
               </div>
             ))}
@@ -468,10 +529,11 @@ export default function AutomationPage() {
           {step === 1 && (
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Automation Name <span className="text-red-500">*</span>
+                <label htmlFor="automation-name" className="text-sm font-medium text-foreground">
+                  Automation Name <span className="text-destructive" aria-label="required">*</span>
                 </label>
                 <Input
+                  id="automation-name"
                   placeholder="e.g., Welcome Message for New Contacts"
                   value={formData.name}
                   onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
@@ -479,27 +541,36 @@ export default function AutomationPage() {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">Trigger Type</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {TRIGGER_TYPES.map(trigger => (
-                    <div
-                      key={trigger.value}
-                      onClick={() => setFormData(prev => ({ ...prev, triggerType: trigger.value }))}
-                      className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                        formData.triggerType === trigger.value 
-                          ? 'border-[#25D366] bg-[#25D366]/5' 
-                          : 'border-border hover:border-[#25D366]/50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">{trigger.icon}</span>
-                        <div>
-                          <div className="font-medium text-foreground">{trigger.label}</div>
-                          <div className="text-xs text-muted-foreground">{trigger.description}</div>
+                <span className="text-sm font-medium text-foreground">Trigger Type</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" role="radiogroup" aria-label="Trigger type">
+                  {TRIGGER_TYPES.map(trigger => {
+                    const TriggerIcon = trigger.Icon;
+                    const active = formData.triggerType === trigger.value;
+                    return (
+                      <button
+                        key={trigger.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setFormData(prev => ({ ...prev, triggerType: trigger.value }))}
+                        className={`p-4 rounded-xl border text-left transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 ${
+                          active
+                            ? 'border-primary bg-primary/10 ring-1 ring-primary/40'
+                            : 'border-border bg-secondary/30 hover:border-border/80 hover:bg-secondary/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className={`flex h-9 w-9 items-center justify-center rounded-lg bg-secondary/60 ${trigger.tone}`}>
+                            <TriggerIcon className="w-4 h-4" aria-hidden="true" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="font-medium text-foreground">{trigger.label}</div>
+                            <div className="text-xs text-muted-foreground">{trigger.description}</div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -524,9 +595,16 @@ export default function AutomationPage() {
                     {formData.triggerConfig.keywords.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {formData.triggerConfig.keywords.map((keyword, i) => (
-                          <Badge key={i} variant="secondary" className="px-3 py-1">
+                          <Badge key={i} variant="secondary" className="px-3 py-1 gap-1.5">
                             {keyword}
-                            <button onClick={() => removeKeyword(keyword)} className="ml-2 hover:text-red-500">×</button>
+                            <button
+                              type="button"
+                              onClick={() => removeKeyword(keyword)}
+                              aria-label={`Remove keyword ${keyword}`}
+                              className="inline-flex items-center hover:text-destructive cursor-pointer"
+                            >
+                              <X className="w-3 h-3" aria-hidden="true" />
+                            </button>
                           </Badge>
                         ))}
                       </div>
@@ -557,9 +635,11 @@ export default function AutomationPage() {
               )}
 
               {formData.triggerType === 'new_contact' && (
-                <div className="bg-secondary/30 rounded-xl p-4">
+                <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-4">
                   <div className="flex items-center gap-3">
-                    <span className="text-3xl">👤</span>
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sky-500/20 text-sky-300">
+                      <UserPlus className="w-5 h-5" aria-hidden="true" />
+                    </span>
                     <div>
                       <div className="font-medium text-foreground">New Contact Trigger</div>
                       <div className="text-sm text-muted-foreground">
@@ -571,9 +651,11 @@ export default function AutomationPage() {
               )}
 
               {formData.triggerType === 'all' && (
-                <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-xl p-4 border border-yellow-200 dark:border-yellow-800">
+                <div className="bg-amber-500/10 rounded-xl p-4 border border-amber-500/30">
                   <div className="flex items-center gap-3">
-                    <span className="text-3xl">⚠️</span>
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20 text-amber-300">
+                      <AlertTriangle className="w-5 h-5" aria-hidden="true" />
+                    </span>
                     <div>
                       <div className="font-medium text-foreground">All Messages Trigger</div>
                       <div className="text-sm text-muted-foreground">
@@ -590,37 +672,41 @@ export default function AutomationPage() {
           {step === 3 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">Actions ({formData.actions.length})</label>
+                <span className="text-sm font-medium text-foreground tabular-nums">Actions ({formData.actions.length})</span>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="gap-1.5 cursor-pointer"
                   onClick={() => setFormData(prev => ({
                     ...prev,
                     actions: [...prev.actions, { type: 'reply', config: { message: '' } }],
                   }))}
                 >
-                  ➕ Add Action
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />
+                  Add Action
                 </Button>
               </div>
 
               <div className="space-y-4 max-h-[50vh] overflow-y-auto pr-1">
                 {formData.actions.map((action, idx) => (
-                  <div key={idx} className="border rounded-lg p-3 space-y-3 relative bg-muted/20">
+                  <div key={idx} className="border border-border rounded-lg p-3 space-y-3 relative bg-secondary/30">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-muted-foreground">Action #{idx + 1}</span>
+                      <span className="text-xs font-semibold text-muted-foreground tabular-nums">Action #{idx + 1}</span>
                       {formData.actions.length > 1 && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          className="text-destructive h-6 px-2 text-xs"
+                          className="gap-1 text-destructive hover:text-destructive hover:bg-destructive/10 h-7 px-2 text-xs cursor-pointer"
                           onClick={() => setFormData(prev => ({
                             ...prev,
                             actions: prev.actions.filter((_, i) => i !== idx),
                           }))}
+                          aria-label={`Remove action ${idx + 1}`}
                         >
-                          🗑️ Remove
+                          <Trash2 className="w-3 h-3" aria-hidden="true" />
+                          Remove
                         </Button>
                       )}
                     </div>
@@ -638,11 +724,17 @@ export default function AutomationPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {ACTION_TYPES.map(at => (
-                          <SelectItem key={at.value} value={at.value}>
-                            {at.icon} {at.label}
-                          </SelectItem>
-                        ))}
+                        {ACTION_TYPES.map(at => {
+                          const Icon = at.Icon;
+                          return (
+                            <SelectItem key={at.value} value={at.value}>
+                              <span className="inline-flex items-center gap-2">
+                                <Icon className={`w-3.5 h-3.5 ${at.tone}`} aria-hidden="true" />
+                                {at.label}
+                              </span>
+                            </SelectItem>
+                          );
+                        })}
                       </SelectContent>
                     </Select>
 
@@ -676,9 +768,9 @@ export default function AutomationPage() {
                           <Button type="button" variant="outline" disabled={uploadingFile} onClick={async () => {
                             const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*';
                             input.onchange = async (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (!file) return; setUploadingFile(true); try { const res = await api.uploadMedia(file); if (res.data?.url) { updateAction(idx, 'url', res.data.url); updateAction(idx, 'mimetype', res.data.mimeType); toast({ title: 'Uploaded' }); } } catch { toast({ title: 'Upload failed', variant: 'destructive' }); } setUploadingFile(false); }; input.click();
-                          }}>{uploadingFile ? '⏳' : '📁'} Upload</Button>
+                          }}>{uploadingFile ? (<><Loader2 className="w-3.5 h-3.5 mw-spin mr-1" aria-hidden="true" />Uploading</>) : (<><Upload className="w-3.5 h-3.5 mr-1" aria-hidden="true" />Upload</>)}</Button>
                         </div>
-                        {action.config?.url && <p className="text-xs text-muted-foreground truncate">✅ {action.config.url}</p>}
+                        {action.config?.url && <p className="inline-flex items-center gap-1.5 text-xs text-primary truncate"><CheckCircle2 className="w-3 h-3 flex-shrink-0" aria-hidden="true" />{action.config.url}</p>}
                         <Input placeholder="Caption (optional)" value={action.config?.caption || ''} onChange={e => updateAction(idx, 'caption', e.target.value)} />
                       </div>
                     )}
@@ -691,9 +783,9 @@ export default function AutomationPage() {
                           <Button type="button" variant="outline" disabled={uploadingFile} onClick={async () => {
                             const input = document.createElement('input'); input.type = 'file'; input.accept = 'video/*';
                             input.onchange = async (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (!file) return; setUploadingFile(true); try { const res = await api.uploadMedia(file); if (res.data?.url) { updateAction(idx, 'url', res.data.url); updateAction(idx, 'mimetype', res.data.mimeType); toast({ title: 'Uploaded' }); } } catch { toast({ title: 'Upload failed', variant: 'destructive' }); } setUploadingFile(false); }; input.click();
-                          }}>{uploadingFile ? '⏳' : '📁'} Upload</Button>
+                          }}>{uploadingFile ? (<><Loader2 className="w-3.5 h-3.5 mw-spin mr-1" aria-hidden="true" />Uploading</>) : (<><Upload className="w-3.5 h-3.5 mr-1" aria-hidden="true" />Upload</>)}</Button>
                         </div>
-                        {action.config?.url && <p className="text-xs text-muted-foreground truncate">✅ {action.config.url}</p>}
+                        {action.config?.url && <p className="inline-flex items-center gap-1.5 text-xs text-primary truncate"><CheckCircle2 className="w-3 h-3 flex-shrink-0" aria-hidden="true" />{action.config.url}</p>}
                         <Input placeholder="Caption (optional)" value={action.config?.caption || ''} onChange={e => updateAction(idx, 'caption', e.target.value)} />
                       </div>
                     )}
@@ -706,9 +798,9 @@ export default function AutomationPage() {
                           <Button type="button" variant="outline" disabled={uploadingFile} onClick={async () => {
                             const input = document.createElement('input'); input.type = 'file'; input.accept = 'audio/*';
                             input.onchange = async (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (!file) return; setUploadingFile(true); try { const res = await api.uploadMedia(file); if (res.data?.url) { updateAction(idx, 'url', res.data.url); updateAction(idx, 'mimetype', res.data.mimeType); toast({ title: 'Uploaded' }); } } catch { toast({ title: 'Upload failed', variant: 'destructive' }); } setUploadingFile(false); }; input.click();
-                          }}>{uploadingFile ? '⏳' : '📁'} Upload</Button>
+                          }}>{uploadingFile ? (<><Loader2 className="w-3.5 h-3.5 mw-spin mr-1" aria-hidden="true" />Uploading</>) : (<><Upload className="w-3.5 h-3.5 mr-1" aria-hidden="true" />Upload</>)}</Button>
                         </div>
-                        {action.config?.url && <p className="text-xs text-muted-foreground truncate">✅ {action.config.url}</p>}
+                        {action.config?.url && <p className="inline-flex items-center gap-1.5 text-xs text-primary truncate"><CheckCircle2 className="w-3 h-3 flex-shrink-0" aria-hidden="true" />{action.config.url}</p>}
                         <div className="flex items-center gap-2">
                           <input type="checkbox" id={`ptt-${idx}`} checked={action.config?.ptt || false} onChange={e => updateAction(idx, 'ptt', e.target.checked)} />
                           <label htmlFor={`ptt-${idx}`} className="text-sm">Send as voice note (PTT)</label>
@@ -724,9 +816,9 @@ export default function AutomationPage() {
                           <Button type="button" variant="outline" disabled={uploadingFile} onClick={async () => {
                             const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.zip';
                             input.onchange = async (e) => { const file = (e.target as HTMLInputElement).files?.[0]; if (!file) return; setUploadingFile(true); try { const res = await api.uploadMedia(file); if (res.data?.url) { updateAction(idx, 'url', res.data.url); updateAction(idx, 'filename', res.data.filename); updateAction(idx, 'mimetype', res.data.mimeType); toast({ title: 'Uploaded' }); } } catch { toast({ title: 'Upload failed', variant: 'destructive' }); } setUploadingFile(false); }; input.click();
-                          }}>{uploadingFile ? '⏳' : '📁'} Upload</Button>
+                          }}>{uploadingFile ? (<><Loader2 className="w-3.5 h-3.5 mw-spin mr-1" aria-hidden="true" />Uploading</>) : (<><Upload className="w-3.5 h-3.5 mr-1" aria-hidden="true" />Upload</>)}</Button>
                         </div>
-                        {action.config?.url && <p className="text-xs text-muted-foreground truncate">✅ {action.config.filename || action.config.url}</p>}
+                        {action.config?.url && <p className="inline-flex items-center gap-1.5 text-xs text-primary truncate"><CheckCircle2 className="w-3 h-3 flex-shrink-0" aria-hidden="true" />{action.config.filename || action.config.url}</p>}
                         <Input placeholder="Filename (e.g. document.pdf)" value={action.config?.filename || ''} onChange={e => updateAction(idx, 'filename', e.target.value)} />
                         <Input placeholder="Caption (optional)" value={action.config?.caption || ''} onChange={e => updateAction(idx, 'caption', e.target.value)} />
                       </div>
@@ -742,9 +834,18 @@ export default function AutomationPage() {
                             <div key={i} className="flex gap-2 items-center">
                               <span className="text-sm text-muted-foreground w-6">{i + 1}.</span>
                               <Input value={opt} readOnly className="flex-1" />
-                              <Button type="button" variant="ghost" size="sm" onClick={() => {
-                                const opts = [...(action.config?.options || [])]; opts.splice(i, 1); updateAction(idx, 'options', opts);
-                              }}>✕</Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  const opts = [...(action.config?.options || [])]; opts.splice(i, 1); updateAction(idx, 'options', opts);
+                                }}
+                                aria-label={`Remove option ${i + 1}`}
+                                className="text-destructive hover:bg-destructive/10 cursor-pointer"
+                              >
+                                <X className="w-3.5 h-3.5" aria-hidden="true" />
+                              </Button>
                             </div>
                           ))}
                         </div>
@@ -785,9 +886,10 @@ export default function AutomationPage() {
                               alert('Geolocation is not supported by this browser.');
                             }
                           }}
-                          className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1"
+                          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 hover:underline cursor-pointer"
                         >
-                          📱 Use current location
+                          <MapPin className="w-3 h-3" aria-hidden="true" />
+                          Use current location
                         </button>
                         <Input placeholder="Location name (optional)" value={action.config?.name || ''} onChange={e => updateAction(idx, 'name', e.target.value)} />
                         <Input placeholder="Address (optional)" value={action.config?.address || ''} onChange={e => updateAction(idx, 'address', e.target.value)} />
@@ -817,7 +919,12 @@ export default function AutomationPage() {
                           <SelectTrigger><SelectValue placeholder="Select a team member" /></SelectTrigger>
                           <SelectContent>
                             {users.map(u => (
-                              <SelectItem key={u.id} value={u.id}>👤 {u.name} ({u.email})</SelectItem>
+                              <SelectItem key={u.id} value={u.id}>
+                                <span className="inline-flex items-center gap-2">
+                                  <User className="w-3.5 h-3.5 text-muted-foreground" aria-hidden="true" />
+                                  {u.name} ({u.email})
+                                </span>
+                              </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -827,8 +934,11 @@ export default function AutomationPage() {
                     {/* AI Reply */}
                     {action.type === 'ai_reply' && (
                       <div className="space-y-2">
-                        <div className="p-2 bg-blue-50 dark:bg-blue-950/30 rounded border border-blue-200 dark:border-blue-800">
-                          <p className="text-xs font-medium text-blue-700 dark:text-blue-300">🤖 Uses OpenAI for contextual replies</p>
+                        <div className="p-2 bg-sky-500/10 rounded border border-sky-500/30">
+                          <p className="inline-flex items-center gap-1.5 text-xs font-medium text-sky-300">
+                            <Bot className="w-3.5 h-3.5" aria-hidden="true" />
+                            Uses OpenAI for contextual replies
+                          </p>
                         </div>
                         <Textarea placeholder="System prompt (optional)..." value={action.config?.systemPrompt || ''} onChange={e => updateAction(idx, 'systemPrompt', e.target.value)} rows={3} />
                       </div>
@@ -850,17 +960,20 @@ export default function AutomationPage() {
 
                     {/* Simulate Typing — for all send actions */}
                     {['reply', 'send_text', 'send_image', 'send_video', 'send_audio', 'send_document', 'send_location', 'send_contact', 'send_poll', 'ai_reply'].includes(action.type) && (
-                      <div className="mt-2 p-2.5 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-lg border border-indigo-100 dark:border-indigo-800/30">
+                      <div className="mt-2 p-2.5 bg-indigo-500/10 rounded-lg border border-indigo-500/20">
                         <label className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={action.config?.simulateTyping || false}
                             onChange={e => updateAction(idx, 'simulateTyping', e.target.checked)}
-                            className="w-4 h-4 accent-indigo-600"
+                            className="w-4 h-4 accent-indigo-400"
                           />
                           <div>
-                            <span className="text-xs font-medium text-foreground">⌨️ Simulate Typing</span>
-                            <p className="text-[10px] text-muted-foreground">Shows "typing..." indicator before sending</p>
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
+                              <Pencil className="w-3 h-3" aria-hidden="true" />
+                              Simulate Typing
+                            </span>
+                            <p className="text-[10px] text-muted-foreground">Shows &quot;typing...&quot; indicator before sending</p>
                           </div>
                         </label>
                         {action.config?.simulateTyping && (
@@ -887,26 +1000,38 @@ export default function AutomationPage() {
           <DialogFooter className="flex justify-between">
             <div>
               {step > 1 && (
-                <Button variant="outline" onClick={() => setStep(s => s - 1)}>
+                <Button variant="outline" onClick={() => setStep(s => s - 1)} className="cursor-pointer">
                   Back
                 </Button>
               )}
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setShowModal(false)}>
+              <Button variant="outline" onClick={() => setShowModal(false)} className="cursor-pointer">
                 Cancel
               </Button>
               {step < 3 ? (
-                <Button onClick={() => setStep(s => s + 1)} className="bg-[#25D366] hover:bg-[#128C7E]">
+                <Button onClick={() => setStep(s => s + 1)} className="cursor-pointer">
                   Next
                 </Button>
               ) : (
-                <Button 
-                  onClick={handleSave} 
+                <Button
+                  onClick={handleSave}
                   disabled={saving}
-                  className="bg-[#25D366] hover:bg-[#128C7E]"
+                  className="gap-2 cursor-pointer"
                 >
-                  {saving ? 'Saving...' : editingAutomation ? 'Update' : 'Create Automation'}
+                  {saving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
+                      Saving...
+                    </>
+                  ) : editingAutomation ? (
+                    'Update'
+                  ) : (
+                    <>
+                      <Plus className="w-4 h-4" aria-hidden="true" />
+                      Create Automation
+                    </>
+                  )}
                 </Button>
               )}
             </div>

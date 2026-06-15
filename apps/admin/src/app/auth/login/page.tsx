@@ -7,12 +7,19 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
+import {
+  Check,
+  ShieldCheck,
+  AlertCircle,
+  Loader2,
+  ArrowLeft,
+} from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
+
   // 2FA state
   const [requires2FA, setRequires2FA] = useState(false);
   const [userId, setUserId] = useState('');
@@ -78,9 +85,9 @@ export default function LoginPage() {
 
   const handleDigitChange = (index: number, value: string) => {
     if (!/^[0-9]*$/.test(value)) return;
-    
+
     const newDigits = [...totpDigits];
-    
+
     // Handle paste of full code
     if (value.length > 1) {
       const digits = value.slice(0, 6).split('');
@@ -88,22 +95,22 @@ export default function LoginPage() {
       setTotpDigits(newDigits);
       const lastIndex = Math.min(digits.length, 5);
       inputRefs.current[lastIndex]?.focus();
-      
+
       // Auto-submit if 6 digits pasted
       if (digits.length === 6) {
         setTimeout(() => handle2FAVerify(newDigits.join('')), 100);
       }
       return;
     }
-    
+
     newDigits[index] = value;
     setTotpDigits(newDigits);
-    
+
     // Auto-advance to next input
     if (value && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
-    
+
     // Auto-submit when all 6 digits entered
     const code = newDigits.join('');
     if (code.length === 6 && newDigits.every(d => d !== '')) {
@@ -120,7 +127,7 @@ export default function LoginPage() {
   const handle2FAVerify = async (codeOverride?: string) => {
     const code = codeOverride || (useBackupCode ? backupCode : totpDigits.join(''));
     if (!code || (!useBackupCode && code.length !== 6)) return;
-    
+
     setLoading(true);
     setError('');
 
@@ -151,7 +158,7 @@ export default function LoginPage() {
       localStorage.setItem('accessToken', accessToken);
       if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
       if (user) localStorage.setItem('user', JSON.stringify(user));
-      
+
       // Show success animation then redirect
       setVerified(true);
       setLoading(false);
@@ -168,62 +175,65 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-emerald-50 via-white to-green-50 dark:from-gray-950 dark:via-gray-900 dark:to-emerald-950 p-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4 relative overflow-hidden">
+      {/* Subtle ambient glow — pure CSS, no library */}
+      <div className="pointer-events-none absolute -top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-primary/10 blur-3xl rounded-full" aria-hidden="true" />
+
+      <div className="w-full max-w-md relative z-10">
         {/* Logo */}
         <div className="text-center mb-8">
-          <Link href="/" className="inline-flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden">
+          <Link href="/" className="inline-flex items-center gap-3 group">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden ring-1 ring-border bg-card">
               <Image src="/logo.png" alt="MultiWA" width={48} height={48} className="object-contain" />
             </div>
-            <span className="text-2xl font-bold text-gray-900 dark:text-white">
+            <span className="text-2xl font-bold text-foreground tracking-tight">
               MultiWA
             </span>
           </Link>
         </div>
 
         {/* Card */}
-        <div className="bg-white dark:bg-gray-800/50 rounded-3xl p-8 shadow-xl shadow-gray-200/50 dark:shadow-none border border-gray-100 dark:border-gray-800">
-          
+        <div className="bg-card rounded-3xl p-8 shadow-2xl shadow-black/40 border border-border">
+
           {verified ? (
             /* ========== Verified Success Screen ========== */
             <div className="py-8 text-center animate-fade-in">
-              <div className="w-20 h-20 mx-auto mb-5 rounded-full bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center shadow-lg shadow-emerald-200 dark:shadow-emerald-900/30" style={{ animation: 'pulse 1.5s ease-in-out infinite' }}>
-                <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
-                </svg>
+              <div
+                className="w-20 h-20 mx-auto mb-5 rounded-full bg-primary/15 border border-primary/30 text-primary flex items-center justify-center shadow-lg shadow-primary/20"
+                style={{ animation: 'pulse 1.5s ease-in-out infinite' }}
+              >
+                <Check className="w-10 h-10" aria-hidden="true" strokeWidth={3} />
               </div>
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Verified!</h2>
-              <p className="text-gray-500 dark:text-gray-400 text-sm">Redirecting to dashboard...</p>
+              <h2 className="text-xl font-bold text-foreground mb-2">Verified</h2>
+              <p className="text-muted-foreground text-sm">Redirecting to dashboard...</p>
               <div className="mt-4 flex justify-center">
-                <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                <Loader2 className="w-6 h-6 text-primary mw-spin" aria-hidden="true" />
               </div>
             </div>
           ) : requires2FA ? (
             /* ========== 2FA Verification Step ========== */
             <div className="animate-fade-in">
               <div className="text-center mb-6">
-                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-emerald-100 to-green-100 dark:from-emerald-900/30 dark:to-green-900/30 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" />
-                  </svg>
+                <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-primary/15 border border-primary/30 text-primary flex items-center justify-center">
+                  <ShieldCheck className="w-8 h-8" aria-hidden="true" />
                 </div>
-                <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                <h1 className="text-2xl font-bold text-foreground mb-2">
                   Two-Factor Authentication
                 </h1>
-                <p className="text-gray-500 dark:text-gray-400 text-sm">
-                  {useBackupCode 
-                    ? 'Enter one of your backup codes to verify your identity' 
+                <p className="text-muted-foreground text-sm">
+                  {useBackupCode
+                    ? 'Enter one of your backup codes to verify your identity'
                     : 'Enter the 6-digit code from your authenticator app'}
                 </p>
               </div>
 
               {error && (
-                <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm flex items-center gap-2">
-                  <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
-                  </svg>
-                  {error}
+                <div
+                  role="alert"
+                  className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-start gap-2"
+                >
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>{error}</span>
                 </div>
               )}
 
@@ -231,33 +241,37 @@ export default function LoginPage() {
                 /* Backup Code Input */
                 <div className="space-y-5">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    <label htmlFor="backup-code" className="block text-sm font-medium text-foreground mb-2">
                       Backup Code
                     </label>
                     <input
+                      id="backup-code"
                       type="text"
                       value={backupCode}
                       onChange={e => setBackupCode(e.target.value.toUpperCase())}
-                      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all font-mono text-center text-lg tracking-widest"
+                      className="w-full px-4 py-3 rounded-xl border border-border bg-secondary/40 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/60 transition-all font-mono text-center text-lg tracking-widest"
                       placeholder="XXXXXXXX"
                       autoFocus
+                      aria-label="Backup code"
                     />
                   </div>
                   <button
+                    type="button"
                     onClick={() => handle2FAVerify()}
                     disabled={loading || !backupCode}
-                    className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="w-full py-3.5 bg-primary text-primary-foreground font-semibold rounded-xl hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
                   >
                     {loading ? (
                       <span className="flex items-center justify-center gap-2">
-                        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                        <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
                         Verifying...
                       </span>
                     ) : 'Verify Backup Code'}
                   </button>
                   <button
+                    type="button"
                     onClick={() => { setUseBackupCode(false); setBackupCode(''); setError(''); }}
-                    className="w-full text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+                    className="w-full text-sm text-primary hover:text-primary/80 font-medium cursor-pointer"
                   >
                     Use authenticator app instead
                   </button>
@@ -281,20 +295,22 @@ export default function LoginPage() {
                           const paste = e.clipboardData.getData('text').replace(/\D/g, '');
                           handleDigitChange(0, paste);
                         }}
-                        className="w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all outline-none"
+                        className="w-12 h-14 text-center text-xl font-bold rounded-xl border-2 border-border bg-secondary/40 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all"
                         disabled={loading}
+                        aria-label={`Digit ${i + 1} of 6`}
                       />
                     ))}
                   </div>
-                  
+
                   <button
+                    type="button"
                     onClick={() => handle2FAVerify()}
                     disabled={loading || totpDigits.join('').length !== 6}
-                    className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    className="w-full py-3.5 bg-primary text-primary-foreground font-semibold rounded-xl hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
                   >
                     {loading ? (
                       <span className="flex items-center justify-center gap-2">
-                        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                        <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
                         Verifying...
                       </span>
                     ) : 'Verify'}
@@ -302,16 +318,19 @@ export default function LoginPage() {
 
                   <div className="flex items-center justify-between text-sm">
                     <button
+                      type="button"
                       onClick={() => { setUseBackupCode(true); setError(''); setTotpDigits(['', '', '', '', '', '']); }}
-                      className="text-emerald-600 hover:text-emerald-700 font-medium"
+                      className="text-primary hover:text-primary/80 font-medium cursor-pointer"
                     >
                       Use backup code
                     </button>
                     <button
+                      type="button"
                       onClick={() => { setRequires2FA(false); setError(''); setTotpDigits(['', '', '', '', '', '']); setUserId(''); }}
-                      className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground cursor-pointer"
                     >
-                      ← Back to login
+                      <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+                      Back to login
                     </button>
                   </div>
                 </div>
@@ -320,55 +339,63 @@ export default function LoginPage() {
           ) : (
             /* ========== Normal Login Form ========== */
             <>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+              <h1 className="text-2xl font-bold text-foreground mb-2">
                 Welcome back
               </h1>
-              <p className="text-gray-500 dark:text-gray-400 mb-8">
+              <p className="text-muted-foreground mb-8">
                 Sign in to your account to continue
               </p>
 
               {error && (
-                <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
-                  {error}
+                <div
+                  role="alert"
+                  className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-start gap-2"
+                >
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                  <span>{error}</span>
                 </div>
               )}
 
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <label htmlFor="email" className="block text-sm font-medium text-foreground mb-2">
                     Email address
                   </label>
                   <input
+                    id="email"
                     type="email"
                     name="email"
                     required
-                    className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                    autoComplete="email"
+                    className="w-full px-4 py-3 rounded-xl border border-border bg-secondary/40 text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/60 transition-all"
                     placeholder="you@company.com"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  <label htmlFor="password" className="block text-sm font-medium text-foreground mb-2">
                     Password
                   </label>
                   <input
+                    id="password"
                     type="password"
                     name="password"
                     required
-                    className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                    autoComplete="current-password"
+                    className="w-full px-4 py-3 rounded-xl border border-border bg-secondary/40 text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/60 transition-all"
                     placeholder="••••••••"
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2">
+                  <label className="inline-flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                      className="w-4 h-4 rounded border-border accent-primary"
                     />
-                    <span className="text-sm text-gray-600 dark:text-gray-400">Remember me</span>
+                    <span className="text-sm text-muted-foreground">Remember me</span>
                   </label>
-                  <a href="#" className="text-sm text-emerald-600 hover:text-emerald-700">
+                  <a href="#" className="text-sm text-primary hover:text-primary/80">
                     Forgot password?
                   </a>
                 </div>
@@ -376,11 +403,11 @@ export default function LoginPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-green-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-emerald-500/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="w-full py-3.5 bg-primary text-primary-foreground font-semibold rounded-xl hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
                 >
                   {loading ? (
                     <span className="flex items-center justify-center gap-2">
-                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" /></svg>
+                      <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
                       Signing in...
                     </span>
                   ) : 'Sign in'}
@@ -391,9 +418,9 @@ export default function LoginPage() {
         </div>
 
         {!requires2FA && (
-          <p className="text-center mt-6 text-gray-600 dark:text-gray-400">
+          <p className="text-center mt-6 text-muted-foreground">
             Don&apos;t have an account?{' '}
-            <Link href="/auth/register" className="text-emerald-600 hover:text-emerald-700 font-medium">
+            <Link href="/auth/register" className="text-primary hover:text-primary/80 font-medium">
               Create one
             </Link>
           </p>

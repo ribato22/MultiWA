@@ -18,6 +18,22 @@ import ReactFlow, {
   Panel,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
+import {
+  PlayCircle,
+  Zap,
+  Settings as SettingsIcon,
+  Timer,
+  Puzzle,
+  Lightbulb,
+  Trash2,
+  RotateCcw,
+  Save,
+  X,
+  Bot,
+  MapPin,
+  Pencil,
+  type LucideIcon,
+} from 'lucide-react';
 
 import { TriggerNode } from './nodes/TriggerNode';
 import { ConditionNode } from './nodes/ConditionNode';
@@ -47,19 +63,29 @@ const initialNodesDefault: Node[] = [
 const initialEdgesDefault: Edge[] = [];
 
 // Node palette items
-const paletteItems = [
-  { type: 'trigger', label: 'Trigger', icon: '▶️', color: '#22c55e', desc: 'Start automation' },
-  { type: 'condition', label: 'Condition', icon: '⚡', color: '#f59e0b', desc: 'Branch logic' },
-  { type: 'action', label: 'Action', icon: '⚙️', color: '#6366f1', desc: 'Perform task' },
-  { type: 'delay', label: 'Delay', icon: '⏱️', color: '#64748b', desc: 'Wait timer' },
+type PaletteItem = {
+  type: string;
+  label: string;
+  Icon: LucideIcon;
+  color: string;
+  tone: string;
+  desc: string;
+};
+const paletteItems: PaletteItem[] = [
+  { type: 'trigger',   label: 'Trigger',   Icon: PlayCircle,   color: '#22c55e', tone: 'text-primary',          desc: 'Start automation' },
+  { type: 'condition', label: 'Condition', Icon: Zap,          color: '#f59e0b', tone: 'text-amber-300',        desc: 'Branch logic' },
+  { type: 'action',    label: 'Action',    Icon: SettingsIcon, color: '#818cf8', tone: 'text-indigo-300',       desc: 'Perform task' },
+  { type: 'delay',     label: 'Delay',     Icon: Timer,        color: '#64748b', tone: 'text-muted-foreground', desc: 'Wait timer' },
 ];
 
-// Shared styles for the Node Editor Panel
+// Shared styles for the Node Editor Panel — use theme HSL via CSS custom props.
+// We keep inline style here because ReactFlow nodes/panels sometimes need direct
+// values; HSL hooks into the same vars as Tailwind utility classes.
 const labelStyle: React.CSSProperties = {
   display: 'block',
   fontSize: '11px',
   fontWeight: 600,
-  color: '#475569',
+  color: 'hsl(var(--muted-foreground))',
   marginBottom: '4px',
   textTransform: 'uppercase',
   letterSpacing: '0.03em',
@@ -69,10 +95,10 @@ const inputStyle: React.CSSProperties = {
   width: '100%',
   padding: '8px 10px',
   fontSize: '13px',
-  border: '1px solid #e2e8f0',
+  border: '1px solid hsl(var(--border))',
   borderRadius: '8px',
-  backgroundColor: 'white',
-  color: '#1e293b',
+  backgroundColor: 'hsl(var(--secondary) / 0.4)',
+  color: 'hsl(var(--foreground))',
   outline: 'none',
   transition: 'border-color 0.15s',
   boxSizing: 'border-box',
@@ -101,8 +127,8 @@ function FlowCanvas({
     setEdges((eds) => addEdge({
       ...params,
       animated: true,
-      style: { stroke: '#6366f1', strokeWidth: 2 },
-      markerEnd: { type: 'arrowclosed' as any, color: '#6366f1' },
+      style: { stroke: '#818cf8', strokeWidth: 2 },
+      markerEnd: { type: 'arrowclosed' as any, color: '#818cf8' },
     }, eds));
   }, [setEdges]);
 
@@ -181,92 +207,63 @@ function FlowCanvas({
   };
 
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex' }}>
+    <div className="absolute inset-0 flex">
       {/* Left Sidebar — Node Palette */}
       {!readOnly && (
-        <div style={{
-          width: '220px',
-          background: 'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)',
-          borderRight: '1px solid #e2e8f0',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}>
+        <div className="w-[220px] bg-card border-r border-border flex flex-col overflow-hidden">
           {/* Palette Header */}
-          <div style={{
-            padding: '16px 16px 12px',
-            borderBottom: '1px solid #e2e8f0',
-          }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#64748b' }}>
-              🧩 Components
+          <div className="p-4 pb-3 border-b border-border">
+            <div className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              <Puzzle className="w-3 h-3" aria-hidden="true" />
+              Components
             </div>
-            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+            <div className="text-[11px] text-muted-foreground/70 mt-0.5">
               Drag to canvas to add
             </div>
           </div>
 
           {/* Palette Items */}
-          <div style={{ flex: 1, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', overflowY: 'auto' }}>
-            {paletteItems.map((item) => (
-              <div
-                key={item.type}
-                draggable
-                onDragStart={(e) => onDragStart(e, item.type)}
-                style={{
-                  padding: '14px',
-                  backgroundColor: 'white',
-                  borderRadius: '12px',
-                  border: `2px solid ${item.color}15`,
-                  cursor: 'grab',
-                  transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = item.color;
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = `0 4px 12px ${item.color}25`;
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = `${item.color}15`;
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)';
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{
-                    width: '36px', height: '36px', borderRadius: '10px',
-                    background: `${item.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: '16px',
-                  }}>
-                    {item.icon}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '13px', color: '#1e293b' }}>
-                      {item.label}
-                    </div>
-                    <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '1px' }}>
-                      {item.desc}
+          <div className="flex-1 p-3 flex flex-col gap-2 overflow-y-auto">
+            {paletteItems.map((item) => {
+              const Icon = item.Icon;
+              return (
+                <div
+                  key={item.type}
+                  draggable
+                  onDragStart={(e) => onDragStart(e, item.type)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Drag ${item.label} node to canvas`}
+                  className="group p-3.5 bg-secondary/30 hover:bg-secondary/60 rounded-xl border border-border hover:border-primary/40 cursor-grab active:cursor-grabbing transition-all focus:outline-none focus:ring-2 focus:ring-primary/40 shadow-sm"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className={`flex h-9 w-9 items-center justify-center rounded-xl bg-card border border-border/60 ${item.tone}`}>
+                      <Icon className="w-4 h-4" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className={`text-[13px] font-semibold ${item.tone}`}>
+                        {item.label}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground/80 mt-px">
+                        {item.desc}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Palette Footer */}
-          <div style={{
-            padding: '12px',
-            borderTop: '1px solid #e2e8f0',
-          }}>
-            <div style={{
-              padding: '10px 12px',
-              background: 'linear-gradient(135deg, #dbeafe 0%, #e0e7ff 100%)',
-              borderRadius: '10px',
-              fontSize: '11px',
-              color: '#3b82f6',
-              lineHeight: 1.4,
-            }}>
-              💡 <strong>Tips:</strong> Connect nodes by dragging from output to input handles. Use the controls panel to zoom and fit view.
+          <div className="p-3 border-t border-border">
+            <div className="p-2.5 bg-sky-500/10 border border-sky-500/30 rounded-xl text-[11px] text-sky-300 leading-snug">
+              <div className="inline-flex items-center gap-1 font-semibold mb-1">
+                <Lightbulb className="w-3 h-3" aria-hidden="true" />
+                Tips
+              </div>
+              <p className="text-sky-200/90">
+                Connect nodes by dragging from output to input handles. Use the controls panel to zoom and fit view.
+              </p>
             </div>
           </div>
         </div>
@@ -295,103 +292,71 @@ function FlowCanvas({
           proOptions={{ hideAttribution: true }}
           defaultEdgeOptions={{
             animated: true,
-            style: { stroke: '#6366f1', strokeWidth: 2 },
+            style: { stroke: '#818cf8', strokeWidth: 2 },
           }}
         >
-          <Controls 
-            style={{ 
-              borderRadius: '12px', 
-              overflow: 'hidden', 
-              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-              border: '1px solid #e2e8f0',
+          <Controls
+            style={{
+              borderRadius: '12px',
+              overflow: 'hidden',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              border: '1px solid hsl(var(--border))',
+              background: 'hsl(var(--card))',
             }}
           />
-          <MiniMap 
+          <MiniMap
             nodeColor={(n) => {
               if (n.type === 'trigger') return '#22c55e';
               if (n.type === 'condition') return '#f59e0b';
-              if (n.type === 'action') return '#6366f1';
+              if (n.type === 'action') return '#818cf8';
               if (n.type === 'delay') return '#64748b';
-              return '#999';
+              return '#94a3b8';
             }}
             style={{
               borderRadius: '12px',
               overflow: 'hidden',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-              border: '1px solid #e2e8f0',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+              border: '1px solid hsl(var(--border))',
+              background: 'hsl(var(--card))',
             }}
-            maskColor="rgba(0, 0, 0, 0.08)"
+            maskColor="rgba(0, 0, 0, 0.4)"
           />
-          <Background 
-            variant={BackgroundVariant.Dots} 
-            gap={20} 
-            size={1} 
-            color="#e2e8f0"
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            color="hsl(var(--border))"
           />
 
           {/* Top-right action buttons */}
           {!readOnly && (
             <Panel position="top-right">
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="flex gap-2">
                 {selectedNode && (
                   <button
+                    type="button"
                     onClick={handleDeleteSelected}
-                    style={{
-                      padding: '8px 14px',
-                      backgroundColor: '#fee2e2',
-                      color: '#dc2626',
-                      border: '1px solid #fecaca',
-                      borderRadius: '10px',
-                      cursor: 'pointer',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      transition: 'all 0.15s',
-                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-destructive/10 text-destructive border border-destructive/30 rounded-xl text-xs font-semibold hover:bg-destructive/20 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-destructive/40"
                   >
-                    🗑️ Delete
+                    <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    Delete
                   </button>
                 )}
                 <button
+                  type="button"
                   onClick={handleClearAll}
-                  style={{
-                    padding: '8px 14px',
-                    backgroundColor: '#fff7ed',
-                    color: '#ea580c',
-                    border: '1px solid #fed7aa',
-                    borderRadius: '10px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    transition: 'all 0.15s',
-                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold hover:bg-amber-500/20 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/40"
                 >
-                  🔄 Clear
+                  <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" />
+                  Clear
                 </button>
                 <button
+                  type="button"
                   onClick={handleSave}
-                  style={{
-                    padding: '8px 16px',
-                    background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '10px',
-                    cursor: 'pointer',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.35)',
-                    transition: 'all 0.15s',
-                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-xl text-xs font-semibold hover:bg-primary/90 shadow-lg shadow-primary/25 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
                 >
-                  💾 Save Flow
+                  <Save className="w-3.5 h-3.5" aria-hidden="true" />
+                  Save Flow
                 </button>
               </div>
             </Panel>
@@ -399,25 +364,14 @@ function FlowCanvas({
 
           {/* Node count indicator */}
           <Panel position="bottom-right">
-            <div style={{
-              padding: '6px 12px',
-              backgroundColor: 'rgba(255,255,255,0.9)',
-              backdropFilter: 'blur(8px)',
-              borderRadius: '8px',
-              border: '1px solid #e2e8f0',
-              fontSize: '11px',
-              color: '#64748b',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e' }} />
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-card/80 backdrop-blur-md border border-border rounded-lg text-[11px] text-muted-foreground tabular-nums">
+              <span className="inline-flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary" aria-hidden="true" />
                 {nodes.length} nodes
               </span>
-              <span style={{ color: '#cbd5e1' }}>|</span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#6366f1' }} />
+              <span className="text-muted-foreground/50" aria-hidden="true">|</span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" aria-hidden="true" />
                 {edges.length} connections
               </span>
             </div>
@@ -427,60 +381,44 @@ function FlowCanvas({
       </div>
 
       {/* Right Sidebar — Node Editor Panel */}
-      {!readOnly && selectedNode && (
-        <div style={{
-          width: '280px',
-          background: 'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)',
-          borderLeft: '1px solid #e2e8f0',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}>
+      {!readOnly && selectedNode && (() => {
+        const typeIconMap: Record<string, { Icon: LucideIcon; tone: string; toneBg: string }> = {
+          trigger:   { Icon: PlayCircle,   tone: 'text-primary',          toneBg: 'bg-primary/15' },
+          condition: { Icon: Zap,          tone: 'text-amber-300',        toneBg: 'bg-amber-500/15' },
+          action:    { Icon: SettingsIcon, tone: 'text-indigo-300',       toneBg: 'bg-indigo-500/15' },
+          delay:     { Icon: Timer,        tone: 'text-muted-foreground', toneBg: 'bg-secondary/60' },
+        };
+        const meta = typeIconMap[selectedNode.type] ?? typeIconMap.action;
+        const HeaderIcon = meta.Icon;
+        return (
+        <div className="w-[280px] bg-card border-l border-border flex flex-col overflow-hidden">
           {/* Editor Header */}
-          <div style={{
-            padding: '14px 16px',
-            borderBottom: '1px solid #e2e8f0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <div style={{
-                width: '28px', height: '28px', borderRadius: '8px',
-                background: selectedNode.type === 'trigger' ? '#22c55e15' :
-                  selectedNode.type === 'condition' ? '#f59e0b15' :
-                  selectedNode.type === 'action' ? '#6366f115' : '#64748b15',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '14px',
-              }}>
-                {selectedNode.type === 'trigger' ? '▶️' :
-                 selectedNode.type === 'condition' ? '⚡' :
-                 selectedNode.type === 'action' ? '⚙️' : '⏱️'}
-              </div>
-              <div>
-                <div style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b', textTransform: 'capitalize' }}>
+          <div className="px-4 py-3.5 border-b border-border flex items-center justify-between">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${meta.toneBg} ${meta.tone}`}>
+                <HeaderIcon className="w-3.5 h-3.5" aria-hidden="true" />
+              </span>
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-foreground capitalize">
                   {selectedNode.type} Editor
                 </div>
-                <div style={{ fontSize: '10px', color: '#94a3b8' }}>
+                <div className="text-[10px] text-muted-foreground/80 font-mono truncate">
                   ID: {selectedNode.id.substring(0, 12)}...
                 </div>
               </div>
             </div>
             <button
+              type="button"
               onClick={() => setSelectedNode(null)}
-              style={{
-                width: '24px', height: '24px', borderRadius: '6px',
-                border: '1px solid #e2e8f0', background: 'white',
-                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '12px', color: '#64748b',
-              }}
+              aria-label="Close editor panel"
+              className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-border bg-secondary/40 text-muted-foreground hover:bg-secondary/60 hover:text-foreground cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
             >
-              ✕
+              <X className="w-3 h-3" aria-hidden="true" />
             </button>
           </div>
 
           {/* Editor Form */}
-          <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3.5">
             {/* Label (common to all) */}
             <div>
               <label style={labelStyle}>Label</label>
@@ -503,10 +441,10 @@ function FlowCanvas({
                     onChange={(e) => updateNodeData(selectedNode.id, 'triggerType', e.target.value)}
                     style={inputStyle}
                   >
-                    <option value="all">📩 All Messages</option>
-                    <option value="keyword">🔤 Keyword Match</option>
-                    <option value="regex">🔣 Pattern Match (Regex)</option>
-                    <option value="new_contact">👤 New Contact</option>
+                    <option value="all">All Messages</option>
+                    <option value="keyword">Keyword Match</option>
+                    <option value="regex">Pattern Match (Regex)</option>
+                    <option value="new_contact">New Contact</option>
                   </select>
                 </div>
                 {selectedNode.data.triggerType === 'keyword' && (
@@ -542,7 +480,7 @@ function FlowCanvas({
                         style={inputStyle}
                         placeholder="e.g. i, gi, m"
                       />
-                      <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>i = case-insensitive, g = global, m = multiline</div>
+                      <div className="text-[11px] text-muted-foreground mt-1">i = case-insensitive, g = global, m = multiline</div>
                     </div>
                   </>
                 )}
@@ -618,14 +556,14 @@ function FlowCanvas({
                         onChange={(e) => updateNodeData(selectedNode.id, 'value', e.target.value)}
                         style={inputStyle}
                       >
-                        <option value="text">💬 Text</option>
-                        <option value="image">🖼️ Image</option>
-                        <option value="video">🎬 Video</option>
-                        <option value="audio">🎵 Audio</option>
-                        <option value="document">📄 Document</option>
-                        <option value="sticker">😀 Sticker</option>
-                        <option value="location">📍 Location</option>
-                        <option value="contact">👤 Contact</option>
+                        <option value="text">Text</option>
+                        <option value="image">Image</option>
+                        <option value="video">Video</option>
+                        <option value="audio">Audio</option>
+                        <option value="document">Document</option>
+                        <option value="sticker">Sticker</option>
+                        <option value="location">Location</option>
+                        <option value="contact">Contact</option>
                       </select>
                     </div>
                   </>
@@ -651,8 +589,8 @@ function FlowCanvas({
                         onChange={(e) => updateNodeData(selectedNode.id, 'value', e.target.value)}
                         style={inputStyle}
                       >
-                        <option value="user">👤 Private Chat</option>
-                        <option value="group">👥 Group Chat</option>
+                        <option value="user">Private Chat</option>
+                        <option value="group">Group Chat</option>
                       </select>
                     </div>
                   </>
@@ -670,19 +608,19 @@ function FlowCanvas({
                     onChange={(e) => updateNodeData(selectedNode.id, 'actionType', e.target.value)}
                     style={inputStyle}
                   >
-                    <option value="send_text">💬 Send Text</option>
-                    <option value="send_image">🖼️ Send Image</option>
-                    <option value="send_video">🎬 Send Video</option>
-                    <option value="send_audio">🎵 Send Audio</option>
-                    <option value="send_document">📄 Send Document</option>
-                    <option value="send_poll">📊 Send Poll</option>
-                    <option value="send_location">📍 Send Location</option>
-                    <option value="send_contact">👤 Send Contact</option>
-                    <option value="add_tag">🏷️ Add Tag</option>
-                    <option value="remove_tag">🏷️ Remove Tag</option>
-                    <option value="assign_agent">👤 Assign Agent</option>
-                    <option value="ai_reply">🤖 AI Reply</option>
-                    <option value="webhook">🔗 Call Webhook</option>
+                    <option value="send_text">Send Text</option>
+                    <option value="send_image">Send Image</option>
+                    <option value="send_video">Send Video</option>
+                    <option value="send_audio">Send Audio</option>
+                    <option value="send_document">Send Document</option>
+                    <option value="send_poll">Send Poll</option>
+                    <option value="send_location">Send Location</option>
+                    <option value="send_contact">Send Contact</option>
+                    <option value="add_tag">Add Tag</option>
+                    <option value="remove_tag">Remove Tag</option>
+                    <option value="assign_agent">Assign Agent</option>
+                    <option value="ai_reply">AI Reply</option>
+                    <option value="webhook">Call Webhook</option>
                   </select>
                 </div>
                 {(selectedNode.data.actionType === 'send_text' || !selectedNode.data.actionType) && (
@@ -694,7 +632,7 @@ function FlowCanvas({
                       style={{ ...inputStyle, minHeight: '80px', resize: 'vertical', fontFamily: 'inherit' }}
                       placeholder="Type your reply message here..."
                     />
-                    <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                    <div className="text-[10px] text-muted-foreground/80 mt-1">
                       Variables: {'{{name}}'}, {'{{phone}}'}, {'{{message}}'}
                     </div>
                   </div>
@@ -709,7 +647,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="https://example.com/image.jpg"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Caption</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Caption</label>
                     <input
                       type="text"
                       value={(selectedNode.data.config as any)?.caption || ''}
@@ -729,7 +667,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="https://example.com/document.pdf"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Filename</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Filename</label>
                     <input
                       type="text"
                       value={(selectedNode.data.config as any)?.filename || ''}
@@ -737,7 +675,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="document.pdf"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Caption (optional)</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Caption (optional)</label>
                     <input
                       type="text"
                       value={(selectedNode.data.config as any)?.caption || ''}
@@ -757,7 +695,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="What do you prefer?"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Options (comma-separated)</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Options (comma-separated)</label>
                     <input
                       type="text"
                       value={((selectedNode.data.config as any)?.options || []).join(', ')}
@@ -768,7 +706,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="Option A, Option B, Option C"
                     />
-                    <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                    <div className="text-[10px] text-muted-foreground/80 mt-1">
                       Enter 2-12 options separated by commas
                     </div>
                   </div>
@@ -783,7 +721,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="https://example.com/video.mp4"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Caption (optional)</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Caption (optional)</label>
                     <input
                       type="text"
                       value={(selectedNode.data.config as any)?.caption || ''}
@@ -809,7 +747,7 @@ function FlowCanvas({
                         checked={(selectedNode.data.config as any)?.ptt || false}
                         onChange={(e) => updateNodeData(selectedNode.id, 'config', { ...(selectedNode.data.config || {}), ptt: e.target.checked })}
                       />
-                      <span style={{ fontSize: '12px', color: '#e2e8f0' }}>Send as voice note (PTT)</span>
+                      <span className="text-xs text-foreground">Send as voice note (PTT)</span>
                     </div>
                   </div>
                 )}
@@ -859,11 +797,12 @@ function FlowCanvas({
                           alert('Geolocation is not supported by this browser.');
                         }
                       }}
-                      style={{ marginTop: '6px', fontSize: '11px', color: '#10b981', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 0' }}
+                      className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 cursor-pointer bg-transparent border-0 px-0 py-1"
                     >
-                      📱 Use current location
+                      <MapPin className="w-3 h-3" aria-hidden="true" />
+                      Use current location
                     </button>
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Name (optional)</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Name (optional)</label>
                     <input
                       type="text"
                       value={(selectedNode.data.config as any)?.name || ''}
@@ -871,7 +810,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="Location name"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Address (optional)</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Address (optional)</label>
                     <input
                       type="text"
                       value={(selectedNode.data.config as any)?.address || ''}
@@ -891,7 +830,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="John Doe"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Phone Number</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Phone Number</label>
                     <input
                       type="text"
                       value={(selectedNode.data.config as any)?.contactPhone || ''}
@@ -911,16 +850,19 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="User ID to assign conversation to"
                     />
-                    <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '4px' }}>
+                    <div className="text-[10px] text-muted-foreground/80 mt-1">
                       Enter the team member user ID. Use the standard modal for a dropdown.
                     </div>
                   </div>
                 )}
                 {selectedNode.data.actionType === 'ai_reply' && (
                   <div>
-                    <div style={{ padding: '8px 10px', background: '#eff6ff', borderRadius: '6px', border: '1px solid #bfdbfe', marginBottom: '10px' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#2563eb' }}>🤖 AI-Powered Reply</div>
-                      <div style={{ fontSize: '10px', color: '#3b82f6', marginTop: '2px' }}>
+                    <div className="px-2.5 py-2 bg-sky-500/10 border border-sky-500/30 rounded-md mb-2.5">
+                      <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-300">
+                        <Bot className="w-3 h-3" aria-hidden="true" />
+                        AI-Powered Reply
+                      </div>
+                      <div className="text-[10px] text-sky-200/80 mt-0.5">
                         Uses OpenAI to generate contextual replies based on incoming message and conversation history.
                       </div>
                     </div>
@@ -943,7 +885,7 @@ function FlowCanvas({
                       style={inputStyle}
                       placeholder="https://api.example.com/webhook"
                     />
-                    <label style={{ ...labelStyle, marginTop: '10px' }}>Method</label>
+                    <label style={{ ...labelStyle, marginTop: '10px' }} className="text-muted-foreground">Method</label>
                     <select
                       value={(selectedNode.data.config as any)?.method || 'POST'}
                       onChange={(e) => updateNodeData(selectedNode.id, 'config', { ...(selectedNode.data.config || {}), method: e.target.value })}
@@ -970,7 +912,7 @@ function FlowCanvas({
 
                 {/* Simulate Typing — for all send actions */}
                 {['send_text', 'reply', 'send_image', 'send_video', 'send_audio', 'send_document', 'send_location', 'send_contact', 'send_poll', 'ai_reply'].includes(selectedNode.data.actionType || '') && (
-                  <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(99, 102, 241, 0.06)', borderRadius: '8px', border: '1px solid rgba(99, 102, 241, 0.15)' }}>
+                  <div className="mt-3 p-2.5 bg-indigo-500/10 border border-indigo-500/30 rounded-lg">
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                       <input
                         type="checkbox"
@@ -979,8 +921,8 @@ function FlowCanvas({
                         style={{ width: '16px', height: '16px', accentColor: '#6366f1' }}
                       />
                       <div>
-                        <div style={{ fontSize: '12px', fontWeight: 600, color: '#e2e8f0' }}>⌨️ Simulate Typing</div>
-                        <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '2px' }}>Shows "typing..." indicator before sending</div>
+                        <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground"><Pencil className="w-3 h-3" aria-hidden="true" />Simulate Typing</div>
+                        <div className="text-[10px] text-muted-foreground/80 mt-0.5">Shows &quot;typing...&quot; indicator before sending</div>
                       </div>
                     </label>
                     {(selectedNode.data.config as any)?.simulateTyping && (
@@ -1032,10 +974,7 @@ function FlowCanvas({
           </div>
 
           {/* Editor Footer */}
-          <div style={{
-            padding: '12px 16px',
-            borderTop: '1px solid #e2e8f0',
-          }}>
+          <div className="px-4 py-3 border-t border-border">
             <button
               onClick={() => {
                 if (selectedNode) {
@@ -1044,24 +983,17 @@ function FlowCanvas({
                   setSelectedNode(null);
                 }
               }}
-              style={{
-                width: '100%',
-                padding: '8px 14px',
-                backgroundColor: '#fee2e2',
-                color: '#dc2626',
-                border: '1px solid #fecaca',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontWeight: 600,
-                textAlign: 'center',
-              }}
+              className="w-full px-3.5 py-2 bg-destructive/10 text-destructive border border-destructive/30 rounded-lg text-xs font-semibold hover:bg-destructive/20 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-destructive/40"
             >
-              🗑️ Delete This Node
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                Delete This Node
+              </span>
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

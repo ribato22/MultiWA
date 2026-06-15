@@ -15,27 +15,27 @@ interface StatusBadgeProps {
 
 const statusConfig = {
   online: {
-    bg: 'bg-emerald-500',
-    text: 'text-emerald-700 dark:text-emerald-400',
-    bgLight: 'bg-emerald-100 dark:bg-emerald-900/30',
+    bg: 'bg-primary',
+    text: 'text-primary',
+    bgLight: 'bg-primary/15 border border-primary/30',
     label: 'Connected',
   },
   offline: {
-    bg: 'bg-gray-400',
-    text: 'text-gray-700 dark:text-gray-400',
-    bgLight: 'bg-gray-100 dark:bg-gray-800',
+    bg: 'bg-muted-foreground/60',
+    text: 'text-muted-foreground',
+    bgLight: 'bg-secondary border border-border',
     label: 'Disconnected',
   },
   connecting: {
-    bg: 'bg-amber-500',
-    text: 'text-amber-700 dark:text-amber-400',
-    bgLight: 'bg-amber-100 dark:bg-amber-900/30',
+    bg: 'bg-amber-400',
+    text: 'text-amber-300',
+    bgLight: 'bg-amber-500/15 border border-amber-500/30',
     label: 'Connecting...',
   },
   error: {
-    bg: 'bg-red-500',
-    text: 'text-red-700 dark:text-red-400',
-    bgLight: 'bg-red-100 dark:bg-red-900/30',
+    bg: 'bg-destructive',
+    text: 'text-destructive',
+    bgLight: 'bg-destructive/15 border border-destructive/30',
     label: 'Error',
   },
 };

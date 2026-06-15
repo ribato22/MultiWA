@@ -13,7 +13,13 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
+
+// Chart series colors aligned with theme palette
+// Sent = primary green (matches button/bubble colors); Received = sky (contrast)
+const COLOR_SENT = '#22c55e';
+const COLOR_RECEIVED = '#0ea5e9';
 
 interface ChartDataPoint {
   date: string;
@@ -56,9 +62,11 @@ export default function MessageChart({ profileId, className }: MessageChartProps
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 6);
 
-        const res = await api.request<Array<{ period: string; incoming: number; outgoing: number }>>(
-          `/statistics/messages/trend?profileId=${targetProfileId}&granularity=day&startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`
-        );
+        const res = await api.getMessageTrend(targetProfileId, {
+          granularity: 'day',
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        });
 
         if (res.data && res.data.length > 0) {
           const mapped = res.data.map((item) => {
@@ -102,11 +110,11 @@ export default function MessageChart({ profileId, className }: MessageChartProps
         </div>
         <div className="flex items-center gap-4 text-sm">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#25D366]" />
+            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: COLOR_SENT }} aria-hidden="true" />
             <span className="text-muted-foreground">Sent</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-[#128C7E]" />
+            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: COLOR_RECEIVED }} aria-hidden="true" />
             <span className="text-muted-foreground">Received</span>
           </div>
         </div>
@@ -114,8 +122,9 @@ export default function MessageChart({ profileId, className }: MessageChartProps
 
       <div className="h-64" style={{ minHeight: '256px', minWidth: 0 }}>
         {loading ? (
-          <div className="h-full flex items-center justify-center">
-            <div className="animate-pulse text-muted-foreground">Loading chart data...</div>
+          <div className="h-full flex items-center justify-center text-muted-foreground gap-2">
+            <Loader2 className="w-5 h-5 mw-spin text-primary" aria-hidden="true" />
+            <span className="text-sm">Loading chart data...</span>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -125,22 +134,22 @@ export default function MessageChart({ profileId, className }: MessageChartProps
             >
               <defs>
                 <linearGradient id="colorSent" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#25D366" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#25D366" stopOpacity={0} />
+                  <stop offset="5%" stopColor={COLOR_SENT} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={COLOR_SENT} stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="colorReceived" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#128C7E" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#128C7E" stopOpacity={0} />
+                  <stop offset="5%" stopColor={COLOR_RECEIVED} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={COLOR_RECEIVED} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-              <XAxis 
-                dataKey="date" 
+              <XAxis
+                dataKey="date"
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
               />
-              <YAxis 
+              <YAxis
                 axisLine={false}
                 tickLine={false}
                 tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
@@ -152,14 +161,14 @@ export default function MessageChart({ profileId, className }: MessageChartProps
                   backgroundColor: 'hsl(var(--card))',
                   borderColor: 'hsl(var(--border))',
                   borderRadius: '8px',
-                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                  boxShadow: '0 4px 12px -2px rgba(0, 0, 0, 0.4)',
                 }}
                 labelStyle={{ color: 'hsl(var(--foreground))' }}
               />
               <Area
                 type="monotone"
                 dataKey="sent"
-                stroke="#25D366"
+                stroke={COLOR_SENT}
                 strokeWidth={2}
                 fillOpacity={1}
                 fill="url(#colorSent)"
@@ -167,7 +176,7 @@ export default function MessageChart({ profileId, className }: MessageChartProps
               <Area
                 type="monotone"
                 dataKey="received"
-                stroke="#128C7E"
+                stroke={COLOR_RECEIVED}
                 strokeWidth={2}
                 fillOpacity={1}
                 fill="url(#colorReceived)"

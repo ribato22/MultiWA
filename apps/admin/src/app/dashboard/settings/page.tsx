@@ -5,6 +5,33 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import {
+  Plus,
+  X,
+  CheckCircle2,
+  XCircle,
+  Bell,
+  Mail,
+  MessageCircle,
+  Loader2,
+  Link2,
+  Send,
+  KeyRound,
+  Shield,
+  RefreshCw,
+  AlertTriangle,
+  Smartphone,
+  Tablet,
+  Globe,
+  Compass,
+  Terminal,
+  Settings as SettingsIcon,
+  Folder,
+  Cloud,
+  ArrowRight,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react';
 import { api, User, Profile } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,9 +74,9 @@ interface Member {
 }
 
 const ROLES = [
-  { value: 'admin', label: 'Admin', color: 'bg-blue-500' },
+  { value: 'admin', label: 'Admin', color: 'bg-sky-500' },
   { value: 'member', label: 'Member', color: 'bg-green-500' },
-  { value: 'viewer', label: 'Viewer', color: 'bg-gray-500' },
+  { value: 'viewer', label: 'Viewer', color: 'bg-muted-foreground/60' },
 ];
 
 export default function SettingsPage() {
@@ -284,14 +311,14 @@ export default function SettingsPage() {
     setRevokingAll(false);
   };
 
-  const getDeviceIcon = (device: string) => {
-    if (device.includes('Chrome')) return '🌐';
-    if (device.includes('Firefox')) return '🦊';
-    if (device.includes('Safari')) return '🧭';
-    if (device.includes('Edge')) return '🔷';
-    if (device.includes('Postman') || device.includes('API')) return '⚙️';
-    if (device.includes('cURL')) return '💻';
-    return '📱';
+  const getDeviceIcon = (device: string): LucideIcon => {
+    if (device.includes('Chrome')) return Globe;
+    if (device.includes('Firefox')) return Globe;
+    if (device.includes('Safari')) return Compass;
+    if (device.includes('Edge')) return Globe;
+    if (device.includes('Postman') || device.includes('API')) return SettingsIcon;
+    if (device.includes('cURL')) return Terminal;
+    return Smartphone;
   };
 
   const fetchUser = async () => {
@@ -535,7 +562,9 @@ export default function SettingsPage() {
                 </div>
               ) : members.length === 0 ? (
                 <div className="p-12 text-center">
-                  <div className="text-4xl mb-3">👥</div>
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary/60 text-muted-foreground">
+                    <Shield className="w-6 h-6" aria-hidden="true" />
+                  </div>
                   <h3 className="font-semibold text-foreground mb-2">No team members yet</h3>
                   <p className="text-sm text-muted-foreground">Invite members to collaborate</p>
                 </div>
@@ -551,7 +580,7 @@ export default function SettingsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {member.role === 'owner' ? (
-                        <Badge className="bg-amber-500 text-white">Owner</Badge>
+                        <Badge className="bg-amber-500/15 text-amber-300 border border-amber-500/30">Owner</Badge>
                       ) : user?.role === 'owner' ? (
                         <Select value={member.role} onValueChange={(val) => handleChangeRole(member.id, val)}>
                           <SelectTrigger className="w-28 h-8 text-xs">
@@ -567,9 +596,14 @@ export default function SettingsPage() {
                         <Badge variant="secondary">{member.role}</Badge>
                       )}
                       {user?.role === 'owner' && member.role !== 'owner' && (
-                        <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 h-8 w-8 p-0"
-                          onClick={() => handleRemoveMember(member)}>
-                          ✕
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8 p-0 cursor-pointer"
+                          onClick={() => handleRemoveMember(member)}
+                          aria-label={`Remove ${member.name}`}
+                        >
+                          <X className="w-4 h-4" aria-hidden="true" />
                         </Button>
                       )}
                     </div>
@@ -588,12 +622,15 @@ export default function SettingsPage() {
               </DialogHeader>
               {tempPassword ? (
                 <div className="space-y-4">
-                  <div className="p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-xl">
-                    <h4 className="font-medium text-green-700 dark:text-green-400 mb-2">✅ Member Added!</h4>
-                    <p className="text-sm text-green-600 dark:text-green-400 mb-3">Share this temporary password with the new member. They should change it after their first login.</p>
+                  <div className="p-4 bg-primary/10 border border-primary/30 rounded-xl">
+                    <h4 className="inline-flex items-center gap-2 font-medium text-primary mb-2">
+                      <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+                      Member Added
+                    </h4>
+                    <p className="text-sm text-primary/90 mb-3">Share this temporary password with the new member. They should change it after their first login.</p>
                     <div className="flex gap-2">
-                      <Input value={tempPassword} readOnly className="font-mono bg-white dark:bg-secondary" />
-                      <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(tempPassword); toast({ title: 'Password copied' }); }}>
+                      <Input value={tempPassword} readOnly className="font-mono bg-secondary/60" aria-label="Temporary password" />
+                      <Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(tempPassword); toast({ title: 'Password copied' }); }} className="cursor-pointer">
                         Copy
                       </Button>
                     </div>
@@ -687,19 +724,23 @@ export default function SettingsPage() {
                   {/* In-App Channel */}
                   <div className="flex items-center justify-between p-4 border border-border rounded-xl bg-secondary/5">
                     <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-lg">🔔</span>
+                      <span className="w-10 h-10 rounded-lg bg-violet-500/20 text-violet-300 flex items-center justify-center">
+                        <Bell className="w-5 h-5" aria-hidden="true" />
+                      </span>
                       <div>
                         <div className="font-medium text-foreground">In-App Notifications</div>
                         <div className="text-xs text-muted-foreground">Bell icon + notification panel in the dashboard</div>
                       </div>
                     </div>
-                    <Badge className="bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-500/30">Always On</Badge>
+                    <Badge className="bg-primary/15 text-primary border border-primary/30">Always On</Badge>
                   </div>
 
                   {/* Email Channel */}
                   <div className="flex items-center justify-between p-4 border border-border rounded-xl">
                     <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white text-lg">📧</span>
+                      <span className="w-10 h-10 rounded-lg bg-sky-500/20 text-sky-300 flex items-center justify-center">
+                        <Mail className="w-5 h-5" aria-hidden="true" />
+                      </span>
                       <div>
                         <div className="font-medium text-foreground">Email Notifications</div>
                         <div className="text-xs text-muted-foreground">
@@ -717,7 +758,9 @@ export default function SettingsPage() {
                   {/* WhatsApp Channel (Coming Soon) */}
                   <div className="flex items-center justify-between p-4 border border-dashed border-border rounded-xl opacity-60">
                     <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white text-lg">💬</span>
+                      <span className="w-10 h-10 rounded-lg bg-primary/20 text-primary flex items-center justify-center">
+                        <MessageCircle className="w-5 h-5" aria-hidden="true" />
+                      </span>
                       <div>
                         <div className="font-medium text-foreground">WhatsApp Notifications</div>
                         <div className="text-xs text-muted-foreground">Receive alerts via WhatsApp message</div>
@@ -813,8 +856,19 @@ export default function SettingsPage() {
                       size="sm"
                       onClick={() => handleTestSmtp(false)}
                       disabled={testingSmtp}
+                      className="gap-1.5 cursor-pointer"
                     >
-                      {testingSmtp ? '⏳ Testing...' : '🔌 Test Connection'}
+                      {testingSmtp ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 mw-spin" aria-hidden="true" />
+                          Testing...
+                        </>
+                      ) : (
+                        <>
+                          <Link2 className="w-3.5 h-3.5" aria-hidden="true" />
+                          Test Connection
+                        </>
+                      )}
                     </Button>
 
                     <div className="flex items-center gap-2">
@@ -824,34 +878,50 @@ export default function SettingsPage() {
                         className="h-8 w-48 text-sm"
                         value={testEmailAddress}
                         onChange={e => setTestEmailAddress(e.target.value)}
+                        aria-label="Test email address"
                       />
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => handleTestSmtp(true)}
                         disabled={testingSmtp || !testEmailAddress}
+                        className="gap-1.5 cursor-pointer"
                       >
-                        📨 Send Test Email
+                        <Send className="w-3.5 h-3.5" aria-hidden="true" />
+                        Send Test Email
                       </Button>
                     </div>
 
                     {smtpTestResult && (
-                      <span className={`text-sm ${smtpTestResult.success ? 'text-emerald-600' : 'text-destructive'}`}>
-                        {smtpTestResult.success ? '✅' : '❌'} {smtpTestResult.message}
+                      <span
+                        role="status"
+                        aria-live="polite"
+                        className={`inline-flex items-center gap-1.5 text-sm ${smtpTestResult.success ? 'text-primary' : 'text-destructive'}`}
+                      >
+                        {smtpTestResult.success
+                          ? <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+                          : <XCircle className="w-4 h-4" aria-hidden="true" />}
+                        {smtpTestResult.message}
                       </span>
                     )}
                   </div>
 
                   {smtpConfigSource && smtpConfigSource !== 'none' && (
-                    <div className="text-xs text-muted-foreground flex items-center gap-1 pt-1">
-                      💾 Config source: <strong>{smtpConfigSource}</strong>
+                    <div className="text-xs text-muted-foreground inline-flex items-center gap-1.5 pt-1">
+                      <SettingsIcon className="w-3 h-3" aria-hidden="true" />
+                      Config source: <strong>{smtpConfigSource}</strong>
                       {smtpConfigSource === 'database' ? ' — values stored in database (overrides env vars).' : ' — loaded from environment variables.'}
                     </div>
                   )}
                 </div>
 
-                <Button onClick={handleSaveSmtp} disabled={savingSmtp}>
-                  {savingSmtp ? 'Saving...' : 'Save SMTP Configuration'}
+                <Button onClick={handleSaveSmtp} disabled={savingSmtp} className="cursor-pointer">
+                  {savingSmtp ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
+                      Saving...
+                    </span>
+                  ) : 'Save SMTP Configuration'}
                 </Button>
               </div>
             </div>
@@ -869,19 +939,31 @@ export default function SettingsPage() {
                 API keys and webhooks are managed from their dedicated pages in the sidebar.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Link href="/dashboard/api-keys" className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/20 transition-colors">
-                  <span className="text-2xl">🔑</span>
-                  <div>
+                <Link
+                  href="/dashboard/api-keys"
+                  className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/30 hover:border-primary/30 transition-colors group"
+                >
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/15 text-primary">
+                    <KeyRound className="w-5 h-5" aria-hidden="true" />
+                  </span>
+                  <div className="flex-1">
                     <div className="font-medium text-foreground">API Keys</div>
                     <div className="text-sm text-muted-foreground">Manage API keys and permissions</div>
                   </div>
+                  <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
                 </Link>
-                <Link href="/dashboard/webhooks" className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/20 transition-colors">
-                  <span className="text-2xl">🔗</span>
-                  <div>
+                <Link
+                  href="/dashboard/webhooks"
+                  className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/30 hover:border-primary/30 transition-colors group"
+                >
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
+                    <Link2 className="w-5 h-5" aria-hidden="true" />
+                  </span>
+                  <div className="flex-1">
                     <div className="font-medium text-foreground">Webhooks</div>
                     <div className="text-sm text-muted-foreground">Configure event webhooks</div>
                   </div>
+                  <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
                 </Link>
               </div>
               <div className="bg-secondary/20 rounded-xl p-4">
@@ -922,17 +1004,17 @@ export default function SettingsPage() {
                   {twoFactorEnabled ? (
                     <div className="space-y-3">
                       <div className="flex items-center gap-3">
-                        <Badge className="bg-green-500 text-white">Enabled</Badge>
+                        <Badge className="bg-primary/15 text-primary border border-primary/30">Enabled</Badge>
                         <span className="text-sm text-muted-foreground">2FA is active on your account</span>
                       </div>
 
                       {/* Backup codes info */}
-                      <div className="p-3 bg-secondary/30 rounded-lg">
+                      <div className="p-3 bg-secondary/40 border border-border/60 rounded-lg">
                         <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm">🔐</span>
+                          <div className="inline-flex items-center gap-2">
+                            <Shield className="w-4 h-4 text-primary" aria-hidden="true" />
                             <span className="text-sm text-muted-foreground">
-                              Backup codes remaining: <strong className={backupCodesRemaining <= 2 ? 'text-orange-500' : 'text-foreground'}>{backupCodesRemaining}</strong>
+                              Backup codes remaining: <strong className={`tabular-nums ${backupCodesRemaining <= 2 ? 'text-amber-400' : 'text-foreground'}`}>{backupCodesRemaining}</strong>
                             </span>
                           </div>
                           <Button
@@ -940,15 +1022,32 @@ export default function SettingsPage() {
                             size="sm"
                             disabled={regeneratingCodes}
                             onClick={handleRegenerateBackupCodes}
+                            className="gap-1.5 cursor-pointer"
                           >
-                            {regeneratingCodes ? 'Generating...' : '🔄 Regenerate'}
+                            {regeneratingCodes ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 mw-spin" aria-hidden="true" />
+                                Generating...
+                              </>
+                            ) : (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                                Regenerate
+                              </>
+                            )}
                           </Button>
                         </div>
                         {backupCodesRemaining <= 2 && backupCodesRemaining > 0 && (
-                          <p className="text-xs text-orange-500 mt-2">⚠️ You're running low on backup codes. Consider regenerating.</p>
+                          <p className="inline-flex items-center gap-1 text-xs text-amber-400 mt-2">
+                            <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+                            You&apos;re running low on backup codes. Consider regenerating.
+                          </p>
                         )}
                         {backupCodesRemaining === 0 && (
-                          <p className="text-xs text-red-500 mt-2">⚠️ No backup codes remaining! Regenerate now to avoid being locked out.</p>
+                          <p className="inline-flex items-center gap-1 text-xs text-destructive mt-2">
+                            <AlertTriangle className="w-3 h-3" aria-hidden="true" />
+                            No backup codes remaining. Regenerate now to avoid being locked out.
+                          </p>
                         )}
                       </div>
 
@@ -1086,7 +1185,7 @@ export default function SettingsPage() {
                         size="sm"
                         disabled={revokingAll}
                         onClick={handleRevokeAllSessions}
-                        className="text-xs text-red-600 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-900/20"
+                        className="text-xs text-destructive border-destructive/30 hover:bg-destructive/10"
                       >
                         {revokingAll ? 'Revoking...' : 'Revoke All Others'}
                       </Button>
@@ -1098,19 +1197,23 @@ export default function SettingsPage() {
                         {[1, 2].map(i => <Skeleton key={i} className="h-14" />)}
                       </div>
                     ) : sessions.length === 0 ? (
-                      <div className="flex items-center gap-3 p-3 bg-secondary/20 rounded-lg">
-                        <div className="w-8 h-8 bg-primary/10 rounded flex items-center justify-center">💻</div>
+                      <div className="flex items-center gap-3 p-3 bg-secondary/40 border border-border/60 rounded-lg">
+                        <div className="w-8 h-8 bg-primary/15 text-primary rounded flex items-center justify-center">
+                          <Terminal className="w-4 h-4" aria-hidden="true" />
+                        </div>
                         <div className="flex-1">
                           <div className="text-sm font-medium text-foreground">Current Session</div>
                           <div className="text-xs text-muted-foreground">This device</div>
                         </div>
-                        <Badge className="bg-green-500 text-white">Active</Badge>
+                        <Badge className="bg-primary/15 text-primary border border-primary/30">Active</Badge>
                       </div>
                     ) : (
-                      sessions.map((session, index) => (
-                        <div key={session.id} className="flex items-center gap-3 p-3 bg-secondary/20 rounded-lg hover:bg-secondary/30 transition-colors">
-                          <div className="w-9 h-9 bg-primary/10 rounded-lg flex items-center justify-center text-lg">
-                            {getDeviceIcon(session.device)}
+                      sessions.map((session, index) => {
+                        const DeviceIcon = getDeviceIcon(session.device);
+                        return (
+                        <div key={session.id} className="flex items-center gap-3 p-3 bg-secondary/30 border border-border/60 rounded-lg hover:bg-secondary/50 transition-colors">
+                          <div className="w-9 h-9 bg-primary/10 text-primary rounded-lg flex items-center justify-center">
+                            <DeviceIcon className="w-4 h-4" aria-hidden="true" />
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium text-foreground">{session.device || 'Unknown Device'}</div>
@@ -1121,26 +1224,27 @@ export default function SettingsPage() {
                             </div>
                           </div>
                           {index === 0 ? (
-                            <Badge className="bg-green-500 text-white">Current</Badge>
+                            <Badge className="bg-primary/15 text-primary border border-primary/30">Current</Badge>
                           ) : (
                             <Button
                               variant="ghost"
                               size="sm"
                               disabled={revokingSession === session.id}
                               onClick={() => handleRevokeSession(session.id)}
-                              className="text-xs text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 h-7 px-2"
+                              className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10 h-7 px-2 cursor-pointer"
                             >
                               {revokingSession === session.id ? '...' : 'Revoke'}
                             </Button>
                           )}
                         </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
 
-                <div className="p-4 border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 rounded-xl">
-                  <h4 className="font-medium text-red-700 dark:text-red-400 mb-1">Danger Zone</h4>
+                <div className="p-4 border border-destructive/30 bg-destructive/10 rounded-xl">
+                  <h4 className="font-medium text-destructive mb-1">Danger Zone</h4>
                   <p className="text-sm text-muted-foreground mb-3">
                     Once deleted, your account and all data cannot be recovered.
                   </p>
@@ -1149,8 +1253,9 @@ export default function SettingsPage() {
 
                 {/* Connected Devices / WhatsApp Profiles */}
                 <div className="p-4 border border-border rounded-xl">
-                  <h4 className="font-medium text-foreground mb-1 flex items-center gap-2">
-                    <span>📱</span> Connected Devices
+                  <h4 className="font-medium text-foreground mb-1 inline-flex items-center gap-2">
+                    <Smartphone className="w-4 h-4 text-primary" aria-hidden="true" />
+                    Connected Devices
                   </h4>
                   <p className="text-sm text-muted-foreground mb-3">WhatsApp profiles connected to this gateway</p>
                   {connectedProfiles.length === 0 ? (
@@ -1161,8 +1266,8 @@ export default function SettingsPage() {
                         <div key={profile.id} className="flex items-center justify-between py-2 px-3 bg-secondary/30 rounded-lg">
                           <div className="flex items-center gap-3">
                             <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                              profile.status === 'connected' ? 'bg-emerald-500' :
-                              profile.status === 'connecting' ? 'bg-amber-500 animate-pulse' : 'bg-gray-300'
+                              profile.status === 'connected' ? 'bg-primary' :
+                              profile.status === 'connecting' ? 'bg-amber-400 animate-pulse' : 'bg-muted-foreground/40'
                             }`} />
                             <div>
                               <p className="text-sm font-medium text-foreground">{profile.name}</p>
@@ -1170,15 +1275,15 @@ export default function SettingsPage() {
                             </div>
                           </div>
                           <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                            profile.status === 'connected' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
-                            profile.status === 'connecting' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' :
-                            'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                            profile.status === 'connected' ? 'bg-primary/15 text-primary border border-primary/30' :
+                            profile.status === 'connecting' ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30' :
+                            'bg-secondary text-muted-foreground border border-border'
                           }`}>{profile.status}</span>
                         </div>
                       ))}
                     </div>
                   )}
-                  <Link href="/dashboard/profiles" className="text-xs text-blue-600 hover:underline mt-3 inline-block">Manage Profiles →</Link>
+                  <Link href="/dashboard/profiles" className="text-xs text-primary hover:underline mt-3 inline-block">Manage Profiles →</Link>
                 </div>
               </div>
             </div>
@@ -1206,7 +1311,9 @@ export default function SettingsPage() {
                     onClick={() => setStorageConfig(prev => ({ ...prev, type: 'local' }))}
                   >
                     <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white">📁</span>
+                      <span className="w-10 h-10 rounded-lg bg-sky-500/20 text-sky-300 flex items-center justify-center">
+                        <Folder className="w-5 h-5" aria-hidden="true" />
+                      </span>
                       <div>
                         <h4 className="font-medium text-foreground">Local Storage</h4>
                         <p className="text-xs text-muted-foreground">Files stored on the server filesystem</p>
@@ -1223,7 +1330,9 @@ export default function SettingsPage() {
                     onClick={() => setStorageConfig(prev => ({ ...prev, type: 's3' }))}
                   >
                     <div className="flex items-center gap-3">
-                      <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white">☁️</span>
+                      <span className="w-10 h-10 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center">
+                        <Cloud className="w-5 h-5" aria-hidden="true" />
+                      </span>
                       <div>
                         <h4 className="font-medium text-foreground">S3 / MinIO</h4>
                         <p className="text-xs text-muted-foreground">Object storage compatible with AWS S3</p>
@@ -1314,18 +1423,35 @@ export default function SettingsPage() {
                         setTestingStorage(false);
                       }}
                     >
-                      {testingStorage ? '⏳ Testing...' : '🔌 Test Connection'}
+                      {testingStorage ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Loader2 className="w-3.5 h-3.5 mw-spin" aria-hidden="true" />
+                          Testing...
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Link2 className="w-3.5 h-3.5" aria-hidden="true" />
+                          Test Connection
+                        </span>
+                      )}
                     </Button>
                     {storageTestResult && (
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-sm ${storageTestResult.success ? 'text-emerald-600' : 'text-red-500'}`}>
-                          {storageTestResult.success ? '✅' : '❌'} {storageTestResult.message}
+                        <span
+                          role="status"
+                          aria-live="polite"
+                          className={`inline-flex items-center gap-1.5 text-sm ${storageTestResult.success ? 'text-primary' : 'text-destructive'}`}
+                        >
+                          {storageTestResult.success
+                            ? <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+                            : <XCircle className="w-4 h-4" aria-hidden="true" />}
+                          {storageTestResult.message}
                         </span>
                         {storageTestResult.bucketMissing && (
                           <Button
                             variant="outline"
                             size="sm"
-                            className="border-amber-500 text-amber-700 hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/30"
+                            className="border-amber-500/50 text-amber-300 hover:bg-amber-500/10"
                             disabled={testingStorage}
                             onClick={async () => {
                               setTestingStorage(true);
@@ -1349,7 +1475,7 @@ export default function SettingsPage() {
 
               {/* Source Indicator */}
               {storageConfigSource && (
-                <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl p-3 text-sm text-blue-700 dark:text-blue-300 flex items-start gap-2">
+                <div className="bg-sky-500/10 border border-sky-500/30 rounded-xl p-3 text-sm text-sky-300 flex items-start gap-2">
                   <span>ℹ️</span>
                   <p>Config source: <strong>{storageConfigSource}</strong>{storageConfigSource === 'env' ? ' — values from environment variables. Save to store in database.' : ' — values stored in database (overrides env vars).'}</p>
                 </div>
@@ -1430,7 +1556,7 @@ export default function SettingsPage() {
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-red-600">Delete Account</DialogTitle>
+            <DialogTitle className="text-destructive">Delete Account</DialogTitle>
             <DialogDescription>This action cannot be undone. Please confirm by entering your password.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1491,7 +1617,8 @@ function PushNotificationCard() {
     if (result?.success) {
       toast({ title: 'Test push sent!', description: `${result.message}. Check browser notifications.` });
     } else {
-      const errorDetail = result?.results?.[0]?.error || result?.error || result?.message || 'Could not send test push';
+      const r = result as any;
+      const errorDetail = r?.results?.[0]?.error || r?.error || r?.message || 'Could not send test push';
       toast({ title: 'Test failed', description: errorDetail, variant: 'destructive' });
     }
   };
@@ -1500,7 +1627,9 @@ function PushNotificationCard() {
     return (
       <div className="flex items-center justify-between p-4 border border-dashed border-border rounded-xl opacity-60">
         <div className="flex items-center gap-3">
-          <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white text-lg">📲</span>
+          <span className="w-10 h-10 rounded-lg bg-orange-500/20 text-orange-300 flex items-center justify-center">
+            <Tablet className="w-5 h-5" aria-hidden="true" />
+          </span>
           <div>
             <div className="font-medium text-foreground">Push Notifications</div>
             <div className="text-xs text-muted-foreground">Not supported in this browser</div>
@@ -1515,7 +1644,9 @@ function PushNotificationCard() {
     <div className="p-4 border border-border rounded-xl space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <span className="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500 to-red-600 flex items-center justify-center text-white text-lg">📲</span>
+          <span className="w-10 h-10 rounded-lg bg-orange-500/20 text-orange-300 flex items-center justify-center">
+            <Tablet className="w-5 h-5" aria-hidden="true" />
+          </span>
           <div>
             <div className="font-medium text-foreground">Push Notifications</div>
             <div className="text-xs text-muted-foreground">
@@ -1531,8 +1662,9 @@ function PushNotificationCard() {
       </div>
 
       {permission === 'denied' && (
-        <div className="text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
-          ⚠️ Notification permission was denied. Please enable it in your browser settings, then refresh.
+        <div className="inline-flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/30 px-3 py-2 rounded-lg">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+          Notification permission was denied. Please enable it in your browser settings, then refresh.
         </div>
       )}
 
@@ -1544,8 +1676,18 @@ function PushNotificationCard() {
 
       {isSubscribed && (
         <div className="flex items-center gap-2 pt-1">
-          <Button variant="outline" size="sm" onClick={handleTest} disabled={testing}>
-            {testing ? 'Sending...' : '🔔 Send Test Push'}
+          <Button variant="outline" size="sm" onClick={handleTest} disabled={testing} className="gap-1.5 cursor-pointer">
+            {testing ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 mw-spin" aria-hidden="true" />
+                Sending...
+              </>
+            ) : (
+              <>
+                <Bell className="w-3.5 h-3.5" aria-hidden="true" />
+                Send Test Push
+              </>
+            )}
           </Button>
           <span className="text-xs text-muted-foreground">
             Send a test push to this browser
@@ -1555,4 +1697,3 @@ function PushNotificationCard() {
     </div>
   );
 }
-

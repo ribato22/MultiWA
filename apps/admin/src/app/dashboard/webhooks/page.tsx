@@ -4,6 +4,21 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Plus,
+  Webhook as WebhookIcon,
+  Inbox,
+  Send,
+  CheckCircle2,
+  Eye,
+  Link2,
+  UserPlus,
+  Users,
+  Activity,
+  Pause,
+  Layers,
+  type LucideIcon,
+} from 'lucide-react';
 import { api, Profile, Webhook } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,14 +54,15 @@ import {
 import { useToast } from '@/hooks/use-toast';
 
 // Available webhook events
-const WEBHOOK_EVENTS = [
-  { value: 'message.received', label: 'Message Received', icon: '📥' },
-  { value: 'message.sent', label: 'Message Sent', icon: '📤' },
-  { value: 'message.delivered', label: 'Message Delivered', icon: '✅' },
-  { value: 'message.read', label: 'Message Read', icon: '👁️' },
-  { value: 'connection.update', label: 'Connection Update', icon: '🔗' },
-  { value: 'contact.created', label: 'Contact Created', icon: '👤' },
-  { value: 'group.update', label: 'Group Update', icon: '👥' },
+type WebhookEvent = { value: string; label: string; Icon: LucideIcon; tone: string };
+const WEBHOOK_EVENTS: WebhookEvent[] = [
+  { value: 'message.received',  label: 'Message Received',  Icon: Inbox,         tone: 'text-sky-300' },
+  { value: 'message.sent',      label: 'Message Sent',      Icon: Send,          tone: 'text-primary' },
+  { value: 'message.delivered', label: 'Message Delivered', Icon: CheckCircle2,  tone: 'text-primary' },
+  { value: 'message.read',      label: 'Message Read',      Icon: Eye,           tone: 'text-violet-300' },
+  { value: 'connection.update', label: 'Connection Update', Icon: Link2,         tone: 'text-amber-300' },
+  { value: 'contact.created',   label: 'Contact Created',   Icon: UserPlus,      tone: 'text-rose-300' },
+  { value: 'group.update',      label: 'Group Update',      Icon: Users,         tone: 'text-orange-300' },
 ];
 
 export default function WebhooksPage() {
@@ -173,11 +189,11 @@ export default function WebhooksPage() {
     try {
       const res = await api.testWebhook(webhook.id);
       if (res.data?.success) {
-        toast({ title: `✅ Test successful! ${res.data.message || ''}` });
+        toast({ title: `Test successful. ${res.data.message || ''}` });
       } else {
-        toast({ 
-          title: `❌ Test failed: ${res.data?.message || res.data?.error || res.error || 'Unknown error'}`, 
-          variant: 'destructive' 
+        toast({
+          title: `Test failed: ${res.data?.message || res.data?.error || res.error || 'Unknown error'}`,
+          variant: 'destructive',
         });
       }
     } catch (error) {
@@ -249,13 +265,11 @@ export default function WebhooksPage() {
             Receive real-time notifications for events
           </p>
         </div>
-        <Button 
-          onClick={openCreateModal} 
-          className="bg-[#25D366] hover:bg-[#128C7E]"
+        <Button
+          onClick={openCreateModal}
+          className="gap-2 cursor-pointer"
         >
-          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
+          <Plus className="w-4 h-4" aria-hidden="true" />
           Add Webhook
         </Button>
       </div>
@@ -279,23 +293,35 @@ export default function WebhooksPage() {
       {/* Stats Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-foreground">{webhooks.length}</div>
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
+            <WebhookIcon className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">{webhooks.length}</div>
           <div className="text-sm text-muted-foreground">Total Webhooks</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-green-600">
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 text-primary">
+            <Activity className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-primary tabular-nums">
             {webhooks.filter(w => w.enabled).length}
           </div>
           <div className="text-sm text-muted-foreground">Active</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-foreground">
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-muted-foreground/10 text-muted-foreground">
+            <Pause className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">
             {webhooks.filter(w => !w.enabled).length}
           </div>
           <div className="text-sm text-muted-foreground">Paused</div>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
-          <div className="text-2xl font-bold text-foreground">
+          <div className="mb-2 flex h-9 w-9 items-center justify-center rounded-lg bg-violet-500/15 text-violet-300">
+            <Layers className="w-5 h-5" aria-hidden="true" />
+          </div>
+          <div className="text-2xl font-bold text-foreground tabular-nums">
             {new Set(webhooks.flatMap(w => w.events)).size}
           </div>
           <div className="text-sm text-muted-foreground">Event Types</div>
@@ -305,15 +331,15 @@ export default function WebhooksPage() {
       {/* Webhooks List */}
       {webhooks.length === 0 ? (
         <div className="bg-card rounded-2xl border border-border p-12 text-center">
-          <div className="text-6xl mb-4">🌐</div>
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+            <WebhookIcon className="w-8 h-8" aria-hidden="true" />
+          </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No Webhooks</h3>
           <p className="text-muted-foreground mb-6">
             Create a webhook to receive real-time event notifications
           </p>
-          <Button 
-            onClick={openCreateModal} 
-            className="bg-[#25D366] hover:bg-[#128C7E]"
-          >
+          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+            <Plus className="w-4 h-4" aria-hidden="true" />
             Create Your First Webhook
           </Button>
         </div>
@@ -322,59 +348,69 @@ export default function WebhooksPage() {
           {webhooks.map(webhook => (
             <div
               key={webhook.id}
-              className="bg-card rounded-xl border border-border p-5 hover:shadow-lg transition-all duration-200"
+              className="bg-card rounded-xl border border-border p-5 hover:border-primary/30 hover:shadow-lg hover:shadow-primary/5 transition-all duration-200"
             >
-              <div className="flex items-start justify-between gap-4">
+              <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                 {/* Left side */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-2">
-                    <Badge variant={webhook.enabled ? 'default' : 'secondary'} className={webhook.enabled ? 'bg-green-500' : ''}>
+                    <Badge
+                      variant="secondary"
+                      className={webhook.enabled
+                        ? 'gap-1.5 bg-primary/15 text-primary border border-primary/30'
+                        : 'gap-1.5 bg-secondary text-muted-foreground border border-border'}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${webhook.enabled ? 'bg-primary' : 'bg-muted-foreground/60'}`} aria-hidden="true" />
                       {webhook.enabled ? 'Active' : 'Paused'}
                     </Badge>
                   </div>
-                  
-                  <div className="font-mono text-sm text-foreground bg-secondary/30 rounded-lg px-3 py-2 mb-3 truncate">
+
+                  <div className="font-mono text-sm text-foreground bg-secondary/40 border border-border/60 rounded-lg px-3 py-2 mb-3 truncate">
                     {webhook.url}
                   </div>
-                  
+
                   <div className="flex flex-wrap gap-1">
                     {webhook.events.map(event => {
                       const eventInfo = WEBHOOK_EVENTS.find(e => e.value === event);
+                      const EventIcon = eventInfo?.Icon;
                       return (
-                        <Badge key={event} variant="outline" className="text-xs">
-                          {eventInfo?.icon} {eventInfo?.label || event}
+                        <Badge key={event} variant="outline" className="text-xs gap-1">
+                          {EventIcon && <EventIcon className={`w-3 h-3 ${eventInfo?.tone ?? ''}`} aria-hidden="true" />}
+                          {eventInfo?.label || event}
                         </Badge>
                       );
                     })}
                   </div>
-                  
-                  <div className="mt-3 text-xs text-muted-foreground">
+
+                  <div className="mt-3 text-xs text-muted-foreground tabular-nums">
                     Created {new Date(webhook.createdAt).toLocaleDateString()}
                   </div>
                 </div>
 
                 {/* Right side - Actions */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-shrink-0">
                   <Switch
                     checked={webhook.enabled}
                     onCheckedChange={() => handleToggle(webhook)}
+                    aria-label="Toggle webhook"
                   />
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     size="sm"
                     onClick={() => handleTest(webhook)}
                     disabled={testing === webhook.id}
+                    className="cursor-pointer"
                   >
                     {testing === webhook.id ? 'Testing...' : 'Test'}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => openEditModal(webhook)}>
+                  <Button variant="outline" size="sm" onClick={() => openEditModal(webhook)} className="cursor-pointer">
                     Edit
                   </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => confirmDelete(webhook)}
-                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
                   >
                     Delete
                   </Button>
@@ -420,10 +456,11 @@ export default function WebhooksPage() {
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">
-                Webhook URL <span className="text-red-500">*</span>
+              <label htmlFor="webhook-url" className="text-sm font-medium text-foreground">
+                Webhook URL <span className="text-destructive" aria-label="required">*</span>
               </label>
               <Input
+                id="webhook-url"
                 placeholder="https://your-server.com/webhook"
                 value={formData.url}
                 onChange={e => setFormData(prev => ({ ...prev, url: e.target.value }))}
@@ -435,44 +472,50 @@ export default function WebhooksPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-foreground">Events</label>
+                <span className="text-sm font-medium text-foreground">Events</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={selectAllEvents}
-                  className="text-xs"
+                  className="text-xs cursor-pointer"
                 >
                   {formData.events.length === WEBHOOK_EVENTS.length ? 'Deselect All' : 'Select All'}
                 </Button>
               </div>
-              
-              <div className="border border-border rounded-lg p-3 space-y-2 max-h-64 overflow-y-auto">
-                {WEBHOOK_EVENTS.map(event => (
-                  <div key={event.value} className="flex items-center gap-2">
-                    <Checkbox
-                      id={event.value}
-                      checked={formData.events.includes(event.value)}
-                      onCheckedChange={() => toggleEvent(event.value)}
-                    />
-                    <label htmlFor={event.value} className="text-sm text-foreground cursor-pointer flex items-center gap-2">
-                      <span>{event.icon}</span>
-                      <span>{event.label}</span>
-                    </label>
-                  </div>
-                ))}
+
+              <div className="border border-border rounded-lg p-3 space-y-2 max-h-64 overflow-y-auto bg-secondary/30">
+                {WEBHOOK_EVENTS.map(event => {
+                  const EventIcon = event.Icon;
+                  return (
+                    <div key={event.value} className="flex items-center gap-2">
+                      <Checkbox
+                        id={event.value}
+                        checked={formData.events.includes(event.value)}
+                        onCheckedChange={() => toggleEvent(event.value)}
+                      />
+                      <label
+                        htmlFor={event.value}
+                        className="text-sm text-foreground cursor-pointer flex items-center gap-2"
+                      >
+                        <EventIcon className={`w-3.5 h-3.5 ${event.tone}`} aria-hidden="true" />
+                        <span>{event.label}</span>
+                      </label>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowModal(false)}>
+            <Button variant="outline" onClick={() => setShowModal(false)} className="cursor-pointer">
               Cancel
             </Button>
-            <Button 
-              onClick={handleSave} 
+            <Button
+              onClick={handleSave}
               disabled={saving}
-              className="bg-[#25D366] hover:bg-[#128C7E]"
+              className="cursor-pointer"
             >
               {saving ? 'Saving...' : editingWebhook ? 'Update Webhook' : 'Add Webhook'}
             </Button>
@@ -491,8 +534,8 @@ export default function WebhooksPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogCancel className="cursor-pointer">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer">
               Delete Webhook
             </AlertDialogAction>
           </AlertDialogFooter>

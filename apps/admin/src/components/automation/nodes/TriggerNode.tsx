@@ -2,6 +2,7 @@
 
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
+import { PlayCircle, Inbox, TypeIcon, Regex, UserPlus, type LucideIcon } from 'lucide-react';
 
 interface TriggerNodeData {
   label: string;
@@ -9,74 +10,56 @@ interface TriggerNodeData {
   filters?: Record<string, unknown>;
 }
 
-const triggerTypeLabels: Record<string, string> = {
-  'all': '📩 All Messages',
-  'keyword': '🔤 Keyword Match',
-  'regex': '🔣 Pattern Match',
-  'new_contact': '👤 New Contact',
+type TriggerInfo = { Icon: LucideIcon; label: string };
+
+const triggerInfo: Record<string, TriggerInfo> = {
+  all:                { Icon: Inbox,    label: 'All Messages' },
+  keyword:            { Icon: TypeIcon, label: 'Keyword Match' },
+  regex:              { Icon: Regex,    label: 'Pattern Match' },
+  new_contact:        { Icon: UserPlus, label: 'New Contact' },
   // Legacy values for backward compatibility
-  'message.received': '📩 Message Received',
-  'message.keyword': '🔤 Keyword Match',
-  'contact.created': '👤 New Contact',
-  'all_messages': '📩 All Messages',
+  'message.received': { Icon: Inbox,    label: 'Message Received' },
+  'message.keyword':  { Icon: TypeIcon, label: 'Keyword Match' },
+  'contact.created':  { Icon: UserPlus, label: 'New Contact' },
+  all_messages:       { Icon: Inbox,    label: 'All Messages' },
 };
 
 export const TriggerNode = memo(({ data, selected }: NodeProps<TriggerNodeData>) => {
+  const info = triggerInfo[data.triggerType] ?? { Icon: PlayCircle, label: data.label };
+  const LabelIcon = info.Icon;
+
   return (
     <div
-      style={{
-        padding: '16px 20px',
-        borderRadius: '14px',
-        background: selected 
-          ? 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)'
-          : 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)',
-        border: `2px solid ${selected ? '#22c55e' : '#86efac'}`,
-        minWidth: '180px',
-        boxShadow: selected 
-          ? '0 8px 24px rgba(34, 197, 94, 0.25)' 
-          : '0 2px 12px rgba(0,0,0,0.08)',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-      }}
+      className={`
+        px-5 py-4 rounded-2xl min-w-[180px]
+        bg-primary/10 border-2
+        transition-all duration-200
+        ${selected
+          ? 'border-primary shadow-lg shadow-primary/30'
+          : 'border-primary/40 shadow-md shadow-black/20'}
+      `}
     >
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        marginBottom: '6px',
-      }}>
-        <div style={{
-          width: '24px', height: '24px', borderRadius: '6px',
-          backgroundColor: '#22c55e15', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '12px',
-        }}>
-          ▶️
-        </div>
-        <span style={{ 
-          fontSize: '10px', 
-          textTransform: 'uppercase', 
-          color: '#16a34a',
-          fontWeight: 700,
-          letterSpacing: '0.05em',
-        }}>
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary/20 text-primary">
+          <PlayCircle className="w-3.5 h-3.5" aria-hidden="true" />
+        </span>
+        <span className="text-[10px] uppercase font-bold tracking-wider text-primary">
           Trigger
         </span>
       </div>
-      <div style={{ 
-        fontSize: '13px', 
-        fontWeight: 600,
-        color: '#15803d',
-      }}>
-        {triggerTypeLabels[data.triggerType] || data.label}
+      <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground">
+        <LabelIcon className="w-3.5 h-3.5 text-primary flex-shrink-0" aria-hidden="true" />
+        <span className="truncate">{info.label}</span>
       </div>
-      
+
       <Handle
         type="source"
         position={Position.Bottom}
         style={{
-          background: 'linear-gradient(135deg, #22c55e, #16a34a)',
+          background: '#22c55e',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
+          border: '2px solid hsl(217 33% 17%)',
           boxShadow: '0 2px 6px rgba(34, 197, 94, 0.4)',
         }}
       />

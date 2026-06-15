@@ -7,6 +7,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Gamepad2, X, ArrowRight } from 'lucide-react';
 
 export function DemoBanner() {
   const [dismissed, setDismissed] = useState(false);
@@ -15,30 +16,30 @@ export function DemoBanner() {
   if (!isDemoMode || dismissed) return null;
 
   return (
-    <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500 text-white text-sm relative z-[100]">
+    <div className="bg-amber-500/15 border-b border-amber-500/30 text-amber-300 text-sm relative z-[100]">
       <div className="max-w-screen-xl mx-auto px-4 py-2 flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 flex-1 justify-center">
-          <span className="text-base">🎮</span>
-          <span className="font-medium">
+          <Gamepad2 className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+          <span className="font-medium text-amber-200">
             Demo Mode — You&apos;re exploring a read-only instance.
           </span>
           <a
             href="https://github.com/ribato22/MultiWA"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline underline-offset-2 font-semibold hover:text-white/90 transition-colors"
+            className="inline-flex items-center gap-1 underline underline-offset-2 font-semibold text-amber-200 hover:text-amber-100 transition-colors"
           >
-            Deploy your own →
+            Deploy your own
+            <ArrowRight className="w-3 h-3" aria-hidden="true" />
           </a>
         </div>
         <button
+          type="button"
           onClick={() => setDismissed(true)}
-          className="p-1 hover:bg-white/20 rounded transition-colors flex-shrink-0"
+          className="p-1 hover:bg-amber-500/20 rounded transition-colors flex-shrink-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500/40"
           aria-label="Dismiss demo banner"
         >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <X className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
     </div>

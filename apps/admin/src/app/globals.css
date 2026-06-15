@@ -55,35 +55,42 @@
   }
 
   .dark {
-    --background: 222 47% 6%;
-    --foreground: 0 0% 98%;
-    --card: 222 47% 8%;
-    --card-foreground: 0 0% 98%;
-    --popover: 222 47% 8%;
-    --popover-foreground: 0 0% 98%;
-    
-    /* WhatsApp Green - Brighter for Dark Mode */
-    --primary: 142 70% 45%;
-    --primary-foreground: 142 80% 10%;
-    
-    --secondary: 222 40% 14%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 222 40% 14%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 142 40% 16%;
-    --accent-foreground: 142 70% 92%;
-    --destructive: 0 62.8% 45%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 222 40% 16%;
-    --input: 222 40% 16%;
-    --ring: 142 70% 45%;
-    
-    /* Dark mode chart colors */
-    --chart-1: 142 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
+    /* MultiWA Dark OLED tokens — match design-system/multiwa-admin/MASTER.md
+     * Background = slate-900 (#0F172A 222 47% 11%)
+     * Card       = slate-800 (#1E293B 217 33% 17%)
+     * Border     = slate-700 (#334155 215 25% 27%)
+     * Foreground = slate-50  (#F8FAFC 210 40% 98%)
+     * Muted text = slate-400 (#94A3B8 215 20% 65%)
+     * Primary    = green-500 (#22C55E 142 71% 45%) — WhatsApp brand-aligned CTA
+     */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+    --card: 217 33% 17%;
+    --card-foreground: 210 40% 98%;
+    --popover: 217 33% 17%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 142 71% 45%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 215 25% 27%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 215 25% 27%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 215 25% 27%;
+    --input: 215 25% 27%;
+    --ring: 142 71% 45%;
+
+    /* Charts — high-saturation series for dark backgrounds */
+    --chart-1: 142 71% 50%;
+    --chart-2: 197 90% 56%;
+    --chart-3: 38 92% 60%;
+    --chart-4: 280 70% 65%;
+    --chart-5: 340 80% 62%;
   }
 }
 
@@ -477,4 +484,42 @@
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* Purge-resilient spinner used by QR / connecting states.
+ * Tailwind's animate-spin can be missing from production CSS when its only
+ * usage lives inside a Next.js dynamic route page. The keyframe + utility
+ * below are global so any element with style={{ animation: 'mw-spin ...' }}
+ * or className="mw-spin" rotates on production builds too.
+ */
+@-webkit-keyframes mw-spin {
+  0% { -webkit-transform: rotate(0deg); transform: rotate(0deg); }
+  100% { -webkit-transform: rotate(360deg); transform: rotate(360deg); }
+}
+@keyframes mw-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.mw-spin {
+  -webkit-animation: mw-spin 1s linear infinite !important;
+  animation: mw-spin 1s linear infinite !important;
+  transform-origin: center;
+}
+/* Loading indicators are always animated to signal "work in progress".
+ * Even when the OS reports prefers-reduced-motion=reduce, we keep the
+ * spinner spinning because a static spinner would be a stronger UX
+ * regression than a slow rotation. Decorative animations elsewhere in
+ * the app should still honor the media query individually. */
+
+/* iOS / Android safe-area utilities (notches, home indicators) */
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0.5rem);
+}
+
+/* Prevent any stray horizontal scroll on small viewports */
+html, body {
+  overflow-x: hidden;
 }

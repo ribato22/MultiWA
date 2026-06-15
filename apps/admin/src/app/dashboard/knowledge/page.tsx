@@ -4,6 +4,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import {
+  Brain,
+  FileText,
+  Plus,
+  Search,
+  RefreshCw,
+  Trash2,
+  X,
+  BookOpen,
+  Loader2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
@@ -89,7 +100,7 @@ export default function KnowledgePage() {
     try {
       const { data } = await api.addKnowledgeDocument(selectedProfile, docName.trim(), docContent.trim());
       toast({
-        title: '✅ Document Added',
+        title: 'Document Added',
         description: `"${data?.name}" processed into ${data?.chunkCount} chunks`,
       });
       setDocName('');
@@ -105,7 +116,7 @@ export default function KnowledgePage() {
   const handleDelete = async (id: string) => {
     try {
       await api.deleteKnowledgeDocument(id);
-      toast({ title: '🗑️ Deleted', description: 'Document removed from knowledge base' });
+      toast({ title: 'Deleted', description: 'Document removed from knowledge base' });
       setDocuments(prev => prev.filter(d => d.id !== id));
       setDeletingId(null);
     } catch {
@@ -136,7 +147,7 @@ export default function KnowledgePage() {
 
   if (loading) {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="space-y-6">
         <div className="animate-pulse space-y-6">
           <div className="h-8 bg-secondary rounded-lg w-56" />
           <div className="h-4 bg-secondary rounded w-80" />
@@ -148,11 +159,13 @@ export default function KnowledgePage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
-          <span className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-lg">🧠</span>
+          <span className="w-10 h-10 rounded-xl bg-primary/15 text-primary flex items-center justify-center">
+            <Brain className="w-5 h-5" aria-hidden="true" />
+          </span>
           AI Knowledge Base
         </h1>
         <p className="text-muted-foreground mt-1">
@@ -162,18 +175,20 @@ export default function KnowledgePage() {
 
       {/* Profile Selector */}
       <div className="flex items-center gap-4">
-        <label className="text-sm font-medium text-foreground whitespace-nowrap">Profile:</label>
+        <label htmlFor="kb-profile" className="text-sm font-medium text-foreground whitespace-nowrap">Profile:</label>
         <select
+          id="kb-profile"
           value={selectedProfile}
           onChange={e => setSelectedProfile(e.target.value)}
-          className="w-full max-w-xs rounded-xl border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+          className="w-full max-w-xs rounded-xl border border-border bg-card px-4 py-2.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
         >
           {profiles.map(p => (
             <option key={p.id} value={p.id}>{p.name} {p.phone ? `(${p.phone})` : ''}</option>
           ))}
         </select>
-        <Button onClick={() => setShowAdd(true)} className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white ml-auto">
-          + Add Document
+        <Button onClick={() => setShowAdd(true)} className="gap-2 ml-auto cursor-pointer">
+          <Plus className="w-4 h-4" aria-hidden="true" />
+          Add Document
         </Button>
       </div>
 
@@ -182,33 +197,57 @@ export default function KnowledgePage() {
         <div className="bg-card border border-border rounded-2xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
-              <span>📄</span> Add Knowledge Document
+              <FileText className="w-4 h-4 text-primary" aria-hidden="true" />
+              Add Knowledge Document
             </h3>
-            <button onClick={() => setShowAdd(false)} className="text-muted-foreground hover:text-foreground text-xl">×</button>
+            <button
+              type="button"
+              onClick={() => setShowAdd(false)}
+              aria-label="Close add document dialog"
+              className="text-muted-foreground hover:text-foreground cursor-pointer transition-colors"
+            >
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
           </div>
           <div>
-            <label className="block text-sm font-medium text-foreground mb-2">Document Name</label>
+            <label htmlFor="kb-doc-name" className="block text-sm font-medium text-foreground mb-2">Document Name</label>
             <Input
+              id="kb-doc-name"
               value={docName}
               onChange={e => setDocName(e.target.value)}
               placeholder="e.g., FAQ, Product Catalog, Company Info"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-foreground mb-2">Content</label>
+            <label htmlFor="kb-doc-content" className="block text-sm font-medium text-foreground mb-2">Content</label>
             <textarea
+              id="kb-doc-content"
               value={docContent}
               onChange={e => setDocContent(e.target.value)}
               placeholder="Paste your knowledge text here...&#10;&#10;The text will be automatically split into searchable chunks."
-              className="w-full h-40 rounded-xl border border-border bg-background px-4 py-3 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+              className="w-full h-40 rounded-xl border border-border bg-secondary/40 text-foreground placeholder:text-muted-foreground/60 px-4 py-3 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
-            <p className="text-xs text-muted-foreground mt-1">{docContent.length.toLocaleString()} characters</p>
+            <p className="text-xs text-muted-foreground mt-1 tabular-nums">{docContent.length.toLocaleString()} characters</p>
           </div>
           <div className="flex gap-3">
-            <Button onClick={handleAddDocument} disabled={addingDoc || !docName.trim() || !docContent.trim()} className="bg-gradient-to-r from-emerald-500 to-teal-600 text-white">
-              {addingDoc ? 'Processing...' : '✅ Add Document'}
+            <Button
+              onClick={handleAddDocument}
+              disabled={addingDoc || !docName.trim() || !docContent.trim()}
+              className="gap-2 cursor-pointer"
+            >
+              {addingDoc ? (
+                <>
+                  <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" aria-hidden="true" />
+                  Add Document
+                </>
+              )}
             </Button>
-            <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setShowAdd(false)} className="cursor-pointer">Cancel</Button>
           </div>
         </div>
       )}
@@ -216,19 +255,31 @@ export default function KnowledgePage() {
       {/* Documents Table */}
       <div className="bg-card border border-border rounded-2xl overflow-hidden">
         <div className="p-4 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
+          <h3 className="text-sm font-semibold text-foreground tabular-nums">
             Documents ({documents.length})
           </h3>
-          <button onClick={loadDocuments} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-            🔄 Refresh
+          <button
+            type="button"
+            onClick={loadDocuments}
+            disabled={docsLoading}
+            aria-label="Refresh document list"
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${docsLoading ? 'mw-spin' : ''}`} aria-hidden="true" />
+            Refresh
           </button>
         </div>
         {docsLoading ? (
-          <div className="p-8 text-center text-muted-foreground animate-pulse">Loading documents...</div>
+          <div className="p-8 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
+            Loading documents...
+          </div>
         ) : documents.length === 0 ? (
           <div className="p-12 text-center">
-            <div className="text-4xl mb-3">📚</div>
-            <p className="text-muted-foreground text-sm">No documents yet</p>
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-secondary/60 text-muted-foreground">
+              <BookOpen className="w-7 h-7" aria-hidden="true" />
+            </div>
+            <p className="text-foreground text-sm font-medium">No documents yet</p>
             <p className="text-xs text-muted-foreground mt-1">Add your first document to start building the knowledge base</p>
           </div>
         ) : (
@@ -246,29 +297,46 @@ export default function KnowledgePage() {
               </thead>
               <tbody>
                 {documents.map(doc => (
-                  <tr key={doc.id} className="border-b border-border/50 hover:bg-secondary/20 transition-colors">
+                  <tr key={doc.id} className="border-b border-border/50 hover:bg-secondary/30 transition-colors group">
                     <td className="px-4 py-3 font-medium text-foreground">{doc.name}</td>
                     <td className="px-4 py-3">
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 uppercase">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-sky-500/15 text-sky-300 uppercase tracking-wider">
                         {doc.type}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right text-muted-foreground font-mono text-xs">{formatSize(doc.size)}</td>
+                    <td className="px-4 py-3 text-right text-muted-foreground font-mono text-xs tabular-nums">{formatSize(doc.size)}</td>
                     <td className="px-4 py-3 text-right">
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/15 text-primary tabular-nums">
                         {doc.chunkCount}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-muted-foreground text-xs tabular-nums">{new Date(doc.createdAt).toLocaleDateString()}</td>
                     <td className="px-4 py-3 text-center">
                       {deletingId === doc.id ? (
                         <div className="flex items-center justify-center gap-2">
-                          <button onClick={() => handleDelete(doc.id)} className="text-xs text-red-500 hover:text-red-600 font-medium">Confirm</button>
-                          <button onClick={() => setDeletingId(null)} className="text-xs text-muted-foreground hover:text-foreground">Cancel</button>
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(doc.id)}
+                            className="text-xs text-destructive hover:text-destructive/80 font-medium cursor-pointer"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingId(null)}
+                            className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                          >
+                            Cancel
+                          </button>
                         </div>
                       ) : (
-                        <button onClick={() => setDeletingId(doc.id)} className="text-muted-foreground hover:text-red-500 transition-colors" title="Delete">
-                          🗑️
+                        <button
+                          type="button"
+                          onClick={() => setDeletingId(doc.id)}
+                          aria-label={`Delete ${doc.name}`}
+                          className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        >
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
                         </button>
                       )}
                     </td>
@@ -283,30 +351,48 @@ export default function KnowledgePage() {
       {/* Search Section */}
       <div className="bg-card border border-border rounded-2xl p-6 space-y-4">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <span>🔍</span> Search Knowledge Base
+          <Search className="w-4 h-4 text-primary" aria-hidden="true" />
+          Search Knowledge Base
         </h3>
         <div className="flex gap-3">
-          <Input
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Ask a question to search across all documents..."
-            className="flex-1"
-            onKeyDown={e => e.key === 'Enter' && handleSearch()}
-          />
-          <Button onClick={handleSearch} disabled={searching || !searchQuery.trim()} variant="outline">
-            {searching ? 'Searching...' : '🔍 Search'}
+          <div className="relative flex-1">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Ask a question to search across all documents..."
+              className="pl-10"
+              aria-label="Search knowledge base"
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            />
+          </div>
+          <Button onClick={handleSearch} disabled={searching || !searchQuery.trim()} variant="outline" className="gap-2 cursor-pointer">
+            {searching ? (
+              <>
+                <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
+                Searching...
+              </>
+            ) : (
+              <>
+                <Search className="w-4 h-4" aria-hidden="true" />
+                Search
+              </>
+            )}
           </Button>
         </div>
 
         {/* Search Results */}
         {searchResults.length > 0 && (
           <div className="space-y-3 mt-4">
-            <p className="text-xs text-muted-foreground">{searchResults.length} result(s) found</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{searchResults.length} result(s) found</p>
             {searchResults.map((result, i) => (
-              <div key={i} className="bg-secondary/30 rounded-xl p-4 space-y-2">
+              <div key={i} className="bg-secondary/40 border border-border/60 rounded-xl p-4 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-foreground">{result.documentName}</span>
-                  <span className="px-2 py-0.5 rounded-full text-xs font-mono font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300">
+                  <span className="text-sm font-medium text-foreground truncate">{result.documentName}</span>
+                  <span className="px-2 py-0.5 rounded-full text-xs font-mono font-medium bg-primary/15 text-primary tabular-nums flex-shrink-0">
                     {(result.score * 100).toFixed(0)}% match
                   </span>
                 </div>

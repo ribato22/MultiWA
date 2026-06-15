@@ -2,6 +2,20 @@
 
 import React, { memo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
+import {
+  Settings as SettingsIcon,
+  MessageSquare,
+  Image as ImageIcon,
+  FileText,
+  BarChart3,
+  Tag,
+  Tags,
+  UserCog,
+  Bot,
+  Webhook as WebhookIcon,
+  Timer,
+  type LucideIcon,
+} from 'lucide-react';
 
 interface ActionNodeData {
   label: string;
@@ -9,88 +23,70 @@ interface ActionNodeData {
   config?: Record<string, unknown>;
 }
 
-const actionTypeLabels: Record<string, string> = {
-  'send_text': '💬 Send Text',
-  'send_image': '🖼️ Send Image',
-  'send_document': '📄 Send Document',
-  'send_poll': '📊 Send Poll',
-  'add_tag': '🏷️ Add Tag',
-  'remove_tag': '🏷️ Remove Tag',
-  'assign_agent': '👤 Assign Agent',
-  'ai_reply': '🤖 AI Reply',
-  'webhook': '🔗 Call Webhook',
-  'delay': '⏳ Delay',
+type ActionInfo = { Icon: LucideIcon; label: string };
+
+const actionInfo: Record<string, ActionInfo> = {
+  send_text:     { Icon: MessageSquare, label: 'Send Text' },
+  send_image:    { Icon: ImageIcon,     label: 'Send Image' },
+  send_document: { Icon: FileText,      label: 'Send Document' },
+  send_poll:     { Icon: BarChart3,     label: 'Send Poll' },
+  add_tag:       { Icon: Tag,           label: 'Add Tag' },
+  remove_tag:    { Icon: Tags,          label: 'Remove Tag' },
+  assign_agent:  { Icon: UserCog,       label: 'Assign Agent' },
+  ai_reply:      { Icon: Bot,           label: 'AI Reply' },
+  webhook:       { Icon: WebhookIcon,   label: 'Call Webhook' },
+  delay:         { Icon: Timer,         label: 'Delay' },
 };
 
 export const ActionNode = memo(({ data, selected }: NodeProps<ActionNodeData>) => {
+  const info = actionInfo[data.actionType] ?? { Icon: SettingsIcon, label: data.label };
+  const LabelIcon = info.Icon;
+
   return (
     <div
-      style={{
-        padding: '16px 20px',
-        borderRadius: '14px',
-        background: selected 
-          ? 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)'
-          : 'linear-gradient(135deg, #eef2ff 0%, #f0f0ff 100%)',
-        border: `2px solid ${selected ? '#6366f1' : '#a5b4fc'}`,
-        minWidth: '180px',
-        boxShadow: selected 
-          ? '0 8px 24px rgba(99, 102, 241, 0.25)' 
-          : '0 2px 12px rgba(0,0,0,0.08)',
-        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-      }}
+      className={`
+        px-5 py-4 rounded-2xl min-w-[180px]
+        bg-indigo-500/10 border-2
+        transition-all duration-200
+        ${selected
+          ? 'border-indigo-400 shadow-lg shadow-indigo-500/25'
+          : 'border-indigo-500/40 shadow-md shadow-black/20'}
+      `}
     >
       <Handle
         type="target"
         position={Position.Top}
         style={{
-          background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+          background: '#818cf8',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
-          boxShadow: '0 2px 6px rgba(99, 102, 241, 0.4)',
+          border: '2px solid hsl(217 33% 17%)',
+          boxShadow: '0 2px 6px rgba(129, 140, 248, 0.4)',
         }}
       />
-      
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        marginBottom: '6px',
-      }}>
-        <div style={{
-          width: '24px', height: '24px', borderRadius: '6px',
-          backgroundColor: '#6366f115', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '12px',
-        }}>
-          ⚙️
-        </div>
-        <span style={{ 
-          fontSize: '10px', 
-          textTransform: 'uppercase', 
-          color: '#4338ca',
-          fontWeight: 700,
-          letterSpacing: '0.05em',
-        }}>
+
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-500/20 text-indigo-300">
+          <SettingsIcon className="w-3.5 h-3.5" aria-hidden="true" />
+        </span>
+        <span className="text-[10px] uppercase font-bold tracking-wider text-indigo-300">
           Action
         </span>
       </div>
-      <div style={{ 
-        fontSize: '13px', 
-        fontWeight: 600,
-        color: '#3730a3',
-      }}>
-        {actionTypeLabels[data.actionType] || data.label}
+      <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground">
+        <LabelIcon className="w-3.5 h-3.5 text-indigo-300 flex-shrink-0" aria-hidden="true" />
+        <span className="truncate">{info.label}</span>
       </div>
-      
+
       <Handle
         type="source"
         position={Position.Bottom}
         style={{
-          background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+          background: '#818cf8',
           width: '12px',
           height: '12px',
-          border: '2px solid white',
-          boxShadow: '0 2px 6px rgba(99, 102, 241, 0.4)',
+          border: '2px solid hsl(217 33% 17%)',
+          boxShadow: '0 2px 6px rgba(129, 140, 248, 0.4)',
         }}
       />
     </div>

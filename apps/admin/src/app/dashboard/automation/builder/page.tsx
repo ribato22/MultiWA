@@ -3,7 +3,16 @@
 import dynamic from 'next/dynamic';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  ArrowLeft,
+  Wrench,
+  Loader2,
+  CheckCircle2,
+  FileText,
+  AlertCircle,
+} from 'lucide-react';
 import { api, Profile } from '@/lib/api';
+import { DesktopOnlyGuard } from '@/components/ui/desktop-only-guard';
 
 // Dynamic import to avoid SSR issues with reactflow
 const FlowBuilder = dynamic(
@@ -11,8 +20,8 @@ const FlowBuilder = dynamic(
   { ssr: false, loading: () => (
     <div className="flex items-center justify-center h-[70vh]">
       <div className="text-center">
-        <div className="animate-spin w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full mx-auto mb-4" />
-        <p className="text-gray-500 dark:text-gray-400">Loading Flow Builder...</p>
+        <Loader2 className="w-10 h-10 text-primary mw-spin mx-auto mb-4" aria-hidden="true" />
+        <p className="text-muted-foreground">Loading Flow Builder...</p>
       </div>
     </div>
   )}
@@ -312,33 +321,35 @@ export default function AutomationBuilderPage() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between px-6 py-4 border-b border-border bg-card">
+        <div className="flex items-center gap-3 min-w-0">
           <button
+            type="button"
             onClick={() => router.push('/dashboard/automation')}
-            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            aria-label="Back to automation list"
+            className="p-2 rounded-lg hover:bg-secondary/60 text-muted-foreground hover:text-foreground transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50"
           >
-            <svg className="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-            </svg>
+            <ArrowLeft className="w-5 h-5" aria-hidden="true" />
           </button>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-              🔧 Visual Flow Builder
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
+              <Wrench className="w-5 h-5 text-primary" aria-hidden="true" />
+              Visual Flow Builder
             </h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-sm text-muted-foreground">
               Design automation flows with drag-and-drop
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Profile selector */}
           {profiles.length > 0 && (
             <select
               value={selectedProfile}
               onChange={(e) => setSelectedProfile(e.target.value)}
-              className="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+              className="text-sm border border-border rounded-lg px-3 py-1.5 bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+              aria-label="Profile"
             >
               {profiles.map(p => (
                 <option key={p.id} value={p.id}>
@@ -350,37 +361,58 @@ export default function AutomationBuilderPage() {
 
           {/* Save status indicator */}
           {saveStatus === 'saved' && (
-            <span className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1 animate-pulse">
-              ✅ Saved to API
+            <span
+              role="status"
+              aria-live="polite"
+              className="text-sm text-primary inline-flex items-center gap-1.5"
+            >
+              <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+              Saved to API
             </span>
           )}
           {saveStatus === 'draft' && (
-            <span className="text-sm text-amber-600 dark:text-amber-400 flex items-center gap-1">
-              📝 Draft saved (add trigger nodes to save to API)
+            <span
+              role="status"
+              aria-live="polite"
+              className="text-sm text-amber-300 inline-flex items-center gap-1.5"
+            >
+              <FileText className="w-4 h-4" aria-hidden="true" />
+              Draft saved (add trigger nodes to save to API)
             </span>
           )}
           {saveStatus === 'error' && (
-            <span className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-              ❌ Save failed
+            <span
+              role="status"
+              aria-live="assertive"
+              className="text-sm text-destructive inline-flex items-center gap-1.5"
+            >
+              <AlertCircle className="w-4 h-4" aria-hidden="true" />
+              Save failed
             </span>
           )}
 
-          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded-lg">
-            <span className="w-3 h-3 rounded-full bg-emerald-500" /> Trigger
-            <span className="w-3 h-3 rounded-full bg-amber-500 ml-2" /> Condition
-            <span className="w-3 h-3 rounded-full bg-indigo-500 ml-2" /> Action
-            <span className="w-3 h-3 rounded-full bg-slate-500 ml-2" /> Delay
+          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-secondary/40 border border-border/60 px-3 py-1.5 rounded-lg">
+            <span className="w-2.5 h-2.5 rounded-full bg-primary" aria-hidden="true" /> Trigger
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ml-2" aria-hidden="true" /> Condition
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 ml-2" aria-hidden="true" /> Action
+            <span className="w-2.5 h-2.5 rounded-full bg-slate-400 ml-2" aria-hidden="true" /> Delay
           </div>
         </div>
       </div>
 
       {/* Flow Builder */}
       <div className="flex-1 relative" style={{ height: 'calc(100vh - 130px)', minHeight: '500px' }}>
-        <FlowBuilder
-          initialNodes={draft?.nodes}
-          initialEdges={draft?.edges}
-          onSave={handleSave}
-        />
+        <DesktopOnlyGuard
+          pageName="Visual Flow Builder"
+          reason="Drag-and-drop canvas needs a larger screen for comfortable use."
+          minWidth="md"
+        >
+          <FlowBuilder
+            initialNodes={draft?.nodes}
+            initialEdges={draft?.edges}
+            onSave={handleSave}
+          />
+        </DesktopOnlyGuard>
       </div>
     </div>
   );

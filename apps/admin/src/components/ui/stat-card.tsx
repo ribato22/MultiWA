@@ -42,10 +42,10 @@ export function StatCard({
     );
   }
 
-  const trendColor = trend 
-    ? trend.value >= 0 
-      ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30' 
-      : 'text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30'
+  const trendColor = trend
+    ? trend.value >= 0
+      ? 'text-primary bg-primary/15 border border-primary/30'
+      : 'text-destructive bg-destructive/15 border border-destructive/30'
     : '';
 
   return (
