@@ -14,6 +14,13 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Guides & Examples',
+      items: [
+        'guides/examples',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Architecture',
       items: [
         'architecture/system-architecture',
