@@ -240,6 +240,9 @@ model Message {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([profileId, timestamp])
+  @@index([conversationId, timestamp])
+  @@index([messageId])
+  @@index([profileId, status])
   @@map("messages")
 }
 
