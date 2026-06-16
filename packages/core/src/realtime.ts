@@ -12,7 +12,7 @@ export const REALTIME_CHANNEL = 'multiwa:realtime';
 export type RealtimeMessage =
   | { type: 'qr:update'; profileId: string; payload: { qrCode: string } }
   | { type: 'connection:status'; profileId: string; payload: { status: string; phoneOrReason?: string } }
-  | { type: 'message'; profileId: string; payload: { message: any; conversation?: any } }
+  | { type: 'message'; profileId: string; payload: any }
   | { type: 'message:ack'; profileId: string; payload: { messageId: string; status: string } }
   | { type: 'heartbeat'; profileId: string; payload: { ts: number; workerPid: number } };
 

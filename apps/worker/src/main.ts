@@ -1,12 +1,19 @@
 // apps/worker/src/main.ts
+import 'reflect-metadata'; // MUST be first — required for NestJS DI decorator metadata
 import { Worker, Queue } from 'bullmq';
 import Redis from 'ioredis';
 import pino from 'pino';
 import { PrismaClient } from '@prisma/client';
+import { NestFactory } from '@nestjs/core';
+import type { INestApplicationContext } from '@nestjs/common';
+import { WorkerEngineModule } from './engine/worker-engine.module';
 import { MessageProcessor } from './processors/message.processor';
 import { AutomationProcessor } from './processors/automation.processor';
 import { WebhookProcessor } from './processors/webhook.processor';
 import { ScheduledProcessor } from './processors/scheduled.processor';
+
+// Nest application context hosting the engine runtime (only when ENGINE_HOST=worker).
+let nestApp: INestApplicationContext | undefined;
 
 const logger = pino(
   process.env.NODE_ENV === 'production'
@@ -130,6 +137,7 @@ const shutdown = async () => {
     scheduledWorker.close(),
     scheduledQueue.close(),
   ]);
+  if (nestApp) await nestApp.close();
   await connection.quit();
   await prisma.$disconnect();
   process.exit(0);
@@ -143,6 +151,17 @@ const start = async () => {
   // Test database connection
   await prisma.$connect();
   logger.info('📦 Database connected');
+
+  // When the engine is hosted in the worker, bootstrap the Nest context that
+  // provides the engine runtime (RealtimeEmitter, send gate, and — as they
+  // relocate — EngineManager/RuleEngine/Messages/etc.). Inert when ENGINE_HOST=api.
+  if (process.env.ENGINE_HOST === 'worker') {
+    nestApp = await NestFactory.createApplicationContext(WorkerEngineModule, {
+      logger: ['warn', 'error', 'log'],
+    });
+    await nestApp.init();
+    logger.info('🧩 Worker engine Nest context initialized (ENGINE_HOST=worker)');
+  }
 
   await setupScheduledJobs();
 
