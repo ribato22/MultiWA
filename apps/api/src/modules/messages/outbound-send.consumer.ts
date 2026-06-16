@@ -11,6 +11,7 @@ import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import { MessagesService } from './messages.service';
 import { OUTBOUND_SEND_MAX_ATTEMPTS, OutboundSendJob, isDurableSend } from './outbound-send';
+import { isWorkerEngine } from '../../common/engine-host';
 
 @Injectable()
 export class OutboundSendConsumer implements OnModuleInit, OnModuleDestroy {
@@ -25,6 +26,13 @@ export class OutboundSendConsumer implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
+    // The in-API consumer runs only when durable send is on AND the engine is
+    // hosted in the API. When ENGINE_HOST=worker the worker drains this queue
+    // (it owns the engine), so the API must not also consume it.
+    if (isWorkerEngine()) {
+      this.logger.log('ENGINE_HOST=worker: in-API outbound send consumer idle (worker drains the queue)');
+      return;
+    }
     if (!isDurableSend()) {
       this.logger.log('DURABLE_SEND not enabled; outbound send consumer idle (synchronous send path active)');
       return;

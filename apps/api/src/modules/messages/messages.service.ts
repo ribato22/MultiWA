@@ -26,6 +26,7 @@ import {
   OutboundSendJob,
   isDurableSend,
 } from './outbound-send';
+import { isWorkerEngine } from '../../common/engine-host';
 
 
 @Injectable()
@@ -220,24 +221,12 @@ export class MessagesService {
       data: { lastMessageAt: new Date() },
     });
 
-    // Send via WhatsApp engine, gated per profile (inter-message delay + daily limit).
-    const engine = this.engineManager.getEngine(profileId);
-    if (!engine) {
-      this.logger.warn(`No engine found for profile ${profileId}, message queued as pending`);
-      return {
-        success: true,
-        messageId: message.id,
-        conversationId: conversation.id,
-        status: 'pending',
-        warning: 'Profile not connected, message queued',
-      };
-    }
-
-    // Durable path: enqueue and return 202 immediately. The in-API consumer
-    // (OutboundSendConsumer) drains the queue and runs the real send through the
-    // send gate, so the engine stays in this process while the send survives an
-    // API restart and gets bounded retry.
-    if (isDurableSend()) {
+    // Worker-hosted engine OR durable mode: enqueue and return 202 immediately.
+    // The consumer (in the worker when ENGINE_HOST=worker; in-API when
+    // DURABLE_SEND=true) performs the real send through the send gate, so the send
+    // survives a restart and gets bounded retry. In worker mode the API has no
+    // engine of its own, so it must enqueue rather than check a local engine.
+    if (isWorkerEngine() || isDurableSend()) {
       // Pre-enqueue daily-limit check so the common case still gets a synchronous
       // 429 (the send gate in the consumer is the authoritative increment).
       const now = new Date();
@@ -274,6 +263,19 @@ export class MessagesService {
         messageId: message.id,
         conversationId: conversation.id,
         status: 'queued',
+      };
+    }
+
+    // API-hosted synchronous send (ENGINE_HOST=api, DURABLE_SEND off).
+    const engine = this.engineManager.getEngine(profileId);
+    if (!engine) {
+      this.logger.warn(`No engine found for profile ${profileId}, message queued as pending`);
+      return {
+        success: true,
+        messageId: message.id,
+        conversationId: conversation.id,
+        status: 'pending',
+        warning: 'Profile not connected, message queued',
       };
     }
 
