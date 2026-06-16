@@ -1,10 +1,13 @@
 // MultiWA Gateway API - Engine Manager Service
 // apps/api/src/modules/profiles/engine-manager.service.ts
 //
-// This service manages WhatsApp engine instances and wires them to EventsGateway
+// This service manages WhatsApp engine instances and emits realtime events
+// through the injected RealtimeEmitter (EventsGateway in the API; a Redis
+// publisher in the worker), decoupling it from Socket.IO so it can run in either
+// process. See architecture/engine-worker-migration-sop.md.
 
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
-import { EventsGateway } from '../events/events.gateway';
+import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
@@ -28,7 +31,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private engines = new Map<string, EngineInstance>();
 
   constructor(
-    private readonly eventsGateway: EventsGateway,
+    @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
     @Inject(forwardRef(() => RuleEngineService))
     private readonly ruleEngineService: RuleEngineService,
     private readonly notificationsService: NotificationsService,
@@ -334,13 +337,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           });
           
           // Emit QR data URL to WebSocket clients
-          this.eventsGateway.emitQrUpdate(profileId, qrDataUrl);
+          this.realtime.emitQrUpdate(profileId, qrDataUrl);
           this.emitEvent(AppEvents.CONNECTION.QR, { profileId, qr: qrDataUrl });
           this.logger.log(`QR code emitted via WebSocket for profile ${profileId}`);
         } catch (error) {
           this.logger.error(`Error generating QR data URL:`, error);
           // Fallback: send raw QR string
-          this.eventsGateway.emitQrUpdate(profileId, qr);
+          this.realtime.emitQrUpdate(profileId, qr);
         }
       },
       onReady: async (phone: string, pushName: string) => {
@@ -360,7 +363,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.logger.warn(
             `Profile ${profileId}: scanned WA number ${actual} does not match expected ${expected}. Disconnecting.`,
           );
-          this.eventsGateway.emitConnectionStatus(
+          this.realtime.emitConnectionStatus(
             profileId,
             'error',
             `Scanned number does not match this profile. Expected ${expected}, got ${actual}.`,
@@ -397,7 +400,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         });
 
         // Emit connection status via WebSocket
-        this.eventsGateway.emitConnectionStatus(profileId, 'connected', phone);
+        this.realtime.emitConnectionStatus(profileId, 'connected', phone);
         this.emitEvent(AppEvents.CONNECTION.READY, { profileId, phone, pushName });
 
         // === Notification: profile connected ===
@@ -437,7 +440,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             where: { id: profileId },
             data: { status: 'disconnected' },
           });
-          this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
+          this.realtime.emitConnectionStatus(profileId, 'disconnected');
           this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason });
 
           // === Notification: session invalidated ===
@@ -469,7 +472,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               where: { id: profileId },
               data: { status: 'connecting' },
             });
-            this.eventsGateway.emitConnectionStatus(profileId, `reconnecting (${attempt}/${maxRetries})`);
+            this.realtime.emitConnectionStatus(profileId, `reconnecting (${attempt}/${maxRetries})`);
             
             await new Promise(resolve => setTimeout(resolve, delay));
             
@@ -490,7 +493,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             where: { id: profileId },
             data: { status: 'disconnected' },
           });
-          this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
+          this.realtime.emitConnectionStatus(profileId, 'disconnected');
           this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'max retries exhausted' });
         }
       },
@@ -690,7 +693,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           });
 
           // Emit via WebSocket for real-time chat
-          this.eventsGateway.emitMessage(profileId, {
+          this.realtime.emitMessage(profileId, {
             type: 'message:received',
             message: savedMessage,
             conversation,
@@ -797,7 +800,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.logger.log(`[ACK] Updated ${updated.count} message(s) for ${messageId} → ${status}`);
 
           // Emit WebSocket event for real-time UI updates
-          this.eventsGateway.emitMessageAck(profileId, messageId, status);
+          this.realtime.emitMessageAck(profileId, messageId, status);
 
           // Emit on the app bus only for delivery-meaningful acks (skip
           // pending/sent — 'sent' is already published by the outbound path).
@@ -853,7 +856,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.logger.error(`Failed to reset profile status:`, dbErr);
         }
         
-        this.eventsGateway.emitConnectionStatus(profileId, 'error');
+        this.realtime.emitConnectionStatus(profileId, 'error');
       });
 
       return { status: 'connecting', message: 'Scan QR code to connect' };
@@ -896,7 +899,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     });
 
     // Emit disconnection via WebSocket
-    this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
+    this.realtime.emitConnectionStatus(profileId, 'disconnected');
 
     return { status: 'disconnected' };
   }

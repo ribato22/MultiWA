@@ -15,3 +15,21 @@ export type RealtimeMessage =
   | { type: 'message'; profileId: string; payload: { message: any; conversation?: any } }
   | { type: 'message:ack'; profileId: string; payload: { messageId: string; status: string } }
   | { type: 'heartbeat'; profileId: string; payload: { ts: number; workerPid: number } };
+
+/**
+ * Sink for engine realtime events. Decouples the engine runtime from the API's
+ * Socket.IO gateway so the engine can run in either process:
+ *   - API   (ENGINE_HOST=api):    EventsGateway implements this (emits to Socket.IO)
+ *   - Worker (ENGINE_HOST=worker): RealtimePublisher implements this (publishes to
+ *     Redis; the API's RealtimeBridge re-emits via Socket.IO)
+ * The method shapes match EventsGateway's existing emit methods.
+ */
+export interface RealtimeEmitter {
+  emitQrUpdate(profileId: string, qrCode: string): void;
+  emitConnectionStatus(profileId: string, status: string, phoneOrReason?: string): void;
+  emitMessage(profileId: string, message: any): void;
+  emitMessageAck(profileId: string, messageId: string, status: string): void;
+}
+
+/** DI token for the RealtimeEmitter implementation. */
+export const REALTIME_EMITTER = 'REALTIME_EMITTER';
