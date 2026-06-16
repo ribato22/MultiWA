@@ -6,8 +6,8 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { EventsGateway } from '../events/events.gateway';
 import { prisma } from '@multiwa/database';
-import { WhatsAppWebJsAdapter } from '@multiwa/engines';
-import type { IWhatsAppEngine, EngineConfig } from '@multiwa/engines';
+import { EngineFactory } from '@multiwa/engines';
+import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';
@@ -41,7 +41,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async onModuleInit() {
     this.logger.log('EngineManagerService initializing...');
-    
+
+    const envEngine = process.env.DEFAULT_ENGINE;
+    if (envEngine && !['whatsapp-web-js', 'baileys', 'mock'].includes(envEngine)) {
+      this.logger.warn(`DEFAULT_ENGINE='${envEngine}' is not a valid engine; profiles without an explicit engine will use whatsapp-web-js`);
+    }
+
     try {
       // Step 1: Reset all profiles that show as 'connected' in the database
       // (since we just started, no engines are actually running)
@@ -215,6 +220,41 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       }
     }
     this.engines.clear();
+  }
+
+  /**
+   * Resolve which engine to instantiate for a profile.
+   * Precedence: validated profile.engine -> DEFAULT_ENGINE env -> whatsapp-web-js.
+   * See architecture/multi-engine-sop.md. EngineFactory.create() is used (never
+   * getOrCreate) — EngineManagerService.engines is the sole instance owner.
+   */
+  private resolveEngineType(engineField?: string | null): EngineType {
+    const valid: EngineType[] = ['whatsapp-web-js', 'baileys', 'mock'];
+    let selected: EngineType;
+
+    if (engineField && valid.includes(engineField as EngineType)) {
+      selected = engineField as EngineType;
+    } else {
+      const envDefault = process.env.DEFAULT_ENGINE;
+      if (envDefault && valid.includes(envDefault as EngineType)) {
+        if (engineField) {
+          this.logger.warn(`Profile engine '${engineField}' invalid; falling back to DEFAULT_ENGINE='${envDefault}'`);
+        }
+        selected = envDefault as EngineType;
+      } else {
+        if (engineField) {
+          this.logger.warn(`Profile engine '${engineField}' is not a known engine; defaulting to whatsapp-web-js`);
+        }
+        selected = 'whatsapp-web-js';
+      }
+    }
+
+    if (selected === 'baileys') {
+      this.logger.warn(
+        'Profile is using the EXPERIMENTAL Baileys engine — sendReaction is a no-op stub and getContacts may be unavailable. Use whatsapp-web-js for production.',
+      );
+    }
+    return selected;
   }
 
   /**
@@ -731,9 +771,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       },
     };
 
-    // Create and initialize engine (using whatsapp-web.js for better group support)
-    const engine = new WhatsAppWebJsAdapter();
-    
+    // Create and initialize the engine selected for this profile.
+    const engineType = this.resolveEngineType(profile.engine);
+    this.logger.log(`Initializing '${engineType}' engine for profile ${profileId}`);
+    const engine = EngineFactory.create(engineType);
+
     try {
       await engine.initialize(engineConfig);
       

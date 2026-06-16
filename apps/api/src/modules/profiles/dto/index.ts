@@ -7,7 +7,11 @@ import { IsString, IsOptional, IsUrl, IsEnum, IsInt, Min } from 'class-validator
 export enum EngineType {
   WHATSAPP_WEB_JS = 'whatsapp-web-js',
   BAILEYS = 'baileys',
+  MOCK = 'mock',
 }
+
+const ENGINE_DESC =
+  'WhatsApp engine for this profile. whatsapp-web-js (default, production) | baileys (EXPERIMENTAL: sendReaction is a no-op stub, getContacts may be unavailable) | mock (testing only). Engine changes take effect on next reconnect.';
 
 export class CreateProfileDto {
   @ApiProperty({ example: 'uuid-of-workspace' })
@@ -18,7 +22,7 @@ export class CreateProfileDto {
   @IsString()
   name: string;
 
-  @ApiPropertyOptional({ enum: EngineType, default: EngineType.WHATSAPP_WEB_JS })
+  @ApiPropertyOptional({ enum: EngineType, default: EngineType.WHATSAPP_WEB_JS, description: ENGINE_DESC })
   @IsOptional()
   @IsEnum(EngineType)
   engine?: EngineType;
@@ -40,7 +44,7 @@ export class UpdateProfileDto {
   @IsString()
   name?: string;
 
-  @ApiPropertyOptional({ enum: EngineType })
+  @ApiPropertyOptional({ enum: EngineType, description: ENGINE_DESC })
   @IsOptional()
   @IsEnum(EngineType)
   engine?: EngineType;

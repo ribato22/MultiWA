@@ -30,7 +30,13 @@ export class EngineFactory {
   }
 
   /**
-   * Get or create an engine instance for a profile
+   * Get or create an engine instance for a profile.
+   *
+   * @deprecated Do NOT call this from EngineManagerService — it keeps a second
+   * static `instances` Map, and EngineManagerService.engines is the sole owner of
+   * adapter instances. Two owners means dual instances per profile, double-fired
+   * callbacks, and session corruption. Use EngineFactory.create() and manage the
+   * instance lifetime yourself. See architecture/multi-engine-sop.md.
    */
   static async getOrCreate(
     profileId: string,

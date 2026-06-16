@@ -62,12 +62,12 @@ describe('SendGateService', () => {
   it('rejects with 429 once the daily limit is reached, without calling sendFn', async () => {
     let count = 0;
     vi.mocked(prisma.profile.findUnique).mockImplementation(
-      async () => profileRow({ dailyMessageLimit: 2, dailyMessageCount: count }) as any,
+      (async () => profileRow({ dailyMessageLimit: 2, dailyMessageCount: count })) as any,
     );
-    vi.mocked(prisma.profile.update).mockImplementation(async (args: any) => {
+    vi.mocked(prisma.profile.update).mockImplementation((async (args: any) => {
       if (args?.data?.dailyMessageCount?.increment) count += 1;
-      return {} as any;
-    });
+      return {};
+    }) as any);
 
     const sendFn = vi.fn().mockResolvedValue('ok');
 

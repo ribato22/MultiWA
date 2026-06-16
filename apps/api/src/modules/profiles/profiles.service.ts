@@ -83,6 +83,7 @@ export class ProfilesService {
       data: {
         workspaceId: dto.workspaceId,
         displayName: dto.name,
+        engine: dto.engine ?? 'whatsapp-web-js',
         webhookUrl: dto.webhookUrl,
         webhookSecret: dto.webhookSecret,
       },
@@ -90,7 +91,7 @@ export class ProfilesService {
   }
 
   async update(id: string, dto: UpdateProfileDto) {
-    await this.findOne(id);
+    const existing = await this.findOne(id);
 
     // Build the update payload conditionally so a partial update never clobbers
     // existing columns with undefined/null.
@@ -101,8 +102,20 @@ export class ProfilesService {
     };
     if (dto.messageDelayMs !== undefined) data.messageDelayMs = dto.messageDelayMs;
     if (dto.dailyMessageLimit !== undefined) data.dailyMessageLimit = dto.dailyMessageLimit;
+    if (dto.engine !== undefined) data.engine = dto.engine;
 
-    return prisma.profile.update({ where: { id }, data });
+    const updated = await prisma.profile.update({ where: { id }, data });
+
+    // An engine change only takes effect on the next reconnect (we do not force a
+    // disconnect here — that would risk corrupting a live session).
+    if (dto.engine !== undefined && dto.engine !== (existing as any).engine) {
+      return {
+        ...updated,
+        warning:
+          'Engine change will take effect on next reconnect. Clear the engine-specific session directory before reconnecting.',
+      };
+    }
+    return updated;
   }
 
   async delete(id: string) {
