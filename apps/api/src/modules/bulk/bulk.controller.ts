@@ -1,30 +1,33 @@
 // MultiWA Gateway - Bulk Messaging Controller
 // apps/api/src/modules/bulk/bulk.controller.ts
 
-import { 
-  Controller, 
-  Get, 
-  Post, 
-  Param, 
-  Body, 
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
   Query,
-  UseGuards 
+  UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { BulkService } from './bulk.service';
 import { SendBulkDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Bulk Messaging')
 @Controller('bulk')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class BulkController {
   constructor(private readonly bulkService: BulkService) {}
 
   @Post('send')
-  @ApiOperation({ 
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
+  @ApiOperation({
     summary: 'Send bulk messages with variable substitution',
     description: 'Sends messages to multiple recipients with support for template variables like {name}, {company}. Returns a batch ID for tracking.'
   })
@@ -33,6 +36,7 @@ export class BulkController {
   }
 
   @Get('batches')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List all batches for a profile' })
   @ApiQuery({ name: 'profileId', required: true })
   async listBatches(@Query('profileId') profileId: string) {
@@ -40,6 +44,7 @@ export class BulkController {
   }
 
   @Get('batch/:batchId')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get batch status with detailed results' })
   @ApiParam({ name: 'batchId', description: 'Batch ID returned from send-bulk' })
   @ApiQuery({ name: 'profileId', required: true })
@@ -51,6 +56,7 @@ export class BulkController {
   }
 
   @Post('batch/:batchId/cancel')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Cancel a batch in progress' })
   @ApiParam({ name: 'batchId', description: 'Batch ID to cancel' })
   @ApiQuery({ name: 'profileId', required: true })

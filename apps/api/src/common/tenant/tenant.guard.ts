@@ -90,6 +90,8 @@ export class TenantGuard implements CanActivate {
         return !!(await prisma.message.findFirst({ where: { id, ...viaProfile }, select }));
       case 'scheduledMessage':
         return !!(await prisma.scheduledMessage.findFirst({ where: { id, ...viaProfile }, select }));
+      case 'knowledgeDocument':
+        return !!(await prisma.knowledgeDocument.findFirst({ where: { id, ...viaProfile }, select }));
       default:
         return false;
     }

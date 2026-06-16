@@ -1,26 +1,29 @@
 // MultiWA Gateway - Statistics Controller
 // apps/api/src/modules/statistics/statistics.controller.ts
 
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { StatisticsService } from './statistics.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Statistics')
 @Controller('statistics')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 export class StatisticsController {
   constructor(private readonly service: StatisticsService) {}
 
   @Get('dashboard')
   @ApiOperation({ summary: 'Get organization dashboard overview' })
-  @ApiQuery({ name: 'organizationId', required: true })
-  async getDashboard(@Query('organizationId') organizationId: string) {
-    return this.service.getDashboard(organizationId);
+  async getDashboard(@Request() req: any) {
+    // Always scope to the caller's own organization — never trust a client-supplied id.
+    return this.service.getDashboard(req.user.organizationId);
   }
 
   @Get('messages')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get message statistics' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'startDate', required: false })
@@ -38,6 +41,7 @@ export class StatisticsController {
   }
 
   @Get('messages/trend')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get message trend over time' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'granularity', required: false, enum: ['hour', 'day', 'week'] })
@@ -57,6 +61,7 @@ export class StatisticsController {
   }
 
   @Get('contacts')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get contact statistics' })
   @ApiQuery({ name: 'profileId', required: true })
   async getContactStats(@Query('profileId') profileId: string) {
@@ -64,6 +69,7 @@ export class StatisticsController {
   }
 
   @Get('broadcasts')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get broadcast statistics' })
   @ApiQuery({ name: 'profileId', required: true })
   async getBroadcastStats(@Query('profileId') profileId: string) {
@@ -71,6 +77,7 @@ export class StatisticsController {
   }
 
   @Get('automations')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get automation statistics' })
   @ApiQuery({ name: 'profileId', required: true })
   async getAutomationStats(@Query('profileId') profileId: string) {
@@ -78,6 +85,7 @@ export class StatisticsController {
   }
 
   @Get('response-time')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get response time analytics' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'startDate', required: false })

@@ -5,11 +5,15 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } fro
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { AutoreplyService } from './autoreply.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateAutoreplyDto, UpdateAutoreplyDto, QuickReplyDto } from './dto';
 
+// Quick replies and keyword autoreplies are both persisted as Automation rows,
+// so their :id routes are tenant-checked against the 'automation' resource.
 @ApiTags('Autoreply')
 @Controller('autoreply')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class AutoreplyController {
@@ -17,12 +21,14 @@ export class AutoreplyController {
 
   // Quick Replies (preset responses)
   @Post('quick-replies')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create quick reply preset' })
   async createQuickReply(@Body() dto: QuickReplyDto) {
     return this.service.createQuickReply(dto);
   }
 
   @Get('quick-replies')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List quick replies' })
   @ApiQuery({ name: 'profileId', required: true })
   async listQuickReplies(@Query('profileId') profileId: string) {
@@ -30,6 +36,7 @@ export class AutoreplyController {
   }
 
   @Delete('quick-replies/:id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Delete quick reply' })
   async deleteQuickReply(@Param('id') id: string) {
     return this.service.deleteQuickReply(id);
@@ -37,12 +44,14 @@ export class AutoreplyController {
 
   // Keyword Autoreplies (simple version of automation)
   @Post()
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create keyword autoreply' })
   async create(@Body() dto: CreateAutoreplyDto) {
     return this.service.create(dto);
   }
 
   @Get()
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List keyword autoreplies' })
   @ApiQuery({ name: 'profileId', required: true })
   async findAll(@Query('profileId') profileId: string) {
@@ -50,24 +59,28 @@ export class AutoreplyController {
   }
 
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Get autoreply by ID' })
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
 
   @Put(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Update autoreply' })
   async update(@Param('id') id: string, @Body() dto: UpdateAutoreplyDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Delete autoreply' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);
   }
 
   @Put(':id/toggle')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Toggle autoreply on/off' })
   async toggle(@Param('id') id: string) {
     return this.service.toggle(id);
@@ -75,12 +88,14 @@ export class AutoreplyController {
 
   // Webhook Dynamic Reply
   @Post('webhook-reply')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Configure webhook for dynamic replies' })
   async configureWebhookReply(@Body() body: { profileId: string; webhookUrl: string; enabled: boolean }) {
     return this.service.configureWebhookReply(body.profileId, body.webhookUrl, body.enabled);
   }
 
   @Get('webhook-reply/:profileId')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get webhook reply configuration' })
   async getWebhookReply(@Param('profileId') profileId: string) {
     return this.service.getWebhookReply(profileId);
@@ -88,10 +103,11 @@ export class AutoreplyController {
 
   // AI Bot Hook
   @Post('ai-hook')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Configure AI bot hook (Dialogflow, GPT, etc)' })
-  async configureAiHook(@Body() body: { 
-    profileId: string; 
-    provider: string; 
+  async configureAiHook(@Body() body: {
+    profileId: string;
+    provider: string;
     config: any;
     enabled: boolean;
   }) {
@@ -99,6 +115,7 @@ export class AutoreplyController {
   }
 
   @Get('ai-hook/:profileId')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get AI hook configuration' })
   async getAiHook(@Param('profileId') profileId: string) {
     return this.service.getAiHook(profileId);

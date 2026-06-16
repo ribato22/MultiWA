@@ -13,7 +13,8 @@ export type TenantResource =
   | 'automation'
   | 'template'
   | 'message'
-  | 'scheduledMessage';
+  | 'scheduledMessage'
+  | 'knowledgeDocument';
 
 export interface TenantCheck {
   /** Where to read the id from on the request. */
