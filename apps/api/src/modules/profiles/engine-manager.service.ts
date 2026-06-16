@@ -59,6 +59,14 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    * 2. Auto-reconnect profiles that have valid session data
    */
   async onModuleInit() {
+    // When the engine is hosted in the worker, the API must NOT reset profile
+    // status or auto-reconnect sessions — the worker owns them. Skipping this is
+    // the anti-split-brain guard (no two processes connecting the same session).
+    if (process.env.ENGINE_HOST === 'worker') {
+      this.logger.warn('ENGINE_HOST=worker: API EngineManagerService skipping autoReconnect (worker owns sessions)');
+      return;
+    }
+
     this.logger.log('EngineManagerService initializing...');
 
     const envEngine = process.env.DEFAULT_ENGINE;

@@ -12,6 +12,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { Queue } from 'bullmq';
 import { prisma } from '@multiwa/database';
 import { APP_EVENT_SET } from '@multiwa/core';
+import { isWorkerEngine } from '../../common/engine-host';
 
 /** DI token for the BullMQ 'webhooks' producer queue. */
 export const WEBHOOK_QUEUE = 'WEBHOOK_QUEUE';
@@ -26,6 +27,13 @@ export class WebhookDispatcherService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    // When ENGINE_HOST=worker the engine (and thus event production) lives in the
+    // worker, which runs its own dispatcher. The API one must stay silent to avoid
+    // double-enqueuing webhook deliveries.
+    if (isWorkerEngine()) {
+      this.logger.log('ENGINE_HOST=worker: API webhook dispatcher deactivated (worker dispatches)');
+      return;
+    }
     // onAny gives us the event name (unlike a bare @OnEvent('**') handler).
     this.eventEmitter.onAny((event: string | string[], payload: unknown) => {
       const name = Array.isArray(event) ? event.join('.') : String(event);

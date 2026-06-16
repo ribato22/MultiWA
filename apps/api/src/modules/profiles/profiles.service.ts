@@ -5,12 +5,17 @@ import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef 
 import { prisma } from '@multiwa/database';
 import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { EngineManagerService } from './engine-manager.service';
+import { EngineCommandsService } from '../engine-commands/engine-commands.service';
+import { isWorkerEngine } from '../../common/engine-host';
 
 @Injectable()
 export class ProfilesService {
   constructor(
     @Inject(forwardRef(() => EngineManagerService))
     private readonly engineManager: EngineManagerService,
+    // Engine commands client — used to drive the worker-hosted engine when
+    // ENGINE_HOST=worker; unused (idle) when ENGINE_HOST=api.
+    private readonly engineCommands: EngineCommandsService,
   ) {}
 
   async findAll(organizationId: string, workspaceId?: string) {
@@ -135,11 +140,13 @@ export class ProfilesService {
       return { status: 'already_connected', phone: profile.phoneNumber };
     }
 
-    // Use EngineManager to handle connection
-    // This will initialize the engine and emit QR code via WebSocket
-    const result = await this.engineManager.connectProfile(id);
-    
-    return { 
+    // Initialize the engine (emits QR via WebSocket). When ENGINE_HOST=worker the
+    // engine lives in the worker, so delegate over the engine-commands queue.
+    const result = isWorkerEngine()
+      ? await this.engineCommands.connectProfile(id)
+      : await this.engineManager.connectProfile(id);
+
+    return {
       status: result.status,
       message: result.message,
     };
@@ -148,15 +155,18 @@ export class ProfilesService {
   async disconnect(id: string) {
     await this.findOne(id);
 
-    // Use EngineManager to handle disconnection
-    const result = await this.engineManager.disconnectProfile(id);
+    const result = isWorkerEngine()
+      ? await this.engineCommands.disconnectProfile(id)
+      : await this.engineManager.disconnectProfile(id);
 
     return { status: result.status };
   }
 
   async getStatus(id: string) {
     const profile = await this.findOne(id);
-    const engineStatus = this.engineManager.getEngineStatus(id);
+    const engineStatus = isWorkerEngine()
+      ? await this.engineCommands.getEngineStatus(id)
+      : this.engineManager.getEngineStatus(id);
     
     return {
       id: profile.id,
