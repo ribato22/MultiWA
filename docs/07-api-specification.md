@@ -251,13 +251,9 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `DELETE` | `/webhooks/:id` | Delete webhook |
 | `POST` | `/webhooks/:id/test` | Send a test event |
 
-### Hooks (`/hooks`) — incoming webhook receivers
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/hooks` | List receiver hooks |
-| `POST` | `/hooks` | Register a receiver hook |
-| `DELETE` | `/hooks/:id` | Delete receiver hook |
+> **Removed:** the legacy global `/hooks` registry has been retired. Use the
+> organization-scoped `/webhooks` endpoints above — they sign every delivery with
+> an HMAC `X-MultiWA-Signature` header and are isolated per tenant.
 
 ### Automation (`/automation`)
 

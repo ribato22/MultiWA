@@ -4,6 +4,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DemoGuard } from './common/guards/demo.guard';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
@@ -35,7 +36,6 @@ import { SettingsModule } from './modules/settings/settings.module';
 
 // Infrastructure modules
 import { CacheModule } from './modules/cache/cache.module';
-import { HooksModule } from './modules/hooks/hooks.module';
 import { PluginsModule } from './modules/plugins/plugins.module';
 
 // Third-party integrations
@@ -62,10 +62,20 @@ import { BulkModule } from './modules/bulk/bulk.module';
     
     // Task scheduling
     ScheduleModule.forRoot(),
-    
+
+    // Application event bus (consumed by the plugin loader and any @OnEvent
+    // listener). Previously provided by the now-removed global HooksModule; the
+    // legacy /hooks webhook registry was a cross-tenant global store and has been
+    // deprecated in favour of the org-scoped WebhooksModule (/webhooks).
+    EventEmitterModule.forRoot({
+      wildcard: true,        // Allow 'message.*' patterns
+      delimiter: '.',         // Event namespace delimiter
+      maxListeners: 20,
+      verboseMemoryLeak: true,
+    }),
+
     // Infrastructure modules
     CacheModule,       // Config-driven cache (Redis/Memory)
-    HooksModule,       // Event hooks + webhook plugin system
     PluginsModule,     // Plugin loader (scans plugins/ directory)
     
     // Third-party integrations
