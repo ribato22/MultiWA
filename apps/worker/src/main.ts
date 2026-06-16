@@ -8,7 +8,7 @@ import { NestFactory } from '@nestjs/core';
 import type { INestApplicationContext } from '@nestjs/common';
 import { WorkerEngineModule } from './engine/worker-engine.module';
 import { EngineManagerService } from './engine/engine-manager.service';
-import { WorkerSenderService } from './engine/sender.service';
+import { WorkerMessagesService } from './engine/messages.service';
 import { EngineCommandProcessor } from './engine/engine-command-processor';
 import { MessageProcessor } from './processors/message.processor';
 import { AutomationProcessor } from './processors/automation.processor';
@@ -170,7 +170,7 @@ const start = async () => {
     logger.info('🧩 Worker engine Nest context initialized (ENGINE_HOST=worker)');
 
     const engineManager = nestApp.get(EngineManagerService);
-    const sender = nestApp.get(WorkerSenderService);
+    const messages = nestApp.get(WorkerMessagesService);
     const commandProcessor = new EngineCommandProcessor(engineManager);
 
     // API -> worker engine commands (connect/disconnect/status/group/contacts/etc.)
@@ -194,7 +194,7 @@ const start = async () => {
       'outbound-send',
       async (job) => {
         const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? OUTBOUND_ATTEMPTS);
-        await sender.deliver(job.data, isLastAttempt);
+        await messages.deliverQueued(job.data, isLastAttempt);
       },
       { connection, concurrency: 1 },
     );

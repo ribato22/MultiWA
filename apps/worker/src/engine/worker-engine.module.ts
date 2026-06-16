@@ -15,7 +15,10 @@ import { REALTIME_EMITTER } from '@multiwa/core';
 import { SendGateService } from '@multiwa/engine-runtime';
 import { RealtimePublisherService } from './realtime-publisher.service';
 import { EngineManagerService } from './engine-manager.service';
-import { WorkerSenderService } from './sender.service';
+import { WorkerMessagesService } from './messages.service';
+import { WorkerAutomationService } from './automation.service';
+import { AIService } from './ai.service';
+import { WorkerRuleEngineService } from './rule-engine.service';
 import { WorkerWebhookDispatcherService, WORKER_WEBHOOK_QUEUE } from './webhook-dispatcher.service';
 
 @Module({
@@ -29,7 +32,10 @@ import { WorkerWebhookDispatcherService, WORKER_WEBHOOK_QUEUE } from './webhook-
     { provide: REALTIME_EMITTER, useExisting: RealtimePublisherService },
     SendGateService,
     EngineManagerService,
-    WorkerSenderService,
+    WorkerMessagesService,
+    WorkerAutomationService,
+    AIService,
+    WorkerRuleEngineService,
     WorkerWebhookDispatcherService,
     {
       // Worker-side BullMQ 'webhooks' producer (the WebhookProcessor consumes it).
@@ -42,7 +48,7 @@ import { WorkerWebhookDispatcherService, WORKER_WEBHOOK_QUEUE } from './webhook-
         }),
     },
   ],
-  exports: [EngineManagerService, WorkerSenderService],
+  exports: [EngineManagerService, WorkerMessagesService],
 })
 export class WorkerEngineModule implements OnModuleDestroy {
   constructor(@Inject(WORKER_WEBHOOK_QUEUE) private readonly webhookQueue: Queue) {}

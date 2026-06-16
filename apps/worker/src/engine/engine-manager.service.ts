@@ -15,10 +15,9 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AppEvents } from '@multiwa/core';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
-// NOTE (worker-local copy): automation (RuleEngine) and push/email notifications
-// are intentionally NOT wired in the worker yet — see architecture/engine-worker-migration-sop.md.
-// The worker persists inbound messages and emits message.received on the bus (so
-// webhooks still fire); automation/notifications in worker mode are a follow-up.
+import { WorkerRuleEngineService, IncomingMessage } from './rule-engine.service';
+// NOTE (worker-local copy): push/email notifications are NOT wired in the worker
+// (the API surfaces them); automation (RuleEngine) IS wired below.
 
 
 interface EngineInstance {
@@ -35,6 +34,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   constructor(
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(forwardRef(() => WorkerRuleEngineService))
+    private readonly ruleEngine: WorkerRuleEngineService,
   ) {
     this.logger.log('Worker EngineManagerService initialized');
   }
@@ -723,9 +724,42 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             }).catch(() => {}); // Ignore duplicate errors
           }
 
-          // NOTE: automation (RuleEngine) is deferred in the worker for now. The
-          // message.received app-event was already emitted above, so webhooks fire;
-          // inline automation replies are a documented follow-up.
+          // === AUTOMATION: Process through the worker-local Rule Engine ===
+          const incomingMsg: IncomingMessage = {
+            profileId,
+            conversationId: conversation.id,
+            senderJid,
+            senderName,
+            messageType: msgType === 'chat' ? 'text' : msgType,
+            content,
+            timestamp: new Date(),
+            isGroup,
+            isNewContact,
+          };
+
+          // Fast-fail guard: skip automation when the profile is at its daily cap.
+          // The send gate owns the single counter increment (automation replies go
+          // through it), so this guard must NOT increment. null = unlimited.
+          const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
+          if (
+            currentProfile &&
+            currentProfile.dailyMessageLimit != null &&
+            currentProfile.dailyMessageCount >= currentProfile.dailyMessageLimit
+          ) {
+            this.logger.warn(`Daily message limit reached for profile ${profileId}, skipping automation`);
+          } else {
+            const results = await this.ruleEngine.processMessage(incomingMsg);
+            for (const result of results) {
+              if (result.success) {
+                this.logger.log(`✅ Action "${result.action}" succeeded for ${senderJid}`);
+              } else {
+                this.logger.error(`❌ Action "${result.action}" failed for ${senderJid}: ${result.error || 'Unknown error'}`);
+              }
+            }
+            if (results.length > 0) {
+              this.logger.log(`Automation processed ${results.length} action(s) for message from ${senderJid}`);
+            }
+          }
         } catch (error) {
           this.logger.error(`Error processing incoming message:`, error);
         }
