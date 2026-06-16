@@ -5,12 +5,14 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, Req 
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { BroadcastService } from './broadcast.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateBroadcastDto, UpdateBroadcastDto, ScheduleBroadcastDto } from './dto';
 import { AuditService, AuditAction } from '../audit/audit.service';
 
 @ApiTags('Broadcast')
 @Controller('broadcast')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class BroadcastController {
@@ -20,6 +22,7 @@ export class BroadcastController {
   ) {}
 
   @Post()
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create a broadcast' })
   async create(@Body() dto: CreateBroadcastDto, @Req() req: any) {
     const result = await this.service.create(dto);
@@ -35,6 +38,7 @@ export class BroadcastController {
   }
 
   @Get()
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List broadcasts' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'status', required: false, enum: ['draft', 'scheduled', 'running', 'paused', 'completed', 'failed'] })
@@ -46,18 +50,21 @@ export class BroadcastController {
   }
 
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Get broadcast by ID with stats' })
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
 
   @Put(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Update broadcast (draft only)' })
   async update(@Param('id') id: string, @Body() dto: UpdateBroadcastDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Delete broadcast' })
   async delete(@Param('id') id: string, @Req() req: any) {
     const result = await this.service.delete(id);
@@ -72,12 +79,14 @@ export class BroadcastController {
   }
 
   @Post(':id/schedule')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Schedule broadcast' })
   async schedule(@Param('id') id: string, @Body() dto: ScheduleBroadcastDto) {
     return this.service.schedule(id, dto);
   }
 
   @Post(':id/start')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Start broadcast immediately' })
   async start(@Param('id') id: string, @Req() req: any) {
     const result = await this.service.start(id);
@@ -92,30 +101,35 @@ export class BroadcastController {
   }
 
   @Post(':id/pause')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Pause running broadcast' })
   async pause(@Param('id') id: string) {
     return this.service.pause(id);
   }
 
   @Post(':id/resume')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Resume paused broadcast' })
   async resume(@Param('id') id: string) {
     return this.service.resume(id);
   }
 
   @Post(':id/cancel')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Cancel broadcast' })
   async cancel(@Param('id') id: string) {
     return this.service.cancel(id);
   }
 
   @Get(':id/stats')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Get detailed broadcast statistics' })
   async getStats(@Param('id') id: string) {
     return this.service.getStats(id);
   }
 
   @Get(':id/recipients')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Get recipient list with status' })
   @ApiQuery({ name: 'status', required: false, enum: ['pending', 'sent', 'delivered', 'failed'] })
   @ApiQuery({ name: 'limit', required: false })

@@ -5,16 +5,19 @@ import { Controller, Get, Put, Delete, Param, Query, Body, UseGuards } from '@ne
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Conversations')
 @Controller('conversations')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class ConversationsController {
   constructor(private readonly service: ConversationsService) {}
 
   @Get()
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List conversations' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'type', required: false, enum: ['user', 'group', 'broadcast'] })
@@ -30,6 +33,7 @@ export class ConversationsController {
   }
 
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Get conversation with messages' })
   @ApiQuery({ name: 'messageLimit', required: false })
   async findOne(
@@ -40,48 +44,56 @@ export class ConversationsController {
   }
 
   @Put(':id/read')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Mark conversation as read' })
   async markAsRead(@Param('id') id: string) {
     return this.service.markAsRead(id);
   }
 
   @Put(':id/archive')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Archive conversation' })
   async archive(@Param('id') id: string) {
     return this.service.archive(id);
   }
 
   @Put(':id/unarchive')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Unarchive conversation' })
   async unarchive(@Param('id') id: string) {
     return this.service.unarchive(id);
   }
 
   @Put(':id/mute')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle mute conversation' })
   async toggleMute(@Param('id') id: string) {
     return this.service.toggleMute(id);
   }
 
   @Put(':id/pin')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle pin conversation' })
   async togglePin(@Param('id') id: string) {
     return this.service.togglePin(id);
   }
 
   @Delete(':id/messages')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Clear all messages in conversation' })
   async clearMessages(@Param('id') id: string) {
     return this.service.clearMessages(id);
   }
 
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Delete conversation and messages' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);
   }
 
   @Get(':id/messages')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Get messages in conversation' })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })

@@ -25,10 +25,10 @@ export class WebhooksController {
   }
 
   @Get()
-  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile', optional: true })
-  @ApiOperation({ summary: 'List all webhooks' })
-  @ApiQuery({ name: 'profileId', required: false })
-  async findAll(@Query('profileId') profileId?: string) {
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
+  @ApiOperation({ summary: 'List webhooks for a profile' })
+  @ApiQuery({ name: 'profileId', required: true })
+  async findAll(@Query('profileId') profileId: string) {
     return this.service.findAll(profileId);
   }
 
