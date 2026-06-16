@@ -16,6 +16,7 @@ import { MessagesModule } from './modules/messages/messages.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { EngineCommandsModule } from './modules/engine-commands/engine-commands.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { TemplatesModule } from './modules/templates/templates.module';
@@ -54,6 +55,8 @@ import { BulkModule } from './modules/bulk/bulk.module';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
     // Cross-tenant ownership guard (opt-in per route via @RequireTenant)
     TenantModule,
+    // API -> worker engine command client (active only when ENGINE_HOST=worker)
+    EngineCommandsModule,
     // Configuration
     ConfigModule.forRoot({
       isGlobal: true,

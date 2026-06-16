@@ -12,3 +12,6 @@ export * from './value-objects';
 
 // Use Cases
 export * from './use-cases';
+
+// Realtime relay contract (worker -> API bridge)
+export * from './realtime';
