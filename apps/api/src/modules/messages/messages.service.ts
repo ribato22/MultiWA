@@ -1,8 +1,9 @@
 // MultiWA Gateway - Enhanced Messages Service
 // apps/api/src/modules/messages/messages.service.ts
 
-import { Injectable, NotFoundException, BadRequestException, HttpException, Inject, forwardRef, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, HttpException, HttpStatus, Inject, forwardRef, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import type { Queue } from 'bullmq';
 import { prisma } from '@multiwa/database';
 import {
   SendTextDto,
@@ -19,6 +20,12 @@ import {
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { SendGateService } from './send-gate.service';
 import { AppEvents } from '../../common/app-events';
+import {
+  OUTBOUND_SEND_QUEUE,
+  OUTBOUND_SEND_MAX_ATTEMPTS,
+  OutboundSendJob,
+  isDurableSend,
+} from './outbound-send';
 
 
 @Injectable()
@@ -30,6 +37,8 @@ export class MessagesService {
     private readonly engineManager: EngineManagerService,
     private readonly sendGate: SendGateService,
     private readonly eventEmitter: EventEmitter2,
+    @Inject(OUTBOUND_SEND_QUEUE)
+    private readonly outboundQueue: Queue,
   ) {}
   // Send text message
   async sendText(dto: SendTextDto) {
@@ -224,6 +233,50 @@ export class MessagesService {
       };
     }
 
+    // Durable path: enqueue and return 202 immediately. The in-API consumer
+    // (OutboundSendConsumer) drains the queue and runs the real send through the
+    // send gate, so the engine stays in this process while the send survives an
+    // API restart and gets bounded retry.
+    if (isDurableSend()) {
+      // Pre-enqueue daily-limit check so the common case still gets a synchronous
+      // 429 (the send gate in the consumer is the authoritative increment).
+      const now = new Date();
+      const resetDue = !profile.dailyResetAt || profile.dailyResetAt <= now;
+      if (
+        profile.dailyMessageLimit != null &&
+        !resetDue &&
+        (profile.dailyMessageCount ?? 0) >= profile.dailyMessageLimit
+      ) {
+        await prisma.message.update({ where: { id: message.id }, data: { status: 'failed' } });
+        throw new HttpException(
+          {
+            error: 'DAILY_LIMIT_REACHED',
+            limit: profile.dailyMessageLimit,
+            count: profile.dailyMessageCount,
+            resetAt: profile.dailyResetAt,
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
+      await prisma.message.update({ where: { id: message.id }, data: { status: 'queued' } });
+      const job: OutboundSendJob = { messageDbId: message.id, profileId, to: jid, type, content, quotedMessageId };
+      await this.outboundQueue.add('send', job, {
+        jobId: `send:${message.id}`,
+        attempts: OUTBOUND_SEND_MAX_ATTEMPTS,
+        backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: 500,
+        removeOnFail: 200,
+      });
+
+      return {
+        success: true,
+        messageId: message.id,
+        conversationId: conversation.id,
+        status: 'queued',
+      };
+    }
+
     let result: any;
     try {
       result = await this.sendGate.executeWithGate(profileId, () =>
@@ -322,6 +375,71 @@ export class MessagesService {
         this.logger.warn(`Unknown message type: ${type}`);
         return engine.sendText(jid, JSON.stringify(content));
     }
+  }
+
+  /**
+   * Deliver one queued outbound send (called by OutboundSendConsumer in the
+   * durable path). Runs through the send gate exactly like the synchronous path.
+   * - transient errors (or a not-yet-connected profile) throw so BullMQ retries;
+   *   on the last attempt the message is marked failed instead.
+   * - a daily-limit 429 is permanent: the message is marked failed without retry.
+   */
+  async deliverQueued(data: OutboundSendJob, isLastAttempt: boolean): Promise<void> {
+    const { messageDbId, profileId, to, type, content, quotedMessageId } = data;
+
+    const engine = this.engineManager.getEngine(profileId);
+    if (!engine) {
+      if (isLastAttempt) {
+        await this.markQueuedFailed(messageDbId, profileId, to, type, 'Profile not connected');
+        return;
+      }
+      throw new Error(`Profile ${profileId} not connected; retrying queued send`);
+    }
+
+    try {
+      const result = await this.sendGate.executeWithGate(profileId, () =>
+        this.dispatchToEngine(engine, type, to, content, quotedMessageId),
+      );
+      await prisma.message.update({
+        where: { id: messageDbId },
+        data: { ...(result?.messageId ? { messageId: result.messageId } : {}), status: 'sent' },
+      });
+      this.eventEmitter.emit(AppEvents.MESSAGE.SENT, {
+        profileId,
+        messageId: messageDbId,
+        waMessageId: result?.messageId,
+        to,
+        type,
+      });
+    } catch (error: any) {
+      // Daily-limit rejection is permanent for today — fail without retry.
+      if (error instanceof HttpException && error.getStatus?.() === HttpStatus.TOO_MANY_REQUESTS) {
+        await this.markQueuedFailed(messageDbId, profileId, to, type, 'DAILY_LIMIT_REACHED');
+        return;
+      }
+      if (isLastAttempt) {
+        await this.markQueuedFailed(messageDbId, profileId, to, type, error?.message);
+        return;
+      }
+      throw error; // transient: let BullMQ retry with backoff
+    }
+  }
+
+  private async markQueuedFailed(
+    messageId: string,
+    profileId: string,
+    to: string,
+    type: string,
+    errorMsg?: string,
+  ): Promise<void> {
+    await prisma.message.update({ where: { id: messageId }, data: { status: 'failed' } });
+    this.eventEmitter.emit(AppEvents.MESSAGE.FAILED, {
+      profileId,
+      messageId,
+      to,
+      type,
+      error: errorMsg,
+    });
   }
 
   // Normalize phone to JID

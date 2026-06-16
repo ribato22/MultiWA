@@ -122,6 +122,28 @@ When a profile reaches its `dailyMessageLimit`, further sends are rejected with
 
 Counters reset daily at **midnight WIB (Asia/Jakarta, UTC+7)**.
 
+## Durable Sending (optional)
+
+By default, `POST /messages/...` sends synchronously and returns the result
+(`status: "sent"`). Set **`DURABLE_SEND=true`** to make sending durable:
+
+- The API enqueues the send to a Redis-backed queue and returns **`202`** with
+  `{ "success": true, "status": "queued", "messageId": "<id>" }` immediately.
+- An in-process consumer drains the queue and performs the actual send through the
+  send gate. Jobs survive an API restart and are retried (3 attempts, exponential
+  backoff) on transient failure.
+- The final outcome surfaces via the message's `status` (`sent` / `failed`) and
+  the `message.sent` / `message.failed` webhook events.
+- The daily limit is still enforced synchronously where possible: an over-limit
+  send is rejected with the same **`429 DAILY_LIMIT_REACHED`** before enqueue. In
+  a rare race, a queued send can instead end as `status: "failed"` with a
+  `message.failed` event.
+
+> Contract note: when `DURABLE_SEND=true`, send endpoints return `202 queued`
+> rather than a synchronous `sent` result. Consumers should track delivery via
+> `message.status` or webhook events. `OUTBOUND_SEND_CONCURRENCY` (default 10)
+> tunes throughput; per-profile ordering and pacing are preserved regardless.
+
 ## Global Rate Limit
 
 - **API throttle**: 120 requests/minute per IP (global `ThrottlerGuard`).
