@@ -64,11 +64,23 @@ export class TenantGuard implements CanActivate {
     id: string,
     organizationId: string,
   ): Promise<boolean> {
-    // Every tenant resource chains to the org through its profile's workspace.
+    // Most tenant resources chain to the org through their profile's workspace.
     const viaProfile = { profile: { workspace: { organizationId } } } as const;
     const select = { id: true } as const;
 
     switch (resource) {
+      // --- Resources that scope to the org directly (higher in the tree) ---
+      case 'workspace':
+        return !!(await prisma.workspace.findFirst({ where: { id, organizationId }, select }));
+      case 'account':
+        return !!(await prisma.account.findFirst({
+          where: { id, workspace: { organizationId } },
+          select,
+        }));
+      case 'role':
+        return !!(await prisma.role.findFirst({ where: { id, organizationId }, select }));
+
+      // --- Resources that chain through Profile -> Workspace -> Organization ---
       case 'profile':
         return !!(await prisma.profile.findFirst({
           where: { id, workspace: { organizationId } },

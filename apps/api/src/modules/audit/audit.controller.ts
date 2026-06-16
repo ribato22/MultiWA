@@ -1,11 +1,14 @@
 // MultiWA Gateway - Audit Controller
 // apps/api/src/modules/audit/audit.controller.ts
 
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 
+// Audit logs are scoped to the caller's organization, always derived from the
+// token — never a client-supplied organizationId — so one tenant cannot read
+// another tenant's audit trail.
 @ApiTags('Audit')
 @Controller('audit')
 @UseGuards(JwtOrApiKeyGuard)
@@ -14,8 +17,7 @@ export class AuditController {
   constructor(private readonly service: AuditService) {}
 
   @Get('logs')
-  @ApiOperation({ summary: 'Query audit logs' })
-  @ApiQuery({ name: 'organizationId', required: true })
+  @ApiOperation({ summary: 'Query audit logs for the caller organization' })
   @ApiQuery({ name: 'userId', required: false })
   @ApiQuery({ name: 'action', required: false, description: 'Filter by action prefix (e.g., "auth", "profile")' })
   @ApiQuery({ name: 'resourceType', required: false })
@@ -25,7 +27,7 @@ export class AuditController {
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({ name: 'offset', required: false, type: Number })
   async query(
-    @Query('organizationId') organizationId: string,
+    @Request() req: any,
     @Query('userId') userId?: string,
     @Query('action') action?: string,
     @Query('resourceType') resourceType?: string,
@@ -36,7 +38,7 @@ export class AuditController {
     @Query('offset') offset?: number,
   ) {
     return this.service.query({
-      organizationId,
+      organizationId: req.user.organizationId,
       userId,
       action,
       resourceType,
@@ -49,14 +51,13 @@ export class AuditController {
   }
 
   @Get('summary')
-  @ApiOperation({ summary: 'Get audit summary statistics' })
-  @ApiQuery({ name: 'organizationId', required: true })
+  @ApiOperation({ summary: 'Get audit summary statistics for the caller organization' })
   @ApiQuery({ name: 'days', required: false, type: Number, description: 'Last N days (default: 30)' })
   async getSummary(
-    @Query('organizationId') organizationId: string,
+    @Request() req: any,
     @Query('days') days?: number,
   ) {
-    return this.service.getSummary(organizationId, days);
+    return this.service.getSummary(req.user.organizationId, days);
   }
 
   @Get('actions')

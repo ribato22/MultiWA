@@ -1,8 +1,13 @@
 import { SetMetadata } from '@nestjs/common';
 
 /**
- * Resources that ultimately belong to an Organization through
- * Profile -> Workspace -> Organization.
+ * Resources that belong to an Organization.
+ *
+ * Most chain through Profile -> Workspace -> Organization. A few sit higher in
+ * the tenancy tree and scope to the org directly (or via Workspace):
+ *   - workspace: Workspace.organizationId
+ *   - account:   Account -> Workspace.organizationId
+ *   - role:      Role.organizationId
  */
 export type TenantResource =
   | 'profile'
@@ -14,7 +19,10 @@ export type TenantResource =
   | 'template'
   | 'message'
   | 'scheduledMessage'
-  | 'knowledgeDocument';
+  | 'knowledgeDocument'
+  | 'workspace'
+  | 'account'
+  | 'role';
 
 export interface TenantCheck {
   /** Where to read the id from on the request. */

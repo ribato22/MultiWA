@@ -3,10 +3,12 @@ import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } f
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { WorkspacesService } from './workspaces.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Workspaces')
 @Controller('workspaces')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TenantGuard)
 @ApiBearerAuth()
 export class WorkspacesController {
   constructor(private readonly service: WorkspacesService) {}
@@ -24,16 +26,19 @@ export class WorkspacesController {
   }
 
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'workspace' })
   async findOne(@Param('id') id: string) {
     return this.service.findById(id);
   }
 
   @Put(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'workspace' })
   async update(@Param('id') id: string, @Body() dto: any) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'workspace' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);
   }

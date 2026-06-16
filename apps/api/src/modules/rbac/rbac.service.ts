@@ -253,9 +253,11 @@ export class RbacService {
     return { success: true };
   }
 
-  async getUserRoles(userId: string) {
+  async getUserRoles(userId: string, organizationId?: string) {
     return prisma.userRole.findMany({
-      where: { userId },
+      // Scope to a single org when provided so callers can't enumerate a user's
+      // memberships across other tenants.
+      where: { userId, ...(organizationId ? { organizationId } : {}) },
       include: { role: true, organization: true },
     });
   }

@@ -5,10 +5,12 @@ import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req } from 
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { AccountsService } from './accounts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Accounts')
 @Controller('accounts')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class AccountsController {
@@ -22,6 +24,7 @@ export class AccountsController {
   }
 
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Get account by ID' })
   async findOne(@Param('id') id: string) {
     return this.accountsService.findOne(id);
@@ -35,25 +38,30 @@ export class AccountsController {
   }
 
   @Put(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Update account' })
   async update(@Param('id') id: string, @Body() dto: any) {
     return this.accountsService.update(id, dto);
   }
 
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Delete account' })
   async remove(@Param('id') id: string) {
     return this.accountsService.remove(id);
   }
 
-  // Nested profiles endpoints
+  // Nested profiles endpoints. Both the account and the profile are tenant-checked
+  // so a caller can't pair their own account id with another org's profile id.
   @Get(':accountId/profiles')
+  @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Get all profiles for account' })
   async getProfiles(@Param('accountId') accountId: string) {
     return this.accountsService.getProfiles(accountId);
   }
 
   @Post(':accountId/profiles')
+  @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Create profile for account' })
   async createProfile(
     @Param('accountId') accountId: string,
@@ -63,6 +71,10 @@ export class AccountsController {
   }
 
   @Get(':accountId/profiles/:profileId')
+  @RequireTenant(
+    { from: 'param', key: 'accountId', resource: 'account' },
+    { from: 'param', key: 'profileId', resource: 'profile' },
+  )
   @ApiOperation({ summary: 'Get profile by ID' })
   async getProfile(
     @Param('accountId') accountId: string,
@@ -72,6 +84,10 @@ export class AccountsController {
   }
 
   @Delete(':accountId/profiles/:profileId')
+  @RequireTenant(
+    { from: 'param', key: 'accountId', resource: 'account' },
+    { from: 'param', key: 'profileId', resource: 'profile' },
+  )
   @ApiOperation({ summary: 'Delete profile' })
   async deleteProfile(
     @Param('accountId') accountId: string,
@@ -81,6 +97,10 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles/:profileId/connect')
+  @RequireTenant(
+    { from: 'param', key: 'accountId', resource: 'account' },
+    { from: 'param', key: 'profileId', resource: 'profile' },
+  )
   @ApiOperation({ summary: 'Connect profile (start QR)' })
   async connectProfile(
     @Param('accountId') accountId: string,
@@ -90,6 +110,10 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles/:profileId/disconnect')
+  @RequireTenant(
+    { from: 'param', key: 'accountId', resource: 'account' },
+    { from: 'param', key: 'profileId', resource: 'profile' },
+  )
   @ApiOperation({ summary: 'Disconnect profile' })
   async disconnectProfile(
     @Param('accountId') accountId: string,
@@ -99,6 +123,10 @@ export class AccountsController {
   }
 
   @Get(':accountId/profiles/:profileId/qr')
+  @RequireTenant(
+    { from: 'param', key: 'accountId', resource: 'account' },
+    { from: 'param', key: 'profileId', resource: 'profile' },
+  )
   @ApiOperation({ summary: 'Get QR code for profile' })
   async getQr(
     @Param('accountId') accountId: string,

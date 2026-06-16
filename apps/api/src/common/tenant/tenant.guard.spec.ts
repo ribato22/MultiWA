@@ -16,6 +16,10 @@ vi.mock('@multiwa/database', () => ({
     template: { findFirst: vi.fn() },
     message: { findFirst: vi.fn() },
     scheduledMessage: { findFirst: vi.fn() },
+    knowledgeDocument: { findFirst: vi.fn() },
+    workspace: { findFirst: vi.fn() },
+    account: { findFirst: vi.fn() },
+    role: { findFirst: vi.fn() },
   },
 }));
 
@@ -104,5 +108,50 @@ describe('TenantGuard', () => {
         where: { id: 'c1', profile: { workspace: { organizationId: ORG } } },
       }),
     );
+  });
+
+  it('scopes a workspace directly by organizationId', async () => {
+    vi.mocked(prisma.workspace.findFirst).mockResolvedValue({ id: 'w1' } as any);
+    const { guard, ctx } = makeContext(
+      { user: { organizationId: ORG }, params: { id: 'w1' } },
+      [{ from: 'param', key: 'id', resource: 'workspace' }],
+    );
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(prisma.workspace.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'w1', organizationId: ORG } }),
+    );
+  });
+
+  it('scopes an account through its workspace->org', async () => {
+    vi.mocked(prisma.account.findFirst).mockResolvedValue({ id: 'a1' } as any);
+    const { guard, ctx } = makeContext(
+      { user: { organizationId: ORG }, params: { accountId: 'a1' } },
+      [{ from: 'param', key: 'accountId', resource: 'account' }],
+    );
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(prisma.account.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'a1', workspace: { organizationId: ORG } } }),
+    );
+  });
+
+  it('scopes a role directly by organizationId', async () => {
+    vi.mocked(prisma.role.findFirst).mockResolvedValue({ id: 'r1' } as any);
+    const { guard, ctx } = makeContext(
+      { user: { organizationId: ORG }, params: { id: 'r1' } },
+      [{ from: 'param', key: 'id', resource: 'role' }],
+    );
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect(prisma.role.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'r1', organizationId: ORG } }),
+    );
+  });
+
+  it('rejects a cross-tenant role with 403', async () => {
+    vi.mocked(prisma.role.findFirst).mockResolvedValue(null as any);
+    const { guard, ctx } = makeContext(
+      { user: { organizationId: ORG }, params: { id: 'other-org-role' } },
+      [{ from: 'param', key: 'id', resource: 'role' }],
+    );
+    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
   });
 });

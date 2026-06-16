@@ -1,15 +1,21 @@
 // MultiWA Gateway - RBAC Controller
 // apps/api/src/modules/rbac/rbac.controller.ts
 
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { RbacService } from './rbac.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateRoleDto, UpdateRoleDto, AssignRoleDto } from './dto';
 
+// RBAC is the privilege boundary itself, so the organization is ALWAYS derived
+// from the authenticated principal (req.user.organizationId) — never trusted from
+// a client-supplied query/body/param. Role ids are tenant-checked against the
+// caller's org so one tenant cannot read/modify/assign another tenant's roles.
 @ApiTags('RBAC')
 @Controller('rbac')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 export class RbacController {
   constructor(private readonly service: RbacService) {}
@@ -24,30 +30,34 @@ export class RbacController {
   // Roles CRUD
   @Post('roles')
   @ApiOperation({ summary: 'Create custom role' })
-  async createRole(@Body() dto: CreateRoleDto) {
+  async createRole(@Request() req: any, @Body() dto: CreateRoleDto) {
+    // Authoritative org from the token — ignore any client-supplied organizationId.
+    dto.organizationId = req.user.organizationId;
     return this.service.createRole(dto);
   }
 
   @Get('roles')
-  @ApiOperation({ summary: 'List roles for organization' })
-  @ApiQuery({ name: 'organizationId', required: true })
-  async listRoles(@Query('organizationId') organizationId: string) {
-    return this.service.listRoles(organizationId);
+  @ApiOperation({ summary: 'List roles for the caller organization' })
+  async listRoles(@Request() req: any) {
+    return this.service.listRoles(req.user.organizationId);
   }
 
   @Get('roles/:id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'role' })
   @ApiOperation({ summary: 'Get role details with users' })
   async getRole(@Param('id') id: string) {
     return this.service.getRole(id);
   }
 
   @Put('roles/:id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'role' })
   @ApiOperation({ summary: 'Update role' })
   async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
     return this.service.updateRole(id, dto);
   }
 
   @Delete('roles/:id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'role' })
   @ApiOperation({ summary: 'Delete custom role' })
   async deleteRole(@Param('id') id: string) {
     return this.service.deleteRole(id);
@@ -55,40 +65,36 @@ export class RbacController {
 
   // Role assignment
   @Post('assign')
+  @RequireTenant({ from: 'body', key: 'roleId', resource: 'role' })
   @ApiOperation({ summary: 'Assign role to user' })
   async assignRole(@Body() dto: AssignRoleDto) {
     return this.service.assignRole(dto);
   }
 
   @Delete('users/:userId/organizations/:orgId')
-  @ApiOperation({ summary: 'Remove user from organization' })
-  async removeRole(
-    @Param('userId') userId: string,
-    @Param('orgId') organizationId: string,
-  ) {
-    return this.service.removeRole(userId, organizationId);
+  @ApiOperation({ summary: 'Remove user from the caller organization' })
+  async removeRole(@Param('userId') userId: string, @Request() req: any) {
+    // Org is taken from the token; the :orgId path segment is not trusted.
+    return this.service.removeRole(userId, req.user.organizationId);
   }
 
   @Get('users/:userId/roles')
-  @ApiOperation({ summary: 'Get all roles for a user' })
-  async getUserRoles(@Param('userId') userId: string) {
-    return this.service.getUserRoles(userId);
+  @ApiOperation({ summary: 'Get the user roles within the caller organization' })
+  async getUserRoles(@Param('userId') userId: string, @Request() req: any) {
+    return this.service.getUserRoles(userId, req.user.organizationId);
   }
 
   @Get('users/:userId/permissions')
-  @ApiOperation({ summary: 'Get user permissions for organization' })
-  @ApiQuery({ name: 'organizationId', required: true })
-  async getUserPermissions(
-    @Param('userId') userId: string,
-    @Query('organizationId') organizationId: string,
-  ) {
-    return this.service.getUserPermissions(userId, organizationId);
+  @ApiOperation({ summary: 'Get user permissions for the caller organization' })
+  async getUserPermissions(@Param('userId') userId: string, @Request() req: any) {
+    return this.service.getUserPermissions(userId, req.user.organizationId);
   }
 
   @Post('organizations/:id/seed')
-  @ApiOperation({ summary: 'Seed default roles for organization' })
-  async seedRoles(@Param('id') organizationId: string) {
-    await this.service.seedDefaultRoles(organizationId);
+  @ApiOperation({ summary: 'Seed default roles for the caller organization' })
+  async seedRoles(@Request() req: any) {
+    // Always seed the caller's own org; the :id path segment is not trusted.
+    await this.service.seedDefaultRoles(req.user.organizationId);
     return { success: true };
   }
 }
