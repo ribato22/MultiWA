@@ -163,6 +163,9 @@ importers:
       '@multiwa/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@multiwa/engine-runtime':
+        specifier: workspace:*
+        version: link:../../packages/engine-runtime
       '@multiwa/engines':
         specifier: workspace:*
         version: link:../../packages/engines
@@ -368,6 +371,22 @@ importers:
       prisma:
         specifier: ^6.3.0
         version: 6.19.2(typescript@5.9.3)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/engine-runtime:
+    dependencies:
+      '@multiwa/database':
+        specifier: workspace:*
+        version: link:../database
+      '@multiwa/engines':
+        specifier: workspace:*
+        version: link:../engines
+      '@nestjs/common':
+        specifier: ^10.4.0
+        version: 10.4.22(class-transformer@0.5.1)(class-validator@0.14.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+    devDependencies:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

@@ -8,7 +8,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { prisma } from '@multiwa/database';
-import { nextMidnightWIB } from './send-gate.service';
+import { nextMidnightWIB } from '@multiwa/engine-runtime';
 
 @Injectable()
 export class DailyResetCron {

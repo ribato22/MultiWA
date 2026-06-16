@@ -1,9 +1,10 @@
-// MultiWA Gateway - Send Gate Service
-// apps/api/src/modules/messages/send-gate.service.ts
+// MultiWA Gateway - Send Gate Service (shared engine runtime)
+// packages/engine-runtime/src/send-gate.service.ts
 //
 // Enforces per-profile outbound pacing (messageDelayMs, block-and-wait) and the
 // per-profile daily send cap (dailyMessageLimit, reject 429) for EVERY outbound
-// send path. See architecture/send-gate-sop.md.
+// send path. Shared by apps/api (ENGINE_HOST=api) and apps/worker
+// (ENGINE_HOST=worker). See architecture/send-gate-sop.md.
 
 import {
   Injectable,

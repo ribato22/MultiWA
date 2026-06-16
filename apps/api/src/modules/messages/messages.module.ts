@@ -6,7 +6,7 @@ import IORedis from 'ioredis';
 import { MessagesController } from './messages.controller';
 import { MessagesService } from './messages.service';
 import { ScheduledMessageCron } from './scheduled-message.cron';
-import { SendGateService } from './send-gate.service';
+import { SendGateService } from '@multiwa/engine-runtime';
 import { DailyResetCron } from './daily-reset.cron';
 import { OutboundSendConsumer } from './outbound-send.consumer';
 import { OUTBOUND_SEND_QUEUE } from './outbound-send';

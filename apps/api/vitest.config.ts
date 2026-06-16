@@ -17,6 +17,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Resolve the shared engine runtime to source so vi.mock('@multiwa/database')
+      // reaches into it (the dist build would be an un-transformed external).
+      // Test-only; runtime/typecheck still use the package's dist.
+      '@multiwa/engine-runtime': path.resolve(__dirname, '../../packages/engine-runtime/src/index.ts'),
     },
   },
 });

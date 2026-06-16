@@ -12,6 +12,7 @@ COPY apps/worker/package.json ./apps/worker/
 COPY packages/core/package.json ./packages/core/
 COPY packages/database/package.json ./packages/database/
 COPY packages/engines/package.json ./packages/engines/
+COPY packages/engine-runtime/package.json ./packages/engine-runtime/
 COPY packages/sdk/package.json ./packages/sdk/
 
 # Copy all source BEFORE install to avoid BuildKit COPY overlay conflict
@@ -19,6 +20,7 @@ COPY apps/worker ./apps/worker
 COPY packages/core ./packages/core
 COPY packages/database ./packages/database
 COPY packages/engines ./packages/engines
+COPY packages/engine-runtime ./packages/engine-runtime
 COPY packages/sdk ./packages/sdk
 COPY tsconfig.json ./tsconfig.json
 
@@ -32,6 +34,7 @@ RUN cd packages/database && npx prisma generate
 RUN pnpm --filter @multiwa/database build || true
 RUN pnpm --filter @multiwa/core build || true
 RUN pnpm --filter @multiwa/engines build || true
+RUN pnpm --filter @multiwa/engine-runtime build || true
 
 # Build Worker. tsc runs with noEmitOnError:false (it still emits JS on type
 # errors), but the build MUST FAIL if no dist/main.js is produced — otherwise a
@@ -62,6 +65,7 @@ COPY --from=builder /app/apps/worker/package.json ./apps/worker/
 COPY --from=builder /app/packages/core/package.json ./packages/core/
 COPY --from=builder /app/packages/database/package.json ./packages/database/
 COPY --from=builder /app/packages/engines/package.json ./packages/engines/
+COPY --from=builder /app/packages/engine-runtime/package.json ./packages/engine-runtime/
 
 # Install production dependencies only
 RUN pnpm install --no-frozen-lockfile --prod
@@ -71,6 +75,7 @@ COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
 COPY --from=builder /app/packages/core ./packages/core
 COPY --from=builder /app/packages/database ./packages/database
 COPY --from=builder /app/packages/engines ./packages/engines
+COPY --from=builder /app/packages/engine-runtime ./packages/engine-runtime
 
 # Generate Prisma client in runner (pin to v6.19.2 to match project)
 RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate

@@ -1,0 +1,22 @@
+{
+  "name": "@multiwa/engine-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MultiWA shared WhatsApp engine runtime (used by apps/api and apps/worker)",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@multiwa/database": "workspace:*",
+    "@multiwa/engines": "workspace:*",
+    "@nestjs/common": "^10.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

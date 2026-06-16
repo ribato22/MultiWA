@@ -18,7 +18,7 @@ import {
   SendPollDto,
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
-import { SendGateService } from './send-gate.service';
+import { SendGateService } from '@multiwa/engine-runtime';
 import { AppEvents } from '../../common/app-events';
 import {
   OUTBOUND_SEND_QUEUE,

@@ -12,7 +12,7 @@ vi.mock('@multiwa/database', () => ({
 }));
 
 import { prisma } from '@multiwa/database';
-import { SendGateService, nextMidnightWIB } from './send-gate.service';
+import { SendGateService, nextMidnightWIB } from '@multiwa/engine-runtime';
 
 const FUTURE = new Date(Date.now() + 60 * 60 * 1000); // avoids the lazy-reset path
 

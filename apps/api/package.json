@@ -18,6 +18,7 @@
     "@fastify/static": "^7.0.0",
     "@multiwa/core": "workspace:*",
     "@multiwa/database": "workspace:*",
+    "@multiwa/engine-runtime": "workspace:*",
     "@multiwa/engines": "workspace:*",
     "@nestjs/bull": "^10.2.0",
     "@nestjs/common": "^10.4.0",
