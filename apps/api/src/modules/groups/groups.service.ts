@@ -11,6 +11,8 @@ import {
   DemoteParticipantsDto 
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
+import { EngineCommandsService } from '../engine-commands/engine-commands.service';
+import { isWorkerEngine } from '../../common/engine-host';
 
 export interface GroupInfo {
   id: string;
@@ -35,12 +37,15 @@ export class GroupsService {
 
   constructor(
     private readonly engineManager: EngineManagerService,
+    // Routes group operations to the worker-hosted engine when ENGINE_HOST=worker.
+    private readonly engineCommands: EngineCommandsService,
   ) {}
 
   /**
    * Get all groups for a profile
    */
   async getAll(profileId: string): Promise<GroupInfo[]> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(profileId, 'getAll', {});
     const engine = this.engineManager.getEngine(profileId);
     if (!engine) {
       // Return empty array if engine not connected (instead of throwing error)
@@ -79,6 +84,7 @@ export class GroupsService {
    * Get detailed group info including participants
    */
   async getById(profileId: string, groupId: string): Promise<GroupInfo> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(profileId, 'getById', { groupId });
     const engine = await this.engineManager.getEngine(profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${profileId} not found or not connected`);
@@ -114,6 +120,7 @@ export class GroupsService {
    * Create a new group
    */
   async create(dto: CreateGroupDto): Promise<GroupInfo> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(dto.profileId, 'create', { name: dto.name, description: dto.description, participants: dto.participants });
     const engine = await this.engineManager.getEngine(dto.profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${dto.profileId} not found or not connected`);
@@ -150,6 +157,7 @@ export class GroupsService {
    * Update group info (name, description)
    */
   async update(groupId: string, dto: UpdateGroupDto): Promise<{ success: boolean }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(dto.profileId, 'update', { groupId, name: dto.name, description: dto.description });
     const engine = await this.engineManager.getEngine(dto.profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${dto.profileId} not found or not connected`);
@@ -173,6 +181,7 @@ export class GroupsService {
    * Add participants to a group
    */
   async addParticipants(groupId: string, dto: AddParticipantsDto): Promise<{ success: boolean; added: string[] }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(dto.profileId, 'addParticipants', { groupId, participants: dto.participants });
     const engine = await this.engineManager.getEngine(dto.profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${dto.profileId} not found or not connected`);
@@ -196,6 +205,7 @@ export class GroupsService {
    * Remove participants from a group
    */
   async removeParticipants(groupId: string, dto: RemoveParticipantsDto): Promise<{ success: boolean; removed: string[] }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(dto.profileId, 'removeParticipants', { groupId, participants: dto.participants });
     const engine = await this.engineManager.getEngine(dto.profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${dto.profileId} not found or not connected`);
@@ -219,6 +229,7 @@ export class GroupsService {
    * Promote participants to admin
    */
   async promoteParticipants(groupId: string, dto: PromoteParticipantsDto): Promise<{ success: boolean }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(dto.profileId, 'promoteParticipants', { groupId, participants: dto.participants });
     const engine = await this.engineManager.getEngine(dto.profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${dto.profileId} not found or not connected`);
@@ -242,6 +253,7 @@ export class GroupsService {
    * Demote participants from admin
    */
   async demoteParticipants(groupId: string, dto: DemoteParticipantsDto): Promise<{ success: boolean }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(dto.profileId, 'demoteParticipants', { groupId, participants: dto.participants });
     const engine = await this.engineManager.getEngine(dto.profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${dto.profileId} not found or not connected`);
@@ -265,6 +277,7 @@ export class GroupsService {
    * Leave a group
    */
   async leave(profileId: string, groupId: string): Promise<{ success: boolean }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(profileId, 'leave', { groupId });
     const engine = await this.engineManager.getEngine(profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${profileId} not found or not connected`);
@@ -283,6 +296,7 @@ export class GroupsService {
    * Get group invite link
    */
   async getInviteLink(profileId: string, groupId: string): Promise<{ link: string }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(profileId, 'getInviteLink', { groupId });
     const engine = await this.engineManager.getEngine(profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${profileId} not found or not connected`);
@@ -301,6 +315,7 @@ export class GroupsService {
    * Revoke group invite link
    */
   async revokeInviteLink(profileId: string, groupId: string): Promise<{ link: string }> {
+    if (isWorkerEngine()) return this.engineCommands.groupOp(profileId, 'revokeInviteLink', { groupId });
     const engine = await this.engineManager.getEngine(profileId);
     if (!engine) {
       throw new NotFoundException(`Profile ${profileId} not found or not connected`);
