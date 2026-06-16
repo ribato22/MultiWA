@@ -1,13 +1,14 @@
 // MultiWA Gateway - Worker notifications (in-app)
 // apps/worker/src/engine/notifications.service.ts
 //
-// Worker-local copy of the in-app part of the API NotificationsService: creates
-// the per-user notification rows the admin bell shows, for engine events in
-// worker mode. Email/push fan-out is intentionally NOT ported here (best-effort,
-// the API path retains it); only the durable in-app rows are written.
+// Worker-local copy of the API NotificationsService: creates the per-user in-app
+// notification rows the admin bell shows AND fans out email/push (best-effort)
+// for engine events in worker mode.
 
 import { Injectable, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { EmailService } from './email.service';
+import { PushService } from './push.service';
 
 export enum NotificationType {
   MESSAGE = 'message',
@@ -22,6 +23,11 @@ export enum NotificationType {
 @Injectable()
 export class WorkerNotificationsService {
   private readonly logger = new Logger(WorkerNotificationsService.name);
+
+  constructor(
+    private readonly emailService: EmailService,
+    private readonly pushService: PushService,
+  ) {}
 
   async createForOrg(
     orgId: string,
@@ -40,7 +46,27 @@ export class WorkerNotificationsService {
       await prisma.notification
         .create({ data: { userId: user.id, type, title, body, metadata: metadata || undefined } })
         .catch((err) => this.logger.warn(`Notification create failed: ${(err as Error).message}`));
+      // Fire-and-forget email/push (best-effort).
+      this.sendEmailIfEnabled(user.id, title, body).catch((err) => this.logger.warn(`Email notification failed: ${err.message}`));
+      this.sendPushIfEnabled(user.id, title, body, metadata).catch((err) => this.logger.warn(`Push notification failed: ${err.message}`));
     }
+  }
+
+  private async sendEmailIfEnabled(userId: string, title: string, body: string): Promise<void> {
+    if (!this.emailService.enabled) return;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, preferences: true } });
+    if (!user?.email) return;
+    const prefs = (user.preferences as any) || {};
+    if (prefs.emailNotifications === false) return;
+    await this.emailService.send({ to: user.email, subject: `[MultiWA] ${title}`, text: body });
+  }
+
+  private async sendPushIfEnabled(userId: string, title: string, body: string, metadata?: Record<string, any>): Promise<void> {
+    if (!this.pushService.enabled) return;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { preferences: true } });
+    const prefs = (user?.preferences as any) || {};
+    if (prefs.pushNotifications === false) return;
+    await this.pushService.sendPush(userId, title, body, metadata);
   }
 
   private isNotificationEnabled(preferences: any, type: NotificationType): boolean {
