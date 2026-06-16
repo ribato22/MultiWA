@@ -8,6 +8,8 @@ import { EventsGateway } from '../events/events.gateway';
 import { prisma } from '@multiwa/database';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { AppEvents } from '../../common/app-events';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';
@@ -30,8 +32,22 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     @Inject(forwardRef(() => RuleEngineService))
     private readonly ruleEngineService: RuleEngineService,
     private readonly notificationsService: NotificationsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {
     this.logger.log('EngineManagerService initialized');
+  }
+
+  /**
+   * Publish an application-bus event (dot-namespaced). Fire-and-forget: never let
+   * a listener error disrupt the WhatsApp engine callback that produced it. The
+   * WebhookDispatcher and plugin loader consume these.
+   */
+  private emitEvent(event: string, payload: Record<string, unknown>): void {
+    try {
+      this.eventEmitter.emit(event, payload);
+    } catch (err) {
+      this.logger.warn(`Failed to emit '${event}': ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -319,6 +335,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           
           // Emit QR data URL to WebSocket clients
           this.eventsGateway.emitQrUpdate(profileId, qrDataUrl);
+          this.emitEvent(AppEvents.CONNECTION.QR, { profileId, qr: qrDataUrl });
           this.logger.log(`QR code emitted via WebSocket for profile ${profileId}`);
         } catch (error) {
           this.logger.error(`Error generating QR data URL:`, error);
@@ -381,6 +398,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
         // Emit connection status via WebSocket
         this.eventsGateway.emitConnectionStatus(profileId, 'connected', phone);
+        this.emitEvent(AppEvents.CONNECTION.READY, { profileId, phone, pushName });
 
         // === Notification: profile connected ===
         this.notifyOrgUsers(profileId, NotificationType.CONNECTION,
@@ -420,6 +438,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             data: { status: 'disconnected' },
           });
           this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
+          this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason });
 
           // === Notification: session invalidated ===
           this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
@@ -472,6 +491,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             data: { status: 'disconnected' },
           });
           this.eventsGateway.emitConnectionStatus(profileId, 'disconnected');
+          this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'max retries exhausted' });
         }
       },
       onMessage: async (message: any) => {
@@ -676,6 +696,19 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             conversation,
           });
 
+          // Emit on the app bus (drives webhook delivery + plugins). fromMe is
+          // already skipped above.
+          this.emitEvent(AppEvents.MESSAGE.RECEIVED, {
+            profileId,
+            id: savedMessage.id,
+            from: senderJid,
+            body: content.text ?? content.caption ?? '',
+            type: savedMessage.type,
+            hasMedia: !!(content.url || content.hasMedia),
+            timestamp: savedMessage.timestamp,
+            conversationId: conversation.id,
+          });
+
           // === Notification: new message ===
           const msgPreview = (content.text || content.caption || msgType).substring(0, 80);
           this.notifyOrgUsers(profileId, NotificationType.MESSAGE,
@@ -765,6 +798,18 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
           // Emit WebSocket event for real-time UI updates
           this.eventsGateway.emitMessageAck(profileId, messageId, status);
+
+          // Emit on the app bus only for delivery-meaningful acks (skip
+          // pending/sent — 'sent' is already published by the outbound path).
+          const ackEvent =
+            status === 'delivered'
+              ? AppEvents.MESSAGE.DELIVERED
+              : status === 'read' || status === 'played'
+                ? AppEvents.MESSAGE.READ
+                : null;
+          if (ackEvent) {
+            this.emitEvent(ackEvent, { profileId, messageId, status });
+          }
         } catch (error) {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
         }

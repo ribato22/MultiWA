@@ -82,7 +82,10 @@ webhookWorker.on('completed', (job) => {
 });
 
 webhookWorker.on('failed', (job, err) => {
-  logger.error({ jobId: job?.id, queue: 'webhooks', error: err.message }, 'Webhook failed');
+  logger.error(
+    { jobId: job?.id, attempt: job?.attemptsMade, queue: 'webhooks', error: err.message },
+    'Webhook delivery failed',
+  );
 });
 
 scheduledWorker.on('completed', (job, result) => {

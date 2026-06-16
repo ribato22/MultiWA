@@ -92,17 +92,32 @@ app.post('/webhook', (req, res) => {
 
 ---
 
-## Retry Policy
+## Delivery & Retry
 
-| Attempt | Delay |
-|---------|-------|
+Webhook delivery is **durable**: events are enqueued to a BullMQ queue and
+delivered by the worker, so deliveries survive an API restart and a slow or failing
+endpoint never blocks the WhatsApp pipeline. Each delivery is signed with
+`X-MultiWA-Signature: sha256=<hmac>` and carries `X-MultiWA-Event`. A 30s per-request
+timeout applies.
+
+Failed deliveries (non-2xx, network error, or timeout) are retried with BullMQ
+exponential backoff (`delay: 30s`):
+
+| Attempt | Approx. delay before it runs |
+|---------|------------------------------|
 | 1 | Immediate |
-| 2 | 30 seconds |
-| 3 | 2 minutes |
-| 4 | 10 minutes |
-| 5 | 1 hour |
+| 2 | ~30 seconds |
+| 3 | ~1 minute |
+| 4 | ~2 minutes |
+| 5 | ~4 minutes |
 
-After 5 failed attempts, the webhook is marked as failing.
+Retry delays are approximate BullMQ exponential-backoff values. After 5 failed
+attempts the job enters the BullMQ failed state. Every attempt (success or failure)
+writes a `WebhookLog` row, so the rows for a webhook give the full delivery history.
+
+> Payload logging: the worker honours `WEBHOOK_LOG_PAYLOAD_MAX_BYTES` (default 512;
+> `0` omits the payload; `-1` keeps it in full) to control how much of each event
+> body is persisted in `WebhookLog`.
 
 ---
 

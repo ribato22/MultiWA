@@ -12,10 +12,42 @@ export interface WebhookJob {
 }
 
 /**
- * Generate HMAC signature for webhook payload
+ * Generate HMAC signature for the canonical webhook body.
  */
 function generateHmacSignature(body: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(body).digest('hex');
+}
+
+/**
+ * Rewrite localhost URLs to host.docker.internal so the dockerized worker can
+ * reach an endpoint running on the host (matches webhooks.service.ts).
+ */
+function rewriteLocalhost(url: string): string {
+  return url
+    .replace('://localhost:', '://host.docker.internal:')
+    .replace('://localhost/', '://host.docker.internal/')
+    .replace('://127.0.0.1:', '://host.docker.internal:')
+    .replace('://127.0.0.1/', '://host.docker.internal/');
+}
+
+/**
+ * Apply the WebhookLog PII policy. WEBHOOK_LOG_PAYLOAD_MAX_BYTES:
+ *   0  -> store {} (omit payload entirely)
+ *   -1 -> store the full payload (no redaction)
+ *   N  -> truncate common message-body fields to N characters (default 512)
+ * PLN Batam internal deployments should set this to 0 (see internal runbook).
+ */
+function policedLogPayload(payload: any): any {
+  const max = parseInt(process.env.WEBHOOK_LOG_PAYLOAD_MAX_BYTES ?? '512', 10);
+  if (max === 0) return {};
+  if (Number.isNaN(max) || max < 0) return payload;
+  const clone = { ...(payload || {}) };
+  for (const key of ['body', 'text', 'caption', 'message']) {
+    if (typeof clone[key] === 'string' && clone[key].length > max) {
+      clone[key] = clone[key].slice(0, max) + '…[truncated]';
+    }
+  }
+  return clone;
 }
 
 export class WebhookProcessor {
@@ -36,21 +68,27 @@ export class WebhookProcessor {
       return { skipped: true, reason: 'Event not subscribed' };
     }
 
-    try {
-      // Generate signature
-      const body = JSON.stringify(payload);
-      const signature = generateHmacSignature(body, webhook.secret);
-      const headers = (webhook.headers as Record<string, string>) || {};
+    const logPayload = policedLogPayload(payload);
 
-      // Send webhook
-      const response = await fetch(webhook.url, {
+    try {
+      // Canonical signed body — MUST match webhooks.service.ts so the SDK
+      // verifiers (X-MultiWA-Signature) keep working.
+      const body = JSON.stringify({
+        event,
+        timestamp: new Date().toISOString(),
+        profileId: webhook.profileId,
+        data: payload,
+      });
+      const signature = generateHmacSignature(body, webhook.secret);
+      const customHeaders = (webhook.headers as Record<string, string>) || {};
+
+      const response = await fetch(rewriteLocalhost(webhook.url), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Webhook-Event': event,
-          'X-Webhook-Signature': signature,
-          'X-Webhook-Timestamp': Date.now().toString(),
-          ...headers,
+          'X-MultiWA-Signature': `sha256=${signature}`,
+          'X-MultiWA-Event': event,
+          ...customHeaders,
         },
         body,
         signal: AbortSignal.timeout(30000), // 30s timeout
@@ -63,7 +101,7 @@ export class WebhookProcessor {
         data: {
           webhookId,
           event,
-          payload: payload as any,
+          payload: logPayload as any,
           statusCode: response.status,
           success: response.ok,
           response: responseText,
@@ -76,12 +114,12 @@ export class WebhookProcessor {
 
       return { success: true, status: response.status };
     } catch (error) {
-      // Log failed delivery
+      // Log failed delivery (BullMQ retries the job; each attempt logs a row).
       await prisma.webhookLog.create({
         data: {
           webhookId,
           event,
-          payload: payload as any,
+          payload: logPayload as any,
           statusCode: null,
           success: false,
           response: error instanceof Error ? error.message : 'Unknown error',

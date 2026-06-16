@@ -211,6 +211,9 @@ importers:
       bcrypt:
         specifier: ^5.1.1
         version: 5.1.1
+      bullmq:
+        specifier: ^5.30.0
+        version: 5.67.2
       class-transformer:
         specifier: ^0.5.1
         version: 0.5.1
