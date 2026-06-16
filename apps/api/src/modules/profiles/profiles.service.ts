@@ -92,14 +92,17 @@ export class ProfilesService {
   async update(id: string, dto: UpdateProfileDto) {
     await this.findOne(id);
 
-    return prisma.profile.update({
-      where: { id },
-      data: {
-        displayName: dto.name,
-        webhookUrl: dto.webhookUrl,
-        webhookSecret: dto.webhookSecret,
-      },
-    });
+    // Build the update payload conditionally so a partial update never clobbers
+    // existing columns with undefined/null.
+    const data: Record<string, unknown> = {
+      displayName: dto.name,
+      webhookUrl: dto.webhookUrl,
+      webhookSecret: dto.webhookSecret,
+    };
+    if (dto.messageDelayMs !== undefined) data.messageDelayMs = dto.messageDelayMs;
+    if (dto.dailyMessageLimit !== undefined) data.dailyMessageLimit = dto.dailyMessageLimit;
+
+    return prisma.profile.update({ where: { id }, data });
   }
 
   async delete(id: string) {

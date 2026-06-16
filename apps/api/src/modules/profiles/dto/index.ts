@@ -2,7 +2,7 @@
 // apps/api/src/modules/profiles/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUrl, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsUrl, IsEnum, IsInt, Min } from 'class-validator';
 
 export enum EngineType {
   WHATSAPP_WEB_JS = 'whatsapp-web-js',
@@ -54,4 +54,22 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   webhookSecret?: string;
+
+  @ApiPropertyOptional({
+    example: 1500,
+    description: 'Minimum delay (ms) enforced between outbound messages for this profile (anti-ban pacing).',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  messageDelayMs?: number;
+
+  @ApiPropertyOptional({
+    example: 1000,
+    description: 'Daily outbound message cap for this profile. Omit/null = unlimited. When reached, sends are rejected with HTTP 429.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  dailyMessageLimit?: number | null;
 }

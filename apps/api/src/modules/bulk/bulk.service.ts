@@ -1,21 +1,25 @@
 // MultiWA Gateway - Bulk Messaging Service
 // apps/api/src/modules/bulk/bulk.service.ts
 
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, HttpException } from '@nestjs/common';
 import { SendBulkDto, BulkBatchStatus, BulkMessageType, BulkMessageContent } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
+import { MessagesService } from '../messages/messages.service';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class BulkService {
   private readonly logger = new Logger(BulkService.name);
-  
+
   // In-memory batch storage (in production, use Redis)
   private batches: Map<string, BulkBatchStatus> = new Map();
   private batchProfiles: Map<string, string> = new Map(); // batchId -> profileId
 
   constructor(
     private readonly engineManager: EngineManagerService,
+    // All sends route through MessagesService so the per-profile send gate
+    // (delay + daily limit) and DB/message lifecycle apply to bulk too.
+    private readonly messagesService: MessagesService,
   ) {}
 
   /**
@@ -138,26 +142,9 @@ export class BulkService {
       const processedContent = this.processContent(msg.content, msg.variables);
 
       try {
-        let result: { messageId?: string };
-
-        switch (msg.type) {
-          case BulkMessageType.TEXT:
-            result = await engine.sendText(msg.chatId, processedContent.text || '');
-            break;
-          case BulkMessageType.IMAGE:
-            result = await engine.sendImage(msg.chatId, { url: processedContent.url, caption: processedContent.caption });
-            break;
-          case BulkMessageType.VIDEO:
-            result = await engine.sendVideo(msg.chatId, { url: processedContent.url, caption: processedContent.caption });
-            break;
-          case BulkMessageType.AUDIO:
-            result = await engine.sendAudio(msg.chatId, { url: processedContent.url });
-            break;
-          case BulkMessageType.DOCUMENT:
-            result = await engine.sendDocument(msg.chatId, { url: processedContent.url, filename: processedContent.filename || 'document' });
-            break;
-          default:
-            throw new Error(`Unknown message type: ${msg.type}`);
+        const sendResult = await this.dispatchViaMessages(profileId, msg, processedContent);
+        if (!sendResult.success) {
+          throw new Error(sendResult.error || 'SEND_FAILED');
         }
 
         // Update batch status
@@ -165,22 +152,26 @@ export class BulkService {
         batch.progress.pending--;
         if (batch.results && batch.results[i]) {
           batch.results[i].status = 'sent';
-          batch.results[i].messageId = result.messageId;
+          batch.results[i].messageId = sendResult.waMessageId || sendResult.messageId;
         }
-      } catch (error) {
+      } catch (error: any) {
         this.logger.error(`Bulk send error for ${msg.chatId}: ${error.message}`);
-        
+
+        // A daily-limit 429 from the send gate means every remaining message
+        // would be rejected too — stop the batch like stopOnError.
+        const dailyLimitHit = error instanceof HttpException && error.getStatus() === 429;
+
         batch.progress.failed++;
         batch.progress.pending--;
         if (batch.results && batch.results[i]) {
           batch.results[i].status = 'failed';
           batch.results[i].error = {
-            code: 'SEND_FAILED',
+            code: dailyLimitHit ? 'DAILY_LIMIT_REACHED' : 'SEND_FAILED',
             message: error.message,
           };
         }
 
-        if (options.stopOnError) {
+        if (options.stopOnError || dailyLimitHit) {
           // Mark remaining as cancelled
           for (let j = i + 1; j < messages.length; j++) {
             batch.progress.cancelled++;
@@ -207,6 +198,33 @@ export class BulkService {
 
     batch.status = 'completed';
     batch.completedAt = new Date();
+  }
+
+  /**
+   * Route a single bulk message through MessagesService so the per-profile send
+   * gate, DB message lifecycle, and webhook emits apply. Returns the service
+   * result; throws HttpException (e.g. 429) which the caller handles.
+   */
+  private dispatchViaMessages(
+    profileId: string,
+    msg: SendBulkDto['messages'][number],
+    content: BulkMessageContent,
+  ): Promise<{ success: boolean; messageId?: string; waMessageId?: string; error?: string }> {
+    const to = msg.chatId;
+    switch (msg.type) {
+      case BulkMessageType.TEXT:
+        return this.messagesService.sendText({ profileId, to, text: content.text || '' });
+      case BulkMessageType.IMAGE:
+        return this.messagesService.sendImage({ profileId, to, url: content.url, caption: content.caption });
+      case BulkMessageType.VIDEO:
+        return this.messagesService.sendVideo({ profileId, to, url: content.url, caption: content.caption });
+      case BulkMessageType.AUDIO:
+        return this.messagesService.sendAudio({ profileId, to, url: content.url });
+      case BulkMessageType.DOCUMENT:
+        return this.messagesService.sendDocument({ profileId, to, url: content.url, filename: content.filename || 'document' });
+      default:
+        throw new Error(`Unknown message type: ${msg.type}`);
+    }
   }
 
   /**

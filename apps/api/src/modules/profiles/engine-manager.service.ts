@@ -318,7 +318,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.engines.delete(profileId);
           await prisma.profile.update({
             where: { id: profileId },
-            data: { status: 'DISCONNECTED' },
+            data: { status: 'disconnected' },
           });
           return;
         }
@@ -676,41 +676,31 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             isNewContact,
           };
 
-          // Check daily message limit before processing automations
+          // Fast-fail guard: skip automation entirely when the profile is at its
+          // daily cap. The actual counter increment is owned by SendGateService
+          // (every automation reply ultimately goes through MessagesService →
+          // the send gate), so incrementing here too would double-count.
+          // null dailyMessageLimit means unlimited.
           const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
-          if (currentProfile && currentProfile.dailyMessageLimit > 0 && currentProfile.dailyMessageCount >= currentProfile.dailyMessageLimit) {
+          if (
+            currentProfile &&
+            currentProfile.dailyMessageLimit != null &&
+            currentProfile.dailyMessageCount >= currentProfile.dailyMessageLimit
+          ) {
             this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${currentProfile.dailyMessageLimit}, skipping automation`);
           } else {
             const results = await this.ruleEngineService.processMessage(incomingMsg);
-          
-            // Log and handle automation action results
+
+            // Log automation action results. Counter increments happen in the
+            // send gate, not here (see note above).
             for (const result of results) {
               if (result.success) {
                 this.logger.log(`✅ Action "${result.action}" succeeded for ${senderJid}${result.data?.message ? `: ${(result.data.message as string).substring(0, 50)}...` : ''}`);
-                
-                // Increment daily message count for actions that send messages
-                const sendingActions = ['reply', 'send_image', 'send_document', 'send_poll', 'send_audio', 'send_video', 'send_location', 'send_contact'];
-                if (sendingActions.includes(result.action)) {
-                  try {
-                    await prisma.profile.update({
-                      where: { id: profileId },
-                      data: { 
-                        dailyMessageCount: { increment: 1 },
-                        ...(currentProfile && currentProfile.dailyResetAt && new Date() > currentProfile.dailyResetAt ? {
-                          dailyResetAt: new Date(new Date().setHours(24, 0, 0, 0)),
-                          dailyMessageCount: 1,
-                        } : {}),
-                      },
-                    });
-                  } catch (e) {
-                    this.logger.warn(`Failed to update daily message count: ${(e as Error).message}`);
-                  }
-                }
               } else {
                 this.logger.error(`❌ Action "${result.action}" failed for ${senderJid}: ${result.error || 'Unknown error'}`);
               }
             }
-            
+
             if (results.length > 0) {
               this.logger.log(`Automation processed ${results.length} action(s) for message from ${senderJid}`);
             }

@@ -1,13 +1,14 @@
 // MultiWA Gateway - Enhanced Messages Service
 // apps/api/src/modules/messages/messages.service.ts
 
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, HttpException, Inject, forwardRef, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
-import { 
-  SendTextDto, 
-  SendImageDto, 
-  SendVideoDto, 
-  SendAudioDto, 
+import {
+  SendTextDto,
+  SendImageDto,
+  SendVideoDto,
+  SendAudioDto,
   SendDocumentDto,
   SendLocationDto,
   SendContactDto,
@@ -16,6 +17,8 @@ import {
   SendPollDto,
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
+import { SendGateService } from './send-gate.service';
+import { AppEvents } from '../../common/app-events';
 
 
 @Injectable()
@@ -25,6 +28,8 @@ export class MessagesService {
   constructor(
     @Inject(forwardRef(() => EngineManagerService))
     private readonly engineManager: EngineManagerService,
+    private readonly sendGate: SendGateService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
   // Send text message
   async sendText(dto: SendTextDto) {
@@ -206,93 +211,44 @@ export class MessagesService {
       data: { lastMessageAt: new Date() },
     });
 
-    // Send via WhatsApp engine
-    try {
-      const engine = this.engineManager.getEngine(profileId);
-      
-      if (!engine) {
-        this.logger.warn(`No engine found for profile ${profileId}, message queued as pending`);
-        return {
-          success: true,
-          messageId: message.id,
-          conversationId: conversation.id,
-          status: 'pending',
-          warning: 'Profile not connected, message queued',
-        };
-      }
-
-      // Send message through engine based on type
-      // Rewrite media URLs: S3_PUBLIC_URL uses localhost:9000 for browser access,
-      // but inside Docker the engine needs minio:9000 (Docker internal network)
-      let result;
-      const engineContent = { ...content };
-      if (engineContent.url && typeof engineContent.url === 'string') {
-        engineContent.url = engineContent.url
-          .replace('://localhost:9000', '://minio:9000')
-          .replace('://127.0.0.1:9000', '://minio:9000');
-      }
-      switch (type) {
-        case 'text':
-          result = await engine.sendText(jid, engineContent.text, { quotedMessageId });
-          break;
-        case 'image':
-          result = await engine.sendImage(jid, engineContent);
-          break;
-        case 'video':
-          result = await engine.sendVideo(jid, engineContent);
-          break;
-        case 'audio':
-          result = await engine.sendAudio(jid, engineContent);
-          break;
-        case 'document':
-          result = await engine.sendDocument(jid, engineContent);
-          break;
-        case 'location':
-          result = await engine.sendLocation(jid, content);
-          break;
-        case 'contact':
-          result = await engine.sendContact(jid, content);
-          break;
-        case 'poll':
-          result = await engine.sendPoll(jid, content);
-          break;
-        case 'reaction':
-          result = await engine.sendReaction(content.messageId, content.emoji);
-          break;
-        default:
-          this.logger.warn(`Unknown message type: ${type}`);
-          result = await engine.sendText(jid, JSON.stringify(content));
-      }
-
-      // Update message with actual WhatsApp message ID and status
-      if (result?.messageId) {
-        await prisma.message.update({
-          where: { id: message.id },
-          data: {
-            messageId: result.messageId,
-            status: 'sent',
-          },
-        });
-      }
-
-      this.logger.log(`Message sent successfully: ${result?.messageId}`);
-      
+    // Send via WhatsApp engine, gated per profile (inter-message delay + daily limit).
+    const engine = this.engineManager.getEngine(profileId);
+    if (!engine) {
+      this.logger.warn(`No engine found for profile ${profileId}, message queued as pending`);
       return {
         success: true,
         messageId: message.id,
         conversationId: conversation.id,
-        waMessageId: result?.messageId,
-        status: 'sent',
+        status: 'pending',
+        warning: 'Profile not connected, message queued',
       };
+    }
+
+    let result: any;
+    try {
+      result = await this.sendGate.executeWithGate(profileId, () =>
+        this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
+      );
     } catch (error: any) {
-      this.logger.error(`Failed to send message: ${error.message}`);
-      
-      // Update message status to failed
       await prisma.message.update({
         where: { id: message.id },
         data: { status: 'failed' },
       });
-
+      this.eventEmitter.emit(AppEvents.MESSAGE.FAILED, {
+        profileId,
+        messageId: message.id,
+        to: jid,
+        type,
+        conversationId: conversation.id,
+        error: error?.message,
+      });
+      // Daily-limit (429) and other HTTP errors propagate to the caller so the
+      // API returns the real status code; engine send failures keep the existing
+      // soft { success:false } contract.
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(`Failed to send message: ${error.message}`);
       return {
         success: false,
         messageId: message.id,
@@ -300,6 +256,71 @@ export class MessagesService {
         status: 'failed',
         error: error.message,
       };
+    }
+
+    // Update message with actual WhatsApp message ID and status
+    if (result?.messageId) {
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { messageId: result.messageId, status: 'sent' },
+      });
+    }
+    this.eventEmitter.emit(AppEvents.MESSAGE.SENT, {
+      profileId,
+      messageId: message.id,
+      waMessageId: result?.messageId,
+      to: jid,
+      type,
+      conversationId: conversation.id,
+    });
+    this.logger.log(`Message sent successfully: ${result?.messageId}`);
+    return {
+      success: true,
+      messageId: message.id,
+      conversationId: conversation.id,
+      waMessageId: result?.messageId,
+      status: 'sent',
+    };
+  }
+
+  // Dispatch the actual engine call by message type. Rewrites media URLs so the
+  // engine reaches MinIO over the Docker network (S3_PUBLIC_URL uses localhost
+  // for browser access).
+  private async dispatchToEngine(
+    engine: any,
+    type: string,
+    jid: string,
+    content: any,
+    quotedMessageId?: string,
+  ): Promise<any> {
+    const engineContent = { ...content };
+    if (engineContent.url && typeof engineContent.url === 'string') {
+      engineContent.url = engineContent.url
+        .replace('://localhost:9000', '://minio:9000')
+        .replace('://127.0.0.1:9000', '://minio:9000');
+    }
+    switch (type) {
+      case 'text':
+        return engine.sendText(jid, engineContent.text, { quotedMessageId });
+      case 'image':
+        return engine.sendImage(jid, engineContent);
+      case 'video':
+        return engine.sendVideo(jid, engineContent);
+      case 'audio':
+        return engine.sendAudio(jid, engineContent);
+      case 'document':
+        return engine.sendDocument(jid, engineContent);
+      case 'location':
+        return engine.sendLocation(jid, content);
+      case 'contact':
+        return engine.sendContact(jid, content);
+      case 'poll':
+        return engine.sendPoll(jid, content);
+      case 'reaction':
+        return engine.sendReaction(content.messageId, content.emoji);
+      default:
+        this.logger.warn(`Unknown message type: ${type}`);
+        return engine.sendText(jid, JSON.stringify(content));
     }
   }
 
