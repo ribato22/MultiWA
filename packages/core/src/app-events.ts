@@ -1,14 +1,15 @@
-// MultiWA Gateway - Canonical application event names
-// apps/api/src/common/app-events.ts
+// MultiWA Gateway Core - Canonical application event names
+// packages/core/src/app-events.ts
 //
 // Single source of truth for the dot-namespaced event names published on the
 // EventEmitter2 bus (delimiter '.'). These are the names webhook subscribers
 // filter on (Webhook.events) and that the WebhookDispatcher matches against.
+// Shared by apps/api and apps/worker (the engine emits these in whichever
+// process hosts it).
 //
 // IMPORTANT: these DOT names are distinct from the Socket.IO COLON channel names
-// (e.g. 'message:received', 'qr:update') emitted by EventsGateway. Do not
-// conflate them — the webhook `events: { has: event }` filter only matches the
-// dot names below.
+// (e.g. 'message:received', 'qr:update'). Do not conflate them — the webhook
+// `events: { has: event }` filter only matches the dot names below.
 
 export const AppEvents = {
   MESSAGE: {

@@ -10,7 +10,7 @@ vi.mock('@multiwa/database', () => ({
 
 import { prisma } from '@multiwa/database';
 import { WebhookDispatcherService } from './webhook-dispatcher.service';
-import { AppEvents } from '../../common/app-events';
+import { AppEvents } from '@multiwa/core';
 
 function makeService() {
   const queue = { add: vi.fn().mockResolvedValue({}) };

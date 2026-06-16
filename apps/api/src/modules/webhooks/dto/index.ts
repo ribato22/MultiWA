@@ -3,7 +3,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsArray, IsObject, IsOptional, IsNotEmpty, IsUrl, IsBoolean, ArrayNotEmpty } from 'class-validator';
-import { AppEvents } from '../../../common/app-events';
+import { AppEvents } from '@multiwa/core';
 
 export class CreateWebhookDto {
   @ApiProperty({ example: 'profile-uuid' })

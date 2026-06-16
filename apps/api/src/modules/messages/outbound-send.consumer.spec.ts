@@ -17,7 +17,7 @@ vi.mock('../profiles/engine-manager.service', () => ({
 
 import { prisma } from '@multiwa/database';
 import { MessagesService } from './messages.service';
-import { AppEvents } from '../../common/app-events';
+import { AppEvents } from '@multiwa/core';
 import { OutboundSendJob } from './outbound-send';
 
 const JOB: OutboundSendJob = {

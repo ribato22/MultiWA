@@ -12,7 +12,7 @@ import { prisma } from '@multiwa/database';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { AppEvents } from '../../common/app-events';
+import { AppEvents } from '@multiwa/core';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';

@@ -15,3 +15,6 @@ export * from './use-cases';
 
 // Realtime relay contract (worker -> API bridge)
 export * from './realtime';
+
+// Canonical application event names (shared by API + worker)
+export * from './app-events';
