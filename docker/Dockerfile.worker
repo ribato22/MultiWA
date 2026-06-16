@@ -33,22 +33,28 @@ RUN pnpm --filter @multiwa/database build || true
 RUN pnpm --filter @multiwa/core build || true
 RUN pnpm --filter @multiwa/engines build || true
 
-# Build Worker - debug tsc output
+# Build Worker. tsc runs with noEmitOnError:false (it still emits JS on type
+# errors), but the build MUST FAIL if no dist/main.js is produced — otherwise a
+# broken compile silently ships an empty dist (the previous `| tail` swallowed
+# the exit code).
 RUN cd apps/worker && \
   printf '{"compilerOptions":{"outDir":"./dist","rootDir":"./src","module":"CommonJS","moduleResolution":"node","target":"ES2021","declaration":true,"emitDecoratorMetadata":true,"experimentalDecorators":true,"allowSyntheticDefaultImports":true,"esModuleInterop":true,"skipLibCheck":true,"strict":false,"noImplicitAny":false,"strictNullChecks":false,"noUnusedLocals":false,"noUnusedParameters":false,"noEmitOnError":false,"incremental":false},"include":["src/**/*"]}' > tsconfig.docker.json && \
-  cat tsconfig.docker.json && \
-  npx tsc -p tsconfig.docker.json 2>&1 | tail -50; \
-  echo "=== TSC EXIT CODE: $? ===" && \
-  echo "=== DIST LISTING ===" && \
-  find apps/worker/dist -type f 2>/dev/null | head -20 || echo "No dist at all"
+  (npx tsc -p tsconfig.docker.json || echo "⚠️  tsc reported type errors; verifying emit...") && \
+  (test -f dist/main.js && echo "✅ Worker build OK" || (echo "❌ Worker build failed: apps/worker/dist/main.js missing" && exit 1))
 
 # Production stage
 FROM node:20-slim AS runner
 
 WORKDIR /app
 
-# Install pnpm and git (required for baileys dependency)
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/* && npm install -g pnpm
+# Install Chromium + Puppeteer runtime deps (mirrors the API image) so the worker
+# can host the whatsapp-web.js engine when ENGINE_HOST=worker. Harmless otherwise.
+# Plus pnpm and git (git required for the baileys dependency).
+RUN apt-get update && apt-get install -y \
+      chromium libnss3 libfreetype6 libharfbuzz0b \
+      ca-certificates fonts-freefont-ttf libxshmfence1 libgbm1 \
+      git --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/* && npm install -g pnpm
 
 # Copy workspace definition and lockfile
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
@@ -74,6 +80,9 @@ RUN mkdir -p /data/sessions
 
 ENV NODE_ENV=production
 ENV SESSIONS_PATH=/data/sessions
+ENV SESSIONS_DIR=/data/sessions
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 WORKDIR /app/apps/worker
 
