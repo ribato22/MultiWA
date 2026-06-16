@@ -67,10 +67,13 @@ import { BulkModule } from './modules/bulk/bulk.module';
     // listener). Previously provided by the now-removed global HooksModule; the
     // legacy /hooks webhook registry was a cross-tenant global store and has been
     // deprecated in favour of the org-scoped WebhooksModule (/webhooks).
+    // The ONE and only EventEmitterModule.forRoot in the app (PluginsModule must
+    // not register a second one — see plugins.module.ts). Consumed by the plugin
+    // loader and the webhook dispatcher @OnEvent listeners.
     EventEmitterModule.forRoot({
       wildcard: true,        // Allow 'message.*' patterns
       delimiter: '.',         // Event namespace delimiter
-      maxListeners: 20,
+      maxListeners: 50,       // plugin loader + webhook dispatcher + @OnEvent listeners
       verboseMemoryLeak: true,
     }),
 

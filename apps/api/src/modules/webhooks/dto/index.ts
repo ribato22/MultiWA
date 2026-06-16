@@ -3,6 +3,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsArray, IsObject, IsOptional, IsNotEmpty, IsUrl, IsBoolean, ArrayNotEmpty } from 'class-validator';
+import { AppEvents } from '../../../common/app-events';
 
 export class CreateWebhookDto {
   @ApiProperty({ example: 'profile-uuid' })
@@ -56,30 +57,31 @@ export class UpdateWebhookDto {
   enabled?: boolean;
 }
 
-// Event types for documentation
+// Event types for documentation. Keys are bound to the canonical AppEvents
+// constants so this map and the event bus cannot drift apart.
 export const WebhookEvents = {
   // Message events
-  'message.received': 'Incoming message received',
-  'message.sent': 'Outgoing message sent',
-  'message.delivered': 'Message delivered to recipient',
-  'message.read': 'Message read by recipient',
-  'message.failed': 'Message delivery failed',
-  
+  [AppEvents.MESSAGE.RECEIVED]: 'Incoming message received',
+  [AppEvents.MESSAGE.SENT]: 'Outgoing message sent',
+  [AppEvents.MESSAGE.DELIVERED]: 'Message delivered to recipient',
+  [AppEvents.MESSAGE.READ]: 'Message read by recipient',
+  [AppEvents.MESSAGE.FAILED]: 'Message delivery failed',
+
   // Connection events
-  'connection.update': 'Connection status changed',
-  'connection.qr': 'QR code generated',
-  'connection.ready': 'WhatsApp connected',
-  'connection.disconnected': 'WhatsApp disconnected',
-  
+  [AppEvents.CONNECTION.UPDATE]: 'Connection status changed',
+  [AppEvents.CONNECTION.QR]: 'QR code generated',
+  [AppEvents.CONNECTION.READY]: 'WhatsApp connected',
+  [AppEvents.CONNECTION.DISCONNECTED]: 'WhatsApp disconnected',
+
   // Group events
-  'group.join': 'Bot added to group',
-  'group.leave': 'Bot removed from group',
-  'group.message': 'Message received in group',
-  
+  [AppEvents.GROUP.JOIN]: 'Bot added to group',
+  [AppEvents.GROUP.LEAVE]: 'Bot removed from group',
+  [AppEvents.GROUP.MESSAGE]: 'Message received in group',
+
   // Contact events
-  'contact.update': 'Contact information updated',
-  
+  [AppEvents.CONTACT.UPDATE]: 'Contact information updated',
+
   // Other
-  'test': 'Test webhook delivery',
+  test: 'Test webhook delivery',
 } as const;
 
