@@ -6,23 +6,27 @@ import { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { ContactsService } from './contacts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto, ValidateBulkDto } from './dto';
 
 @ApiTags('Contacts')
 @Controller('contacts')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class ContactsController {
   constructor(private readonly service: ContactsService) {}
 
   @Post()
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create a contact' })
   async create(@Body() dto: CreateContactDto) {
     return this.service.create(dto);
   }
 
   @Get()
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List contacts with filtering' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'search', required: false })
@@ -40,18 +44,21 @@ export class ContactsController {
   }
 
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Get contact by ID' })
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
 
   @Put(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Update contact' })
   async update(@Param('id') id: string, @Body() dto: UpdateContactDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Delete contact' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);
@@ -59,12 +66,14 @@ export class ContactsController {
 
   // Import endpoints
   @Post('import')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Bulk import contacts (JSON array)' })
   async import(@Body() dto: ImportContactsDto) {
     return this.service.bulkImport(dto);
   }
 
   @Post('import/csv')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Import contacts from CSV data' })
   async importCsv(@Body() dto: ImportCsvDto) {
     return this.service.importFromCsv(dto);
@@ -72,6 +81,7 @@ export class ContactsController {
 
   // Export endpoints
   @Get('export/csv')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Export contacts to CSV' })
   @ApiQuery({ name: 'profileId', required: true })
   @ApiQuery({ name: 'tags', required: false, type: [String] })
@@ -83,24 +93,26 @@ export class ContactsController {
     @Res() res?: FastifyReply,
   ) {
     const result = await this.service.exportToCsv(profileId, { tags });
-    
+
     if (download && res) {
       res.header('Content-Type', 'text/csv');
       res.header('Content-Disposition', `attachment; filename="${result.filename}"`);
       return res.send(result.csv);
     }
-    
+
     return result;
   }
 
   // Tags endpoints
   @Post(':id/tags')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Add tags to contact' })
   async addTags(@Param('id') id: string, @Body('tags') tags: string[]) {
     return this.service.addTags(id, tags);
   }
 
   @Delete(':id/tags')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Remove tags from contact' })
   async removeTags(@Param('id') id: string, @Body('tags') tags: string[]) {
     return this.service.removeTags(id, tags);
@@ -108,6 +120,7 @@ export class ContactsController {
 
   // Validation endpoints
   @Get('profile/:profileId/validate/:phone')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Validate single phone number' })
   async validatePhone(
     @Param('profileId') profileId: string,
@@ -117,6 +130,7 @@ export class ContactsController {
   }
 
   @Post('profile/:profileId/validate')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Bulk validate phone numbers' })
   async validateBulk(
     @Param('profileId') profileId: string,
@@ -127,6 +141,7 @@ export class ContactsController {
 
   // Sync from WhatsApp
   @Post('sync/whatsapp')
+  @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Sync contacts from WhatsApp profile - fetches contacts exactly as saved in WhatsApp' })
   @ApiQuery({ name: 'profileId', required: false })
   async syncFromWhatsApp(

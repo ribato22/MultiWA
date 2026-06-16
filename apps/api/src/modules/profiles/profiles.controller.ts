@@ -6,10 +6,12 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '
 import { ProfilesService } from './profiles.service';
 import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
 @ApiTags('Profiles')
 @Controller('profiles')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class ProfilesController {
@@ -23,6 +25,7 @@ export class ProfilesController {
   }
 
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get profile by ID' })
   @ApiResponse({ status: 200, description: 'Profile details' })
   async findOne(@Param('id') id: string) {
@@ -37,6 +40,7 @@ export class ProfilesController {
   }
 
   @Put(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Update profile' })
   @ApiResponse({ status: 200, description: 'Profile updated' })
   async update(@Param('id') id: string, @Body() dto: UpdateProfileDto) {
@@ -44,6 +48,7 @@ export class ProfilesController {
   }
 
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Delete profile' })
   @ApiResponse({ status: 200, description: 'Profile deleted' })
   async delete(@Param('id') id: string) {
@@ -52,6 +57,7 @@ export class ProfilesController {
 
   // WhatsApp Connection
   @Post(':id/connect')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Connect WhatsApp profile (QR code sent via WebSocket)' })
   @ApiResponse({ status: 200, description: 'Connection initiated - listen on WebSocket /ws namespace for qr:update event' })
   async connect(@Param('id') id: string) {
@@ -59,6 +65,7 @@ export class ProfilesController {
   }
 
   @Post(':id/disconnect')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Disconnect WhatsApp profile' })
   @ApiResponse({ status: 200, description: 'Disconnected' })
   async disconnect(@Param('id') id: string) {
@@ -69,10 +76,10 @@ export class ProfilesController {
   // SSE endpoint removed in favor of WebSocket for real-time updates
 
   @Get(':id/status')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get connection status' })
   @ApiResponse({ status: 200, description: 'Connection status' })
   async status(@Param('id') id: string) {
     return this.profilesService.getStatus(id);
   }
 }
-

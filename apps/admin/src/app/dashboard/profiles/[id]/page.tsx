@@ -193,6 +193,7 @@ export default function ProfileDetailPage() {
   useEffect(() => {
     const wsUrl = getSocketUrl();
     const socket = io(`${wsUrl}/ws`, {
+      auth: { token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,

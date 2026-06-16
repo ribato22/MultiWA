@@ -7,6 +7,7 @@ import { ConfigModule } from '@nestjs/config';
 import { DemoGuard } from './common/guards/demo.guard';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { TenantModule } from './common/tenant/tenant.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { ProfilesModule } from './modules/profiles/profiles.module';
@@ -43,12 +44,16 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 // Competitive parity modules
 import { GroupsModule } from './modules/groups/groups.module';
 import { BulkModule } from './modules/bulk/bulk.module';
-import { WebSocketModule } from './modules/websocket/websocket.module';
+// WebSocketModule (RealtimeGateway) intentionally not imported: it was a second,
+// unauthenticated gateway on the same /ws namespace as the (now authenticated)
+// EventsGateway and is unused by any service. Consolidated to one gateway.
 
 @Module({
   imports: [
     // Rate limiting — global default; tighten per-route with @Throttle()
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
+    // Cross-tenant ownership guard (opt-in per route via @RequireTenant)
+    TenantModule,
     // Configuration
     ConfigModule.forRoot({
       isGlobal: true,
@@ -99,7 +104,6 @@ import { WebSocketModule } from './modules/websocket/websocket.module';
     // Competitive parity modules
     GroupsModule,      // Full group management API
     BulkModule,        // Bulk messaging with variables
-    WebSocketModule,   // Real-time event subscriptions
   ],
   controllers: [RootController, HealthController],
   providers: [

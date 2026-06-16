@@ -194,6 +194,7 @@ export default function ChatPage() {
     if (!selectedProfile) return;
 
     const socket = io(`${getSocketUrl()}/ws`, {
+      auth: { token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,

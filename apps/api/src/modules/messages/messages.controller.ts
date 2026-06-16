@@ -5,11 +5,13 @@ import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req 
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { MessagesService } from './messages.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
-import { 
-  SendTextDto, 
-  SendImageDto, 
-  SendVideoDto, 
-  SendAudioDto, 
+import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
+import {
+  SendTextDto,
+  SendImageDto,
+  SendVideoDto,
+  SendAudioDto,
   SendDocumentDto,
   SendLocationDto,
   SendContactDto,
@@ -25,7 +27,7 @@ import { AuditService, AuditAction } from '../audit/audit.service';
 
 @ApiTags('Messages')
 @Controller('messages')
-@UseGuards(JwtOrApiKeyGuard)
+@UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 export class MessagesController {
@@ -36,6 +38,7 @@ export class MessagesController {
 
   // Send text message
   @Post('text')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send text message' })
   async sendText(@Body() dto: SendTextDto, @Req() req: any) {
     const result = await this.service.sendText(dto);
@@ -51,6 +54,7 @@ export class MessagesController {
 
   // Send image
   @Post('image')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send image message' })
   async sendImage(@Body() dto: SendImageDto) {
     return this.service.sendImage(dto);
@@ -58,6 +62,7 @@ export class MessagesController {
 
   // Send video
   @Post('video')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send video message' })
   async sendVideo(@Body() dto: SendVideoDto) {
     return this.service.sendVideo(dto);
@@ -65,6 +70,7 @@ export class MessagesController {
 
   // Send audio/voice note
   @Post('audio')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send audio/voice note' })
   async sendAudio(@Body() dto: SendAudioDto) {
     return this.service.sendAudio(dto);
@@ -72,6 +78,7 @@ export class MessagesController {
 
   // Send document
   @Post('document')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send document/file' })
   async sendDocument(@Body() dto: SendDocumentDto) {
     return this.service.sendDocument(dto);
@@ -79,6 +86,7 @@ export class MessagesController {
 
   // Send location
   @Post('location')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send location' })
   async sendLocation(@Body() dto: SendLocationDto) {
     return this.service.sendLocation(dto);
@@ -86,6 +94,7 @@ export class MessagesController {
 
   // Send contact card
   @Post('contact')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send contact card (vCard)' })
   async sendContact(@Body() dto: SendContactDto) {
     return this.service.sendContact(dto);
@@ -93,6 +102,7 @@ export class MessagesController {
 
   // Send reaction
   @Post('reaction')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'React to a message' })
   async sendReaction(@Body() dto: SendReactionDto) {
     return this.service.sendReaction(dto);
@@ -100,6 +110,7 @@ export class MessagesController {
 
   // Reply to message
   @Post('reply')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Reply to a message' })
   async sendReply(@Body() dto: SendReplyDto) {
     return this.service.sendReply(dto);
@@ -107,40 +118,46 @@ export class MessagesController {
 
   // Send poll
   @Post('poll')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send interactive poll' })
   async sendPoll(@Body() dto: SendPollDto) {
     return this.service.sendPoll(dto);
   }
 
-  // ========== NEW: Typing Indicator ==========
+  // ========== Typing Indicator ==========
   @Post('typing')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send typing indicator (composing/recording)', description: 'Show typing or recording state in WhatsApp chat. Optionally auto-clears after a given duration.' })
   async sendTyping(@Body() dto: SendTypingDto) {
     return this.service.sendTyping(dto.profileId, dto.to, dto.state || 'composing', dto.duration);
   }
 
-  // ========== NEW: Read Receipt Control ==========
+  // ========== Read Receipt Control ==========
   @Post('mark-read')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Mark messages/chat as read', description: 'Send read receipts (blue ticks) for specific messages or entire chat.' })
   async markAsRead(@Body() dto: MarkAsReadDto) {
     return this.service.markAsRead(dto.profileId, dto.chatId, dto.messageIds);
   }
 
-  // ========== NEW: Delete for Everyone ==========
+  // ========== Delete for Everyone ==========
   @Post('delete-for-everyone')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Delete message for everyone', description: 'Delete a sent message from WhatsApp for all participants. Only works for messages sent by you.' })
   async deleteForEveryone(@Body() dto: DeleteForEveryoneDto) {
     return this.service.deleteForEveryone(dto.profileId, dto.chatId, dto.messageId);
   }
 
-  // ========== NEW: Message Scheduling ==========
+  // ========== Message Scheduling ==========
   @Post('schedule')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Schedule a message for future delivery' })
   async scheduleMessage(@Body() dto: ScheduleMessageDto) {
     return this.service.scheduleMessage(dto.profileId, dto.to, dto.type, dto.content, dto.scheduledAt);
   }
 
   @Get('schedule/:profileId')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get scheduled messages by profile' })
   @ApiQuery({ name: 'status', required: false, enum: ['pending', 'sent', 'failed', 'cancelled'] })
   async getScheduledMessages(
@@ -151,6 +168,7 @@ export class MessagesController {
   }
 
   @Delete('schedule/:id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'scheduledMessage' })
   @ApiOperation({ summary: 'Cancel a scheduled message' })
   async cancelScheduledMessage(@Param('id') id: string) {
     return this.service.cancelScheduledMessage(id);
@@ -158,6 +176,7 @@ export class MessagesController {
 
   // Get messages by profile
   @Get('profile/:profileId')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get messages by profile' })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'offset', required: false })
@@ -175,6 +194,7 @@ export class MessagesController {
 
   // Get messages by conversation
   @Get('conversation/:conversationId')
+  @RequireTenant({ from: 'param', key: 'conversationId', resource: 'conversation' })
   @ApiOperation({ summary: 'Get messages by conversation' })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })
@@ -188,6 +208,7 @@ export class MessagesController {
 
   // Get single message
   @Get(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'message' })
   @ApiOperation({ summary: 'Get message by ID' })
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
@@ -195,6 +216,7 @@ export class MessagesController {
 
   // Delete message (from local database)
   @Delete(':id')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'message' })
   @ApiOperation({ summary: 'Delete message from database' })
   async delete(@Param('id') id: string) {
     return this.service.delete(id);

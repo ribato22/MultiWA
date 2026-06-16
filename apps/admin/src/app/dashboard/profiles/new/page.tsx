@@ -129,6 +129,7 @@ export default function NewProfilePage() {
     // Create socket connection to /ws namespace (must match backend EventsGateway namespace)
     // Backend uses: @WebSocketGateway({ namespace: '/ws', ... })
     const socket = io(`${wsUrl}/ws`, {
+      auth: { token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null },
       transports: ['websocket', 'polling'],
       timeout: 15000,
       forceNew: true,
