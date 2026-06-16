@@ -99,10 +99,35 @@ For groups, use the full JID: `123456789-123456@g.us`
 
 ---
 
-## Rate Limits
+## Send Gate (pacing & daily limit)
 
-- **Per profile**: 30 messages/minute (adjustable)
-- **Bulk API**: Use `/api/v1/bulk/send` for high-volume
+Every outbound send — direct API, automation, broadcast, scheduled, and bulk —
+passes through a **per-profile send gate** that enforces anti-ban pacing:
+
+| Profile field | Meaning | Default |
+|---------------|---------|---------|
+| `messageDelayMs` | Minimum delay between consecutive messages for the profile. The gate serializes sends per profile and waits out the remaining delay (block-and-wait). | `1500` |
+| `dailyMessageLimit` | Daily outbound cap for the profile. `null` = unlimited. | `null` (unlimited) |
+| `dailyMessageCount` | Messages sent so far in the current window (read-only). | `0` |
+| `dailyResetAt` | When the counter next resets (00:00 WIB / Asia-Jakarta). | — |
+
+Set `messageDelayMs` / `dailyMessageLimit` via `PUT /profiles/:id`.
+
+When a profile reaches its `dailyMessageLimit`, further sends are rejected with
+**HTTP 429**:
+
+```json
+{ "error": "DAILY_LIMIT_REACHED", "limit": 1000, "count": 1000, "resetAt": "2026-06-17T00:00:00+07:00" }
+```
+
+Counters reset daily at **midnight WIB (Asia/Jakarta, UTC+7)**.
+
+## Global Rate Limit
+
+- **API throttle**: 120 requests/minute per IP (global `ThrottlerGuard`).
+- **Bulk API**: use `POST /api/v1/bulk/send` for high-volume sends — it routes
+  through the same per-profile send gate (so `messageDelayMs` and the daily limit
+  apply) plus its own configurable inter-message delay.
 
 ---
 

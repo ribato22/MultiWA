@@ -30,7 +30,7 @@ const features = [
   {
     emoji: '🔌',
     title: 'Pluggable Engines',
-    description: 'Switch between whatsapp-web.js and Baileys engines per session. Swap without rewriting your application code.',
+    description: 'Per-profile engine selection: whatsapp-web.js (default) or the experimental Baileys adapter. Swap without rewriting your application code.',
   },
   {
     emoji: '🤖',

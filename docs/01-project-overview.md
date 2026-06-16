@@ -47,7 +47,7 @@ Provide a robust, scalable, and developer-friendly WhatsApp API that rivals comm
 2. **Enterprise-Ready** - Multi-tenant, RBAC, audit logging
 3. **Developer Experience** - SDKs, Swagger docs, WebSocket real-time
 4. **Automation** - Visual flow builder, auto-reply, n8n integration
-5. **Scalability** - Redis queues, horizontal scaling ready
+5. **Reliability** - Redis-backed queues for durable webhook delivery and background jobs
 
 ### Success Metrics
 
@@ -67,9 +67,9 @@ Provide a robust, scalable, and developer-friendly WhatsApp API that rivals comm
 | **Backend** | NestJS + Fastify |
 | **Database** | PostgreSQL + Prisma ORM |
 | **Cache** | Redis |
-| **Queue** | BullMQ |
+| **Queue** | BullMQ (durable webhook delivery + background jobs) |
 | **Frontend** | Next.js 14 + Shadcn UI |
-| **WhatsApp** | Baileys + WhatsApp-Web.js |
+| **WhatsApp** | WhatsApp-Web.js (default) + Baileys (experimental) |
 | **Real-time** | Socket.IO |
 | **Containerization** | Docker + Docker Compose |
 
