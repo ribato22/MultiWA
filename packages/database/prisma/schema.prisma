@@ -129,7 +129,7 @@ model Profile {
   phoneNumber     String?
   pushName        String?
   profilePicUrl   String?
-  status          String   @default("DISCONNECTED")
+  status          String   @default("disconnected")
   sessionData     String?
   webhookUrl      String?
   webhookSecret   String?
@@ -138,6 +138,8 @@ model Profile {
   dailyMessageLimit Int?
   dailyMessageCount Int    @default(0)
   dailyResetAt    DateTime?
+  // Per-profile engine selection. whatsapp-web-js (default, production) | baileys (EXPERIMENTAL) | mock (testing).
+  engine          String   @default("whatsapp-web-js")
   lastConnectedAt DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
