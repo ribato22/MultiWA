@@ -19,6 +19,7 @@ import { WorkerMessagesService } from './messages.service';
 import { WorkerAutomationService } from './automation.service';
 import { AIService } from './ai.service';
 import { WorkerRuleEngineService } from './rule-engine.service';
+import { WorkerNotificationsService } from './notifications.service';
 import { WorkerWebhookDispatcherService, WORKER_WEBHOOK_QUEUE } from './webhook-dispatcher.service';
 
 @Module({
@@ -36,6 +37,7 @@ import { WorkerWebhookDispatcherService, WORKER_WEBHOOK_QUEUE } from './webhook-
     WorkerAutomationService,
     AIService,
     WorkerRuleEngineService,
+    WorkerNotificationsService,
     WorkerWebhookDispatcherService,
     {
       // Worker-side BullMQ 'webhooks' producer (the WebhookProcessor consumes it).

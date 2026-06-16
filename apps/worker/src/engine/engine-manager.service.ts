@@ -16,8 +16,9 @@ import { AppEvents } from '@multiwa/core';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { WorkerRuleEngineService, IncomingMessage } from './rule-engine.service';
-// NOTE (worker-local copy): push/email notifications are NOT wired in the worker
-// (the API surfaces them); automation (RuleEngine) IS wired below.
+import { WorkerNotificationsService, NotificationType } from './notifications.service';
+// NOTE (worker-local copy): only in-app notification rows are written here; the
+// email/push fan-out is best-effort and retained on the API path.
 
 
 interface EngineInstance {
@@ -36,8 +37,28 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     private readonly eventEmitter: EventEmitter2,
     @Inject(forwardRef(() => WorkerRuleEngineService))
     private readonly ruleEngine: WorkerRuleEngineService,
+    private readonly notificationsService: WorkerNotificationsService,
   ) {
     this.logger.log('Worker EngineManagerService initialized');
+  }
+
+  /**
+   * Create in-app notifications for all users in the profile's organization.
+   */
+  private async notifyOrgUsers(
+    profileId: string,
+    type: NotificationType,
+    title: string,
+    body: string,
+    metadata?: Record<string, any>,
+  ): Promise<void> {
+    const profile = await prisma.profile.findUnique({
+      where: { id: profileId },
+      select: { workspace: { select: { organizationId: true } } },
+    });
+    const orgId = profile?.workspace?.organizationId;
+    if (!orgId) return;
+    await this.notificationsService.createForOrg(orgId, type, title, body, metadata);
   }
 
   /**
@@ -409,6 +430,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         // Emit connection status via WebSocket
         this.realtime.emitConnectionStatus(profileId, 'connected', phone);
         this.emitEvent(AppEvents.CONNECTION.READY, { profileId, phone, pushName });
+        this.notifyOrgUsers(profileId, NotificationType.CONNECTION, '✅ Profile Connected',
+          `${profile.displayName || phone} is now connected`, { profileId, phone },
+        ).catch(err => this.logger.warn(`Notification error (connection): ${err.message}`));
       },
       onDisconnected: async (reason: string) => {
         this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
@@ -442,6 +466,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           });
           this.realtime.emitConnectionStatus(profileId, 'disconnected');
           this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason });
+          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION, '⚠️ Profile Disconnected',
+            `${profile.displayName || profileId} was disconnected: ${reason}`, { profileId, reason },
+          ).catch(err => this.logger.warn(`Notification error (disconnection): ${err.message}`));
         } else {
 
           // Temporary disconnect — attempt auto-retry with exponential backoff
@@ -704,6 +731,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             timestamp: savedMessage.timestamp,
             conversationId: conversation.id,
           });
+
+          // In-app notification for the new message.
+          const msgPreview = (content.text || content.caption || msgType).substring(0, 80);
+          this.notifyOrgUsers(profileId, NotificationType.MESSAGE, `📨 New message from ${senderName}`,
+            msgPreview, { profileId, conversationId: conversation.id, messageId: savedMessage.id, senderJid },
+          ).catch(err => this.logger.warn(`Notification error (message): ${err.message}`));
 
           // Check if this is a new contact
           const phone = senderJid.split('@')[0];
