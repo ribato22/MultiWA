@@ -6,7 +6,9 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "strictNullChecks": false,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   },
   "include": ["src/**/*"],
   "references": [

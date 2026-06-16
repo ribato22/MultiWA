@@ -7,13 +7,18 @@ import { PrismaClient } from '@prisma/client';
 import { NestFactory } from '@nestjs/core';
 import type { INestApplicationContext } from '@nestjs/common';
 import { WorkerEngineModule } from './engine/worker-engine.module';
+import { EngineManagerService } from './engine/engine-manager.service';
+import { WorkerSenderService } from './engine/sender.service';
+import { EngineCommandProcessor } from './engine/engine-command-processor';
 import { MessageProcessor } from './processors/message.processor';
 import { AutomationProcessor } from './processors/automation.processor';
 import { WebhookProcessor } from './processors/webhook.processor';
 import { ScheduledProcessor } from './processors/scheduled.processor';
 
-// Nest application context hosting the engine runtime (only when ENGINE_HOST=worker).
+// Nest application context + workers hosting the engine runtime (ENGINE_HOST=worker).
 let nestApp: INestApplicationContext | undefined;
+let engineCommandWorker: Worker | undefined;
+let outboundSendWorker: Worker | undefined;
 
 const logger = pino(
   process.env.NODE_ENV === 'production'
@@ -137,6 +142,8 @@ const shutdown = async () => {
     scheduledWorker.close(),
     scheduledQueue.close(),
   ]);
+  if (engineCommandWorker) await engineCommandWorker.close();
+  if (outboundSendWorker) await outboundSendWorker.close();
   if (nestApp) await nestApp.close();
   await connection.quit();
   await prisma.$disconnect();
@@ -161,6 +168,41 @@ const start = async () => {
     });
     await nestApp.init();
     logger.info('🧩 Worker engine Nest context initialized (ENGINE_HOST=worker)');
+
+    const engineManager = nestApp.get(EngineManagerService);
+    const sender = nestApp.get(WorkerSenderService);
+    const commandProcessor = new EngineCommandProcessor(engineManager);
+
+    // API -> worker engine commands (connect/disconnect/status/group/contacts/etc.)
+    engineCommandWorker = new Worker(
+      'engine-commands',
+      (job) => commandProcessor.process(job),
+      {
+        connection,
+        concurrency: 20,
+        lockDuration: parseInt(process.env.WORKER_COMMAND_TIMEOUT_MS ?? '30000', 10) + 10000,
+      },
+    );
+    engineCommandWorker.on('failed', (job, err) => {
+      logger.error({ jobId: job?.id, name: job?.name, error: err.message }, 'Engine command failed');
+    });
+
+    // Durable outbound sends drained through the per-profile send gate. Concurrency
+    // 1 keeps strict FIFO; per-profile pacing is enforced by the gate itself.
+    const OUTBOUND_ATTEMPTS = 3;
+    outboundSendWorker = new Worker(
+      'outbound-send',
+      async (job) => {
+        const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? OUTBOUND_ATTEMPTS);
+        await sender.deliver(job.data, isLastAttempt);
+      },
+      { connection, concurrency: 1 },
+    );
+    outboundSendWorker.on('failed', (job, err) => {
+      logger.warn({ jobId: job?.id, attempt: job?.attemptsMade, error: err.message }, 'Queued send failed');
+    });
+
+    logger.info('🛰️  Engine command + outbound send workers started (ENGINE_HOST=worker)');
   }
 
   await setupScheduledJobs();
