@@ -27,6 +27,7 @@ import {
   isDurableSend,
 } from './outbound-send';
 import { isWorkerEngine } from '../../common/engine-host';
+import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 
 
 @Injectable()
@@ -40,6 +41,9 @@ export class MessagesService {
     private readonly eventEmitter: EventEmitter2,
     @Inject(OUTBOUND_SEND_QUEUE)
     private readonly outboundQueue: Queue,
+    // Engine commands client — drives worker-hosted engine ops (presence/read/
+    // delete) when ENGINE_HOST=worker; idle when ENGINE_HOST=api.
+    private readonly engineCommands: EngineCommandsService,
   ) {}
   // Send text message
   async sendText(dto: SendTextDto) {
@@ -543,10 +547,15 @@ export class MessagesService {
 
   // Send typing indicator
   async sendTyping(profileId: string, to: string, state: 'composing' | 'recording' | 'available' = 'composing', duration?: number) {
+    const jid = this.normalizeJid(to);
+
+    if (isWorkerEngine()) {
+      await this.engineCommands.presenceUpdate(profileId, jid, state);
+      return { success: true, state, to: jid };
+    }
+
     const engine = this.engineManager.getEngine(profileId);
     if (!engine) throw new NotFoundException('Profile not connected');
-
-    const jid = this.normalizeJid(to);
     await engine.sendPresenceUpdate(jid, state);
 
     // Note: We don't auto-clear typing. WhatsApp automatically clears
@@ -558,10 +567,15 @@ export class MessagesService {
 
   // Mark messages as read
   async markAsRead(profileId: string, chatId: string, messageIds?: string[]) {
+    const jid = this.normalizeJid(chatId);
+
+    if (isWorkerEngine()) {
+      await this.engineCommands.markRead(profileId, jid, messageIds);
+      return { success: true, chatId: jid, messageIds };
+    }
+
     const engine = this.engineManager.getEngine(profileId);
     if (!engine) throw new NotFoundException('Profile not connected');
-
-    const jid = this.normalizeJid(chatId);
     await engine.markAsRead(jid, messageIds);
 
     return { success: true, chatId: jid, messageIds };
@@ -569,11 +583,15 @@ export class MessagesService {
 
   // Delete message for everyone on WhatsApp
   async deleteForEveryone(profileId: string, chatId: string, messageId: string) {
-    const engine = this.engineManager.getEngine(profileId);
-    if (!engine) throw new NotFoundException('Profile not connected');
-
     const jid = this.normalizeJid(chatId);
-    await engine.deleteForEveryone(jid, messageId);
+
+    if (isWorkerEngine()) {
+      await this.engineCommands.deleteForEveryone(profileId, jid, messageId);
+    } else {
+      const engine = this.engineManager.getEngine(profileId);
+      if (!engine) throw new NotFoundException('Profile not connected');
+      await engine.deleteForEveryone(jid, messageId);
+    }
 
     // Also update DB record if it exists
     try {

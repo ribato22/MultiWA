@@ -35,7 +35,8 @@ function makeService(over: { engine?: any; gate?: any } = {}) {
   const sendGate = over.gate ?? { executeWithGate: vi.fn((_pid: string, fn: () => Promise<any>) => fn()) };
   const eventEmitter = { emit: vi.fn() };
   const queue = { add: vi.fn() };
-  const svc = new MessagesService(engineManager as any, sendGate as any, eventEmitter as any, queue as any);
+  const engineCommands = {};
+  const svc = new MessagesService(engineManager as any, sendGate as any, eventEmitter as any, queue as any, engineCommands as any);
   return { svc, engine, engineManager, sendGate, eventEmitter };
 }
 

@@ -5,12 +5,15 @@ import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef 
 import { prisma } from '@multiwa/database';
 import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
+import { EngineCommandsService } from '../engine-commands/engine-commands.service';
+import { isWorkerEngine } from '../../common/engine-host';
 
 @Injectable()
 export class ContactsService {
   constructor(
     @Inject(forwardRef(() => EngineManagerService))
     private readonly engineManager: EngineManagerService,
+    private readonly engineCommands: EngineCommandsService,
   ) {}
 
   // Create contact
@@ -105,15 +108,19 @@ export class ContactsService {
    * Fetches contacts exactly as saved in WhatsApp (with the same names)
    */
   async syncFromWhatsApp(profileId: string) {
-    const engine = this.engineManager.getEngine(profileId);
-    if (!engine) {
+    // In worker mode the engine lives in the worker; fetch contacts over the
+    // engine-commands queue. Otherwise use the local engine.
+    const engine = isWorkerEngine() ? null : this.engineManager.getEngine(profileId);
+    if (!isWorkerEngine() && !engine) {
       throw new BadRequestException('Profile not connected. Please connect WhatsApp first.');
     }
 
     const results = { synced: 0, created: 0, updated: 0, errors: [] as string[] };
 
     try {
-      const waContacts = await engine.getContacts();
+      const waContacts = isWorkerEngine()
+        ? await this.engineCommands.contactsSync(profileId)
+        : await engine!.getContacts();
       
       for (const contact of waContacts) {
         try {

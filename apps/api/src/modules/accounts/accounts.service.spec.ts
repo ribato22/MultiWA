@@ -23,7 +23,7 @@ describe('AccountsService', () => {
     vi.mocked(prisma.account.findMany).mockReset();
     vi.mocked(prisma.account.create).mockReset();
 
-    service = new AccountsService({} as any);
+    service = new AccountsService({} as any, {} as any);
   });
 
   describe('findAll', () => {

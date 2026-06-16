@@ -4,6 +4,8 @@
 import { Injectable, NotFoundException, Logger, Inject, forwardRef } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { EngineManagerService } from '../profiles/engine-manager.service';
+import { EngineCommandsService } from '../engine-commands/engine-commands.service';
+import { isWorkerEngine } from '../../common/engine-host';
 
 @Injectable()
 export class AccountsService {
@@ -12,6 +14,7 @@ export class AccountsService {
   constructor(
     @Inject(forwardRef(() => EngineManagerService))
     private readonly engineManager: EngineManagerService,
+    private readonly engineCommands: EngineCommandsService,
   ) {}
 
   async findAll(userId: string) {
@@ -184,12 +187,14 @@ export class AccountsService {
   async connectProfile(accountId: string, profileId: string) {
     this.logger.log(`Connecting profile ${profileId} for account ${accountId}`);
     
-    // Use EngineManager to handle connection
-    // This will initialize the engine and emit QR code via WebSocket
-    const result = await this.engineManager.connectProfile(profileId);
+    // Initialize the engine (emits QR via WebSocket). Delegate to the worker over
+    // the engine-commands queue when ENGINE_HOST=worker.
+    const result = isWorkerEngine()
+      ? await this.engineCommands.connectProfile(profileId)
+      : await this.engineManager.connectProfile(profileId);
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       status: result.status,
       message: result.message,
     };
@@ -197,9 +202,10 @@ export class AccountsService {
 
   async disconnectProfile(accountId: string, profileId: string) {
     this.logger.log(`Disconnecting profile ${profileId} for account ${accountId}`);
-    
-    // Use EngineManager to handle disconnection
-    const result = await this.engineManager.disconnectProfile(profileId);
+
+    const result = isWorkerEngine()
+      ? await this.engineCommands.disconnectProfile(profileId)
+      : await this.engineManager.disconnectProfile(profileId);
 
     return { 
       success: true, 
