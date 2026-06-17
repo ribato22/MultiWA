@@ -672,6 +672,38 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
   }
 
+  /**
+   * Resolve a JID's real identity. For an @lid (hidden-number) JID, whatsapp-web.js
+   * 1.34.x rewrites Contact.id to the phone JID; we also fall back to Contact.number.
+   * Returns null if the client isn't ready or WA can't resolve the number.
+   */
+  async resolveIdentity(jid: string): Promise<import('../types').ResolvedIdentity | null> {
+    try {
+      if (!this.isReady() || !this.client || !jid) return null;
+      const isLid = jid.includes('@lid');
+      const contact: any = await this.client.getContactById(jid);
+      let phoneJid: string | null = null;
+      const resolvedId: string = contact?.id?._serialized || '';
+      if (resolvedId.includes('@c.us') || resolvedId.includes('@s.whatsapp.net')) {
+        phoneJid = resolvedId.replace('@c.us', '@s.whatsapp.net');
+      } else if (contact?.number) {
+        phoneJid = `${String(contact.number).replace(/\D/g, '')}@s.whatsapp.net`;
+      } else if (!isLid && (jid.includes('@c.us') || jid.includes('@s.whatsapp.net'))) {
+        phoneJid = jid.replace('@c.us', '@s.whatsapp.net');
+      }
+      const name = contact?.name || contact?.pushname || contact?.verifiedName || undefined;
+      return {
+        phoneJid,
+        lidJid: isLid ? jid : (contact?.lid?._serialized || null),
+        name,
+        pushName: contact?.pushname,
+      };
+    } catch (error: any) {
+      console.warn('[WhatsApp-WebJS] resolveIdentity error:', error?.message);
+      return null;
+    }
+  }
+
   async createGroup(name: string, participants: string[]): Promise<import('../types').GroupInfo> {
     try {
       if (!this.isReady() || !this.client) {

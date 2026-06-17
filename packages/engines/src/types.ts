@@ -91,6 +91,18 @@ export interface ContactInfo {
 }
 
 /**
+ * Resolved real identity behind a WhatsApp JID. WhatsApp multi-device uses a
+ * hidden "LID" (@lid) identity that is distinct from the phone-number JID for
+ * the same person; this maps between them and surfaces the best display name.
+ */
+export interface ResolvedIdentity {
+  phoneJid: string | null;   // normalized @s.whatsapp.net JID, or null if WA can't resolve it
+  lidJid: string | null;     // the @lid form, when known
+  name?: string;             // best display name (saved name > pushname > verified)
+  pushName?: string;
+}
+
+/**
  * Base interface for WhatsApp engines
  * All engine adapters must implement this interface
  */
@@ -141,6 +153,10 @@ export interface IWhatsAppEngine {
 
   // Contacts - fetch contacts from WhatsApp
   getContacts(): Promise<ContactInfo[]>;
+
+  // Resolve a JID's real identity (maps @lid <-> phone number + best name).
+  // Returns null when the engine can't resolve it.
+  resolveIdentity(jid: string): Promise<ResolvedIdentity | null>;
 
   createGroup(name: string, participants: string[]): Promise<GroupInfo>;
   setGroupName(groupId: string, name: string): Promise<void>;

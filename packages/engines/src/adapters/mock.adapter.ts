@@ -256,6 +256,11 @@ export class MockAdapter implements IWhatsAppEngine {
 
   // ========== CONTACTS (MOCK STUBS) ==========
 
+  // LID<->phone resolution is not implemented for this engine.
+  async resolveIdentity(_jid: string): Promise<import('../types').ResolvedIdentity | null> {
+    return null;
+  }
+
   async getContacts(): Promise<import('../types').ContactInfo[]> {
     console.log(`[Mock] Getting contacts`);
     return [

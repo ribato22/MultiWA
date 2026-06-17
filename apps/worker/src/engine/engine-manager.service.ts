@@ -558,12 +558,29 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           const rawSenderJid = message.author || message.from || '';
           // Normalize JID: whatsapp-web.js uses @c.us for individual chats,
           // but our API uses @s.whatsapp.net — normalize to prevent duplicate conversations
-          const senderJid = isGroup ? rawSenderJid : rawSenderJid.replace('@c.us', '@s.whatsapp.net');
-          const senderName = message._data?.notifyName || message.pushName || senderJid.split('@')[0];
+          let senderJid = isGroup ? rawSenderJid : rawSenderJid.replace('@c.us', '@s.whatsapp.net');
+          let senderName = message._data?.notifyName || message.pushName || senderJid.split('@')[0];
           
           // Get or create conversation — use normalized JID
           const rawJid = message.from || '';
-          const jid = isGroup ? rawJid : rawJid.replace('@c.us', '@s.whatsapp.net');
+          let jid = isGroup ? rawJid : rawJid.replace('@c.us', '@s.whatsapp.net');
+
+          // LID resolution: WhatsApp's hidden-number identity (@lid) is a separate
+          // JID from the phone number for the same person -> it would create a
+          // duplicate conversation/contact. For DMs, map @lid -> the real phone JID
+          // (when WA can resolve it) so everything dedups onto one row.
+          let lidJid: string | null = null;
+          if (!isGroup && jid.includes('@lid')) {
+            lidJid = jid;
+            try {
+              const lidEngine = this.engines.get(profileId)?.engine;
+              const ident = lidEngine?.resolveIdentity ? await lidEngine.resolveIdentity(jid) : null;
+              if (ident?.phoneJid) { jid = ident.phoneJid; senderJid = ident.phoneJid; }
+              if (ident?.name) senderName = ident.name;
+            } catch (err) {
+              this.logger.warn(`LID resolve failed for ${jid}: ${(err as Error).message}`);
+            }
+          }
           let conversation = await prisma.conversation.findFirst({
             where: { profileId, jid },
           });
@@ -576,6 +593,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
                 jid,
                 name: isGroup ? (groupName || jid) : (senderName || jid),
                 type: isGroup ? 'group' : 'user',
+                ...(lidJid ? { metadata: { lidJid, lidResolved: jid !== lidJid } } : {}),
               },
             });
           } else if (isGroup && groupName && conversation.name !== groupName) {
