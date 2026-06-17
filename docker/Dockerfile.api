@@ -14,6 +14,7 @@ COPY apps/api/package.json ./apps/api/
 COPY packages/core/package.json ./packages/core/
 COPY packages/database/package.json ./packages/database/
 COPY packages/engines/package.json ./packages/engines/
+COPY packages/engine-runtime/package.json ./packages/engine-runtime/
 COPY packages/sdk/package.json ./packages/sdk/
 
 # Install dependencies (allow lockfile updates for missing deps)
@@ -46,6 +47,7 @@ RUN if [ ! -f packages/engines/dist/index.js ]; then \
   mkdir -p packages/engines/dist && \
   cp -r packages/engines/src/* packages/engines/dist/ 2>/dev/null || true; \
   fi
+RUN pnpm --filter @multiwa/engine-runtime build || true
 RUN pnpm --filter @multiwa/api build || true
 RUN test -f apps/api/dist/main.js && echo "API dist verified" || (echo "FATAL: API dist/main.js missing" && exit 1)
 
@@ -82,6 +84,7 @@ COPY --from=builder /app/apps/api/package.json ./apps/api/package.json
 COPY --from=builder /app/packages/core/package.json ./packages/core/package.json
 COPY --from=builder /app/packages/database/package.json ./packages/database/package.json
 COPY --from=builder /app/packages/engines/package.json ./packages/engines/package.json
+COPY --from=builder /app/packages/engine-runtime/package.json ./packages/engine-runtime/package.json
 COPY --from=builder /app/packages/sdk/package.json ./packages/sdk/package.json
 
 # Install production dependencies in runner
@@ -92,6 +95,7 @@ COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/packages/database ./packages/database
 COPY --from=builder /app/packages/core ./packages/core
 COPY --from=builder /app/packages/engines ./packages/engines
+COPY --from=builder /app/packages/engine-runtime ./packages/engine-runtime
 
 # Re-generate Prisma client for production
 RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
@@ -100,10 +104,12 @@ RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
 RUN rm -rf /app/node_modules/@multiwa && mkdir -p /app/node_modules/@multiwa && \
   ln -sf /app/packages/core /app/node_modules/@multiwa/core && \
   ln -sf /app/packages/engines /app/node_modules/@multiwa/engines && \
+  ln -sf /app/packages/engine-runtime /app/node_modules/@multiwa/engine-runtime && \
   ln -sf /app/packages/database /app/node_modules/@multiwa/database && \
   rm -rf /app/apps/api/node_modules/@multiwa && mkdir -p /app/apps/api/node_modules/@multiwa && \
   ln -sf /app/packages/core /app/apps/api/node_modules/@multiwa/core && \
   ln -sf /app/packages/engines /app/apps/api/node_modules/@multiwa/engines && \
+  ln -sf /app/packages/engine-runtime /app/apps/api/node_modules/@multiwa/engine-runtime && \
   ln -sf /app/packages/database /app/apps/api/node_modules/@multiwa/database
 
 # Create symlinks for Prisma client (generated inside packages/database/node_modules)
