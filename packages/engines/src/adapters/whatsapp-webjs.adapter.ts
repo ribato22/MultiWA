@@ -46,7 +46,29 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
     console.log(`[WhatsApp-WebJS] Platform: ${process.platform}, Using Chrome: ${process.env.PUPPETEER_EXECUTABLE_PATH || config.puppeteerOptions?.executablePath || 'bundled'}`);
 
+    // Optional pinned WhatsApp Web version. Works around the upstream
+    // "authenticated fires but ready never does" bug on newer WA Web builds
+    // (whatsapp-web.js #127084 etc.). Set WWEBJS_WEB_VERSION to a known-good
+    // 2.3000.x build to force it via the wppconnect wa-version mirror; leave
+    // unset for default behaviour (whatsapp-web.js negotiates the version).
+    const pinnedWebVersion = process.env.WWEBJS_WEB_VERSION;
+    const webVersionOpts: any = pinnedWebVersion
+      ? {
+          webVersion: pinnedWebVersion,
+          webVersionCache: {
+            type: 'remote',
+            remotePath:
+              process.env.WWEBJS_WEB_VERSION_URL ||
+              'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/{version}.html',
+          },
+        }
+      : {};
+    if (pinnedWebVersion) {
+      console.log(`[WhatsApp-WebJS] Pinning WhatsApp Web version: ${pinnedWebVersion}`);
+    }
+
     this.client = new Client({
+      ...webVersionOpts,
       authStrategy: new LocalAuth({
         clientId: config.profileId,
         dataPath: sessionDir,

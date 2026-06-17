@@ -2,6 +2,7 @@ node_modules
 **/node_modules
 **/.next
 **/dist
+**/*.tsbuildinfo
 .git
 .pnpm-store
 .turbo

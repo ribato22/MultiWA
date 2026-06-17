@@ -143,8 +143,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       
       for (const profile of profiles) {
         const sessionDir = path.join(sessionsDir, profile.id);
-        // whatsapp-web.js LocalAuth stores data in {dataPath}/.wwebjs_auth/session-{clientId}/
-        const wwebjsSessionDir = path.join(sessionDir, '.wwebjs_auth', `session-${profile.id}`);
+        // whatsapp-web.js LocalAuth (dataPath=sessionDir) stores data in
+        // {dataPath}/session-{clientId}/ — NOT under a .wwebjs_auth subdir.
+        const wwebjsSessionDir = path.join(sessionDir, `session-${profile.id}`);
         // Also check for Baileys-style creds.json as fallback
         const credsPath = path.join(sessionDir, 'creds.json');
         
