@@ -29,6 +29,9 @@ interface EngineInstance {
 export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private readonly logger = new Logger(EngineManagerService.name);
   private engines = new Map<string, EngineInstance>();
+  // Cache resolved WhatsApp group subjects (jid -> {name, at}) so we don't do a
+  // getChatById round-trip on every inbound group message.
+  private groupNameCache = new Map<string, { name: string; at: number }>();
 
   constructor(
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
@@ -38,6 +41,29 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     private readonly eventEmitter: EventEmitter2,
   ) {
     this.logger.log('EngineManagerService initialized');
+  }
+
+  /**
+   * Resolve a WhatsApp group's subject (name) via the engine, cached for 1h.
+   * Falls back to `fallback` if the lookup fails/returns empty — never throws.
+   */
+  private async resolveGroupName(profileId: string, jid: string, fallback: string): Promise<string> {
+    const cached = this.groupNameCache.get(jid);
+    if (cached && Date.now() - cached.at < 3_600_000) return cached.name || fallback;
+    try {
+      const engine = this.engines.get(profileId)?.engine;
+      if (engine) {
+        const info = await engine.getGroupInfo(jid);
+        const name = (info?.name || '').trim();
+        if (name) {
+          this.groupNameCache.set(jid, { name, at: Date.now() });
+          return name;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Group name resolve failed for ${jid}: ${(err as Error).message}`);
+    }
+    return fallback;
   }
 
   /**
@@ -529,15 +555,22 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           let conversation = await prisma.conversation.findFirst({
             where: { profileId, jid },
           });
+          // For groups, use the real WhatsApp group subject — not the sender's name.
+          const groupName = isGroup ? await this.resolveGroupName(profileId, jid, senderName || jid) : null;
           if (!conversation) {
             conversation = await prisma.conversation.create({
               data: {
                 profileId,
                 jid,
-                name: senderName || jid,
+                name: isGroup ? (groupName || jid) : (senderName || jid),
                 type: isGroup ? 'group' : 'user',
               },
             });
+          } else if (isGroup && groupName && conversation.name !== groupName) {
+            // Backfill the authoritative group subject onto a row previously
+            // created with a sender's pushName.
+            await prisma.conversation.update({ where: { id: conversation.id }, data: { name: groupName } });
+            conversation.name = groupName;
           }
 
           // Build content object
