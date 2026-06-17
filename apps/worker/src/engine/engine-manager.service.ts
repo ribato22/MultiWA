@@ -34,6 +34,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   // Cache resolved WhatsApp group subjects (jid -> {name, at}) so we don't do a
   // getChatById round-trip on every inbound group message.
   private groupNameCache = new Map<string, { name: string; at: number }>();
+  // Profiles whose one-off @lid reconciliation already ran this process.
+  private reconciledLid = new Set<string>();
 
   constructor(
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
@@ -66,6 +68,51 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       this.logger.warn(`Group name resolve failed for ${jid}: ${(err as Error).message}`);
     }
     return fallback;
+  }
+
+  /**
+   * One-off reconciliation of legacy @lid conversations: resolve each to the real
+   * phone JID via the live engine, then MERGE into an existing phone conversation
+   * (re-point messages, delete the @lid row) or CONVERT the row's jid+name in place.
+   * Env-gated: RECONCILE_LID='dry' logs the plan only, 'run' executes. Idempotent —
+   * once converted there are no @lid rows left, so re-runs are no-ops.
+   */
+  private async reconcileLid(profileId: string, dryRun: boolean): Promise<void> {
+    if (this.reconciledLid.has(profileId)) return;
+    this.reconciledLid.add(profileId);
+    const engine = this.engines.get(profileId)?.engine;
+    if (!engine?.resolveIdentity) { this.logger.warn('[reconcile-lid] engine has no resolveIdentity'); return; }
+    const lidConvs = await prisma.conversation.findMany({ where: { profileId, jid: { endsWith: '@lid' } } });
+    this.logger.warn(`[reconcile-lid] ${dryRun ? 'DRY-RUN' : 'EXECUTE'} for ${profileId}: ${lidConvs.length} @lid conversation(s)`);
+    for (const conv of lidConvs) {
+      try {
+        const ident = await engine.resolveIdentity(conv.jid);
+        if (!ident?.phoneJid) { this.logger.warn(`[reconcile-lid] ${conv.jid}: UNRESOLVED (leaving as-is)`); continue; }
+        const phoneJid = ident.phoneJid;
+        const name = ident.name || conv.name;
+        const sibling = await prisma.conversation.findFirst({ where: { profileId, jid: phoneJid } });
+        if (sibling && sibling.id !== conv.id) {
+          const msgs = await prisma.message.count({ where: { conversationId: conv.id } });
+          this.logger.warn(`[reconcile-lid] MERGE ${conv.jid} -> ${phoneJid} (into ${sibling.id}, re-point ${msgs} msg, delete @lid row)`);
+          if (!dryRun) {
+            await prisma.message.updateMany({ where: { conversationId: conv.id }, data: { conversationId: sibling.id } });
+            await prisma.conversation.update({ where: { id: sibling.id }, data: { unreadCount: { increment: conv.unreadCount || 0 } } });
+            await prisma.conversation.delete({ where: { id: conv.id } });
+          }
+        } else {
+          this.logger.warn(`[reconcile-lid] CONVERT ${conv.jid} -> ${phoneJid}, name="${name}"`);
+          if (!dryRun) {
+            await prisma.conversation.update({
+              where: { id: conv.id },
+              data: { jid: phoneJid, name, metadata: { ...((conv.metadata as any) || {}), lidJid: conv.jid } },
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`[reconcile-lid] ${conv.jid}: ERROR ${(err as Error).message}`);
+      }
+    }
+    this.logger.warn('[reconcile-lid] done');
   }
 
   /**
@@ -457,6 +504,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         // Emit connection status via WebSocket
         this.realtime.emitConnectionStatus(profileId, 'connected', phone);
         this.emitEvent(AppEvents.CONNECTION.READY, { profileId, phone, pushName });
+
+        // One-off legacy @lid reconciliation (env-gated, runs once the engine is ready).
+        if (process.env.RECONCILE_LID) {
+          this.reconcileLid(profileId, process.env.RECONCILE_LID !== 'run')
+            .catch((e) => this.logger.warn(`reconcile-lid failed: ${(e as Error).message}`));
+        }
+
         this.notifyOrgUsers(profileId, NotificationType.CONNECTION, '✅ Profile Connected',
           `${profile.displayName || phone} is now connected`, { profileId, phone },
         ).catch(err => this.logger.warn(`Notification error (connection): ${err.message}`));
