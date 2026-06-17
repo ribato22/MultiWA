@@ -14,6 +14,7 @@ COPY apps/worker/package.json ./apps/worker/
 COPY packages/core/package.json ./packages/core/
 COPY packages/database/package.json ./packages/database/
 COPY packages/engines/package.json ./packages/engines/
+COPY packages/engine-runtime/package.json ./packages/engine-runtime/
 COPY packages/sdk/package.json ./packages/sdk/
 
 # Install all dependencies with frozen lockfile
