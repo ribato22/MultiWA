@@ -21,6 +21,9 @@ export default defineConfig({
       // reaches into it (the dist build would be an un-transformed external).
       // Test-only; runtime/typecheck still use the package's dist.
       '@multiwa/engine-runtime': path.resolve(__dirname, '../../packages/engine-runtime/src/index.ts'),
+      // Resolve @multiwa/core to source too — the Tests CI job doesn't build core's
+      // dist, and several specs import AppEvents/realtime symbols from it.
+      '@multiwa/core': path.resolve(__dirname, '../../packages/core/src/index.ts'),
     },
   },
 });
