@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 214,
+  "routeCount": 211,
   "routes": [
     {
       "method": "DELETE",
@@ -488,18 +488,6 @@
     {
       "method": "GET",
       "path": "/api/v1/health/ready"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/hooks"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/hooks"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/v1/hooks/:id"
     },
     {
       "method": "GET",

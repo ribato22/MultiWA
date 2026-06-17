@@ -30,8 +30,14 @@ jobs:
       - name: Build Database package
         run: pnpm --filter database build
 
+      - name: Build Core package
+        run: pnpm --filter core build
+
       - name: Build Engines package
         run: pnpm --filter engines build
+
+      - name: Build Engine-Runtime package
+        run: pnpm --filter engine-runtime build
 
       - name: Build API
         run: pnpm --filter api build
