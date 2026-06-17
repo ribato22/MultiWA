@@ -53,7 +53,7 @@ export class WorkerWebhookDispatcherService implements OnModuleInit {
             'deliver',
             { webhookId: webhook.id, event, payload },
             {
-              jobId: messageId ? `${webhook.id}:${event}:${messageId}` : undefined,
+              jobId: messageId ? `${webhook.id}-${event}-${messageId}` : undefined,
               attempts: 5,
               backoff: { type: 'exponential', delay: 30000 },
               removeOnComplete: 200,

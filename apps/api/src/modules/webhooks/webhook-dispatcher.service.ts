@@ -66,7 +66,7 @@ export class WebhookDispatcherService implements OnModuleInit {
             {
               // Idempotency: dedupe the same message → same webhook. Connection
               // events have no messageId, so they get a fresh BullMQ job id.
-              jobId: messageId ? `${webhook.id}:${event}:${messageId}` : undefined,
+              jobId: messageId ? `${webhook.id}-${event}-${messageId}` : undefined,
               attempts: 5,
               backoff: { type: 'exponential', delay: 30000 },
               removeOnComplete: 200,

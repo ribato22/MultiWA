@@ -255,7 +255,7 @@ export class MessagesService {
       await prisma.message.update({ where: { id: message.id }, data: { status: 'queued' } });
       const job: OutboundSendJob = { messageDbId: message.id, profileId, to: jid, type, content, quotedMessageId };
       await this.outboundQueue.add('send', job, {
-        jobId: `send:${message.id}`,
+        jobId: `send-${message.id}`,
         attempts: OUTBOUND_SEND_MAX_ATTEMPTS,
         backoff: { type: 'exponential', delay: 5000 },
         removeOnComplete: 500,

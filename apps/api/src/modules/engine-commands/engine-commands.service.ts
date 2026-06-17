@@ -90,7 +90,7 @@ export class EngineCommandsService implements OnModuleInit, OnModuleDestroy {
       throw new ServiceUnavailableException('Engine command client not ready (ENGINE_HOST must be "worker")');
     }
     const job = await this.queue.add(name, data, {
-      jobId: `${name}:${data.profileId}:${Date.now()}`,
+      jobId: `${name}-${data.profileId}-${Date.now()}`,
       attempts: 1,
       // Keep the completed/failed job briefly so waitUntilFinished can read the
       // result, then auto-clean (avoids unbounded growth; not `false`).

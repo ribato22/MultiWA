@@ -42,7 +42,7 @@ describe('WebhookDispatcherService', () => {
     expect(queue.add.mock.calls[0][0]).toBe('deliver');
     expect(queue.add.mock.calls[0][1]).toMatchObject({ webhookId: 'w1', event: 'message.received' });
     expect(queue.add.mock.calls[0][2]).toMatchObject({
-      jobId: 'w1:message.received:m1',
+      jobId: 'w1-message.received-m1',
       attempts: 5,
       backoff: { type: 'exponential', delay: 30000 },
     });

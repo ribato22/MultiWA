@@ -27,7 +27,7 @@ describe('EngineCommandsService', () => {
     expect(s.queue.add).toHaveBeenCalledWith(
       'connect-profile',
       { profileId: 'p1' },
-      expect.objectContaining({ jobId: expect.stringMatching(/^connect-profile:p1:/), attempts: 1 }),
+      expect.objectContaining({ jobId: expect.stringMatching(/^connect-profile-p1-/), attempts: 1 }),
     );
     expect(s.waitUntilFinished).toHaveBeenCalled();
     expect(result).toEqual({ status: 'connecting' });
