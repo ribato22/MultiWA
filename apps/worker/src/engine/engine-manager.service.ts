@@ -36,6 +36,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private groupNameCache = new Map<string, { name: string; at: number }>();
   // Profiles whose one-off @lid reconciliation already ran this process.
   private reconciledLid = new Set<string>();
+  // Profiles whose one-off group-name reconciliation already ran this process.
+  private reconciledGroups = new Set<string>();
 
   constructor(
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
@@ -113,6 +115,38 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       }
     }
     this.logger.warn('[reconcile-lid] done');
+  }
+
+  /**
+   * One-off reconciliation of group conversation names: set conversation.name to
+   * the live WhatsApp group subject (engine.getGroupInfo) for every @g.us row,
+   * fixing rows previously created with a sender's pushName. Env-gated by
+   * RECONCILE_LID ('dry' logs, 'run' writes). Idempotent.
+   */
+  private async reconcileGroupNames(profileId: string, dryRun: boolean): Promise<void> {
+    if (this.reconciledGroups.has(profileId)) return;
+    this.reconciledGroups.add(profileId);
+    const engine = this.engines.get(profileId)?.engine;
+    if (!engine?.getGroupInfo) return;
+    const groups = await prisma.conversation.findMany({
+      where: { profileId, OR: [{ type: 'group' }, { jid: { endsWith: '@g.us' } }] },
+    });
+    this.logger.warn(`[reconcile-groups] ${dryRun ? 'DRY-RUN' : 'EXECUTE'} for ${profileId}: ${groups.length} group(s)`);
+    for (const g of groups) {
+      try {
+        const info = await engine.getGroupInfo(g.jid);
+        const subject = (info?.name || '').trim();
+        if (subject && subject !== g.name) {
+          this.logger.warn(`[reconcile-groups] ${g.jid}: "${g.name}" -> "${subject}"`);
+          if (!dryRun) await prisma.conversation.update({ where: { id: g.id }, data: { name: subject } });
+        } else {
+          this.logger.warn(`[reconcile-groups] ${g.jid}: subject="${subject || '(empty)'}" (no change)`);
+        }
+      } catch (err) {
+        this.logger.warn(`[reconcile-groups] ${g.jid}: ERROR ${(err as Error).message}`);
+      }
+    }
+    this.logger.warn('[reconcile-groups] done');
   }
 
   /**
@@ -509,6 +543,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         if (process.env.RECONCILE_LID) {
           this.reconcileLid(profileId, process.env.RECONCILE_LID !== 'run')
             .catch((e) => this.logger.warn(`reconcile-lid failed: ${(e as Error).message}`));
+          this.reconcileGroupNames(profileId, process.env.RECONCILE_LID !== 'run')
+            .catch((e) => this.logger.warn(`reconcile-groups failed: ${(e as Error).message}`));
         }
 
         this.notifyOrgUsers(profileId, NotificationType.CONNECTION, '✅ Profile Connected',
