@@ -104,17 +104,68 @@ async function bootstrap() {
       }),
     );
 
-    // Swagger
+    // Swagger / OpenAPI
+    const apiDescription = [
+      'Self-hosted, open-source WhatsApp API gateway.',
+      '',
+      '## Authentication',
+      'All endpoints except `/health*` require **one** of:',
+      '- **Bearer JWT** — `Authorization: Bearer <token>` (obtain via `POST /auth/login`).',
+      '- **API key** — `x-api-key: <key>` (create one on the dashboard API Keys page).',
+      '',
+      'Click **Authorize** above to try requests directly.',
+      '',
+      '## Recipients (`to`)',
+      'Accepts a **phone number** — 7–15 digits; `+`, spaces, dashes are allowed and a local',
+      '`0` prefix is normalised to the country code (e.g. `6281234567890`, `0812-3456-7890`,',
+      '`+62 812 3456 7890`) — **or** a full **WhatsApp JID**: `…@s.whatsapp.net`, `…@c.us`,',
+      '`…@g.us` (group), `…@lid`, `…@broadcast`, `…@newsletter`. Raw names are not accepted.',
+      '',
+      '## Sending model',
+      'Sends are accepted asynchronously and return `201` with `status: "queued"`. A background',
+      'worker delivers them while respecting per-profile rate limits; subscribe to **webhooks**',
+      'or the realtime channel for delivery status (`message.sent` / `message.failed`).',
+      '',
+      '## Errors',
+      'Conventional HTTP status codes. Validation failures return `400` with a `message` array;',
+      'missing/invalid credentials return `401`; daily send-limit hits return `429`.',
+    ].join('\n');
+
     const config = new DocumentBuilder()
       .setTitle('MultiWA Gateway API')
-      .setDescription('Open Source WhatsApp Business API Gateway')
+      .setDescription(apiDescription)
       .setVersion('3.0.0')
-      .addBearerAuth()
-      .addApiKey({ type: 'apiKey', name: 'x-api-key', in: 'header' }, 'api-key')
+      .setContact('MultiWA', 'https://github.com/ribato22/MultiWA', '')
+      .setLicense('MIT', 'https://github.com/ribato22/MultiWA/blob/main/LICENSE')
+      .setExternalDoc('Documentation & guides', 'https://github.com/ribato22/MultiWA#readme')
+      // Public-safe: default to same-origin; deployments can override with SWAGGER_SERVER_URL.
+      .addServer(process.env.SWAGGER_SERVER_URL || '/', 'Current host')
+      // Names kept as the @nestjs/swagger defaults so existing @ApiBearerAuth()/@ApiSecurity('api-key') keep matching.
+      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT', description: 'JWT access token from POST /auth/login' })
+      .addApiKey({ type: 'apiKey', name: 'x-api-key', in: 'header', description: 'API key from the dashboard API Keys page' }, 'api-key')
+      .addTag('Health', 'Liveness & readiness probes (no auth required)')
+      .addTag('Authentication', 'Register, login, 2FA, token refresh')
+      .addTag('Messages', 'Send messages (text, media, location, poll, contact), reactions, scheduling, history')
+      .addTag('Profiles', 'WhatsApp profile/session lifecycle (connect, QR, status)')
+      .addTag('Webhooks', 'Event subscriptions with HMAC-signed delivery')
+      .addTag('Contacts', 'Contact directory')
+      .addTag('Templates', 'Reusable message templates')
+      .addTag('Broadcast', 'Bulk/broadcast campaigns')
+      .addTag('Automation', 'No-code automation flows')
       .build();
-    
+
     const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('api/docs', app, document);
+    SwaggerModule.setup('api/docs', app, document, {
+      customSiteTitle: 'MultiWA Gateway API — Docs',
+      swaggerOptions: {
+        persistAuthorization: true,
+        docExpansion: 'none',
+        filter: true,
+        displayRequestDuration: true,
+        tagsSorter: 'alpha',
+        operationsSorter: 'alpha',
+      },
+    });
     console.log('✅ [6/7] Validation & Swagger configured');
 
     // Start server

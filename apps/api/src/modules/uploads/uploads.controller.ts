@@ -8,6 +8,7 @@ import { existsSync, createReadStream } from 'fs';
 import { resolve, join } from 'path';
 import { UploadsService } from './uploads.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 
 const MAX_FILE_SIZES: Record<string, number> = {
   'image': 16 * 1024 * 1024,    // 16MB
@@ -38,11 +39,16 @@ const ALLOWED_MIMES: Record<string, string[]> = {
 @UseGuards(JwtOrApiKeyGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class UploadsController {
   constructor(private readonly uploadsService: UploadsService) {}
 
   @Post('media')
-  @ApiOperation({ summary: 'Upload media file to S3/MinIO' })
+  @ApiOperation({
+    summary: 'Upload media file to S3/MinIO',
+    description:
+      'Accepts a single multipart/form-data file and stores it in object storage. The MIME type is validated against the allowed image, video, audio, and document types, and the size is checked against per-category limits (16MB for image/video/audio, 20MB for documents). Returns the public URL, storage key, size, and detected file type.',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -52,6 +58,7 @@ export class UploadsController {
       },
     },
   })
+  @ApiValidationError()
   async uploadMedia(@Req() request: FastifyRequest) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = await (request as any).file();

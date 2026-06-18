@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiParam, ApiQuery } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { GroupsService } from './groups.service';
 import {
   CreateGroupDto,
@@ -31,6 +32,7 @@ import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class GroupsController {
   constructor(private readonly groupsService: GroupsService) {}
 
@@ -47,6 +49,7 @@ export class GroupsController {
   @ApiOperation({ summary: 'Get detailed group info including participants' })
   @ApiParam({ name: 'groupId', description: 'Group ID (e.g., 628xxx-xxx@g.us)' })
   @ApiQuery({ name: 'profileId', required: true })
+  @ApiNotFound('Group')
   async getById(
     @Param('groupId') groupId: string,
     @Query('profileId') profileId: string,
@@ -57,6 +60,7 @@ export class GroupsController {
   @Post()
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create a new WhatsApp group' })
+  @ApiValidationError()
   async create(@Body() dto: CreateGroupDto) {
     return this.groupsService.create(dto);
   }
@@ -65,6 +69,8 @@ export class GroupsController {
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Update group info (name, description)' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
+  @ApiValidationError()
+  @ApiNotFound('Group')
   async update(
     @Param('groupId') groupId: string,
     @Body() dto: UpdateGroupDto,
@@ -76,6 +82,8 @@ export class GroupsController {
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Add participants to a group' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
+  @ApiValidationError()
+  @ApiNotFound('Group')
   async addParticipants(
     @Param('groupId') groupId: string,
     @Body() dto: AddParticipantsDto,
@@ -87,6 +95,8 @@ export class GroupsController {
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Remove participants from a group' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
+  @ApiValidationError()
+  @ApiNotFound('Group')
   async removeParticipants(
     @Param('groupId') groupId: string,
     @Body() dto: RemoveParticipantsDto,
@@ -98,6 +108,8 @@ export class GroupsController {
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Promote participants to group admin' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
+  @ApiValidationError()
+  @ApiNotFound('Group')
   async promoteParticipants(
     @Param('groupId') groupId: string,
     @Body() dto: PromoteParticipantsDto,
@@ -109,6 +121,8 @@ export class GroupsController {
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Demote participants from group admin' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
+  @ApiValidationError()
+  @ApiNotFound('Group')
   async demoteParticipants(
     @Param('groupId') groupId: string,
     @Body() dto: DemoteParticipantsDto,
@@ -121,6 +135,7 @@ export class GroupsController {
   @ApiOperation({ summary: 'Leave a group' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
   @ApiQuery({ name: 'profileId', required: true })
+  @ApiNotFound('Group')
   async leave(
     @Param('groupId') groupId: string,
     @Query('profileId') profileId: string,
@@ -133,6 +148,7 @@ export class GroupsController {
   @ApiOperation({ summary: 'Get group invite link' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
   @ApiQuery({ name: 'profileId', required: true })
+  @ApiNotFound('Group')
   async getInviteLink(
     @Param('groupId') groupId: string,
     @Query('profileId') profileId: string,
@@ -145,6 +161,7 @@ export class GroupsController {
   @ApiOperation({ summary: 'Revoke and regenerate group invite link' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
   @ApiQuery({ name: 'profileId', required: true })
+  @ApiNotFound('Group')
   async revokeInviteLink(
     @Param('groupId') groupId: string,
     @Query('profileId') profileId: string,

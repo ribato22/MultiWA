@@ -2,8 +2,9 @@
 // apps/api/src/modules/accounts/gdpr.controller.ts
 
 import { Controller, Get, Delete, Req, UseGuards, Logger } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
 import { prisma } from '@multiwa/database';
 
 /**
@@ -12,6 +13,8 @@ import { prisma } from '@multiwa/database';
  */
 @ApiTags('GDPR / Privacy')
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 @UseGuards(JwtAuthGuard)
 @Controller('account')
 export class GdprController {
@@ -23,7 +26,11 @@ export class GdprController {
    * and audit logs associated with the authenticated user.
    */
   @Get('export')
-  @ApiOperation({ summary: 'Export all personal data (GDPR Art. 15)' })
+  @ApiOperation({
+    summary: 'Export all personal data (GDPR Art. 15)',
+    description:
+      'Returns a JSON archive of the authenticated user: profile (secrets excluded), messages, contacts, automations, audit logs, notifications, push subscriptions, sessions, and profiles, plus summary statistics.',
+  })
   @ApiResponse({ status: 200, description: 'JSON archive of all user data' })
   async exportData(@Req() req: any) {
     const userId = req.user.id;
@@ -208,9 +215,14 @@ export class GdprController {
    * This action is IRREVERSIBLE. Cascade-deletes all user data.
    */
   @Delete('delete')
-  @ApiOperation({ summary: 'Delete account and all data (GDPR Art. 17)' })
+  @ApiOperation({
+    summary: 'Delete account and all data (GDPR Art. 17)',
+    description:
+      'Irreversibly erases the authenticated user and their push subscriptions, notifications, audit logs, sessions, API keys, and role assignments. Remaining data cascades via FK constraints.',
+  })
   @ApiResponse({ status: 200, description: 'Account and all data permanently deleted' })
   @ApiResponse({ status: 404, description: 'User not found' })
+  @ApiNotFound('User')
   async deleteAccount(@Req() req: any) {
     const userId = req.user.id;
     this.logger.warn(`GDPR account deletion requested by user ${userId}`);

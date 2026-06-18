@@ -8,7 +8,10 @@ import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-reci
 
 // Base DTO
 class BaseMessageDto {
-  @ApiProperty({ example: 'profile-uuid' })
+  @ApiProperty({
+    example: 'cb8da054-7fd7-4e4d-a6a4-1e6f8ac44894',
+    description: 'ID of the connected WhatsApp profile to send from',
+  })
   @IsString()
   @IsNotEmpty()
   profileId: string;
@@ -17,11 +20,42 @@ class BaseMessageDto {
   // WhatsApp JID (@s.whatsapp.net / @c.us / @g.us group / @lid / @broadcast /
   // @newsletter). Rejects raw names + garbage that would collapse to a junk JID.
   // Logic is shared with normalizeJid via @multiwa/core isWhatsAppRecipient.
-  @ApiProperty({ example: '6281234567890', description: 'Phone number or WhatsApp JID' })
+  @ApiProperty({
+    example: '6281234567890',
+    description:
+      'Recipient: a phone number (7-15 digits; +, spaces, dashes allowed; local 0-prefix is ' +
+      'normalised to the country code) or a WhatsApp JID ending in @s.whatsapp.net, @c.us, ' +
+      '@g.us (group), @lid, @broadcast, or @newsletter. Names are not accepted.',
+  })
   @IsString()
   @IsNotEmpty()
   @IsWhatsAppRecipient()
   to: string;
+}
+
+// Standard response for accepted send operations.
+export class SendMessageResponse {
+  @ApiProperty({ example: true })
+  success: boolean;
+
+  @ApiProperty({
+    example: '835a821a-2ab1-4308-abf7-271a849e63b0',
+    description: 'Internal message record ID (use it to correlate webhook delivery events)',
+  })
+  messageId: string;
+
+  @ApiProperty({
+    example: 'ada497e7-1bdf-47f7-9e10-f4d276e86f04',
+    description: 'Conversation the message belongs to',
+  })
+  conversationId: string;
+
+  @ApiProperty({
+    example: 'queued',
+    enum: ['queued', 'sent', 'pending', 'failed'],
+    description: 'Initial status; the final delivery status arrives via webhook/realtime',
+  })
+  status: string;
 }
 
 // Text message
@@ -31,7 +65,12 @@ export class SendTextDto extends BaseMessageDto {
   @IsNotEmpty()
   text: string;
 
-  @ApiPropertyOptional({ description: 'Message ID to quote/reply to' })
+  @ApiPropertyOptional({
+    example: '',
+    description:
+      'Optional WhatsApp message ID to quote/reply to (e.g. an id from a received-message webhook). ' +
+      'Leave empty to send without a quote. An unresolvable id is ignored — the message is still sent.',
+  })
   @IsString()
   @IsOptional()
   quotedMessageId?: string;

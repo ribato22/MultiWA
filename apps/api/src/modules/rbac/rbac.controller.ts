@@ -2,7 +2,8 @@
 // apps/api/src/modules/rbac/rbac.controller.ts
 
 import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { RbacService } from './rbac.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -17,6 +18,8 @@ import { CreateRoleDto, UpdateRoleDto, AssignRoleDto } from './dto';
 @Controller('rbac')
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 export class RbacController {
   constructor(private readonly service: RbacService) {}
 
@@ -30,6 +33,7 @@ export class RbacController {
   // Roles CRUD
   @Post('roles')
   @ApiOperation({ summary: 'Create custom role' })
+  @ApiValidationError()
   async createRole(@Request() req: any, @Body() dto: CreateRoleDto) {
     // Authoritative org from the token — ignore any client-supplied organizationId.
     dto.organizationId = req.user.organizationId;
@@ -45,6 +49,7 @@ export class RbacController {
   @Get('roles/:id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'role' })
   @ApiOperation({ summary: 'Get role details with users' })
+  @ApiNotFound('Role')
   async getRole(@Param('id') id: string) {
     return this.service.getRole(id);
   }
@@ -52,6 +57,8 @@ export class RbacController {
   @Put('roles/:id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'role' })
   @ApiOperation({ summary: 'Update role' })
+  @ApiValidationError()
+  @ApiNotFound('Role')
   async updateRole(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
     return this.service.updateRole(id, dto);
   }
@@ -59,6 +66,7 @@ export class RbacController {
   @Delete('roles/:id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'role' })
   @ApiOperation({ summary: 'Delete custom role' })
+  @ApiNotFound('Role')
   async deleteRole(@Param('id') id: string) {
     return this.service.deleteRole(id);
   }
@@ -67,12 +75,15 @@ export class RbacController {
   @Post('assign')
   @RequireTenant({ from: 'body', key: 'roleId', resource: 'role' })
   @ApiOperation({ summary: 'Assign role to user' })
+  @ApiValidationError()
+  @ApiNotFound('Role')
   async assignRole(@Body() dto: AssignRoleDto) {
     return this.service.assignRole(dto);
   }
 
   @Delete('users/:userId/organizations/:orgId')
   @ApiOperation({ summary: 'Remove user from the caller organization' })
+  @ApiNotFound('User')
   async removeRole(@Param('userId') userId: string, @Request() req: any) {
     // Org is taken from the token; the :orgId path segment is not trusted.
     return this.service.removeRole(userId, req.user.organizationId);
@@ -80,12 +91,14 @@ export class RbacController {
 
   @Get('users/:userId/roles')
   @ApiOperation({ summary: 'Get the user roles within the caller organization' })
+  @ApiNotFound('User')
   async getUserRoles(@Param('userId') userId: string, @Request() req: any) {
     return this.service.getUserRoles(userId, req.user.organizationId);
   }
 
   @Get('users/:userId/permissions')
   @ApiOperation({ summary: 'Get user permissions for the caller organization' })
+  @ApiNotFound('User')
   async getUserPermissions(@Param('userId') userId: string, @Request() req: any) {
     return this.service.getUserPermissions(userId, req.user.organizationId);
   }

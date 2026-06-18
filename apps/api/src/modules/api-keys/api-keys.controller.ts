@@ -2,15 +2,18 @@
 // apps/api/src/modules/api-keys/api-keys.controller.ts
 
 import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { ApiKeysService } from './api-keys.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { AuditService, AuditAction } from '../audit/audit.service';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
 @ApiTags('API Keys')
 @Controller('api-keys')
 @UseGuards(JwtOrApiKeyGuard)
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 export class ApiKeysController {
   constructor(
     private readonly service: ApiKeysService,
@@ -25,6 +28,7 @@ export class ApiKeysController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new API key' })
+  @ApiValidationError()
   async create(
     @Req() req: any,
     @Body() body: { name: string; permissions?: string[] },
@@ -42,6 +46,7 @@ export class ApiKeysController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete an API key' })
+  @ApiNotFound('API key')
   async delete(@Req() req: any, @Param('id') id: string) {
     const result = await this.service.delete(id, req.user.id);
     this.auditService.log({

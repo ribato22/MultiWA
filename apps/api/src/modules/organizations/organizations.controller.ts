@@ -1,13 +1,16 @@
 // apps/api/src/modules/organizations/organizations.controller.ts
 import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { OrganizationsService } from './organizations.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
 @ApiTags('Organizations')
 @Controller('organizations')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 export class OrganizationsController {
   constructor(private readonly service: OrganizationsService) {}
 
@@ -19,6 +22,7 @@ export class OrganizationsController {
 
   @Put('current')
   @ApiOperation({ summary: 'Update current organization' })
+  @ApiValidationError()
   async update(@Request() req: any, @Body() dto: any) {
     return this.service.update(req.user.organizationId, dto);
   }
@@ -33,12 +37,15 @@ export class OrganizationsController {
 
   @Post('members')
   @ApiOperation({ summary: 'Invite/create a new member' })
+  @ApiValidationError()
   async addMember(@Request() req: any, @Body() dto: { email: string; name: string; role?: string }) {
     return this.service.addMember(req.user.organizationId, dto);
   }
 
   @Put('members/:id/role')
   @ApiOperation({ summary: 'Update member role' })
+  @ApiValidationError()
+  @ApiNotFound('Member')
   async updateMemberRole(
     @Request() req: any,
     @Param('id') memberId: string,
@@ -49,6 +56,7 @@ export class OrganizationsController {
 
   @Delete('members/:id')
   @ApiOperation({ summary: 'Remove member from organization' })
+  @ApiNotFound('Member')
   async removeMember(@Request() req: any, @Param('id') memberId: string) {
     return this.service.removeMember(req.user.organizationId, req.user.id, memberId);
   }

@@ -3,6 +3,7 @@
 
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError, ApiRateLimited, ApiNotFound } from '../../common/decorators/api-responses';
 import { BroadcastService } from './broadcast.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -15,6 +16,7 @@ import { AuditService, AuditAction } from '../audit/audit.service';
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class BroadcastController {
   constructor(
     private readonly service: BroadcastService,
@@ -23,7 +25,8 @@ export class BroadcastController {
 
   @Post()
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Create a broadcast' })
+  @ApiOperation({ summary: 'Create a broadcast', description: 'Creates a broadcast in draft state. Sending begins only when the broadcast is scheduled or started.' })
+  @ApiValidationError()
   async create(@Body() dto: CreateBroadcastDto, @Req() req: any) {
     const result = await this.service.create(dto);
     this.auditService.log({
@@ -52,6 +55,7 @@ export class BroadcastController {
   @Get(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Get broadcast by ID with stats' })
+  @ApiNotFound('Broadcast')
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
@@ -59,6 +63,8 @@ export class BroadcastController {
   @Put(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Update broadcast (draft only)' })
+  @ApiValidationError()
+  @ApiNotFound('Broadcast')
   async update(@Param('id') id: string, @Body() dto: UpdateBroadcastDto) {
     return this.service.update(id, dto);
   }
@@ -66,6 +72,7 @@ export class BroadcastController {
   @Delete(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Delete broadcast' })
+  @ApiNotFound('Broadcast')
   async delete(@Param('id') id: string, @Req() req: any) {
     const result = await this.service.delete(id);
     this.auditService.log({
@@ -80,14 +87,18 @@ export class BroadcastController {
 
   @Post(':id/schedule')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
-  @ApiOperation({ summary: 'Schedule broadcast' })
+  @ApiOperation({ summary: 'Schedule broadcast', description: 'Queues the broadcast to begin sending at the scheduled time.' })
+  @ApiValidationError()
+  @ApiNotFound('Broadcast')
   async schedule(@Param('id') id: string, @Body() dto: ScheduleBroadcastDto) {
     return this.service.schedule(id, dto);
   }
 
   @Post(':id/start')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
-  @ApiOperation({ summary: 'Start broadcast immediately' })
+  @ApiOperation({ summary: 'Start broadcast immediately', description: 'Begins sending the broadcast to all recipients right away. Subject to WhatsApp send-rate limits.' })
+  @ApiNotFound('Broadcast')
+  @ApiRateLimited()
   async start(@Param('id') id: string, @Req() req: any) {
     const result = await this.service.start(id);
     this.auditService.log({
@@ -103,6 +114,7 @@ export class BroadcastController {
   @Post(':id/pause')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Pause running broadcast' })
+  @ApiNotFound('Broadcast')
   async pause(@Param('id') id: string) {
     return this.service.pause(id);
   }
@@ -110,6 +122,7 @@ export class BroadcastController {
   @Post(':id/resume')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Resume paused broadcast' })
+  @ApiNotFound('Broadcast')
   async resume(@Param('id') id: string) {
     return this.service.resume(id);
   }
@@ -117,6 +130,7 @@ export class BroadcastController {
   @Post(':id/cancel')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Cancel broadcast' })
+  @ApiNotFound('Broadcast')
   async cancel(@Param('id') id: string) {
     return this.service.cancel(id);
   }
@@ -124,6 +138,7 @@ export class BroadcastController {
   @Get(':id/stats')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Get detailed broadcast statistics' })
+  @ApiNotFound('Broadcast')
   async getStats(@Param('id') id: string) {
     return this.service.getStats(id);
   }
@@ -131,6 +146,7 @@ export class BroadcastController {
   @Get(':id/recipients')
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Get recipient list with status' })
+  @ApiNotFound('Broadcast')
   @ApiQuery({ name: 'status', required: false, enum: ['pending', 'sent', 'delivered', 'failed'] })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'offset', required: false })

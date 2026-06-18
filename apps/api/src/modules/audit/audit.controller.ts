@@ -2,9 +2,10 @@
 // apps/api/src/modules/audit/audit.controller.ts
 
 import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { AuditService } from './audit.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiAuthErrors } from '../../common/decorators/api-responses';
 
 // Audit logs are scoped to the caller's organization, always derived from the
 // token — never a client-supplied organizationId — so one tenant cannot read
@@ -13,6 +14,8 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 @Controller('audit')
 @UseGuards(JwtOrApiKeyGuard)
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 export class AuditController {
   constructor(private readonly service: AuditService) {}
 

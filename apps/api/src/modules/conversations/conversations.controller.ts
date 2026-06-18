@@ -7,12 +7,14 @@ import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
+import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
 
 @ApiTags('Conversations')
 @Controller('conversations')
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class ConversationsController {
   constructor(private readonly service: ConversationsService) {}
 
@@ -35,6 +37,7 @@ export class ConversationsController {
   @Get(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Get conversation with messages' })
+  @ApiNotFound('Conversation')
   @ApiQuery({ name: 'messageLimit', required: false })
   async findOne(
     @Param('id') id: string,
@@ -46,6 +49,7 @@ export class ConversationsController {
   @Put(':id/read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Mark conversation as read' })
+  @ApiNotFound('Conversation')
   async markAsRead(@Param('id') id: string) {
     return this.service.markAsRead(id);
   }
@@ -53,6 +57,7 @@ export class ConversationsController {
   @Put(':id/archive')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Archive conversation' })
+  @ApiNotFound('Conversation')
   async archive(@Param('id') id: string) {
     return this.service.archive(id);
   }
@@ -60,6 +65,7 @@ export class ConversationsController {
   @Put(':id/unarchive')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Unarchive conversation' })
+  @ApiNotFound('Conversation')
   async unarchive(@Param('id') id: string) {
     return this.service.unarchive(id);
   }
@@ -67,6 +73,7 @@ export class ConversationsController {
   @Put(':id/mute')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle mute conversation' })
+  @ApiNotFound('Conversation')
   async toggleMute(@Param('id') id: string) {
     return this.service.toggleMute(id);
   }
@@ -74,6 +81,7 @@ export class ConversationsController {
   @Put(':id/pin')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle pin conversation' })
+  @ApiNotFound('Conversation')
   async togglePin(@Param('id') id: string) {
     return this.service.togglePin(id);
   }
@@ -81,6 +89,7 @@ export class ConversationsController {
   @Delete(':id/messages')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Clear all messages in conversation' })
+  @ApiNotFound('Conversation')
   async clearMessages(@Param('id') id: string) {
     return this.service.clearMessages(id);
   }
@@ -88,6 +97,7 @@ export class ConversationsController {
   @Delete(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Delete conversation and messages' })
+  @ApiNotFound('Conversation')
   async delete(@Param('id') id: string) {
     return this.service.delete(id);
   }
@@ -95,6 +105,7 @@ export class ConversationsController {
   @Get(':id/messages')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Get messages in conversation' })
+  @ApiNotFound('Conversation')
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'before', required: false, description: 'Get messages before this ID' })
   async getMessages(

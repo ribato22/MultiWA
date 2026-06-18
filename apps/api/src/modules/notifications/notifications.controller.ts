@@ -2,8 +2,9 @@
 // apps/api/src/modules/notifications/notifications.controller.ts
 
 import { Controller, Get, Post, Patch, Delete, Param, Query, Body, UseGuards, Request, Headers } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiSecurity } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { NotificationsService } from './notifications.service';
 import { PushService, PushSubscriptionPayload } from './push.service';
 
@@ -11,6 +12,8 @@ import { PushService, PushSubscriptionPayload } from './push.service';
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 export class NotificationsController {
   constructor(
     private readonly notificationsService: NotificationsService,
@@ -68,6 +71,7 @@ export class NotificationsController {
   @Post('push/subscribe')
   @ApiOperation({ summary: 'Subscribe to push notifications' })
   @ApiResponse({ status: 201, description: 'Subscription saved' })
+  @ApiValidationError()
   async subscribePush(
     @Request() req: any,
     @Body() body: PushSubscriptionPayload,
@@ -80,6 +84,7 @@ export class NotificationsController {
   @Post('push/unsubscribe')
   @ApiOperation({ summary: 'Unsubscribe from push notifications' })
   @ApiResponse({ status: 200, description: 'Subscription removed' })
+  @ApiValidationError()
   async unsubscribePush(
     @Request() req: any,
     @Body() body: { endpoint: string },
@@ -108,6 +113,7 @@ export class NotificationsController {
   @Patch(':id/read')
   @ApiOperation({ summary: 'Mark a notification as read' })
   @ApiResponse({ status: 200, description: 'Notification marked as read' })
+  @ApiNotFound('Notification')
   async markAsRead(@Param('id') id: string, @Request() req: any) {
     await this.notificationsService.markAsRead(id, req.user.id);
     return { success: true };
@@ -124,6 +130,7 @@ export class NotificationsController {
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a notification' })
   @ApiResponse({ status: 200, description: 'Notification deleted' })
+  @ApiNotFound('Notification')
   async deleteOne(@Param('id') id: string, @Request() req: any) {
     await this.notificationsService.delete(id, req.user.id);
     return { success: true };

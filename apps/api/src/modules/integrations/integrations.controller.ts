@@ -5,7 +5,8 @@ import {
   Controller, Get, Put, Post, Body,
   UseGuards, Logger,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TypeBotService } from './typebot.service';
 import { ChatwootService } from './chatwoot.service';
@@ -30,6 +31,8 @@ interface IntegrationConfig {
 @Controller('integrations')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 export class IntegrationsController {
   private readonly logger = new Logger(IntegrationsController.name);
 
@@ -62,6 +65,7 @@ export class IntegrationsController {
   @Put('config')
   @ApiOperation({ summary: 'Update integration configuration (env-based, restart required)' })
   @ApiResponse({ status: 200, description: 'Configuration noted, restart needed' })
+  @ApiValidationError()
   async updateConfig(@Body() config: IntegrationConfig) {
     // Note: The services read from environment variables.
     // This endpoint acknowledges the config but env changes require a restart.
@@ -75,6 +79,7 @@ export class IntegrationsController {
   @Post('test')
   @ApiOperation({ summary: 'Test integration connection' })
   @ApiResponse({ status: 200, description: 'Connection test result' })
+  @ApiValidationError()
   async testConnection(@Body() body: { type: 'typebot' | 'chatwoot' }) {
     try {
       if (body.type === 'typebot') {

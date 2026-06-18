@@ -1,8 +1,9 @@
 // MultiWA Gateway - Enhanced Messages Controller
 // apps/api/src/modules/messages/messages.controller.ts
 
-import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
+import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req, applyDecorators } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery, ApiCreatedResponse } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError, ApiRateLimited, ApiNotFound } from '../../common/decorators/api-responses';
 import { MessagesService } from './messages.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -22,14 +23,26 @@ import {
   MarkAsReadDto,
   DeleteForEveryoneDto,
   ScheduleMessageDto,
+  SendMessageResponse,
 } from './dto';
 import { AuditService, AuditAction } from '../audit/audit.service';
+
+// Composite for the send endpoints: operation summary + the queued 201 response +
+// 400 (validation) + 429 (daily limit). 401/403 come from the class-level @ApiAuthErrors.
+const ApiSend = (summary: string, description?: string) =>
+  applyDecorators(
+    ApiOperation({ summary, description }),
+    ApiCreatedResponse({ description: 'Message accepted and queued for delivery.', type: SendMessageResponse }),
+    ApiValidationError(),
+    ApiRateLimited(),
+  );
 
 @ApiTags('Messages')
 @Controller('messages')
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class MessagesController {
   constructor(
     private readonly service: MessagesService,
@@ -39,7 +52,7 @@ export class MessagesController {
   // Send text message
   @Post('text')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send text message' })
+  @ApiSend('Send text message', 'Queue a plain-text WhatsApp message.')
   async sendText(@Body() dto: SendTextDto, @Req() req: any) {
     const result = await this.service.sendText(dto);
     this.auditService.log({
@@ -55,7 +68,7 @@ export class MessagesController {
   // Send image
   @Post('image')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send image message' })
+  @ApiSend('Send image message', 'Queue an image by URL or base64, with an optional caption.')
   async sendImage(@Body() dto: SendImageDto) {
     return this.service.sendImage(dto);
   }
@@ -63,7 +76,7 @@ export class MessagesController {
   // Send video
   @Post('video')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send video message' })
+  @ApiSend('Send video message', 'Queue a video by URL or base64, with an optional caption.')
   async sendVideo(@Body() dto: SendVideoDto) {
     return this.service.sendVideo(dto);
   }
@@ -71,7 +84,7 @@ export class MessagesController {
   // Send audio/voice note
   @Post('audio')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send audio/voice note' })
+  @ApiSend('Send audio/voice note', 'Queue an audio clip; set ptt=true for a push-to-talk voice note.')
   async sendAudio(@Body() dto: SendAudioDto) {
     return this.service.sendAudio(dto);
   }
@@ -79,7 +92,7 @@ export class MessagesController {
   // Send document
   @Post('document')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send document/file' })
+  @ApiSend('Send document/file', 'Queue a document (PDF, DOCX, …) by URL or base64.')
   async sendDocument(@Body() dto: SendDocumentDto) {
     return this.service.sendDocument(dto);
   }
@@ -87,7 +100,7 @@ export class MessagesController {
   // Send location
   @Post('location')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send location' })
+  @ApiSend('Send location', 'Queue a location pin (latitude/longitude, optional name/address).')
   async sendLocation(@Body() dto: SendLocationDto) {
     return this.service.sendLocation(dto);
   }
@@ -95,7 +108,7 @@ export class MessagesController {
   // Send contact card
   @Post('contact')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send contact card (vCard)' })
+  @ApiSend('Send contact card (vCard)', 'Queue one or more contacts as vCards.')
   async sendContact(@Body() dto: SendContactDto) {
     return this.service.sendContact(dto);
   }
@@ -103,7 +116,7 @@ export class MessagesController {
   // Send reaction
   @Post('reaction')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'React to a message' })
+  @ApiSend('React to a message', 'Add or change an emoji reaction on a message.')
   async sendReaction(@Body() dto: SendReactionDto) {
     return this.service.sendReaction(dto);
   }
@@ -111,7 +124,7 @@ export class MessagesController {
   // Reply to message
   @Post('reply')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Reply to a message' })
+  @ApiSend('Reply to a message', 'Send a message that quotes an existing one.')
   async sendReply(@Body() dto: SendReplyDto) {
     return this.service.sendReply(dto);
   }
@@ -119,7 +132,7 @@ export class MessagesController {
   // Send poll
   @Post('poll')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Send interactive poll' })
+  @ApiSend('Send interactive poll', 'Queue a poll with options and single/multi-select.')
   async sendPoll(@Body() dto: SendPollDto) {
     return this.service.sendPoll(dto);
   }
@@ -128,6 +141,7 @@ export class MessagesController {
   @Post('typing')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send typing indicator (composing/recording)', description: 'Show typing or recording state in WhatsApp chat. Optionally auto-clears after a given duration.' })
+  @ApiValidationError()
   async sendTyping(@Body() dto: SendTypingDto) {
     return this.service.sendTyping(dto.profileId, dto.to, dto.state || 'composing', dto.duration);
   }
@@ -136,6 +150,7 @@ export class MessagesController {
   @Post('mark-read')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Mark messages/chat as read', description: 'Send read receipts (blue ticks) for specific messages or entire chat.' })
+  @ApiValidationError()
   async markAsRead(@Body() dto: MarkAsReadDto) {
     return this.service.markAsRead(dto.profileId, dto.chatId, dto.messageIds);
   }
@@ -144,6 +159,7 @@ export class MessagesController {
   @Post('delete-for-everyone')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Delete message for everyone', description: 'Delete a sent message from WhatsApp for all participants. Only works for messages sent by you.' })
+  @ApiValidationError()
   async deleteForEveryone(@Body() dto: DeleteForEveryoneDto) {
     return this.service.deleteForEveryone(dto.profileId, dto.chatId, dto.messageId);
   }
@@ -151,7 +167,8 @@ export class MessagesController {
   // ========== Message Scheduling ==========
   @Post('schedule')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
-  @ApiOperation({ summary: 'Schedule a message for future delivery' })
+  @ApiOperation({ summary: 'Schedule a message for future delivery', description: 'Persist a message to be sent at scheduledAt (ISO 8601). Manage via the schedule endpoints below.' })
+  @ApiValidationError()
   async scheduleMessage(@Body() dto: ScheduleMessageDto) {
     return this.service.scheduleMessage(dto.profileId, dto.to, dto.type, dto.content, dto.scheduledAt);
   }
@@ -210,6 +227,7 @@ export class MessagesController {
   @Get(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'message' })
   @ApiOperation({ summary: 'Get message by ID' })
+  @ApiNotFound('Message')
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }

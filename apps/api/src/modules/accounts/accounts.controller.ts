@@ -3,6 +3,7 @@
 
 import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { AccountsService } from './accounts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -13,6 +14,7 @@ import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class AccountsController {
   constructor(private readonly accountsService: AccountsService) {}
 
@@ -26,12 +28,14 @@ export class AccountsController {
   @Get(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Get account by ID' })
+  @ApiNotFound('Account')
   async findOne(@Param('id') id: string) {
     return this.accountsService.findOne(id);
   }
 
   @Post()
   @ApiOperation({ summary: 'Create new account' })
+  @ApiValidationError()
   async create(@Body() dto: any, @Req() req: any) {
     const userId = req.user?.sub || req.user?.id;
     return this.accountsService.create(dto, userId);
@@ -40,6 +44,8 @@ export class AccountsController {
   @Put(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Update account' })
+  @ApiValidationError()
+  @ApiNotFound('Account')
   async update(@Param('id') id: string, @Body() dto: any) {
     return this.accountsService.update(id, dto);
   }
@@ -47,6 +53,7 @@ export class AccountsController {
   @Delete(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Delete account' })
+  @ApiNotFound('Account')
   async remove(@Param('id') id: string) {
     return this.accountsService.remove(id);
   }
@@ -56,6 +63,7 @@ export class AccountsController {
   @Get(':accountId/profiles')
   @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Get all profiles for account' })
+  @ApiNotFound('Account')
   async getProfiles(@Param('accountId') accountId: string) {
     return this.accountsService.getProfiles(accountId);
   }
@@ -63,6 +71,8 @@ export class AccountsController {
   @Post(':accountId/profiles')
   @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Create profile for account' })
+  @ApiValidationError()
+  @ApiNotFound('Account')
   async createProfile(
     @Param('accountId') accountId: string,
     @Body() dto: any,
@@ -76,6 +86,7 @@ export class AccountsController {
     { from: 'param', key: 'profileId', resource: 'profile' },
   )
   @ApiOperation({ summary: 'Get profile by ID' })
+  @ApiNotFound('Profile')
   async getProfile(
     @Param('accountId') accountId: string,
     @Param('profileId') profileId: string,
@@ -89,6 +100,7 @@ export class AccountsController {
     { from: 'param', key: 'profileId', resource: 'profile' },
   )
   @ApiOperation({ summary: 'Delete profile' })
+  @ApiNotFound('Profile')
   async deleteProfile(
     @Param('accountId') accountId: string,
     @Param('profileId') profileId: string,
@@ -128,6 +140,7 @@ export class AccountsController {
     { from: 'param', key: 'profileId', resource: 'profile' },
   )
   @ApiOperation({ summary: 'Get QR code for profile' })
+  @ApiNotFound('Profile')
   async getQr(
     @Param('accountId') accountId: string,
     @Param('profileId') profileId: string,

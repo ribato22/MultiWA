@@ -4,6 +4,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, Res, BadRequestException } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { ContactsService } from './contacts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -15,12 +16,14 @@ import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto, Va
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class ContactsController {
   constructor(private readonly service: ContactsService) {}
 
   @Post()
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create a contact' })
+  @ApiValidationError()
   async create(@Body() dto: CreateContactDto) {
     return this.service.create(dto);
   }
@@ -46,6 +49,7 @@ export class ContactsController {
   @Get(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Get contact by ID' })
+  @ApiNotFound('Contact')
   async findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
@@ -53,6 +57,8 @@ export class ContactsController {
   @Put(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Update contact' })
+  @ApiValidationError()
+  @ApiNotFound('Contact')
   async update(@Param('id') id: string, @Body() dto: UpdateContactDto) {
     return this.service.update(id, dto);
   }
@@ -60,6 +66,7 @@ export class ContactsController {
   @Delete(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Delete contact' })
+  @ApiNotFound('Contact')
   async delete(@Param('id') id: string) {
     return this.service.delete(id);
   }
@@ -68,6 +75,7 @@ export class ContactsController {
   @Post('import')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Bulk import contacts (JSON array)' })
+  @ApiValidationError()
   async import(@Body() dto: ImportContactsDto) {
     return this.service.bulkImport(dto);
   }
@@ -75,6 +83,7 @@ export class ContactsController {
   @Post('import/csv')
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Import contacts from CSV data' })
+  @ApiValidationError()
   async importCsv(@Body() dto: ImportCsvDto) {
     return this.service.importFromCsv(dto);
   }
@@ -107,6 +116,8 @@ export class ContactsController {
   @Post(':id/tags')
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Add tags to contact' })
+  @ApiValidationError()
+  @ApiNotFound('Contact')
   async addTags(@Param('id') id: string, @Body('tags') tags: string[]) {
     return this.service.addTags(id, tags);
   }
@@ -114,6 +125,8 @@ export class ContactsController {
   @Delete(':id/tags')
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Remove tags from contact' })
+  @ApiValidationError()
+  @ApiNotFound('Contact')
   async removeTags(@Param('id') id: string, @Body('tags') tags: string[]) {
     return this.service.removeTags(id, tags);
   }
@@ -122,6 +135,7 @@ export class ContactsController {
   @Get('profile/:profileId/validate/:phone')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Validate single phone number' })
+  @ApiNotFound('Profile')
   async validatePhone(
     @Param('profileId') profileId: string,
     @Param('phone') phone: string,
@@ -132,6 +146,8 @@ export class ContactsController {
   @Post('profile/:profileId/validate')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Bulk validate phone numbers' })
+  @ApiValidationError()
+  @ApiNotFound('Profile')
   async validateBulk(
     @Param('profileId') profileId: string,
     @Body() dto: ValidateBulkDto,
@@ -144,6 +160,8 @@ export class ContactsController {
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Sync contacts from WhatsApp profile - fetches contacts exactly as saved in WhatsApp' })
   @ApiQuery({ name: 'profileId', required: false })
+  @ApiValidationError()
+  @ApiNotFound('Profile')
   async syncFromWhatsApp(
     @Query('profileId') profileId: string,
   ) {

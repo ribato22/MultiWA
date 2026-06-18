@@ -8,12 +8,14 @@ import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
+import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
 @ApiTags('Profiles')
 @Controller('profiles')
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
+@ApiAuthErrors()
 export class ProfilesController {
   constructor(private readonly profilesService: ProfilesService) {}
 
@@ -28,6 +30,7 @@ export class ProfilesController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get profile by ID' })
   @ApiResponse({ status: 200, description: 'Profile details' })
+  @ApiNotFound('Profile')
   async findOne(@Param('id') id: string) {
     return this.profilesService.findOne(id);
   }
@@ -35,6 +38,7 @@ export class ProfilesController {
   @Post()
   @ApiOperation({ summary: 'Create a new WhatsApp profile' })
   @ApiResponse({ status: 201, description: 'Profile created' })
+  @ApiValidationError()
   async create(@Body() dto: CreateProfileDto, @Request() req: any) {
     return this.profilesService.create(dto, req.user);
   }
@@ -43,6 +47,8 @@ export class ProfilesController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Update profile' })
   @ApiResponse({ status: 200, description: 'Profile updated' })
+  @ApiValidationError()
+  @ApiNotFound('Profile')
   async update(@Param('id') id: string, @Body() dto: UpdateProfileDto) {
     return this.profilesService.update(id, dto);
   }
@@ -51,6 +57,7 @@ export class ProfilesController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Delete profile' })
   @ApiResponse({ status: 200, description: 'Profile deleted' })
+  @ApiNotFound('Profile')
   async delete(@Param('id') id: string) {
     return this.profilesService.delete(id);
   }
@@ -60,6 +67,7 @@ export class ProfilesController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Connect WhatsApp profile (QR code sent via WebSocket)' })
   @ApiResponse({ status: 200, description: 'Connection initiated - listen on WebSocket /ws namespace for qr:update event' })
+  @ApiNotFound('Profile')
   async connect(@Param('id') id: string) {
     return this.profilesService.connect(id);
   }
@@ -68,6 +76,7 @@ export class ProfilesController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Disconnect WhatsApp profile' })
   @ApiResponse({ status: 200, description: 'Disconnected' })
+  @ApiNotFound('Profile')
   async disconnect(@Param('id') id: string) {
     return this.profilesService.disconnect(id);
   }
@@ -79,6 +88,7 @@ export class ProfilesController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get connection status' })
   @ApiResponse({ status: 200, description: 'Connection status' })
+  @ApiNotFound('Profile')
   async status(@Param('id') id: string) {
     return this.profilesService.getStatus(id);
   }

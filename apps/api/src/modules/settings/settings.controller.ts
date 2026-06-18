@@ -1,5 +1,6 @@
 import { Controller, Get, Put, Post, Body, Query, UseGuards, Request, ForbiddenException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
+import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SettingsService, StorageConfig, SmtpConfig } from './settings.service';
 import { EmailService } from '../notifications/email.service';
@@ -8,6 +9,8 @@ import { EmailService } from '../notifications/email.service';
 @Controller('settings')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
+@ApiSecurity('api-key')
+@ApiAuthErrors()
 export class SettingsController {
   constructor(
     private readonly settingsService: SettingsService,
@@ -36,6 +39,7 @@ export class SettingsController {
 
   @Put('storage')
   @ApiOperation({ summary: 'Update storage configuration' })
+  @ApiValidationError()
   @ApiResponse({ status: 200, description: 'Storage config updated' })
   async updateStorageConfig(@Request() req: any, @Body() body: StorageConfig) {
     this.ensureAdmin(req);
@@ -46,6 +50,7 @@ export class SettingsController {
   @Post('storage/test')
   @ApiOperation({ summary: 'Test S3 storage connection' })
   @ApiQuery({ name: 'createBucket', required: false, description: 'Auto-create bucket if missing' })
+  @ApiValidationError()
   @ApiResponse({ status: 200, description: 'Connection test result' })
   async testStorageConnection(
     @Request() req: any,
@@ -75,6 +80,7 @@ export class SettingsController {
 
   @Put('smtp')
   @ApiOperation({ summary: 'Update SMTP configuration' })
+  @ApiValidationError()
   @ApiResponse({ status: 200, description: 'SMTP config updated' })
   async updateSmtpConfig(@Request() req: any, @Body() body: SmtpConfig) {
     this.ensureAdmin(req);
@@ -87,6 +93,7 @@ export class SettingsController {
   @Post('smtp/test')
   @ApiOperation({ summary: 'Test SMTP connection' })
   @ApiQuery({ name: 'sendTo', required: false, description: 'Send test email to this address' })
+  @ApiValidationError()
   @ApiResponse({ status: 200, description: 'SMTP test result' })
   async testSmtpConnection(
     @Request() req: any,
