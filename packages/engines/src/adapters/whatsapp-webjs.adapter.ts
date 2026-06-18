@@ -227,8 +227,17 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       const opts: any = {};
       
       if (options?.quotedMessageId) {
-        const quotedMsg = await this.client?.getMessageById(options.quotedMessageId);
-        if (quotedMsg) opts.quotedMessageId = quotedMsg.id._serialized;
+        // Quoting is optional. A bad/stale id (e.g. the Swagger "string" placeholder)
+        // makes getMessageById throw "Invalid serialized message id specified" — never
+        // let that fail the whole send: warn and send unquoted.
+        try {
+          const quotedMsg = await this.client?.getMessageById(options.quotedMessageId);
+          if (quotedMsg) opts.quotedMessageId = quotedMsg.id._serialized;
+        } catch (e: any) {
+          console.warn(
+            `[WhatsApp-WebJS] Ignoring unresolvable quotedMessageId "${options.quotedMessageId}": ${e?.message}`,
+          );
+        }
       }
 
       const result = await this.client?.sendMessage(chatId, text, opts);
