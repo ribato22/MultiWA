@@ -82,7 +82,9 @@ export default function ApiKeysPage() {
   const [newKey, setNewKey] = useState<string>('');
   const [keyToDelete, setKeyToDelete] = useState<ApiKey | null>(null);
   const [saving, setSaving] = useState(false);
-  
+  // Base URL for the copy-paste curl example (same-origin as the admin; placeholder until mounted).
+  const [apiBase, setApiBase] = useState('https://your-domain.com');
+
   // Form state
   const [formData, setFormData] = useState({
     name: '',
@@ -91,6 +93,7 @@ export default function ApiKeysPage() {
 
   useEffect(() => {
     loadApiKeys();
+    setApiBase(window.location.origin);
   }, []);
 
   const loadApiKeys = async () => {
@@ -387,10 +390,10 @@ export default function ApiKeysPage() {
         <h3 className="font-semibold text-foreground mb-4">Usage Example</h3>
         <div className="bg-secondary/30 rounded-lg p-4 font-mono text-sm overflow-x-auto">
           <pre className="text-muted-foreground">
-{`curl -X POST https://api.example.com/api/v1/messages/send \\
+{`curl -X POST ${apiBase}/api/v1/messages/text \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: YOUR_API_KEY" \\
-  -d '{"profileId": "...", "to": "628xxx", "message": "Hello"}'`}
+  -d '{"profileId": "...", "to": "6281234567890", "text": "Hello"}'`}
           </pre>
         </div>
       </div>
