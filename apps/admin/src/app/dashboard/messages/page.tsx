@@ -28,6 +28,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import TemplatePicker from '@/components/templates/TemplatePicker';
+import { formatDateTime, formatRelative, formatFull } from '@/lib/datetime';
 
 interface Profile {
   id: string;
@@ -167,7 +168,7 @@ export default function MessagesPage() {
       });
       const result = await res.json();
       if (res.ok) {
-        const formattedTime = new Date(scheduleDateTime).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+        const formattedTime = formatDateTime(scheduleDateTime);
         setStatus(`Message scheduled for ${formattedTime}`);
         setTextContent('');
         setScheduleDateTime('');
@@ -1310,8 +1311,8 @@ export default function MessagesPage() {
                             <Icon className="w-3.5 h-3.5 text-primary flex-shrink-0" aria-hidden="true" />
                             <span className="font-medium text-foreground truncate">{msg.to}</span>
                           </div>
-                          <div className="text-xs text-muted-foreground mt-1 tabular-nums">
-                            {msg.type} · {msg.time.toLocaleTimeString()}
+                          <div className="text-xs text-muted-foreground mt-1 tabular-nums" title={formatFull(msg.time)}>
+                            {msg.type} · {formatRelative(msg.time)}
                           </div>
                         </div>
                       );

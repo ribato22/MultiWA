@@ -20,6 +20,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Profile, Webhook } from '@/lib/api';
+import { formatDate } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -383,7 +384,7 @@ export default function WebhooksPage() {
                   </div>
 
                   <div className="mt-3 text-xs text-muted-foreground tabular-nums">
-                    Created {new Date(webhook.createdAt).toLocaleDateString()}
+                    Created {formatDate(webhook.createdAt)}
                   </div>
                 </div>
 

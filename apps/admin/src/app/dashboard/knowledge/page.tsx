@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { api, Profile } from '@/lib/api';
+import { formatDateTime } from '@/lib/datetime';
 
 interface KnowledgeDoc {
   id: string;
@@ -310,7 +311,7 @@ export default function KnowledgePage() {
                         {doc.chunkCount}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs tabular-nums">{new Date(doc.createdAt).toLocaleDateString()}</td>
+                    <td className="px-4 py-3 text-muted-foreground text-xs tabular-nums">{formatDateTime(doc.createdAt)}</td>
                     <td className="px-4 py-3 text-center">
                       {deletingId === doc.id ? (
                         <div className="flex items-center justify-center gap-2">

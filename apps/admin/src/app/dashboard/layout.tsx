@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
 import { DemoBanner } from '@/components/demo-banner';
+import { formatRelative, formatFull } from '@/lib/datetime';
 
 type MenuItem = { name: string; href: string; Icon: LucideIcon };
 
@@ -68,19 +69,6 @@ const notifIcons: Record<string, NotifTypeInfo> = {
   system:        { Icon: Wrench,        tone: 'text-muted-foreground' },
   security:      { Icon: Lock,          tone: 'text-rose-300' },
 };
-
-function timeAgo(dateStr: string): string {
-  const now = new Date();
-  const date = new Date(dateStr);
-  const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -368,7 +356,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                   {notif.title}
                                 </p>
                                 <p className="text-xs text-muted-foreground mt-0.5 truncate">{notif.body}</p>
-                                <p className="text-[10px] text-muted-foreground/70 mt-1 tabular-nums">{timeAgo(notif.createdAt)}</p>
+                                <p className="text-[10px] text-muted-foreground/70 mt-1 tabular-nums" title={formatFull(notif.createdAt)}>{formatRelative(notif.createdAt)}</p>
                               </div>
                               {!notif.isRead && (
                                 <span

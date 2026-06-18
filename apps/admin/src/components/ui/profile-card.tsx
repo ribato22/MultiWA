@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusType } from "@/components/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatRelative, formatFull } from "@/lib/datetime";
 
 interface ProfileCardProps {
   id: string;
@@ -97,8 +98,8 @@ export function ProfileCard({
           <span className="text-muted-foreground ml-1">messages</span>
         </div>
         {lastActive && (
-          <div className="text-muted-foreground">
-            Last active: {lastActive}
+          <div className="text-muted-foreground" title={formatFull(lastActive)}>
+            Last active: {formatRelative(lastActive)}
           </div>
         )}
       </div>

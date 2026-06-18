@@ -3,11 +3,12 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { api, Profile, Conversation } from '@/lib/api';
+import { formatRelative, formatFull, formatTime, formatDate, formatDateTime, formatDaySeparator, dayBucket } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -99,22 +100,6 @@ const getDisplayName = (conv: any) => {
   return formatPhone(conv.jid || conv.contactPhone || '') || conv.name || 'Unknown';
 };
 
-// Format timestamp
-const formatTime = (timestamp: string) => {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-  
-  if (diffDays === 0) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } else if (diffDays === 1) {
-    return 'Yesterday';
-  } else if (diffDays < 7) {
-    return date.toLocaleDateString([], { weekday: 'short' });
-  }
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-};
-
 // Message status icon (Lucide-based; reads better at small sizes)
 const MessageStatus = ({ status }: { status: string }) => {
   switch (status) {
@@ -194,8 +179,8 @@ export default function ChatPage() {
     if (!selectedProfile) return;
 
     const socket = io(`${getSocketUrl()}/ws`, {
-      auth: { token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null },
       transports: ['websocket', 'polling'],
+      auth: (cb) => cb({ token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : undefined }),
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
@@ -601,7 +586,7 @@ export default function ChatPage() {
         };
         setMessages(prev => [...prev, scheduledMsg]);
         
-        toast({ title: '⏰ Message Scheduled', description: `Will be sent on ${new Date(scheduleDateTime).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}` });
+        toast({ title: '⏰ Message Scheduled', description: `Will be sent on ${formatDateTime(scheduleDateTime)}` });
         setMessageInput('');
         setScheduleDateTime('');
         setShowSchedulePicker(false);
@@ -697,11 +682,12 @@ export default function ChatPage() {
                   <div className="flex items-center justify-between">
                     <h4 className="font-medium text-foreground truncate flex items-center gap-1">
                       {(conv as any).metadata?.isPinned && <span className="text-xs">📌</span>}
+                      {(conv.type === 'group' || conv.jid?.includes('@g.us')) ? <span className="text-xs" title="Grup">👥</span> : <span className="text-xs opacity-70" title="Personal">👤</span>}
                       {getDisplayName(conv)}
                       {(conv as any).metadata?.isMuted && <span className="text-xs opacity-60">🔇</span>}
                     </h4>
-                    <span className="text-xs text-muted-foreground">
-                      {conv.lastMessageAt ? formatTime(conv.lastMessageAt) : ''}
+                    <span className="text-xs text-muted-foreground" title={conv.lastMessageAt ? formatFull(conv.lastMessageAt) : undefined}>
+                      {conv.lastMessageAt ? formatRelative(conv.lastMessageAt) : ''}
                     </span>
                   </div>
                   <div className="flex items-center justify-between mt-1">
@@ -813,9 +799,18 @@ export default function ChatPage() {
                   </div>
                 </div>
               ) : (
-                messages.map((msg, idx) => (
+                messages.map((msg, idx) => {
+                  const showDaySeparator = idx === 0 || dayBucket(msg.timestamp) !== dayBucket(messages[idx - 1]?.timestamp);
+                  return (
+                  <Fragment key={`${msg.id}-${idx}`}>
+                    {showDaySeparator && (
+                      <div className="flex justify-center my-3">
+                        <span className="text-xs text-muted-foreground bg-secondary/60 px-3 py-1 rounded-full">
+                          {formatDaySeparator(msg.timestamp)}
+                        </span>
+                      </div>
+                    )}
                   <div
-                    key={`${msg.id}-${idx}`}
                     className={`flex group ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                   >
                     {/* Delete button for outgoing messages (appears on hover) */}
@@ -1001,9 +996,9 @@ export default function ChatPage() {
                           {msg.content?.eventStartTime && (
                             <div className="ml-7 flex items-center gap-2 text-sm text-muted-foreground mb-1">
                               <span>🕐</span>
-                              <span>{new Date(msg.content.eventStartTime * 1000).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+                              <span>{formatDateTime(msg.content.eventStartTime * 1000)}</span>
                               {msg.content?.eventEndTime && (
-                                <span>– {new Date(msg.content.eventEndTime * 1000).toLocaleString('id-ID', { timeStyle: 'short' })}</span>
+                                <span>– {formatTime(msg.content.eventEndTime * 1000)}</span>
                               )}
                             </div>
                           )}
@@ -1037,14 +1032,16 @@ export default function ChatPage() {
 
                       {/* Timestamp and Status */}
                       <div className={`flex items-center gap-1 mt-1 ${msg.direction === 'outgoing' ? 'justify-end' : ''}`}>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <span className="text-xs text-muted-foreground" title={formatFull(msg.timestamp)}>
+                          {formatTime(msg.timestamp)}
                         </span>
                         {msg.direction === 'outgoing' && <MessageStatus status={msg.status} />}
                       </div>
                     </div>
                   </div>
-                ))
+                  </Fragment>
+                  );
+                })
               )}
               <div ref={messagesEndRef} />
             </div>
@@ -1305,11 +1302,11 @@ export default function ChatPage() {
                 <div className="space-y-1">
                   <p className="text-xs text-foreground">
                     <span className="text-muted-foreground">First: </span>
-                    {new Date(messages[0]?.timestamp || '').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    {formatDate(messages[0]?.timestamp)}
                   </p>
                   <p className="text-xs text-foreground">
                     <span className="text-muted-foreground">Last: </span>
-                    {new Date(messages[messages.length - 1]?.timestamp || '').toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    {formatDate(messages[messages.length - 1]?.timestamp)}
                   </p>
                 </div>
               </div>

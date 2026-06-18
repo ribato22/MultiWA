@@ -14,6 +14,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { formatDate, formatRelative, formatFull } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -302,12 +303,12 @@ export default function ApiKeysPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm tabular-nums">
                     {apiKey.lastUsed
-                      ? new Date(apiKey.lastUsed).toLocaleDateString()
+                      ? <span title={formatFull(apiKey.lastUsed)}>{formatRelative(apiKey.lastUsed)}</span>
                       : <span className="text-muted-foreground/60">Never</span>
                     }
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm tabular-nums">
-                    {new Date(apiKey.createdAt).toLocaleDateString()}
+                    {formatDate(apiKey.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -370,10 +371,10 @@ export default function ApiKeysPage() {
                 )}
               </div>
               <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
-                <span>
-                  Last used: {apiKey.lastUsed ? new Date(apiKey.lastUsed).toLocaleDateString() : '—'}
+                <span title={apiKey.lastUsed ? formatFull(apiKey.lastUsed) : undefined}>
+                  Last used: {apiKey.lastUsed ? formatRelative(apiKey.lastUsed) : '—'}
                 </span>
-                <span>{new Date(apiKey.createdAt).toLocaleDateString()}</span>
+                <span>{formatDate(apiKey.createdAt)}</span>
               </div>
             </div>
           ))}

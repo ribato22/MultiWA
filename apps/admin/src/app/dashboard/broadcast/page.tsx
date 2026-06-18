@@ -28,6 +28,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Contact, Profile } from '@/lib/api';
+import { formatRelative, formatFull } from '@/lib/datetime';
 import TemplatePicker from '@/components/templates/TemplatePicker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1169,7 +1170,7 @@ export default function BroadcastPage() {
                 <div className="min-w-0">
                   <div className="font-medium text-foreground truncate">{broadcast.name}</div>
                   <div className="text-sm text-muted-foreground">
-                    {recipientCount} recipients · {new Date(broadcast.createdAt).toLocaleDateString()}
+                    {recipientCount} recipients · <span title={formatFull(broadcast.createdAt)}>{formatRelative(broadcast.createdAt)}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">

@@ -11,6 +11,7 @@ import {
   Search,
   ArrowRight,
 } from 'lucide-react';
+import { formatDate, formatTime } from '@/lib/datetime';
 
 interface Template {
   id: string;
@@ -67,8 +68,8 @@ export default function TemplatePicker({ profileId, onSelect, onClose, variables
     // Build complete variables map with system defaults
     const now = new Date();
     const allVariables: Record<string, string> = {
-      date: now.toLocaleDateString('id-ID'),
-      time: now.toLocaleTimeString('id-ID'),
+      date: formatDate(now),
+      time: formatTime(now),
       ...variables, // User-provided variables (name, phone, etc.) override defaults
     };
 

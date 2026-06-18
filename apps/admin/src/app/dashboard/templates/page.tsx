@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Profile, Template } from '@/lib/api';
+import { formatTime, formatDate } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -412,7 +413,7 @@ export default function TemplatesPage() {
                 {/* Footer */}
                 <div className="flex items-center justify-between text-xs text-muted-foreground pt-3 border-t border-border">
                   <span>Used {template.usageCount || 0} times</span>
-                  <span>{new Date(template.createdAt).toLocaleDateString()}</span>
+                  <span>{formatDate(template.createdAt)}</span>
                 </div>
               </div>
             );
@@ -523,12 +524,12 @@ export default function TemplatesPage() {
                     {formData.content
                       .replace(/\{\{name\}\}/g, 'John')
                       .replace(/\{\{phone\}\}/g, '+62812345678')
-                      .replace(/\{\{date\}\}/g, new Date().toLocaleDateString())
-                      .replace(/\{\{time\}\}/g, new Date().toLocaleTimeString())}
+                      .replace(/\{\{date\}\}/g, formatDate(new Date()))
+                      .replace(/\{\{time\}\}/g, formatTime(new Date()))}
                   </p>
                   <div className="flex items-center justify-end gap-1 mt-1">
                     <span className="text-[10px] text-muted-foreground tabular-nums">
-                      {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatTime(new Date())}
                     </span>
                     <CheckCheck className="w-3.5 h-3.5 text-sky-400" aria-hidden="true" aria-label="Read" />
                   </div>

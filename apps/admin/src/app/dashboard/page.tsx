@@ -79,7 +79,7 @@ export default function DashboardPage() {
     const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     const socket = io(`${wsUrl}/ws`, {
       transports: ['websocket', 'polling'],
-      auth: { token },
+      auth: (cb) => cb({ token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : undefined }),
       reconnection: true,
       reconnectionDelay: 3000,
       reconnectionAttempts: 10,

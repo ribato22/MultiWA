@@ -16,6 +16,7 @@ import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatDateTime, formatFull } from '@/lib/datetime';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -193,8 +194,8 @@ export default function ProfileDetailPage() {
   useEffect(() => {
     const wsUrl = getSocketUrl();
     const socket = io(`${wsUrl}/ws`, {
-      auth: { token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null },
       transports: ['websocket', 'polling'],
+      auth: (cb) => cb({ token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : undefined }),
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
@@ -422,7 +423,7 @@ export default function ProfileDetailPage() {
   // Loading skeleton
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="max-w-4xl mx-auto space-y-6">
         <Skeleton className="h-5 w-40" />
         <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 space-y-4">
           <div className="flex items-center gap-4">
@@ -469,7 +470,7 @@ export default function ProfileDetailPage() {
   const flowStep: 1 | 2 | 3 = isConnected ? 3 : qrCode ? 2 : 1;
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6">
       {/* Breadcrumb */}
       <nav
         aria-label="Breadcrumb"
@@ -635,7 +636,11 @@ export default function ProfileDetailPage() {
           <span className="capitalize">{(profile.status || 'unknown').replace('_', ' ')}</span>
         </DetailCell>
         <DetailCell icon={Clock} label="Created">
-          {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : '—'}
+          {profile.createdAt ? (
+            <span title={formatFull(profile.createdAt)}>{formatDateTime(profile.createdAt)}</span>
+          ) : (
+            '—'
+          )}
         </DetailCell>
         <DetailCell icon={MessageCircle} label="Messages today">
           <span className="font-mono">

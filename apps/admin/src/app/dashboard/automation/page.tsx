@@ -40,6 +40,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Profile, Automation } from '@/lib/api';
+import { formatRelative, formatFull } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -463,7 +464,7 @@ export default function AutomationPage() {
                         {automation.stats?.lastTriggered && (
                           <>
                             <span aria-hidden="true">·</span>
-                            <span>Last: {new Date(automation.stats.lastTriggered).toLocaleString()}</span>
+                            <span title={formatFull(automation.stats.lastTriggered)}>Last: {formatRelative(automation.stats.lastTriggered)}</span>
                           </>
                         )}
                       </div>

@@ -24,6 +24,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { formatRelative, formatFull } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -138,22 +139,7 @@ export default function AuditPage() {
     setLoading(false);
   };
 
-  const formatTime = (dateStr: string) => {
-    if (!dateStr) return '-';
-    const date = new Date(dateStr);
-    if (isNaN(date.getTime())) return '-';
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
+  const formatTime = (dateStr: string) => formatRelative(dateStr) || '-';
 
   const getActionInfo = (action: string): ActionInfo => {
     return ACTION_TYPES[action] || {
@@ -314,7 +300,7 @@ export default function AuditPage() {
                 const ActionIcon = actionInfo.Icon;
                 return (
                   <TableRow key={log.id}>
-                    <TableCell className="text-muted-foreground text-sm whitespace-nowrap tabular-nums">
+                    <TableCell className="text-muted-foreground text-sm whitespace-nowrap tabular-nums" title={formatFull(log.createdAt)}>
                       {formatTime(log.createdAt)}
                     </TableCell>
                     <TableCell>
@@ -363,7 +349,7 @@ export default function AuditPage() {
                     <ActionIcon className="w-3 h-3" aria-hidden="true" />
                     {actionInfo.label}
                   </Badge>
-                  <span className="text-xs text-muted-foreground tabular-nums">
+                  <span className="text-xs text-muted-foreground tabular-nums" title={formatFull(log.createdAt)}>
                     {formatTime(log.createdAt)}
                   </span>
                 </div>

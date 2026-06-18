@@ -33,6 +33,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, User, Profile } from '@/lib/api';
+import { formatRelative, formatFull } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -1220,7 +1221,7 @@ export default function SettingsPage() {
                             <div className="text-xs text-muted-foreground flex items-center gap-2">
                               {session.ipAddress && <span>{session.ipAddress}</span>}
                               {session.ipAddress && <span>·</span>}
-                              <span>Active {new Date(session.lastActiveAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                              <span title={formatFull(session.lastActiveAt)}>Active {formatRelative(session.lastActiveAt)}</span>
                             </div>
                           </div>
                           {index === 0 ? (
@@ -1617,8 +1618,7 @@ function PushNotificationCard() {
     if (result?.success) {
       toast({ title: 'Test push sent!', description: `${result.message}. Check browser notifications.` });
     } else {
-      const r = result as any;
-      const errorDetail = r?.results?.[0]?.error || r?.error || r?.message || 'Could not send test push';
+      const errorDetail = result?.results?.[0]?.error || result?.error || result?.message || 'Could not send test push';
       toast({ title: 'Test failed', description: errorDetail, variant: 'destructive' });
     }
   };
