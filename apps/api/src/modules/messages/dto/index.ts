@@ -4,6 +4,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsNumber, IsBoolean, ValidateNested, IsArray } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
 
 // Base DTO
 class BaseMessageDto {
@@ -12,9 +13,14 @@ class BaseMessageDto {
   @IsNotEmpty()
   profileId: string;
 
-  @ApiProperty({ example: '6281234567890', description: 'Phone number or JID' })
+  // Accepts a phone number (separators/whitespace tolerated, 7-15 digits) or a
+  // WhatsApp JID (@s.whatsapp.net / @c.us / @g.us group / @lid / @broadcast /
+  // @newsletter). Rejects raw names + garbage that would collapse to a junk JID.
+  // Logic is shared with normalizeJid via @multiwa/core isWhatsAppRecipient.
+  @ApiProperty({ example: '6281234567890', description: 'Phone number or WhatsApp JID' })
   @IsString()
   @IsNotEmpty()
+  @IsWhatsAppRecipient()
   to: string;
 }
 

@@ -19,7 +19,7 @@ import {
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { SendGateService } from '@multiwa/engine-runtime';
-import { AppEvents } from '@multiwa/core';
+import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import {
   OUTBOUND_SEND_QUEUE,
   OUTBOUND_SEND_MAX_ATTEMPTS,
@@ -450,15 +450,25 @@ export class MessagesService {
 
   // Normalize phone to JID
   private normalizeJid(to: string): string {
+    // Defense-in-depth: the DTO @IsWhatsAppRecipient gate only runs in the HTTP
+    // ValidationPipe. Internal callers (automation rule-engine, AI actions) reach
+    // here with a raw `to`, so re-validate with the same shared predicate to keep
+    // junk out of the engine + DB. Trim first so leading/trailing whitespace (the
+    // validator tolerates it) does not leak into the stored JID.
+    const input = typeof to === 'string' ? to.trim() : to;
+    if (!isWhatsAppRecipient(input)) {
+      throw new BadRequestException(`Invalid recipient: ${to}`);
+    }
+
     // If already a valid JID (contains @), return as-is
     // This preserves @g.us for groups and @s.whatsapp.net for individuals
-    if (to.includes('@')) {
-      this.logger.debug(`JID already formatted: ${to}`);
-      return to;
+    if (input.includes('@')) {
+      this.logger.debug(`JID already formatted: ${input}`);
+      return input;
     }
-    
+
     // Remove non-digit characters for phone number normalization
-    let phone = to.replace(/\D/g, '');
+    let phone = input.replace(/\D/g, '');
     
     // Convert Indonesian local format (08xxx) to international (628xxx)
     if (phone.startsWith('0')) {

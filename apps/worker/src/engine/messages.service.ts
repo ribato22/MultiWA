@@ -10,7 +10,7 @@ import { Injectable, Logger, HttpException, HttpStatus, Inject, forwardRef } fro
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
 import { SendGateService } from '@multiwa/engine-runtime';
-import { AppEvents } from '@multiwa/core';
+import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import { EngineManagerService } from './engine-manager.service';
 
 export interface OutboundSendJob {
@@ -53,6 +53,13 @@ export class WorkerMessagesService {
   private async queueMessage(profileId: string, to: string, type: string, content: any, quotedMessageId?: string) {
     const profile = await prisma.profile.findUnique({ where: { id: profileId } });
     if (!profile) return { success: false, error: 'Profile not found' };
+
+    // Defense-in-depth: automation/rule-engine replies reach here with a raw `to`
+    // and bypass the API DTO gate. Reject junk before it becomes a bad JID + a
+    // junk conversation. Shared predicate keeps this in sync with the API gate.
+    if (!isWhatsAppRecipient(to)) {
+      return { success: false, error: `Invalid recipient: ${to}` };
+    }
 
     const jid = this.normalizeJid(to);
 
@@ -157,9 +164,12 @@ export class WorkerMessagesService {
     }
   }
 
+  // Recipient is validated in queueMessage (the only caller) via isWhatsAppRecipient.
+  // Trim so leading/trailing whitespace does not leak into the stored JID.
   private normalizeJid(to: string): string {
-    if (to.includes('@')) return to;
-    let phone = to.replace(/\D/g, '');
+    const input = to.trim();
+    if (input.includes('@')) return input;
+    let phone = input.replace(/\D/g, '');
     if (phone.startsWith('0')) phone = '62' + phone.slice(1);
     return `${phone}@s.whatsapp.net`;
   }
