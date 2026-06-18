@@ -4,6 +4,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { formatWeekdayShort } from '@/lib/datetime';
 import {
   AreaChart,
   Area,
@@ -69,7 +70,7 @@ export default function MessageChart({ profileId, className }: MessageChartProps
         if (res.data && res.data.length > 0) {
           const mapped = res.data.map((item) => {
             const d = new Date(item.period);
-            const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
+            const dayName = formatWeekdayShort(d);
             return {
               date: dayName,
               sent: item.outgoing || 0,
@@ -194,7 +195,7 @@ function generateEmptyWeek(): ChartDataPoint[] {
     const d = new Date();
     d.setDate(d.getDate() - i);
     days.push({
-      date: d.toLocaleDateString('en-US', { weekday: 'short' }),
+      date: formatWeekdayShort(d),
       sent: 0,
       received: 0,
     });

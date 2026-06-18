@@ -128,6 +128,13 @@ export function formatRelative(input: DateInput): string {
   }).format(d);
 }
 
+/** "Sen" — short weekday, id-ID, WIB. Chart axes / compact day labels. */
+export function formatWeekdayShort(input: DateInput): string {
+  const d = toDate(input);
+  if (!d) return '';
+  return new Intl.DateTimeFormat(LOCALE, { timeZone: TZ, weekday: 'short' }).format(d);
+}
+
 /** Day-separator label for chat ("Hari ini" / "Kemarin" / "Senin, 18 Juni 2026"). */
 export function formatDaySeparator(input: DateInput): string {
   const d = toDate(input);
