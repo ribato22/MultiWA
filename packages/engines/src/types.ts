@@ -102,6 +102,26 @@ export interface ResolvedIdentity {
   pushName?: string;
 }
 
+/** A single message returned by history sync (lightweight; no media download). */
+export interface RecentChatMessage {
+  id: string;
+  fromMe: boolean;
+  from: string;
+  author?: string;
+  body: string;
+  type: string;
+  timestamp: number; // engine-native (seconds or ms)
+  hasMedia: boolean;
+}
+
+/** A recent chat with its latest messages, used to backfill the dashboard on connect. */
+export interface RecentChat {
+  jid: string;
+  name: string;
+  isGroup: boolean;
+  messages: RecentChatMessage[];
+}
+
 /**
  * Base interface for WhatsApp engines
  * All engine adapters must implement this interface
@@ -157,6 +177,10 @@ export interface IWhatsAppEngine {
   // Resolve a JID's real identity (maps @lid <-> phone number + best name).
   // Returns null when the engine can't resolve it.
   resolveIdentity(jid: string): Promise<ResolvedIdentity | null>;
+
+  // History sync (optional): recent chats with their latest messages, used to
+  // backfill the dashboard on connect. Best-effort; adapters may omit it.
+  getRecentChats?(chatLimit: number, perChatMessages: number): Promise<RecentChat[]>;
 
   createGroup(name: string, participants: string[]): Promise<GroupInfo>;
   setGroupName(groupId: string, name: string): Promise<void>;

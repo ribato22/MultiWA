@@ -6,6 +6,7 @@ node_modules
 .git
 .pnpm-store
 .turbo
+.tmp
 sessions
 *.md
 !**/README.md

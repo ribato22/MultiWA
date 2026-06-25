@@ -489,6 +489,52 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   }
 
   /**
+   * History sync: most-recently-active chats with their latest messages.
+   * Best-effort and bounded — no media is downloaded (only a hasMedia flag).
+   */
+  async getRecentChats(chatLimit = 20, perChatMessages = 20): Promise<import('../types').RecentChat[]> {
+    try {
+      if (!this.isReady() || !this.client) return [];
+      const chats = await this.client.getChats();
+      const sorted = chats
+        .filter((c: any) => {
+          const id = c?.id?._serialized || '';
+          return id && id !== 'status@broadcast' && !id.endsWith('@newsletter');
+        })
+        .sort((a: any, b: any) => (b?.timestamp || 0) - (a?.timestamp || 0))
+        .slice(0, chatLimit);
+
+      const out: import('../types').RecentChat[] = [];
+      for (const chat of sorted) {
+        try {
+          const msgs = await chat.fetchMessages({ limit: perChatMessages });
+          out.push({
+            jid: chat.id._serialized,
+            name: chat.name || '',
+            isGroup: !!chat.isGroup,
+            messages: (msgs || []).map((m: any) => ({
+              id: m?.id?._serialized || '',
+              fromMe: !!m?.fromMe,
+              from: m?.from || chat.id._serialized,
+              author: m?.author,
+              body: m?.body || '',
+              type: m?.type || 'chat',
+              timestamp: m?.timestamp || 0,
+              hasMedia: !!m?.hasMedia,
+            })),
+          });
+        } catch (err: any) {
+          console.warn(`[WhatsApp-WebJS] getRecentChats: skip chat ${chat?.id?._serialized}: ${err.message}`);
+        }
+      }
+      return out;
+    } catch (error: any) {
+      console.error('[WhatsApp-WebJS] getRecentChats error:', error?.message || error);
+      return [];
+    }
+  }
+
+  /**
    * Delete a message for everyone in the chat.
    */
   async deleteForEveryone(chatId: string, messageId: string): Promise<void> {

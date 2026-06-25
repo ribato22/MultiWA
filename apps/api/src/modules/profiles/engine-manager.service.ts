@@ -32,6 +32,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   // Cache resolved WhatsApp group subjects (jid -> {name, at}) so we don't do a
   // getChatById round-trip on every inbound group message.
   private groupNameCache = new Map<string, { name: string; at: number }>();
+  // Guard against concurrent/duplicate history syncs for the same profile.
+  private syncingHistory = new Set<string>();
+  // WhatsApp system/protocol "message" types that are not real chat content.
+  static readonly SYSTEM_MESSAGE_TYPES = new Set<string>([
+    'e2e_notification', 'notification_template', 'notification',
+    'call_log', 'gp2', 'ciphertext', 'protocol', 'revoked',
+  ]);
 
   constructor(
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
@@ -64,6 +71,121 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       this.logger.warn(`Group name resolve failed for ${jid}: ${(err as Error).message}`);
     }
     return fallback;
+  }
+
+  /** Normalize a whatsapp-web.js timestamp (sec or ms) into a sane Date. */
+  private normalizeTimestamp(raw: any): Date {
+    const t = Number(raw);
+    if (!t) return new Date();
+    const ms = t > 10_000_000_000 ? t : t * 1000;
+    const d = new Date(ms);
+    if (isNaN(d.getTime()) || d.getFullYear() > 2100 || d.getFullYear() < 2000) return new Date();
+    return d;
+  }
+
+  /**
+   * Best-effort history sync, run in the background right after a profile connects.
+   * Pulls the most recent chats + their latest messages from WhatsApp and persists
+   * them so existing conversations appear in the dashboard (the live stream only
+   * delivers NEW messages from connect onward). Bounded by HISTORY_SYNC_CHATS /
+   * HISTORY_SYNC_MESSAGES, deduped by messageId, and intentionally SILENT: no
+   * automation, webhooks, or notifications fire for historical messages.
+   */
+  private async syncRecentHistory(profileId: string): Promise<void> {
+    if (this.syncingHistory.has(profileId)) return;
+    const engine = this.engines.get(profileId)?.engine as any;
+    if (!engine?.getRecentChats) {
+      this.logger.debug(`History sync skipped for ${profileId}: engine has no getRecentChats`);
+      return;
+    }
+    this.syncingHistory.add(profileId);
+    try {
+      const chatLimit = Math.max(1, Math.min(100, Number(process.env.HISTORY_SYNC_CHATS) || 20));
+      const perChat = Math.max(1, Math.min(100, Number(process.env.HISTORY_SYNC_MESSAGES) || 20));
+      this.logger.log(`History sync starting for ${profileId} (chats=${chatLimit}, perChat=${perChat})`);
+
+      const profile = await prisma.profile.findUnique({
+        where: { id: profileId }, select: { phoneNumber: true },
+      });
+      const selfDigits = (profile?.phoneNumber || '').replace(/\D/g, '');
+      const selfJid = selfDigits ? `${selfDigits}@s.whatsapp.net` : '';
+
+      const chats = await engine.getRecentChats(chatLimit, perChat);
+      let newConvos = 0, newMsgs = 0;
+
+      for (const chat of chats || []) {
+        try {
+          const rawJid: string = chat?.jid || '';
+          if (!rawJid) continue;
+          const isGroup = !!chat.isGroup || rawJid.includes('@g.us');
+          let jid = isGroup ? rawJid : rawJid.replace('@c.us', '@s.whatsapp.net');
+          if (!isGroup && jid.includes('@lid')) {
+            try {
+              const ident = engine.resolveIdentity ? await engine.resolveIdentity(jid) : null;
+              if (ident?.phoneJid) jid = ident.phoneJid;
+            } catch { /* keep lid jid */ }
+          }
+
+          let conversation = await prisma.conversation.findFirst({ where: { profileId, jid } });
+          if (!conversation) {
+            conversation = await prisma.conversation.create({
+              data: { profileId, jid, name: chat.name || jid, type: isGroup ? 'group' : 'user' },
+            });
+            newConvos++;
+          }
+
+          let lastTs: Date | null = null;
+          for (const m of chat.messages || []) {
+            const msgType: string = m?.type || 'chat';
+            if (EngineManagerService.SYSTEM_MESSAGE_TYPES.has(msgType)) continue;
+            const messageId: string = m?.id || '';
+            if (!messageId) continue;
+            const exists = await prisma.message.findFirst({
+              where: { profileId, messageId }, select: { id: true },
+            });
+            if (exists) continue;
+
+            const content: Record<string, any> = {};
+            if (m.body) content.text = m.body;
+            if (m.hasMedia) content.hasMedia = true;
+
+            const fromMe = !!m.fromMe;
+            const senderJid = fromMe
+              ? (selfJid || jid)
+              : (isGroup ? (m.author || m.from || jid) : jid);
+            const ts = this.normalizeTimestamp(m.timestamp);
+
+            await prisma.message.create({
+              data: {
+                profileId,
+                conversationId: conversation.id,
+                messageId,
+                direction: fromMe ? 'outgoing' : 'incoming',
+                senderJid,
+                type: msgType === 'chat' ? 'text' : msgType,
+                content,
+                status: fromMe ? 'sent' : 'received',
+                timestamp: ts,
+              },
+            });
+            newMsgs++;
+            if (!lastTs || ts > lastTs) lastTs = ts;
+          }
+
+          if (lastTs) {
+            await prisma.conversation
+              .update({ where: { id: conversation.id }, data: { lastMessageAt: lastTs } })
+              .catch(() => {});
+          }
+        } catch (err) {
+          this.logger.warn(`History sync: skip chat ${chat?.jid}: ${(err as Error).message}`);
+        }
+      }
+
+      this.logger.log(`History sync done for ${profileId}: +${newConvos} conversations, +${newMsgs} messages`);
+    } finally {
+      this.syncingHistory.delete(profileId);
+    }
   }
 
   /**
@@ -444,6 +566,15 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           `${profile.displayName || phone} is now connected`,
           { profileId, phone },
         ).catch(err => this.logger.warn(`Notification error (connection): ${err.message}`));
+
+        // Background, best-effort: pull recent chats + their latest messages so
+        // existing conversations show up in the dashboard (whatsapp-web.js only
+        // streams NEW messages from connect onward). Bounded + deduped; never blocks
+        // connect. Disable with HISTORY_SYNC_ON_CONNECT=false.
+        if (process.env.HISTORY_SYNC_ON_CONNECT !== 'false') {
+          this.syncRecentHistory(profileId).catch(err =>
+            this.logger.warn(`History sync failed for ${profileId}: ${(err as Error).message}`));
+        }
       },
       onDisconnected: async (reason: string) => {
         this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
@@ -536,6 +667,14 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         // Skip bot's own messages to prevent reply loops
         if (message.fromMe) {
           this.logger.debug(`Skipping own message for profile ${profileId}`);
+          return;
+        }
+        // Skip WhatsApp system/protocol messages — these are not real chat content
+        // (E2E-encryption notices, business notification templates, call logs,
+        // group-system events, deleted-message markers). Persisting them produced
+        // bogus "conversations" with unresolved @lid numbers and noisy notifications.
+        if (EngineManagerService.SYSTEM_MESSAGE_TYPES.has(message.type)) {
+          this.logger.debug(`Skipping system message (type=${message.type}) for profile ${profileId}`);
           return;
         }
         this.logger.log(`📨 Incoming message for profile ${profileId} from ${message.from}: type=${message.type}, body=${(message.body || '').substring(0, 50)}`);
@@ -743,14 +882,24 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             },
           });
 
-          // Update conversation
+          // Update conversation. AUTO_READ_ON_RECEIVE (default off): when enabled,
+          // immediately send "seen" to WhatsApp (marks read on the phone) and keep
+          // the dashboard unread count at zero so both stay consistent.
+          const autoRead = process.env.AUTO_READ_ON_RECEIVE === 'true';
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: {
               lastMessageAt: new Date(),
-              unreadCount: { increment: 1 },
+              unreadCount: autoRead ? 0 : { increment: 1 },
             },
           });
+          if (autoRead) {
+            try {
+              await this.engines.get(profileId)?.engine?.markAsRead?.(jid);
+            } catch (err) {
+              this.logger.warn(`Auto-read failed for ${jid}: ${(err as Error).message}`);
+            }
+          }
 
           // Emit via WebSocket for real-time chat
           this.realtime.emitMessage(profileId, {
