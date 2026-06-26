@@ -34,6 +34,46 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private groupNameCache = new Map<string, { name: string; at: number }>();
   // Guard against concurrent/duplicate history syncs for the same profile.
   private syncingHistory = new Set<string>();
+  // Ready-timeout watchdog: whatsapp-web.js can fire 'authenticated' but never
+  // 'ready' (intermittent upstream hang, esp. on newer WA Web builds). If a profile
+  // doesn't reach 'connected' within the timeout, force a bounded reconnect so it
+  // self-heals instead of sitting at "connecting" forever.
+  private readyTimers = new Map<string, NodeJS.Timeout>();
+  private readyTimeoutRetries = new Map<string, number>();
+  private readonly READY_TIMEOUT_MS = Number(process.env.READY_TIMEOUT_MS) || 120000;
+  private readonly READY_TIMEOUT_MAX_RETRIES = Number(process.env.READY_TIMEOUT_MAX_RETRIES) || 3;
+
+  private clearReadyTimer(profileId: string): void {
+    const t = this.readyTimers.get(profileId);
+    if (t) { clearTimeout(t); this.readyTimers.delete(profileId); }
+  }
+
+  // Fired when a profile authenticated but never reached 'connected' in time.
+  private async onReadyTimeout(profileId: string): Promise<void> {
+    this.readyTimers.delete(profileId);
+    const inst = this.engines.get(profileId);
+    if (!inst || inst.status === 'connected') return; // reached ready in time — nothing to do
+    const retries = (this.readyTimeoutRetries.get(profileId) || 0) + 1;
+    const max = this.READY_TIMEOUT_MAX_RETRIES;
+    this.logger.warn(
+      `Profile ${profileId} authenticated but not online within ${this.READY_TIMEOUT_MS / 1000}s ` +
+      `(whatsapp-web.js ready-hang). Auto-recovery ${retries}/${max}.`,
+    );
+    try { await inst.engine?.destroy?.(); } catch (e) { this.logger.warn(`destroy failed: ${(e as Error).message}`); }
+    this.engines.delete(profileId);
+    if (retries > max) {
+      this.logger.error(`Ready-timeout recovery exhausted for ${profileId}; leaving disconnected (manual reconnect needed).`);
+      this.readyTimeoutRetries.delete(profileId);
+      await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } }).catch(() => {});
+      this.realtime.emitConnectionStatus(profileId, 'disconnected');
+      return;
+    }
+    this.readyTimeoutRetries.set(profileId, retries);
+    await prisma.profile.update({ where: { id: profileId }, data: { status: 'connecting' } }).catch(() => {});
+    this.realtime.emitConnectionStatus(profileId, `reconnecting (${retries}/${max})`);
+    this.connectProfile(profileId).catch(err =>
+      this.logger.warn(`Ready-timeout reconnect failed for ${profileId}: ${(err as Error).message}`));
+  }
   // WhatsApp system/protocol "message" types that are not real chat content.
   static readonly SYSTEM_MESSAGE_TYPES = new Set<string>([
     'e2e_notification', 'notification_template', 'notification',
@@ -505,6 +545,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       },
       onReady: async (phone: string, pushName: string) => {
         this.logger.log(`Profile ${profileId} connected: ${phone} (${pushName})`);
+        // Reached 'ready' — cancel the watchdog and reset its retry counter.
+        this.clearReadyTimer(profileId);
+        this.readyTimeoutRetries.delete(profileId);
 
         // Phone number guard: if user initially registered the profile with a
         // specific phone number, refuse to silently overwrite it with a
@@ -578,7 +621,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       },
       onDisconnected: async (reason: string) => {
         this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
-        
+        this.clearReadyTimer(profileId);
+
         // Update engine instance status
         const instance = this.engines.get(profileId);
         if (instance) {
@@ -1067,8 +1111,16 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.logger.error(`Failed to reset profile status:`, dbErr);
         }
         
+        this.clearReadyTimer(profileId);
         this.realtime.emitConnectionStatus(profileId, 'error');
       });
+
+      // Arm the ready-timeout watchdog. Cleared on 'ready' (onReady) or 'disconnected'.
+      this.clearReadyTimer(profileId);
+      this.readyTimers.set(profileId, setTimeout(() => {
+        this.onReadyTimeout(profileId).catch(err =>
+          this.logger.warn(`Ready-timeout handler error for ${profileId}: ${(err as Error).message}`));
+      }, this.READY_TIMEOUT_MS));
 
       return { status: 'connecting', message: 'Scan QR code to connect' };
     } catch (error: any) {
