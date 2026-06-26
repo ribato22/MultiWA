@@ -223,7 +223,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         return { success: false, error: 'Client not ready' };
       }
 
-      const chatId = this.normalizePhoneToJid(to);
+      const chatId = await this.resolveChatId(to);
       const opts: any = {};
       
       if (options?.quotedMessageId) {
@@ -280,7 +280,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         return { success: false, error: 'Client not ready' };
       }
 
-      const chatId = this.normalizePhoneToJid(to);
+      const chatId = await this.resolveChatId(to);
       let messageMedia: MessageMedia;
 
       if (media.url) {
@@ -327,7 +327,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         return { success: false, error: 'Client not ready' };
       }
 
-      const chatId = this.normalizePhoneToJid(to);
+      const chatId = await this.resolveChatId(to);
       const loc = new Location(location.latitude, location.longitude, {
         name: location.name,
         address: location.address,
@@ -352,7 +352,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         return { success: false, error: 'Client not ready' };
       }
 
-      const chatId = this.normalizePhoneToJid(to);
+      const chatId = await this.resolveChatId(to);
       
       // Method 1: Send vCard directly (more reliable - doesn't require contact to exist on phone)
       const contactData = contact as any;
@@ -411,7 +411,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         return { success: false, error: 'Client not ready' };
       }
 
-      const chatId = this.normalizePhoneToJid(to);
+      const chatId = await this.resolveChatId(to);
       // Create poll using the Poll class from whatsapp-web.js
       // The third parameter is optional metadata
       const waPoll = new Poll(poll.question, poll.options);
@@ -438,7 +438,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     try {
       if (!this.isReady() || !this.client) return;
 
-      const chatId = this.normalizePhoneToJid(to);
+      const chatId = await this.resolveChatId(to);
 
       // First, ensure our presence is online (required for typing to work)
       try {
@@ -637,6 +637,30 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     
     // Append @c.us for individual chats
     return `${normalized}@c.us`;
+  }
+
+  // Resolve a recipient to its canonical WhatsApp id via getNumberId. With WhatsApp's
+  // LID system, a raw "<number>@c.us" can resolve to the wrong chat and the server then
+  // rejects the message (ack = -1, surfaced as "unknown" / never delivered). getNumberId
+  // returns the authoritative serialized id AND confirms the number is registered.
+  // Falls back to the plain JID only if the lookup itself errors, so working sends keep working.
+  private async resolveChatId(to: string): Promise<string> {
+    const jid = this.normalizePhoneToJid(to);
+    if (jid.includes('@g.us')) return jid; // groups: no number resolution
+    try {
+      const numberId = await this.client?.getNumberId(jid);
+      if (numberId?._serialized) {
+        if (numberId._serialized !== jid) {
+          console.log(`[WhatsApp-WebJS] Resolved ${to} -> ${numberId._serialized} (raw was ${jid})`);
+        }
+        return numberId._serialized;
+      }
+      throw new Error(`Recipient ${to} is not a registered WhatsApp number`);
+    } catch (e: any) {
+      if (e?.message?.includes('not a registered')) throw e;
+      console.warn(`[WhatsApp-WebJS] getNumberId failed for ${to} (${e?.message}); using direct JID ${jid}`);
+      return jid;
+    }
   }
 
   // ========== GROUPS ==========
