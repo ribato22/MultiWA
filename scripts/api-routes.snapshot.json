@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 211,
+  "routeCount": 213,
   "routes": [
     {
       "method": "DELETE",
@@ -410,6 +410,10 @@
       "path": "/api/v1/conversations/:id"
     },
     {
+      "method": "GET",
+      "path": "/api/v1/conversations/:id"
+    },
+    {
       "method": "PUT",
       "path": "/api/v1/conversations/:id/archive"
     },
@@ -436,6 +440,10 @@
     {
       "method": "PUT",
       "path": "/api/v1/conversations/:id/unarchive"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/conversations/unread-count"
     },
     {
       "method": "POST",

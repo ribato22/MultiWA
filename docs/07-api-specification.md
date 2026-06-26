@@ -200,6 +200,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/conversations` | List conversations |
+| `GET` | `/conversations/unread-count` | Total unread message count across the org |
 | `GET` | `/conversations/:id` | Get conversation |
 | `GET` | `/conversations/:id/messages` | List messages in conversation |
 | `PUT` | `/conversations/:id/read` | Mark conversation read |
