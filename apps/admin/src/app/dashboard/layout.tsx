@@ -28,6 +28,7 @@ import {
   Menu,
   LogOut,
   ChevronRight,
+  ChevronDown,
   MessageCircle,
   Wifi,
   WifiOff,
@@ -99,6 +100,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
+  // Chat unread (org-wide) for the sidebar badge
+  const [chatUnread, setChatUnread] = useState(0);
+
+  // Account menu (top-right)
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const userData = localStorage.getItem('user');
     if (userData) {
@@ -113,6 +121,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     try {
       const res = await api.getUnreadCount();
       if (res.data) setUnreadCount(res.data.count);
+    } catch {}
+    try {
+      const chat = await api.getChatUnreadCount();
+      if (chat.data) setChatUnread(chat.data.count);
     } catch {}
   }, []);
 
@@ -136,6 +148,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     function handleClick(e: MouseEvent) {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) {
         setShowNotifDropdown(false);
+      }
+      if (userRef.current && !userRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
       }
     }
     document.addEventListener('mousedown', handleClick);
@@ -211,6 +226,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {menuItems.map((item) => {
               const Icon = item.Icon;
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
+              const badge = item.href === '/dashboard/chat' ? chatUnread : 0;
+              const badgeLabel = badge > 99 ? '99+' : String(badge);
               return (
                 <Link
                   key={item.href}
@@ -223,39 +240,31 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'
                   }`}
                 >
-                  <Icon className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                  <span className="relative flex-shrink-0">
+                    <Icon className="w-5 h-5" aria-hidden="true" />
+                    {badge > 0 && !sidebarOpen && (
+                      <span
+                        className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] bg-destructive text-destructive-foreground text-[9px] font-bold rounded-full flex items-center justify-center px-1 tabular-nums ring-2 ring-card"
+                        aria-hidden="true"
+                      >
+                        {badgeLabel}
+                      </span>
+                    )}
+                  </span>
                   {sidebarOpen && <span className="font-medium text-sm">{item.name}</span>}
+                  {sidebarOpen && badge > 0 && (
+                    <span
+                      className="ml-auto min-w-[20px] h-5 bg-destructive text-destructive-foreground text-[11px] font-bold rounded-full flex items-center justify-center px-1.5 tabular-nums"
+                      aria-label={`${badge} unread`}
+                    >
+                      {badgeLabel}
+                    </span>
+                  )}
                 </Link>
               );
             })}
           </nav>
 
-          {/* User */}
-          <div className="p-4 border-t border-border pb-safe">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center font-medium flex-shrink-0">
-                {user.name?.[0]?.toUpperCase() || 'U'}
-              </div>
-              {sidebarOpen && (
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
-                    {user.name}
-                  </p>
-                  <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-                </div>
-              )}
-            </div>
-            {sidebarOpen && (
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="mt-3 w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm text-destructive hover:bg-destructive/10 rounded-lg transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-destructive/40"
-              >
-                <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-                Sign out
-              </button>
-            )}
-          </div>
         </div>
       </aside>
 
@@ -383,6 +392,57 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         </Link>
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+
+              {/* Account menu */}
+              <div className="relative" ref={userRef}>
+                <button
+                  type="button"
+                  onClick={() => setShowUserMenu((v) => !v)}
+                  aria-label="Account menu"
+                  aria-expanded={showUserMenu}
+                  className="inline-flex items-center gap-2 rounded-lg p-1 sm:pr-2 hover:bg-secondary/60 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  <span className="w-9 h-9 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center font-medium flex-shrink-0">
+                    {user.name?.[0]?.toUpperCase() || 'U'}
+                  </span>
+                  <span className="hidden sm:block max-w-[160px] text-left leading-tight">
+                    <span className="block text-sm font-medium text-foreground truncate">{user.name}</span>
+                    <span className="block text-xs text-muted-foreground truncate">{user.email}</span>
+                  </span>
+                  <ChevronDown className="hidden sm:block w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+                </button>
+
+                {showUserMenu && (
+                  <div
+                    role="menu"
+                    aria-label="Account"
+                    className="absolute right-0 top-full mt-2 w-60 bg-card rounded-xl shadow-2xl shadow-black/40 border border-border overflow-hidden z-50"
+                  >
+                    <div className="px-4 py-3 border-b border-border">
+                      <p className="text-sm font-medium text-foreground truncate">{user.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+                    </div>
+                    <Link
+                      href="/dashboard/settings"
+                      onClick={() => setShowUserMenu(false)}
+                      role="menuitem"
+                      className="w-full flex items-center gap-2 px-4 py-3 text-sm text-foreground/90 hover:bg-secondary/60 transition-colors cursor-pointer focus:outline-none focus:bg-secondary/60"
+                    >
+                      <SettingsIcon className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
+                      Settings
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={handleLogout}
+                      role="menuitem"
+                      className="w-full flex items-center gap-2 px-4 py-3 text-sm text-destructive hover:bg-destructive/10 transition-colors cursor-pointer focus:outline-none focus:bg-destructive/10 border-t border-border/60"
+                    >
+                      <LogOut className="w-4 h-4" aria-hidden="true" />
+                      Sign out
+                    </button>
                   </div>
                 )}
               </div>

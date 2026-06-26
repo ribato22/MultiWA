@@ -1,7 +1,7 @@
 // MultiWA Gateway - Conversations Controller
 // apps/api/src/modules/conversations/conversations.controller.ts
 
-import { Controller, Get, Put, Delete, Param, Query, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Delete, Param, Query, Body, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,6 +32,14 @@ export class ConversationsController {
     @Query('offset') offset?: number,
   ) {
     return this.service.findAll(profileId, { type, limit, offset });
+  }
+
+  // NOTE: must be declared BEFORE @Get(':id') so the literal path isn't captured by :id.
+  @Get('unread-count')
+  @ApiOperation({ summary: 'Total unread message count across the org' })
+  async unreadCount(@Request() req: any) {
+    const count = await this.service.getOrgUnreadCount(req.user.organizationId);
+    return { count };
   }
 
   @Get(':id')

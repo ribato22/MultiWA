@@ -11,6 +11,30 @@ export class ConversationsService {
 
   constructor(private readonly groupsService: GroupsService) {}
 
+  // Org-wide total unread message count (sum of conversation.unreadCount across all
+  // profiles in the user's organization). Tenant-scoped: only the org's own profiles.
+  async getOrgUnreadCount(organizationId: string): Promise<number> {
+    const workspaces = await prisma.workspace.findMany({
+      where: { organizationId },
+      select: { id: true },
+    });
+    const workspaceIds = workspaces.map((w) => w.id);
+    if (workspaceIds.length === 0) return 0;
+
+    const profiles = await prisma.profile.findMany({
+      where: { workspaceId: { in: workspaceIds } },
+      select: { id: true },
+    });
+    const profileIds = profiles.map((p) => p.id);
+    if (profileIds.length === 0) return 0;
+
+    const agg = await prisma.conversation.aggregate({
+      _sum: { unreadCount: true },
+      where: { profileId: { in: profileIds } },
+    });
+    return agg._sum.unreadCount || 0;
+  }
+
   // List conversations
   async findAll(profileId: string, options: {
     type?: string;

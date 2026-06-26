@@ -502,6 +502,11 @@ class ApiClient {
     );
   }
 
+  // Org-wide total unread message count (for the sidebar Chat badge).
+  async getChatUnreadCount() {
+    return this.request<{ count: number }>('/conversations/unread-count');
+  }
+
   async getMessages(conversationId: string) {
     return this.request<any[]>(`/messages/conversation/${conversationId}`);
   }
