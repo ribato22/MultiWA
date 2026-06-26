@@ -129,6 +129,9 @@ export default function ChatPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const [msgLimit, setMsgLimit] = useState(50);
   const [messageInput, setMessageInput] = useState('');
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -143,6 +146,7 @@ export default function ChatPage() {
   const [scheduling, setScheduling] = useState(false);
   const [emojiCategory, setEmojiCategory] = useState('smileys');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const attachRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -328,12 +332,45 @@ export default function ChatPage() {
   };
 
   const loadMessages = async (conversationId: string) => {
+    // Reset load-older state for the newly opened conversation (optimistic: assume
+    // WhatsApp may have deeper history than the DB snapshot).
+    setHasMoreOlder(true);
+    setMsgLimit(50);
     const res = await api.getMessages(conversationId);
     if (res.data) {
       // API returns { messages: [...], hasMore } or possibly an array
       const raw = res.data as any;
       const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
       setMessages(msgArray);
+    }
+  };
+
+  // On-demand "load older": pull deeper history from WhatsApp, persist it, prepend
+  // to the view while preserving scroll position.
+  const handleLoadOlder = async () => {
+    if (!selectedConversation || loadingOlder) return;
+    setLoadingOlder(true);
+    const container = messagesContainerRef.current;
+    const prevHeight = container?.scrollHeight ?? 0;
+    const prevTop = container?.scrollTop ?? 0;
+    const newLimit = msgLimit + 50;
+    try {
+      const res = await api.loadOlderMessages(selectedConversation.id, newLimit);
+      if (res.data) {
+        const data = res.data as any;
+        setMessages(data.messages || []);
+        setMsgLimit(newLimit);
+        setHasMoreOlder(!!data.hasMore);
+        // Keep the viewport anchored where the user was after prepend.
+        requestAnimationFrame(() => {
+          const c = messagesContainerRef.current;
+          if (c) c.scrollTop = c.scrollHeight - prevHeight + prevTop;
+        });
+      }
+    } catch {
+      // keep current view on failure
+    } finally {
+      setLoadingOlder(false);
     }
   };
 
@@ -787,10 +824,23 @@ export default function ChatPage() {
             </div>
 
             {/* Messages Area */}
-            <div 
+            <div
+              ref={messagesContainerRef}
               className="flex-1 overflow-y-auto p-4 space-y-3"
               style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%239C92AC\' fill-opacity=\'0.03\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}
             >
+              {messages.length > 0 && hasMoreOlder && (
+                <div className="flex justify-center pb-1">
+                  <button
+                    type="button"
+                    onClick={handleLoadOlder}
+                    disabled={loadingOlder}
+                    className="text-xs font-medium px-3 py-1.5 rounded-full bg-secondary/70 text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  >
+                    {loadingOlder ? 'Memuat pesan lama…' : 'Muat pesan lama'}
+                  </button>
+                </div>
+              )}
               {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">

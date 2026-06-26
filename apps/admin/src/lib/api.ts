@@ -511,6 +511,14 @@ class ApiClient {
     return this.request<any[]>(`/messages/conversation/${conversationId}`);
   }
 
+  // On-demand "load older": pulls deeper history from WhatsApp, persists it, and
+  // returns the refreshed page { synced, engineReady, messages, hasMore }.
+  async loadOlderMessages(conversationId: string, limit: number) {
+    return this.request<{ synced: number; engineReady: boolean; messages: any[]; hasMore: boolean }>(
+      `/messages/conversation/${conversationId}/load-older?limit=${limit}`
+    );
+  }
+
   async muteConversation(conversationId: string) {
     return this.request<{ success: boolean; isMuted: boolean }>(`/conversations/${conversationId}/mute`, { method: 'PUT' });
   }

@@ -223,6 +223,19 @@ export class MessagesController {
     return this.service.findByConversation(conversationId, { limit, before });
   }
 
+  // Load older messages on-demand: pulls deeper history from WhatsApp, persists it,
+  // and returns the refreshed page. Profile must be connected.
+  @Get('conversation/:conversationId/load-older')
+  @RequireTenant({ from: 'param', key: 'conversationId', resource: 'conversation' })
+  @ApiOperation({ summary: 'Fetch older messages for a conversation from WhatsApp and persist them' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Total most-recent messages to pull (default 100, max 500)' })
+  async loadOlder(
+    @Param('conversationId') conversationId: string,
+    @Query('limit') limit?: number,
+  ) {
+    return this.service.loadOlderMessages(conversationId, Number(limit) || 100);
+  }
+
   // Get single message
   @Get(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'message' })

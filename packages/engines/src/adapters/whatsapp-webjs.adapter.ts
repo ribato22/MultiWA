@@ -535,6 +535,33 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   }
 
   /**
+   * On-demand "load older": the most recent `limit` messages of a single chat
+   * (newest->oldest). Increasing `limit` across calls walks further back.
+   * Best-effort and bounded — no media is downloaded (only a hasMedia flag).
+   */
+  async fetchChatMessages(chatId: string, limit = 50): Promise<import('../types').RecentChatMessage[]> {
+    try {
+      if (!this.isReady() || !this.client) return [];
+      const normalizedId = this.normalizePhoneToJid(chatId);
+      const chat = await this.client.getChatById(normalizedId);
+      const msgs = await chat.fetchMessages({ limit });
+      return (msgs || []).map((m: any) => ({
+        id: m?.id?._serialized || '',
+        fromMe: !!m?.fromMe,
+        from: m?.from || normalizedId,
+        author: m?.author,
+        body: m?.body || '',
+        type: m?.type || 'chat',
+        timestamp: m?.timestamp || 0,
+        hasMedia: !!m?.hasMedia,
+      }));
+    } catch (error: any) {
+      console.error('[WhatsApp-WebJS] fetchChatMessages error:', error?.message || error);
+      return [];
+    }
+  }
+
+  /**
    * Delete a message for everyone in the chat.
    */
   async deleteForEveryone(chatId: string, messageId: string): Promise<void> {

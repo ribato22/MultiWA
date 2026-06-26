@@ -182,6 +182,10 @@ export interface IWhatsAppEngine {
   // backfill the dashboard on connect. Best-effort; adapters may omit it.
   getRecentChats?(chatLimit: number, perChatMessages: number): Promise<RecentChat[]>;
 
+  // On-demand "load older" (optional): the most recent `limit` messages of a single
+  // chat (newest->oldest). Increasing `limit` across calls walks further back.
+  fetchChatMessages?(chatId: string, limit: number): Promise<RecentChatMessage[]>;
+
   createGroup(name: string, participants: string[]): Promise<GroupInfo>;
   setGroupName(groupId: string, name: string): Promise<void>;
   setGroupDescription(groupId: string, description: string): Promise<void>;

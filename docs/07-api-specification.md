@@ -150,6 +150,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `DELETE` | `/messages/schedule/:id` | Cancel a scheduled message |
 | `GET` | `/messages/profile/:profileId` | List messages for a profile |
 | `GET` | `/messages/conversation/:conversationId` | List messages in a conversation |
+| `GET` | `/messages/conversation/:conversationId/load-older` | Fetch older messages from WhatsApp and persist them |
 | `GET` | `/messages/:id` | Get a single message |
 | `DELETE` | `/messages/:id` | Delete a message locally |
 

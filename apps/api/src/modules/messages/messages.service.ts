@@ -536,6 +536,71 @@ export class MessagesService {
     return { messages, hasMore: messages.length === (options.limit || 50) };
   }
 
+  /**
+   * On-demand "load older": pull up to `limit` most-recent messages for a
+   * conversation directly from WhatsApp, persist any not yet in the DB (deduped,
+   * system-types filtered), then return the refreshed DB page. Increasing `limit`
+   * across calls walks further back in history. Requires the profile's engine to
+   * be connected; otherwise returns the current DB page unchanged.
+   */
+  async loadOlderMessages(conversationId: string, limit: number) {
+    const conversation = await prisma.conversation.findUnique({ where: { id: conversationId } });
+    if (!conversation) throw new NotFoundException('Conversation not found');
+    const profileId = conversation.profileId;
+    const cap = Math.max(1, Math.min(limit || 100, 500));
+
+    const engine = this.engineManager.getEngine(profileId) as any;
+    if (!engine?.fetchChatMessages || !engine.isReady?.()) {
+      const current = await this.findByConversation(conversationId, { limit: cap });
+      return { synced: 0, engineReady: false, ...current };
+    }
+
+    const isGroup = conversation.type === 'group' || conversation.jid.includes('@g.us');
+    const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { phoneNumber: true } });
+    const selfDigits = (profile?.phoneNumber || '').replace(/\D/g, '');
+    const selfJid = selfDigits ? `${selfDigits}@s.whatsapp.net` : '';
+
+    let synced = 0;
+    try {
+      const fetched = await engine.fetchChatMessages(conversation.jid, cap);
+      for (const m of fetched || []) {
+        const msgType: string = m?.type || 'chat';
+        if (EngineManagerService.SYSTEM_MESSAGE_TYPES.has(msgType)) continue;
+        const messageId: string = m?.id || '';
+        if (!messageId) continue;
+        const exists = await prisma.message.findFirst({ where: { profileId, messageId }, select: { id: true } });
+        if (exists) continue;
+
+        const content: Record<string, any> = {};
+        if (m.body) content.text = m.body;
+        if (m.hasMedia) content.hasMedia = true;
+        const fromMe = !!m.fromMe;
+        const senderJid = fromMe
+          ? (selfJid || conversation.jid)
+          : (isGroup ? (m.author || m.from || conversation.jid) : conversation.jid);
+        const t = Number(m.timestamp);
+        const ms = t > 10_000_000_000 ? t : t * 1000;
+        let ts = new Date(ms);
+        if (isNaN(ts.getTime()) || ts.getFullYear() > 2100 || ts.getFullYear() < 2000) ts = new Date();
+
+        await prisma.message.create({
+          data: {
+            profileId, conversationId, messageId,
+            direction: fromMe ? 'outgoing' : 'incoming',
+            senderJid, type: msgType === 'chat' ? 'text' : msgType,
+            content, status: fromMe ? 'sent' : 'received', timestamp: ts,
+          },
+        });
+        synced++;
+      }
+    } catch (err) {
+      this.logger.warn(`loadOlderMessages: fetch failed for ${conversationId}: ${(err as Error).message}`);
+    }
+
+    const refreshed = await this.findByConversation(conversationId, { limit: cap });
+    return { synced, engineReady: true, ...refreshed };
+  }
+
   // Get message by ID
   async findOne(id: string) {
     const message = await prisma.message.findUnique({ 

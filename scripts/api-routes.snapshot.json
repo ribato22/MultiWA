@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 213,
+  "routeCount": 214,
   "routes": [
     {
       "method": "DELETE",
@@ -528,6 +528,10 @@
     {
       "method": "GET",
       "path": "/api/v1/messages/conversation/:conversationId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/messages/conversation/:conversationId/load-older"
     },
     {
       "method": "POST",
