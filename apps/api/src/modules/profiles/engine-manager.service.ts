@@ -889,7 +889,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: {
-              lastMessageAt: new Date(),
+              // Use the message's real timestamp (from WhatsApp), not the server
+              // clock — resilient to host clock skew/drift on air-gapped boxes.
+              lastMessageAt: savedMessage.timestamp,
               unreadCount: autoRead ? 0 : { increment: 1 },
             },
           });
