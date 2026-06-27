@@ -38,6 +38,12 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private authState: any = null;
   private connectionRetryCount: number = 0;
   private maxConnectionRetries: number = 3;
+  // Single-authority reconnect state. Baileys owns its own reconnection internally so it never
+  // competes with EngineManager's onDisconnected auto-retry (a double-reconnect spawns multiple
+  // sockets, each emitting a fresh pairing QR every few seconds → impossible to scan).
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private isReconnecting: boolean = false;
+  private hasAuthenticated: boolean = false;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -53,8 +59,41 @@ export class BaileysAdapter implements IWhatsAppEngine {
       throw new Error('Not initialized. Call initialize() first.');
     }
 
-    const { version } = await fetchLatestBaileysVersion();
-    console.log(`[Baileys] Using WA version ${version.join('.')}`);
+    // Cancel any pending reconnect and tear down a prior socket. Each event handler is bound to
+    // the socket instance that created it (see setupEventHandlers' isCurrent guard), so the old
+    // socket's late 'close' can't schedule another reconnect once it's been replaced.
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.socket) {
+      // Null the field BEFORE end(): Baileys' end() emits 'connection.update' { connection:'close' }
+      // SYNCHRONOUSLY. If this.socket still pointed at the dying socket, isCurrent() would be true
+      // and the close handler would schedule a spurious reconnect on every teardown.
+      const dying = this.socket;
+      this.socket = null;
+      try {
+        dying.end(undefined as any);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Resolve the WhatsApp Web version. On air-gapped hosts fetchLatestBaileysVersion()
+    // cannot reach GitHub: it hangs ~75s on the dropped SYN, then falls back to a STALE
+    // bundled version that WhatsApp rejects at the noise handshake ("Connection Failure",
+    // no QR). Pin a current version via BAILEYS_WA_VERSION="2.3000.1035194821" to skip the
+    // fetch entirely and present a working QR. Falls back to the live fetch when unset.
+    let version: [number, number, number];
+    const pinnedVer = process.env.BAILEYS_WA_VERSION;
+    if (pinnedVer && /^\d+\.\d+\.\d+$/.test(pinnedVer.trim())) {
+      version = pinnedVer.trim().split('.').map(Number) as [number, number, number];
+      console.log(`[Baileys] Using pinned WA version ${version.join('.')}`);
+    } else {
+      const fetched = await fetchLatestBaileysVersion();
+      version = fetched.version as [number, number, number];
+      console.log(`[Baileys] Using fetched WA version ${version.join('.')}`);
+    }
 
     this.socket = makeWASocket({
       version,
@@ -72,11 +111,51 @@ export class BaileysAdapter implements IWhatsAppEngine {
     this.setupEventHandlers();
   }
 
+  // Single, debounced reconnect. Any pending timer is replaced, and an in-flight reconnect is
+  // never re-entered, so at most one socket is ever (re)created per close — the key to a stable,
+  // scannable pairing QR.
+  private scheduleReconnect(delay: number): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    console.log(`[Baileys] Reconnecting in ${delay}ms for ${this.config?.profileId}...`);
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      if (this.isReconnecting) return;
+      this.isReconnecting = true;
+      let failed = false;
+      try {
+        await this.connect();
+      } catch (err: any) {
+        failed = true;
+        console.error(`[Baileys] Reconnect failed for ${this.config?.profileId}: ${err?.message}`);
+      } finally {
+        this.isReconnecting = false;
+      }
+      // Self-heal: a thrown connect() (e.g. a transient init error) fires no 'close' event, so
+      // without this the profile would sit at "connecting" with no further attempts. Back off and
+      // retry; EngineManager's ready-timeout watchdog remains the outer backstop. destroy() flips
+      // isReconnecting=true, which makes the next tick return early and stops the loop.
+      if (failed) {
+        this.connectionRetryCount++;
+        this.scheduleReconnect(Math.min(3000 * (this.connectionRetryCount + 1), 15000));
+      }
+    }, delay);
+  }
+
   private setupEventHandlers(): void {
     if (!this.socket) return;
 
+    // Bind every handler to the socket that created it. After connect() replaces this.socket,
+    // a stale socket's late events (especially 'close') must be ignored so they can't schedule
+    // a reconnect or process messages against an obsolete session.
+    const sock = this.socket;
+    const isCurrent = () => this.socket === sock;
+
     // Connection update
     this.socket.ev.on('connection.update', async (update) => {
+      if (!isCurrent()) return;
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
@@ -90,60 +169,68 @@ export class BaileysAdapter implements IWhatsAppEngine {
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
         const isLoggedOut = statusCode === DisconnectReason.loggedOut;
+        // 515 restartRequired is the EXPECTED close right after a successful QR scan: Baileys
+        // must restart the socket to finish login. It is NOT a failure.
+        const isRestartRequired = statusCode === DisconnectReason.restartRequired;
         const isConnectionFailure = lastDisconnect?.error?.message?.includes('Connection Failure');
 
         console.log(
-          `[Baileys] Connection closed for profile ${this.config?.profileId}. StatusCode: ${statusCode}, Retry count: ${this.connectionRetryCount}`
+          `[Baileys] Connection closed for ${this.config?.profileId}. statusCode=${statusCode} loggedOut=${isLoggedOut} restartRequired=${isRestartRequired} retries=${this.connectionRetryCount}`
         );
 
         this.status = { isConnected: false, isAuthenticated: false };
 
-        // Check if session might be stale (multiple connection failures)
+        // Terminal: logged out. Bubble to the manager so it clears the session for a fresh QR.
+        // Do NOT reconnect — the credentials are gone.
+        if (isLoggedOut) {
+          this.connectionRetryCount = 0;
+          this.config?.onDisconnected?.('Logged Out');
+          return;
+        }
+
+        // Post-scan re-login step. Reconnect immediately and internally; never bubble to the
+        // manager (that would destroy/recreate the engine and abort the in-progress pairing).
+        if (isRestartRequired) {
+          this.scheduleReconnect(0);
+          return;
+        }
+
+        // Repeated hard connection failures => likely a stale session. Clear it and ask the
+        // user (via the manager) for a fresh QR.
         if (isConnectionFailure) {
           this.connectionRetryCount++;
-          
           if (this.connectionRetryCount >= this.maxConnectionRetries) {
-            console.log(`[Baileys] Max retries (${this.maxConnectionRetries}) reached for profile ${this.config?.profileId}. Clearing stale session...`);
-            
-            // Clear session folder to force fresh QR code
+            console.log(`[Baileys] Max retries (${this.maxConnectionRetries}) reached for ${this.config?.profileId}. Clearing stale session...`);
             const sessionDir = this.config?.sessionDir || `./sessions/${this.config?.profileId}`;
             try {
               const fs = require('fs');
               const path = require('path');
-              const files = fs.readdirSync(sessionDir);
-              for (const file of files) {
+              for (const file of fs.readdirSync(sessionDir)) {
                 fs.unlinkSync(path.join(sessionDir, file));
               }
-              console.log(`[Baileys] Session cleared for profile ${this.config?.profileId}. Will generate new QR code.`);
+              console.log(`[Baileys] Session cleared for ${this.config?.profileId}.`);
             } catch (err: any) {
               console.error(`[Baileys] Failed to clear session: ${err.message}`);
             }
-            
             this.connectionRetryCount = 0;
-            // Notify disconnect - user needs to reconnect with fresh QR
-            this.config?.onDisconnected?.('Session expired. Please reconnect.');
+            this.config?.onDisconnected?.('Session Expired. Please reconnect.');
             return;
           }
         } else {
-          // Reset retry count on different error types
           this.connectionRetryCount = 0;
         }
 
-        this.config?.onDisconnected?.(
-          lastDisconnect?.error?.message || 'Connection closed'
-        );
-
-        // Auto-reconnect unless logged out
-        if (!isLoggedOut) {
-          const delay = Math.min(3000 * (this.connectionRetryCount + 1), 15000); // Exponential backoff, max 15s
-          console.log(`[Baileys] Reconnecting in ${delay}ms...`);
-          setTimeout(() => this.connect(), delay);
-        }
+        // QR-pairing phase or a transient drop. Reconnect INTERNALLY only (single authority).
+        // We deliberately do NOT call onDisconnected here: that would trigger EngineManager's own
+        // auto-retry, producing a second competing socket whose QR overwrites this one every few
+        // seconds — the exact bug that made the pairing QR unscannable.
+        this.scheduleReconnect(Math.min(3000 * (this.connectionRetryCount + 1), 15000));
       }
 
       if (connection === 'open') {
         console.log(`[Baileys] Connected for profile ${this.config?.profileId}`);
         this.connectionRetryCount = 0; // Reset retry counter on successful connection
+        this.hasAuthenticated = true;
         this.status = {
           isConnected: true,
           isAuthenticated: true,
@@ -164,6 +251,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
 
     // Messages
     this.socket.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (!isCurrent()) return;
       if (type !== 'notify') return;
 
       for (const message of messages) {
@@ -224,6 +312,10 @@ export class BaileysAdapter implements IWhatsAppEngine {
   }
 
   async disconnect(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.socket) {
       await this.socket.logout();
       this.status = { isConnected: false, isAuthenticated: false };
@@ -231,9 +323,22 @@ export class BaileysAdapter implements IWhatsAppEngine {
   }
 
   async destroy(): Promise<void> {
+    // Cancel any pending reconnect and block an in-flight one from re-creating a socket on an
+    // instance the manager is about to discard (otherwise a zombie connection leaks).
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.isReconnecting = true;
     if (this.socket) {
-      this.socket.end(undefined);
+      // Null first (see connect()): end() emits 'close' synchronously; isCurrent() must be false.
+      const dying = this.socket;
       this.socket = null;
+      try {
+        dying.end(undefined as any);
+      } catch {
+        /* ignore */
+      }
       this.status = { isConnected: false, isAuthenticated: false };
     }
   }
