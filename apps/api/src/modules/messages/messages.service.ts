@@ -317,6 +317,33 @@ export class MessagesService {
       };
     }
 
+    // The engine's send methods report soft failures by RETURNING { success:false, error }
+    // (no throw) — e.g. whatsapp-web.js rejecting a stale/legacy group id (GitHub #8). Without
+    // this guard the code below still marks the message 'sent' and returns success:true, so the
+    // UI shows a delivered message that never actually went out. Treat it as a real failure.
+    if (result && result.success === false) {
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { status: 'failed' },
+      });
+      this.eventEmitter.emit(AppEvents.MESSAGE.FAILED, {
+        profileId,
+        messageId: message.id,
+        to: jid,
+        type,
+        conversationId: conversation.id,
+        error: result.error,
+      });
+      this.logger.warn(`Engine reported send failure for ${message.id}: ${result.error}`);
+      return {
+        success: false,
+        messageId: message.id,
+        conversationId: conversation.id,
+        status: 'failed',
+        error: result.error || 'Engine send failed',
+      };
+    }
+
     // Update message with actual WhatsApp message ID and status
     if (result?.messageId) {
       await prisma.message.update({

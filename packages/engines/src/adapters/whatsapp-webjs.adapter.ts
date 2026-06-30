@@ -646,7 +646,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   // Falls back to the plain JID only if the lookup itself errors, so working sends keep working.
   private async resolveChatId(to: string): Promise<string> {
     const jid = this.normalizePhoneToJid(to);
-    if (jid.includes('@g.us')) return jid; // groups: no number resolution
+    if (jid.includes('@g.us')) return this.resolveGroupChatId(jid);
     try {
       const numberId = await this.client?.getNumberId(jid);
       if (numberId?._serialized) {
@@ -659,6 +659,27 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     } catch (e: any) {
       if (e?.message?.includes('not a registered')) throw e;
       console.warn(`[WhatsApp-WebJS] getNumberId failed for ${to} (${e?.message}); using direct JID ${jid}`);
+      return jid;
+    }
+  }
+
+  // Resolve a group jid to its CURRENT canonical serialized id before sending. WhatsApp
+  // migrated many groups from the legacy "<phone>-<timestamp>@g.us" format to the 18-digit
+  // "<id>@g.us" format; whatsapp-web.js's Store can keep serving a STALE id for a group until
+  // an incoming event refreshes it, and a send to that stale id is accepted locally yet never
+  // delivered (GitHub #8: "groups with no incoming messages since initialization"). getChatById
+  // resolves the chat and returns its current id; we fall back to the raw jid on any error so
+  // groups that already work are never affected.
+  private async resolveGroupChatId(jid: string): Promise<string> {
+    try {
+      const chat: any = await this.client?.getChatById(jid);
+      const canonical = chat?.id?._serialized;
+      if (canonical && canonical !== jid) {
+        console.log(`[WhatsApp-WebJS] Group id resolved ${jid} -> ${canonical}`);
+      }
+      return canonical || jid;
+    } catch (e: any) {
+      console.warn(`[WhatsApp-WebJS] getChatById failed for group ${jid} (${e?.message}); using raw jid`);
       return jid;
     }
   }
