@@ -45,7 +45,19 @@ import {
   Inbox,
   WifiOff,
   Loader2,
+  Gauge,
+  Save,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface Profile {
   id: string;
@@ -54,7 +66,8 @@ interface Profile {
   status: string;
   createdAt: string;
   updatedAt: string;
-  dailyMessageLimit?: number;
+  messageDelayMs?: number;
+  dailyMessageLimit?: number | null;
   dailyMessageCount?: number;
   sessionData?: {
     jid?: string;
@@ -186,6 +199,11 @@ export default function ProfileDetailPage() {
   const [errorReason, setErrorReason] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const accountIdRef = useRef<string | null>(null);
+
+  // Sending-guardrail form state (delay + daily limit), prefilled from the profile.
+  const [delayMs, setDelayMs] = useState<number>(1500);
+  const [dailyLimit, setDailyLimit] = useState<string>(''); // '' means unlimited
+  const [savingGuardrails, setSavingGuardrails] = useState(false);
 
   const profileId = params.id as string;
   const autoConnect = searchParams.get('action') === 'connect';
@@ -383,6 +401,53 @@ export default function ProfileDetailPage() {
     fetchProfile();
   }, [fetchProfile]);
 
+  // Prefill the guardrail form once the profile loads. Keyed on id so refetches
+  // during the QR flow don't clobber in-progress edits.
+  useEffect(() => {
+    if (!profile) return;
+    setDelayMs(profile.messageDelayMs ?? 1500);
+    setDailyLimit(
+      profile.dailyMessageLimit != null ? String(profile.dailyMessageLimit) : '',
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id]);
+
+  const handleSaveGuardrails = async () => {
+    const trimmed = dailyLimit.trim();
+    const parsedLimit = trimmed === '' ? null : Math.floor(Number(trimmed));
+    if (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 0)) {
+      toast({
+        title: 'Invalid daily limit',
+        description: 'Enter a whole number, or leave empty for unlimited.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setSavingGuardrails(true);
+    try {
+      const token = localStorage.getItem('accessToken');
+      const res = await fetch(`/api/v1/profiles/${profileId}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ messageDelayMs: delayMs, dailyMessageLimit: parsedLimit }),
+      });
+      if (res.ok) {
+        toast({ title: 'Guardrails saved', description: 'Sending limits updated.' });
+        fetchProfile();
+      } else {
+        toast({ title: 'Save failed', variant: 'destructive' });
+      }
+    } catch (error) {
+      console.error('Failed to save guardrails:', error);
+      toast({ title: 'Save failed', variant: 'destructive' });
+    } finally {
+      setSavingGuardrails(false);
+    }
+  };
+
   // Auto-connect via ?action=connect URL flag
   useEffect(() => {
     if (
@@ -423,7 +488,7 @@ export default function ProfileDetailPage() {
   // Loading skeleton
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto space-y-6">
+      <div className="space-y-6">
         <Skeleton className="h-5 w-40" />
         <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 space-y-4">
           <div className="flex items-center gap-4">
@@ -469,8 +534,17 @@ export default function ProfileDetailPage() {
   const isConnecting = connecting && !isConnected;
   const flowStep: 1 | 2 | 3 = isConnected ? 3 : qrCode ? 2 : 1;
 
+  // Guardrail form: derived "unlimited" flag + dirty check (disables Save when unchanged).
+  const unlimited = dailyLimit.trim() === '';
+  const normalizedFormLimit = unlimited ? null : Math.floor(Number(dailyLimit));
+  const guardrailsDirty =
+    delayMs !== (profile.messageDelayMs ?? 1500) ||
+    (Number.isNaN(normalizedFormLimit as number)
+      ? true
+      : normalizedFormLimit !== (profile.dailyMessageLimit ?? null));
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="space-y-6">
       {/* Breadcrumb */}
       <nav
         aria-label="Breadcrumb"
@@ -650,6 +724,101 @@ export default function ProfileDetailPage() {
         <DetailCell icon={Wifi} label="Session">
           {profile.sessionData?.name || (isConnected ? 'Active' : 'None')}
         </DetailCell>
+      </section>
+
+      {/* Sending guardrails */}
+      <section
+        aria-label="Sending guardrails"
+        className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 space-y-4"
+      >
+        <div className="flex items-center gap-2">
+          <Gauge className="w-4 h-4 text-slate-400" />
+          <h2 className="text-sm font-semibold text-slate-100">Sending guardrails</h2>
+        </div>
+        <p className="text-xs text-slate-400 max-w-2xl">
+          Pace outbound messages and cap daily volume to lower the risk of WhatsApp
+          rate-locks (error 463). The send gate applies these per message; a recently
+          rate-locked number should stay conservative.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 max-w-2xl">
+          <div className="space-y-1.5">
+            <Label htmlFor="delay" className="text-xs text-slate-300">
+              Inter-message delay
+            </Label>
+            <Select value={String(delayMs)} onValueChange={(v) => setDelayMs(Number(v))}>
+              <SelectTrigger
+                id="delay"
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1500">1.5 seconds</SelectItem>
+                <SelectItem value="3000">3 seconds</SelectItem>
+                <SelectItem value="6000">6 seconds</SelectItem>
+                <SelectItem value="10000">10 seconds</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-slate-500">Minimum gap enforced between two sends.</p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="limit" className="text-xs text-slate-300">
+              Daily message limit
+            </Label>
+            <Input
+              id="limit"
+              type="number"
+              min={0}
+              inputMode="numeric"
+              placeholder="Unlimited"
+              value={dailyLimit}
+              onChange={(e) => setDailyLimit(e.target.value)}
+              disabled={unlimited}
+              className="bg-slate-950/40 border-slate-800 text-slate-100 disabled:opacity-50"
+            />
+            <div className="flex items-center gap-2 pt-0.5">
+              <Switch
+                id="unlimited"
+                checked={unlimited}
+                onCheckedChange={(on) =>
+                  setDailyLimit(on ? '' : String(profile.dailyMessageLimit ?? 1000))
+                }
+              />
+              <Label htmlFor="unlimited" className="text-[11px] text-slate-500 cursor-pointer">
+                Unlimited (not recommended)
+              </Label>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-[11px] text-slate-500">
+            Sent today:{' '}
+            <span className="font-mono text-slate-300">{profile.dailyMessageCount || 0}</span>
+            {!unlimited && (
+              <>
+                {' / '}
+                <span className="font-mono text-slate-300">{dailyLimit}</span>
+              </>
+            )}
+          </p>
+          <Button
+            onClick={handleSaveGuardrails}
+            disabled={savingGuardrails || !guardrailsDirty}
+            className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium disabled:opacity-50"
+          >
+            {savingGuardrails ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
+                Saving…
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Save guardrails
+              </>
+            )}
+          </Button>
+        </div>
       </section>
 
       {/* Actions bar */}
