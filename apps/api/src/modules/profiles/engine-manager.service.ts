@@ -64,8 +64,18 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     if (retries > max) {
       this.logger.error(`Ready-timeout recovery exhausted for ${profileId}; leaving disconnected (manual reconnect needed).`);
       this.readyTimeoutRetries.delete(profileId);
-      await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } }).catch(() => {});
+      const updated = await prisma.profile
+        .update({ where: { id: profileId }, data: { status: 'disconnected' }, select: { displayName: true } })
+        .catch(() => null);
       this.realtime.emitConnectionStatus(profileId, 'disconnected');
+      // Terminal disconnect. The ready-hang path previously emitted neither the webhook
+      // event nor a user notification, so a stuck-offline profile went unnoticed.
+      this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'ready-timeout: recovery exhausted' });
+      this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
+        '⚠️ Profile Disconnected',
+        `${updated?.displayName || profileId} could not come online (WhatsApp Web ready-hang) and auto-recovery was exhausted. Re-link the profile.`,
+        { profileId, reason: 'ready-timeout-exhausted' },
+      ).catch(err => this.logger.warn(`Notification error (ready-timeout): ${err.message}`));
       return;
     }
     this.readyTimeoutRetries.set(profileId, retries);
@@ -705,6 +715,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           });
           this.realtime.emitConnectionStatus(profileId, 'disconnected');
           this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'max retries exhausted' });
+          // A transient disconnect that never recovered is a terminal state an operator
+          // should act on — notify org users (previously only session-invalidation did).
+          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
+            '⚠️ Profile Disconnected',
+            `${profile.displayName || profileId} disconnected (${reason}) and auto-recovery failed after ${maxRetries} attempts. Manual reconnect needed.`,
+            { profileId, reason: 'max-retries-exhausted' },
+          ).catch(err => this.logger.warn(`Notification error (retry-exhausted): ${err.message}`));
         }
       },
       onMessage: async (message: any) => {
