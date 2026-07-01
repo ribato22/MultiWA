@@ -28,12 +28,34 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 
 ### Pull Requests
 
-1. Fork the repo and create your branch from `main`
-2. If you've added code that should be tested, add tests
-3. If you've changed APIs, update the documentation
-4. Ensure the test suite passes
-5. Make sure your code lints
-6. Issue that pull request!
+All changes — including those by maintainers — land through a Pull Request.
+The `main` branch is protected: direct pushes are rejected, and every PR must
+pass the Release Gate CI and receive a review before it can be merged.
+
+**Workflow**
+
+1. Create a topic branch off `main`. Use a descriptive prefix:
+   - `feat/<slug>` — new functionality
+   - `fix/<slug>` — bug fix
+   - `docs/<slug>` — documentation only
+   - `chore/` · `refactor/` · `test/<slug>` — everything else
+2. Keep the change focused — one logical change per PR.
+3. Add or update tests for the behavior you change.
+4. If you touch an API route, update the docs and route snapshot (see
+   [Release Checks](#release-checks)).
+5. Run the checks locally before pushing:
+   `pnpm typecheck`, `pnpm lint`, `pnpm test`, and `pnpm check:release`.
+6. Write [Conventional Commit](https://www.conventionalcommits.org/) messages,
+   e.g. `fix(engine): resolve canonical group id before sending`.
+7. Self-review your diff, then open the PR and fill in the template.
+8. **Link the issues your PR resolves** by putting `Closes #<number>` (or
+   `Fixes #<number>`) in the PR description. Referenced issues close
+   automatically when the PR merges — please don't close them by hand.
+9. A maintainer reviews and merges. Squash-merge is preferred to keep the
+   `main` history linear and readable.
+
+> First time contributing? `git clone` your fork, then follow
+> [Development Setup](#development-setup).
 
 ## Development Setup
 
