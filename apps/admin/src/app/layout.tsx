@@ -4,6 +4,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Inter } from 'next/font/google';
 import { Toaster } from '@/components/ui/toaster';
+import { I18nProvider } from '@/lib/i18n/provider';
 import './globals.css';
 
 const inter = Inter({ 
@@ -37,7 +38,7 @@ export default function RootLayout({
     // active here.
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className={`${inter.variable} font-sans antialiased bg-background text-foreground min-h-screen`}>
-        {children}
+        <I18nProvider>{children}</I18nProvider>
         <Toaster />
       </body>
     </html>

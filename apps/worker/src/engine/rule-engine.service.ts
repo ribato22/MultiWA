@@ -229,7 +229,7 @@ export class WorkerRuleEngineService {
             phone: message.senderJid.split('@')[0],
           },
         });
-        return contact?.tags?.some((t) => condition.tags?.includes(t)) || false;
+        return contact?.tags?.some((t: string) => condition.tags?.includes(t)) || false;
 
       default:
         // Unknown condition types should NOT pass silently
@@ -493,8 +493,15 @@ export class WorkerRuleEngineService {
 
         const previousMessages = recentMessages
           .reverse()
-          .map(m => `${m.direction === 'incoming' ? 'Customer' : 'Agent'}: ${(m.content as any)?.text || ''}`)
-          .filter(m => m.length > 10);
+          .map((m: { direction: string; content: unknown }) => {
+            let text = '';
+            if (m.content && typeof m.content === 'object' && 'text' in m.content) {
+              const rawText = m.content.text;
+              text = typeof rawText === 'string' ? rawText : '';
+            }
+            return `${m.direction === 'incoming' ? 'Customer' : 'Agent'}: ${text}`;
+          })
+          .filter((line: string) => line.length > 10);
 
         // Get contact name
         const senderContact = await prisma.contact.findFirst({
@@ -593,7 +600,7 @@ export class WorkerRuleEngineService {
     if (contact) {
       await prisma.contact.update({
         where: { id: contact.id },
-        data: { tags: contact.tags.filter((t) => !tags.includes(t)) },
+        data: { tags: contact.tags.filter((t: string) => !tags.includes(t)) },
       });
     }
   }
