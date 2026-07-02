@@ -203,9 +203,11 @@ class ApiClient {
 
         const data = await res.json();
         const tokens = data.data || data;
-        if (tokens.accessToken) {
-          localStorage.setItem('accessToken', tokens.accessToken);
-          if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
+        const accessToken = tokens.accessToken || tokens.access_token;
+        const nextRefreshToken = tokens.refreshToken || tokens.refresh_token;
+        if (accessToken) {
+          localStorage.setItem('accessToken', accessToken);
+          if (nextRefreshToken) localStorage.setItem('refreshToken', nextRefreshToken);
           return true;
         }
         return false;

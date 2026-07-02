@@ -143,18 +143,22 @@ export class AuthService {
     return tokens;
   }
 
-  async refreshToken(refreshToken: string): Promise<TokenResponseDto> {
+  async refreshToken(refreshToken: string, ipAddress?: string, userAgent?: string): Promise<TokenResponseDto> {
     try {
-      const payload = this.jwtService.verify(refreshToken);
+      const payload = this.jwtService.verify(refreshToken, {
+        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+      });
       const user = await prisma.user.findUnique({
         where: { id: payload.sub },
       });
 
-      if (!user) {
+      if (!user || !user.isActive) {
         throw new UnauthorizedException('Invalid token');
       }
 
-      return this.generateTokens(user);
+      const tokens = await this.generateTokens(user);
+      await this.sessionsService.createSession(user.id, tokens.accessToken, ipAddress, userAgent);
+      return tokens;
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
