@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MultiWA — Open Source WhatsApp Business API Gateway</title>
+  <title data-i18n="meta.title">MultiWA — Open Source WhatsApp Business API Gateway</title>
   <meta name="description" content="The most complete open-source WhatsApp Business API gateway. Multi-engine, self-hosted, enterprise-ready. Send messages, broadcasts, and automate workflows.">
   <meta name="keywords" content="whatsapp api, whatsapp gateway, open source, self-hosted, whatsapp business, bulk messaging">
   <meta property="og:title" content="MultiWA — Open Source WhatsApp API Gateway">
@@ -20,16 +20,21 @@
     <div class="nav-inner">
       <a href="#" class="logo">
         <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/apps/admin/public/logo.png" alt="MultiWA" width="36" height="36">
-        <span>MultiWA</span>
+        <span data-i18n="app.name">MultiWA</span>
       </a>
       <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#screenshots">Screenshots</a>
-        <a href="#quickstart">Quick Start</a>
-        <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank">Docs</a>
+        <a href="#features" data-i18n="nav.features">Features</a>
+        <a href="#screenshots" data-i18n="nav.screenshots">Screenshots</a>
+        <a href="#quickstart" data-i18n="nav.quickstart">Quick Start</a>
+        <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank" data-i18n="nav.docs">Docs</a>
+        <select id="lang-select" class="lang-select" aria-label="Select Language">
+          <option value="en">English</option>
+          <option value="fa">فارسی</option>
+          <option value="id">Bahasa Indonesia</option>
+        </select>
         <a href="https://github.com/ribato22/MultiWA" class="btn btn-nav" target="_blank">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-          Star on GitHub
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span data-i18n="nav.star">Star on GitHub</span>
         </a>
       </div>
     </div>
@@ -37,29 +42,29 @@
 
   <!-- Hero -->
   <section id="hero">
-    <div class="hero-glow"></div>
+    <div class="hero-glow" aria-hidden="true"></div>
     <div class="container">
-      <div class="badge">Open Source · Self-Hosted · Multi-Engine</div>
-      <h1>WhatsApp Gateway<br><span class="gradient-text">for Everyone</span></h1>
-      <p class="subtitle">The most complete open-source WhatsApp Business API gateway.<br>Multi-engine support, broadcast, automation, and enterprise-ready features.</p>
+      <div class="badge" data-i18n="hero.badge">Open Source · Self-Hosted · Multi-Engine</div>
+      <h1><span data-i18n="hero.title">WhatsApp Gateway</span><br><span class="gradient-text" data-i18n="hero.titleGradient">for Everyone</span></h1>
+      <p class="subtitle" data-i18n="hero.subtitle">The most complete open-source WhatsApp Business API gateway.<br>Multi-engine support, broadcast, automation, and enterprise-ready features.</p>
       <div class="hero-actions">
         <a href="#quickstart" class="btn btn-primary btn-lg">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          Quick Start
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span data-i18n="hero.quickstart">Quick Start</span>
         </a>
         <a href="https://github.com/ribato22/MultiWA" class="btn btn-outline btn-lg" target="_blank">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-          View on GitHub
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span data-i18n="hero.viewGithub">View on GitHub</span>
         </a>
       </div>
       <div class="hero-stats">
-        <div class="stat"><strong>19+</strong><span>GitHub Stars</span></div>
-        <div class="stat-divider"></div>
-        <div class="stat"><strong>MIT</strong><span>License</span></div>
-        <div class="stat-divider"></div>
-        <div class="stat"><strong>3</strong><span>SDKs</span></div>
-        <div class="stat-divider"></div>
-        <div class="stat"><strong>2</strong><span>Engines</span></div>
+        <div class="stat"><strong>19+</strong><span data-i18n="hero.stats.stars">GitHub Stars</span></div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat"><strong>MIT</strong><span data-i18n="hero.stats.license">License</span></div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat"><strong>3</strong><span data-i18n="hero.stats.sdks">SDKs</span></div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat"><strong>2</strong><span data-i18n="hero.stats.engines">Engines</span></div>
       </div>
     </div>
   </section>
@@ -67,48 +72,48 @@
   <!-- Features -->
   <section id="features">
     <div class="container">
-      <h2 class="section-title">Everything You Need</h2>
-      <p class="section-sub">Enterprise-grade WhatsApp integration, without the enterprise price tag.</p>
+      <h2 class="section-title" data-i18n="features.title">Everything You Need</h2>
+      <p class="section-sub" data-i18n="features.sub">Enterprise-grade WhatsApp integration, without the enterprise price tag.</p>
       <div class="features-grid">
         <div class="feature-card">
-          <div class="feature-icon">📱</div>
-          <h3>Multi-Session</h3>
-          <p>Connect unlimited WhatsApp accounts through a single unified API.</p>
+          <div class="feature-icon" aria-hidden="true">📱</div>
+          <h3 data-i18n="features.session.title">Multi-Session</h3>
+          <p data-i18n="features.session.desc">Connect unlimited WhatsApp accounts through a single unified API.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🔌</div>
-          <h3>Multi-Engine</h3>
-          <p>Per-profile engine selection — whatsapp-web.js by default, with an experimental Baileys adapter.</p>
+          <div class="feature-icon" aria-hidden="true">🔌</div>
+          <h3 data-i18n="features.engine.title">Multi-Engine</h3>
+          <p data-i18n="features.engine.desc">Switch between whatsapp-web.js and Baileys adapters seamlessly.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">📢</div>
-          <h3>Broadcast</h3>
-          <p>Bulk messaging with templates, variables, and delivery tracking.</p>
+          <div class="feature-icon" aria-hidden="true">📢</div>
+          <h3 data-i18n="features.broadcast.title">Broadcast</h3>
+          <p data-i18n="features.broadcast.desc">Bulk messaging with templates, variables, and delivery tracking.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🤖</div>
-          <h3>AI Automation</h3>
-          <p>Visual flow builder with OpenAI and Google AI knowledge base.</p>
+          <div class="feature-icon" aria-hidden="true">🤖</div>
+          <h3 data-i18n="features.automation.title">AI Automation</h3>
+          <p data-i18n="features.automation.desc">Visual flow builder with OpenAI and Google AI knowledge base.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">📊</div>
-          <h3>Analytics</h3>
-          <p>Real-time dashboards with message volume, delivery rates, and more.</p>
+          <div class="feature-icon" aria-hidden="true">📊</div>
+          <h3 data-i18n="features.analytics.title">Analytics</h3>
+          <p data-i18n="features.analytics.desc">Real-time dashboards with message volume, delivery rates, and more.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🔗</div>
-          <h3>Webhooks & SDKs</h3>
-          <p>Official TypeScript, Python, and PHP SDKs. Real-time webhooks.</p>
+          <div class="feature-icon" aria-hidden="true">🔗</div>
+          <h3 data-i18n="features.sdks.title">Webhooks & SDKs</h3>
+          <p data-i18n="features.sdks.desc">Official TypeScript, Python, and PHP SDKs. Real-time webhooks.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🐳</div>
-          <h3>Docker Ready</h3>
-          <p>One-command setup. Production-ready containers with health checks.</p>
+          <div class="feature-icon" aria-hidden="true">🐳</div>
+          <h3 data-i18n="features.docker.title">Docker Ready</h3>
+          <p data-i18n="features.docker.desc">One-command setup. Production-ready containers with health checks.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🛡️</div>
-          <h3>Enterprise Security</h3>
-          <p>JWT auth, rate limiting, encryption at rest, GDPR compliance.</p>
+          <div class="feature-icon" aria-hidden="true">🛡️</div>
+          <h3 data-i18n="features.security.title">Enterprise Security</h3>
+          <p data-i18n="features.security.desc">JWT auth, rate limiting, encryption at rest, GDPR compliance.</p>
         </div>
       </div>
     </div>
@@ -117,24 +122,24 @@
   <!-- Screenshots -->
   <section id="screenshots">
     <div class="container">
-      <h2 class="section-title">Beautiful Admin Dashboard</h2>
-      <p class="section-sub">Manage everything from a modern, intuitive interface.</p>
+      <h2 class="section-title" data-i18n="screenshots.title">Beautiful Admin Dashboard</h2>
+      <p class="section-sub" data-i18n="screenshots.sub">Manage everything from a modern, intuitive interface.</p>
       <div class="screenshots-grid">
         <div class="screenshot-card">
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/contacts.png" alt="Contacts" loading="lazy">
-          <span>Contacts</span>
+          <span data-i18n="screenshots.contacts">Contacts</span>
         </div>
         <div class="screenshot-card">
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/automation.png" alt="Automation" loading="lazy">
-          <span>Automation</span>
+          <span data-i18n="screenshots.automation">Automation</span>
         </div>
         <div class="screenshot-card">
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/profiles.png" alt="Profiles" loading="lazy">
-          <span>Profiles</span>
+          <span data-i18n="screenshots.profiles">Profiles</span>
         </div>
         <div class="screenshot-card">
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/settings.png" alt="Settings" loading="lazy">
-          <span>Settings</span>
+          <span data-i18n="screenshots.settings">Settings</span>
         </div>
       </div>
     </div>
@@ -143,21 +148,61 @@
   <!-- Comparison -->
   <section id="comparison">
     <div class="container">
-      <h2 class="section-title">Why MultiWA?</h2>
-      <p class="section-sub">See how we compare to alternatives.</p>
+      <h2 class="section-title" data-i18n="comparison.title">Why MultiWA?</h2>
+      <p class="section-sub" data-i18n="comparison.sub">See how we compare to alternatives.</p>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Feature</th><th class="highlight">MultiWA</th><th>WhatsApp Cloud API</th><th>Evolution API</th></tr>
+            <tr>
+              <th data-i18n="comparison.th.feature">Feature</th>
+              <th class="highlight" data-i18n="comparison.th.multiwa">MultiWA</th>
+              <th data-i18n="comparison.th.cloud">WhatsApp Cloud API</th>
+              <th data-i18n="comparison.th.evolution">Evolution API</th>
+            </tr>
           </thead>
           <tbody>
-            <tr><td>Self-hosted</td><td class="highlight">✅ Full control</td><td>❌ Meta-hosted</td><td>✅</td></tr>
-            <tr><td>Multi-engine</td><td class="highlight">✅ 2 engines</td><td>❌ Single</td><td>❌ Fixed</td></tr>
-            <tr><td>Admin Dashboard</td><td class="highlight">✅ Full-featured</td><td>❌ None</td><td>⚠️ Basic</td></tr>
-            <tr><td>Visual Automation</td><td class="highlight">✅ Flow builder</td><td>❌</td><td>❌</td></tr>
-            <tr><td>AI Knowledge Base</td><td class="highlight">✅ OpenAI + Google</td><td>❌</td><td>❌</td></tr>
-            <tr><td>Official SDKs</td><td class="highlight">✅ TS, Python, PHP</td><td>✅ Multiple</td><td>⚠️ Community</td></tr>
-            <tr><td>Free</td><td class="highlight">✅ MIT License</td><td>⚠️ Per-message</td><td>✅</td></tr>
+            <tr>
+              <td data-i18n="comparison.row.selfhosted">Self-hosted</td>
+              <td class="highlight" data-i18n="comparison.row.selfhosted.multiwa">✅ Full control</td>
+              <td data-i18n="comparison.row.selfhosted.cloud">❌ Meta-hosted</td>
+              <td data-i18n="comparison.row.selfhosted.evolution">✅</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.multiengine">Multi-engine</td>
+              <td class="highlight" data-i18n="comparison.row.multiengine.multiwa">✅ 2 engines</td>
+              <td data-i18n="comparison.row.multiengine.cloud">❌ Single</td>
+              <td data-i18n="comparison.row.multiengine.evolution">❌ Fixed</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.admin">Admin Dashboard</td>
+              <td class="highlight" data-i18n="comparison.row.admin.multiwa">✅ Full-featured</td>
+              <td data-i18n="comparison.row.admin.cloud">❌ None</td>
+              <td data-i18n="comparison.row.admin.evolution">⚠️ Basic</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.visauto">Visual Automation</td>
+              <td class="highlight" data-i18n="comparison.row.visauto.multiwa">✅ Flow builder</td>
+              <td data-i18n="comparison.row.visauto.cloud">❌</td>
+              <td data-i18n="comparison.row.visauto.evolution">❌</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.aikb">AI Knowledge Base</td>
+              <td class="highlight" data-i18n="comparison.row.aikb.multiwa">✅ OpenAI + Google</td>
+              <td data-i18n="comparison.row.aikb.cloud">❌</td>
+              <td data-i18n="comparison.row.aikb.evolution">❌</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.sdk">Official SDKs</td>
+              <td class="highlight" data-i18n="comparison.row.sdk.multiwa">✅ TS, Python, PHP</td>
+              <td data-i18n="comparison.row.sdk.cloud">✅ Multiple</td>
+              <td data-i18n="comparison.row.sdk.evolution">⚠️ Community</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.free">Free</td>
+              <td class="highlight" data-i18n="comparison.row.free.multiwa">✅ MIT License</td>
+              <td data-i18n="comparison.row.free.cloud">⚠️ Per-message</td>
+              <td data-i18n="comparison.row.free.evolution">✅</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -167,24 +212,24 @@
   <!-- Quick Start -->
   <section id="quickstart">
     <div class="container">
-      <h2 class="section-title">Get Started in Seconds</h2>
-      <p class="section-sub">Four commands. That's all it takes.</p>
+      <h2 class="section-title" data-i18n="quickstart.title">Get Started in Seconds</h2>
+      <p class="section-sub" data-i18n="quickstart.sub">Four commands. That's all it takes.</p>
       <div class="code-block">
         <div class="code-header">
-          <div class="dots"><span></span><span></span><span></span></div>
-          <span>Terminal</span>
+          <div class="dots" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span data-i18n="quickstart.terminal">Terminal</span>
         </div>
-        <pre><code><span class="c"># Clone the repository</span>
+        <pre><code><span class="c" data-i18n="quickstart.comment.clone"># Clone the repository</span>
 git clone https://github.com/ribato22/MultiWA.git
 cd MultiWA
 
-<span class="c"># Configure and run</span>
+<span class="c" data-i18n="quickstart.comment.config"># Configure and run</span>
 cp .env.docker .env
 docker compose up -d
 
-<span class="c"># 🎉 Done! Access:</span>
-<span class="c"># Admin Dashboard → http://localhost:3001</span>
-<span class="c"># API Swagger     → http://localhost:3333/api/docs</span></code></pre>
+<span class="c" data-i18n="quickstart.comment.done"># 🎉 Done! Access:</span>
+<span class="c" data-i18n="quickstart.comment.admin"># Admin Dashboard → http://localhost:3001</span>
+<span class="c" data-i18n="quickstart.comment.swagger"># API Swagger     → http://localhost:3333/api/docs</span></code></pre>
       </div>
     </div>
   </section>
@@ -195,17 +240,386 @@ docker compose up -d
       <div class="footer-inner">
         <div class="footer-brand">
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/apps/admin/public/logo.png" alt="MultiWA" width="32" height="32">
-          <span>MultiWA</span>
+          <span data-i18n="app.name">MultiWA</span>
         </div>
         <div class="footer-links">
-          <a href="https://github.com/ribato22/MultiWA" target="_blank">GitHub</a>
-          <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank">Documentation</a>
-          <a href="https://github.com/ribato22/MultiWA/issues" target="_blank">Issues</a>
-          <a href="https://github.com/ribato22/MultiWA/blob/main/LICENSE" target="_blank">MIT License</a>
+          <a href="https://github.com/ribato22/MultiWA" target="_blank" data-i18n="footer.links.github">GitHub</a>
+          <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank" data-i18n="footer.links.docs">Documentation</a>
+          <a href="https://github.com/ribato22/MultiWA/issues" target="_blank" data-i18n="footer.links.issues">Issues</a>
+          <a href="https://github.com/ribato22/MultiWA/blob/main/LICENSE" target="_blank" data-i18n="footer.links.license">MIT License</a>
         </div>
       </div>
-      <p class="copyright">Made with ❤️ by the MultiWA team</p>
+      <p class="copyright" data-i18n="footer.copyright">Made with ❤️ by the MultiWA team</p>
     </div>
   </footer>
+
+  <script>
+    const translations = {
+  "en": {
+    "meta.title": "MultiWA — Open Source WhatsApp Business API Gateway",
+    "meta.description": "The most complete open-source WhatsApp Business API gateway. Multi-engine, self-hosted, enterprise-ready. Send messages, broadcasts, and automate workflows.",
+    "meta.ogTitle": "MultiWA — Open Source WhatsApp API Gateway",
+    "meta.ogDescription": "Multi-engine, self-hosted WhatsApp Business API. Docker one-click setup.",
+    "app.name": "MultiWA",
+    "nav.features": "Features",
+    "nav.screenshots": "Screenshots",
+    "nav.quickstart": "Quick Start",
+    "nav.docs": "Docs",
+    "nav.star": "Star on GitHub",
+    "hero.badge": "Open Source · Self-Hosted · Multi-Engine",
+    "hero.title": "WhatsApp Gateway",
+    "hero.titleGradient": "for Everyone",
+    "hero.subtitle": "The most complete open-source WhatsApp Business API gateway.<br>Multi-engine support, broadcast, automation, and enterprise-ready features.",
+    "hero.quickstart": "Quick Start",
+    "hero.viewGithub": "View on GitHub",
+    "hero.stats.stars": "GitHub Stars",
+    "hero.stats.license": "License",
+    "hero.stats.sdks": "SDKs",
+    "hero.stats.engines": "Engines",
+    "features.title": "Everything You Need",
+    "features.sub": "Enterprise-grade WhatsApp integration, without the enterprise price tag.",
+    "features.session.title": "Multi-Session",
+    "features.session.desc": "Connect unlimited WhatsApp accounts through a single unified API.",
+    "features.engine.title": "Multi-Engine",
+    "features.engine.desc": "Switch between whatsapp-web.js and Baileys adapters seamlessly.",
+    "features.engine.desc_landing": "Per-profile engine selection — whatsapp-web.js by default, with an experimental Baileys adapter.",
+    "features.broadcast.title": "Broadcast",
+    "features.broadcast.desc": "Bulk messaging with templates, variables, and delivery tracking.",
+    "features.automation.title": "AI Automation",
+    "features.automation.desc": "Visual flow builder with OpenAI and Google AI knowledge base.",
+    "features.analytics.title": "Analytics",
+    "features.analytics.desc": "Real-time dashboards with message volume, delivery rates, and more.",
+    "features.sdks.title": "Webhooks & SDKs",
+    "features.sdks.desc": "Official TypeScript, Python, and PHP SDKs. Real-time webhooks.",
+    "features.docker.title": "Docker Ready",
+    "features.docker.desc": "One-command setup. Production-ready containers with health checks.",
+    "features.security.title": "Enterprise Security",
+    "features.security.desc": "JWT auth, rate limiting, encryption at rest, GDPR compliance.",
+    "screenshots.title": "Beautiful Admin Dashboard",
+    "screenshots.sub": "Manage everything from a modern, intuitive interface.",
+    "screenshots.contacts": "Contacts",
+    "screenshots.automation": "Automation",
+    "screenshots.profiles": "Profiles",
+    "screenshots.settings": "Settings",
+    "comparison.title": "Why MultiWA?",
+    "comparison.sub": "See how we compare to alternatives.",
+    "comparison.th.feature": "Feature",
+    "comparison.th.multiwa": "MultiWA",
+    "comparison.th.cloud": "WhatsApp Cloud API",
+    "comparison.th.evolution": "Evolution API",
+    "comparison.row.selfhosted": "Self-hosted",
+    "comparison.row.selfhosted.multiwa": "✅ Full control",
+    "comparison.row.selfhosted.cloud": "❌ Meta-hosted",
+    "comparison.row.selfhosted.evolution": "✅",
+    "comparison.row.multiengine": "Multi-engine",
+    "comparison.row.multiengine.multiwa": "✅ 2 engines",
+    "comparison.row.multiengine.cloud": "❌ Single",
+    "comparison.row.multiengine.evolution": "❌ Fixed",
+    "comparison.row.admin": "Admin Dashboard",
+    "comparison.row.admin.multiwa": "✅ Full-featured",
+    "comparison.row.admin.cloud": "❌ None",
+    "comparison.row.admin.evolution": "⚠️ Basic",
+    "comparison.row.visauto": "Visual Automation",
+    "comparison.row.visauto.multiwa": "✅ Flow builder",
+    "comparison.row.visauto.cloud": "❌",
+    "comparison.row.visauto.evolution": "❌",
+    "comparison.row.aikb": "AI Knowledge Base",
+    "comparison.row.aikb.multiwa": "✅ OpenAI + Google",
+    "comparison.row.aikb.cloud": "❌",
+    "comparison.row.aikb.evolution": "❌",
+    "comparison.row.sdk": "Official SDKs",
+    "comparison.row.sdk.multiwa": "✅ TS, Python, PHP",
+    "comparison.row.sdk.cloud": "✅ Multiple",
+    "comparison.row.sdk.evolution": "⚠️ Community",
+    "comparison.row.free": "Free",
+    "comparison.row.free.multiwa": "✅ MIT License",
+    "comparison.row.free.cloud": "⚠️ Per-message",
+    "comparison.row.free.evolution": "✅",
+    "quickstart.title": "Get Started in Seconds",
+    "quickstart.sub": "Four commands. That's all it takes.",
+    "quickstart.terminal": "Terminal",
+    "quickstart.comment.clone": "# Clone the repository",
+    "quickstart.comment.config": "# Configure and run",
+    "quickstart.comment.done": "# 🎉 Done! Access:",
+    "quickstart.comment.admin": "# Admin Dashboard → http://localhost:3001",
+    "quickstart.comment.swagger": "# API Swagger     → http://localhost:3333/api/docs",
+    "footer.links.github": "GitHub",
+    "footer.links.docs": "Documentation",
+    "footer.links.issues": "Issues",
+    "footer.links.license": "MIT License",
+    "footer.copyright": "Made with ❤️ by the MultiWA team",
+    "api.nginx.title": "MultiWA Gateway",
+    "api.nginx.subtitle": "WhatsApp Business API Gateway",
+    "api.nginx.status": "API Running",
+    "api.nginx.btn.docs": "📚 API Docs",
+    "api.nginx.btn.health": "🔍 Health Check",
+    "api.nginx.copyright": "© 2026 MultiWA Gateway - Open Source"
+  },
+  "fa": {
+    "meta.title": "MultiWA — دروازه متن‌باز WhatsApp Business API",
+    "meta.description": "کامل‌ترین دروازه متن‌باز WhatsApp Business API. چندموتوره، با میزبانی شخصی، آماده برای سازمان‌ها. ارسال پیام، پخش همگانی و خودکارسازی فرآیندها.",
+    "meta.ogTitle": "MultiWA — دروازه متن‌باز WhatsApp API",
+    "meta.ogDescription": "WhatsApp Business API چندموتوره با میزبانی شخصی. راه‌اندازی با یک کلیک در داکر.",
+    "app.name": "مولتی‌وا",
+    "nav.features": "ویژگی‌ها",
+    "nav.screenshots": "تصاویر",
+    "nav.quickstart": "راه‌اندازی سریع",
+    "nav.docs": "مستندات",
+    "nav.star": "ستاره در گیت‌هاب",
+    "hero.badge": "متن‌باز · میزبانی شخصی · چندموتوره",
+    "hero.title": "دروازه واتس‌اپ",
+    "hero.titleGradient": "برای همه",
+    "hero.subtitle": "کامل‌ترین دروازه متن‌باز WhatsApp Business API.<br>پشتیبانی از چند موتور، پخش همگانی، خودکارسازی و ویژگی‌های آماده برای سازمان‌ها.",
+    "hero.quickstart": "راه‌اندازی سریع",
+    "hero.viewGithub": "مشاهده در گیت‌هاب",
+    "hero.stats.stars": "ستاره‌های گیت‌هاب",
+    "hero.stats.license": "مجوز",
+    "hero.stats.sdks": "کیت‌های توسعه (SDK)",
+    "hero.stats.engines": "موتورها",
+    "features.title": "هر آنچه شما نیاز دارید",
+    "features.sub": "یکپارچه‌سازی واتس‌اپ در سطح سازمانی، بدون هزینه‌های گزاف سازمانی.",
+    "features.session.title": "چند نشست",
+    "features.session.desc": "اتصال نامحدود حساب‌های واتس‌اپ از طریق یک API واحد و یکپارچه.",
+    "features.engine.title": "چندموتوره",
+    "features.engine.desc": "جابجایی بدون دغدغه بین آداپتورهای whatsapp-web.js و Baileys.",
+    "features.engine.desc_landing": "انتخاب موتور به ازای هر پروفایل — whatsapp-web.js به صورت پیش‌فرض به همراه آداپتور آزمایشی Baileys.",
+    "features.broadcast.title": "پخش همگانی",
+    "features.broadcast.desc": "ارسال انبوه پیام با قالب‌ها، متغیرها و ردیابی وضعیت تحویل.",
+    "features.automation.title": "خودکارسازی هوش مصنوعی",
+    "features.automation.desc": "طراح جریان بصری همراه با پایگاه دانش هوش مصنوعی OpenAI و گوگل.",
+    "features.analytics.title": "تحلیل‌ها",
+    "features.analytics.desc": "داشبوردهای آنی شامل حجم پیام‌ها، نرخ تحویل و موارد دیگر.",
+    "features.sdks.title": "وب‌هوک‌ها و کیت‌های توسعه",
+    "features.sdks.desc": "کیت‌های توسعه رسمی برای TypeScript، Python و PHP. وب‌هوک‌های آنی.",
+    "features.docker.title": "آماده برای داکر",
+    "features.docker.desc": "راه‌اندازی با یک دستور. کانتینرهای آماده برای محیط عملیاتی به همراه بررسی‌های سلامت.",
+    "features.security.title": "امنیت سازمانی",
+    "features.security.desc": "احراز هویت با JWT، محدودیت نرخ درخواست، رمزنگاری داده‌ها در حالت سکون و سازگاری با استاندارد GDPR.",
+    "screenshots.title": "داشبورد مدیریت زیبا",
+    "screenshots.sub": "مدیریت همه‌چیز از طریق یک رابط کاربری مدرن و بصری.",
+    "screenshots.contacts": "مخاطبین",
+    "screenshots.automation": "اتوماسیون",
+    "screenshots.profiles": "پروفایل‌ها",
+    "screenshots.settings": "تنظیمات",
+    "comparison.title": "چرا MultiWA؟",
+    "comparison.sub": "ببینید چگونه با دیگر گزینه‌ها مقایسه می‌شویم.",
+    "comparison.th.feature": "ویژگی",
+    "comparison.th.multiwa": "MultiWA",
+    "comparison.th.cloud": "WhatsApp Cloud API",
+    "comparison.th.evolution": "Evolution API",
+    "comparison.row.selfhosted": "میزبانی شخصی",
+    "comparison.row.selfhosted.multiwa": "✅ کنترل کامل",
+    "comparison.row.selfhosted.cloud": "❌ میزبانی توسط متا",
+    "comparison.row.selfhosted.evolution": "✅",
+    "comparison.row.multiengine": "چندموتوره",
+    "comparison.row.multiengine.multiwa": "✅ ۲ موتور",
+    "comparison.row.multiengine.cloud": "❌ تک‌موتوره",
+    "comparison.row.multiengine.evolution": "❌ ثابت",
+    "comparison.row.admin": "داشبورد مدیریت",
+    "comparison.row.admin.multiwa": "✅ کامل و غنی",
+    "comparison.row.admin.cloud": "❌ ندارد",
+    "comparison.row.admin.evolution": "⚠️ پایه",
+    "comparison.row.visauto": "اتوماسیون بصری",
+    "comparison.row.visauto.multiwa": "✅ طراح جریان",
+    "comparison.row.visauto.cloud": "❌",
+    "comparison.row.visauto.evolution": "❌",
+    "comparison.row.aikb": "پایگاه دانش هوش مصنوعی",
+    "comparison.row.aikb.multiwa": "✅ OpenAI + گوگل",
+    "comparison.row.aikb.cloud": "❌",
+    "comparison.row.aikb.evolution": "❌",
+    "comparison.row.sdk": "کیت‌های توسعه رسمی",
+    "comparison.row.sdk.multiwa": "✅ TS, Python, PHP",
+    "comparison.row.sdk.cloud": "✅ چندگانه",
+    "comparison.row.sdk.evolution": "⚠️ توسعه جامعه کاربری",
+    "comparison.row.free": "رایگان",
+    "comparison.row.free.multiwa": "✅ مجوز MIT",
+    "comparison.row.free.cloud": "⚠️ پرداخت به ازای پیام",
+    "comparison.row.free.evolution": "✅",
+    "quickstart.title": "شروع در چند ثانیه",
+    "quickstart.sub": "چهار دستور. تمام چیزی که نیاز دارید.",
+    "quickstart.terminal": "ترمینال",
+    "quickstart.comment.clone": "# کلون کردن مخزن",
+    "quickstart.comment.config": "# پیکربندی و اجرا",
+    "quickstart.comment.done": "# 🎉 آماده شد! دسترسی:",
+    "quickstart.comment.admin": "# داشبورد مدیریت ← http://localhost:3001",
+    "quickstart.comment.swagger": "# مستندات API سوگر ← http://localhost:3333/api/docs",
+    "footer.links.github": "گیت‌هاب",
+    "footer.links.docs": "مستندات",
+    "footer.links.issues": "گزارش اشکالات",
+    "footer.links.license": "مجوز MIT",
+    "footer.copyright": "ساخته شده با ❤️ توسط تیم MultiWA",
+    "api.nginx.title": "دروازه MultiWA",
+    "api.nginx.subtitle": "دروازه WhatsApp Business API",
+    "api.nginx.status": "API در حال اجراست",
+    "api.nginx.btn.docs": "📚 مستندات API",
+    "api.nginx.btn.health": "🔍 بررسی سلامت",
+    "api.nginx.copyright": "© ۲۰۲۶ دروازه MultiWA - متن‌باز"
+  },
+  "id": {
+    "meta.title": "MultiWA — Gateway API WhatsApp Business Open Source",
+    "meta.description": "Gateway API WhatsApp Business open-source terlengkap. Multi-engine, self-hosted, siap untuk enterprise. Kirim pesan, siaran, dan otomatisasi alur kerja.",
+    "meta.ogTitle": "MultiWA — Gateway API WhatsApp Open Source",
+    "meta.ogDescription": "Gateway API WhatsApp Business multi-engine, self-hosted. Setup satu klik dengan Docker.",
+    "app.name": "MultiWA",
+    "nav.features": "Fitur",
+    "nav.screenshots": "Tangkapan Layar",
+    "nav.quickstart": "Mulai Cepat",
+    "nav.docs": "Dokumentasi",
+    "nav.star": "Bintang di GitHub",
+    "hero.badge": "Open Source · Self-Hosted · Multi-Engine",
+    "hero.title": "WhatsApp Gateway",
+    "hero.titleGradient": "untuk Semua Orang",
+    "hero.subtitle": "Gateway API WhatsApp Business open-source terlengkap.<br>Dukungan multi-engine, siaran, otomatisasi, dan fitur siap enterprise.",
+    "hero.quickstart": "Mulai Cepat",
+    "hero.viewGithub": "Lihat di GitHub",
+    "hero.stats.stars": "Bintang GitHub",
+    "hero.stats.license": "Lisensi",
+    "hero.stats.sdks": "SDK",
+    "hero.stats.engines": "Engine",
+    "features.title": "Semua yang Anda Butuhkan",
+    "features.sub": "Integrasi WhatsApp kelas enterprise, tanpa harga sekelas enterprise.",
+    "features.session.title": "Multi-Sesi",
+    "features.session.desc": "Hubungkan akun WhatsApp tanpa batas melalui satu API terpadu.",
+    "features.engine.title": "Multi-Engine",
+    "features.engine.desc": "Beralih antara adapter whatsapp-web.js dan Baileys dengan mulus.",
+    "features.engine.desc_landing": "Pilihan engine per-profil — secara default whatsapp-web.js, dengan adapter eksperimental Baileys.",
+    "features.broadcast.title": "Siaran",
+    "features.broadcast.desc": "Pengiriman pesan massal dengan template, variabel, dan pelacakan pengiriman.",
+    "features.automation.title": "Otomatisasi AI",
+    "features.automation.desc": "Penyusun alur visual dengan basis pengetahuan OpenAI dan Google AI.",
+    "features.analytics.title": "Analitik",
+    "features.analytics.desc": "Dasbor real-time dengan volume pesan, tingkat pengiriman, dan lainnya.",
+    "features.sdks.title": "Webhook & SDK",
+    "features.sdks.desc": "SDK resmi untuk TypeScript, Python, dan PHP. Webhook real-time.",
+    "features.docker.title": "Siap Pakai Docker",
+    "features.docker.desc": "Setup satu perintah. Kontainer siap produksi dengan pemeriksaan kesehatan.",
+    "features.security.title": "Keamanan Enterprise",
+    "features.security.desc": "Autentikasi JWT, pembatasan akses, enkripsi data, kepatuhan GDPR.",
+    "screenshots.title": "Dasbor Admin yang Indah",
+    "screenshots.sub": "Kelola semuanya dari antarmuka modern yang intuitif.",
+    "screenshots.contacts": "Kontak",
+    "screenshots.automation": "Otomatisasi",
+    "screenshots.profiles": "Profil",
+    "screenshots.settings": "Pengaturan",
+    "comparison.title": "Mengapa MultiWA?",
+    "comparison.sub": "Lihat perbandingannya dengan alternatif lain.",
+    "comparison.th.feature": "Fitur",
+    "comparison.th.multiwa": "MultiWA",
+    "comparison.th.cloud": "WhatsApp Cloud API",
+    "comparison.th.evolution": "Evolution API",
+    "comparison.row.selfhosted": "Self-hosted",
+    "comparison.row.selfhosted.multiwa": "✅ Kontrol penuh",
+    "comparison.row.selfhosted.cloud": "❌ Dihosting oleh Meta",
+    "comparison.row.selfhosted.evolution": "✅",
+    "comparison.row.multiengine": "Multi-engine",
+    "comparison.row.multiengine.multiwa": "✅ 2 engine",
+    "comparison.row.multiengine.cloud": "❌ Tunggal",
+    "comparison.row.multiengine.evolution": "❌ Tetap",
+    "comparison.row.admin": "Dasbor Admin",
+    "comparison.row.admin.multiwa": "✅ Fitur lengkap",
+    "comparison.row.admin.cloud": "❌ Tidak ada",
+    "comparison.row.admin.evolution": "⚠️ Dasar",
+    "comparison.row.visauto": "Otomatisasi Visual",
+    "comparison.row.visauto.multiwa": "✅ Penyusun alur",
+    "comparison.row.visauto.cloud": "❌",
+    "comparison.row.visauto.evolution": "❌",
+    "comparison.row.aikb": "Basis Pengetahuan AI",
+    "comparison.row.aikb.multiwa": "✅ OpenAI + Google",
+    "comparison.row.aikb.cloud": "❌",
+    "comparison.row.aikb.evolution": "❌",
+    "comparison.row.sdk": "SDK Resmi",
+    "comparison.row.sdk.multiwa": "✅ TS, Python, PHP",
+    "comparison.row.sdk.cloud": "✅ Banyak",
+    "comparison.row.sdk.evolution": "⚠️ Komunitas",
+    "comparison.row.free": "Gratis",
+    "comparison.row.free.multiwa": "✅ Lisensi MIT",
+    "comparison.row.free.cloud": "⚠️ Per pesan",
+    "comparison.row.free.evolution": "✅",
+    "quickstart.title": "Mulai dalam Hitungan Detik",
+    "quickstart.sub": "Empat perintah. Cukup itu saja.",
+    "quickstart.terminal": "Terminal",
+    "quickstart.comment.clone": "# Kloning repositori",
+    "quickstart.comment.config": "# Konfigurasi dan jalankan",
+    "quickstart.comment.done": "# 🎉 Selesai! Akses:",
+    "quickstart.comment.admin": "# Dasbor Admin → http://localhost:3001",
+    "quickstart.comment.swagger": "# API Swagger   → http://localhost:3333/api/docs",
+    "footer.links.github": "GitHub",
+    "footer.links.docs": "Dokumentasi",
+    "footer.links.issues": "Kendala",
+    "footer.links.license": "Lisensi MIT",
+    "footer.copyright": "Dibuat dengan ❤️ oleh tim MultiWA",
+    "api.nginx.title": "MultiWA Gateway",
+    "api.nginx.subtitle": "WhatsApp Business API Gateway",
+    "api.nginx.status": "API Berjalan",
+    "api.nginx.btn.docs": "📚 Dokumentasi API",
+    "api.nginx.btn.health": "🔍 Pemeriksaan Kesehatan",
+    "api.nginx.copyright": "© 2026 MultiWA Gateway - Open Source"
+  }
+};
+
+    const LANGUAGE_STORAGE_KEY = 'multiwa-admin-language';
+
+    function setLanguage(lang) {
+      if (!translations[lang]) lang = 'en';
+      
+      // Save
+      try {
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+      } catch (e) {}
+
+      // Update html element dir and lang attributes
+      const htmlEl = document.documentElement;
+      htmlEl.setAttribute('lang', lang);
+      if (lang === 'fa') {
+        htmlEl.setAttribute('dir', 'rtl');
+      } else {
+        htmlEl.setAttribute('dir', 'ltr');
+      }
+
+      // Update elements
+      const elements = document.querySelectorAll('[data-i18n]');
+      elements.forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        const translation = translations[lang][key];
+        if (translation) {
+          // If translation contains HTML tags (e.g. <br>), use innerHTML, else textContent
+          if (translation.includes('<br>')) {
+            el.innerHTML = translation;
+          } else {
+            el.textContent = translation;
+          }
+        }
+      });
+
+      // Update document title and metas
+      document.title = translations[lang]['meta.title'];
+      const descMeta = document.querySelector('meta[name="description"]');
+      if (descMeta) descMeta.setAttribute('content', translations[lang]['meta.description']);
+      const ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle) ogTitle.setAttribute('content', translations[lang]['meta.ogTitle']);
+      const ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc) ogDesc.setAttribute('content', translations[lang]['meta.ogDescription']);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      let activeLang = 'en';
+      try {
+        const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+        if (stored === 'en' || stored === 'fa' || stored === 'id') {
+          activeLang = stored;
+        }
+      } catch (e) {}
+
+      const select = document.getElementById('lang-select');
+      if (select) {
+        select.value = activeLang;
+        select.addEventListener('change', (e) => {
+          setLanguage(e.target.value);
+        });
+      }
+
+      setLanguage(activeLang);
+    });
+  </script>
 </body>
 </html>
