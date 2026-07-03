@@ -43,6 +43,16 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private readonly READY_TIMEOUT_MS = Number(process.env.READY_TIMEOUT_MS) || 120000;
   private readonly READY_TIMEOUT_MAX_RETRIES = Number(process.env.READY_TIMEOUT_MAX_RETRIES) || 3;
 
+  // Periodic reconnect sweep: a safety net that reconnects profiles stuck
+  // 'disconnected' but still holding a valid session (a network/hang outage that
+  // outlasted the inline retries). RECONNECT_SWEEP_INTERVAL_MS=0 disables it.
+  private reconnectSweepTimer: NodeJS.Timeout | null = null;
+  private sweeping = false;
+  private readonly RECONNECT_SWEEP_INTERVAL_MS = Number(process.env.RECONNECT_SWEEP_INTERVAL_MS) || 180000;
+  // Profiles the operator disconnected on purpose — the sweep must NOT bring these
+  // back. Added on manual disconnect, cleared on manual (re)connect.
+  private manuallyDisconnected = new Set<string>();
+
   private clearReadyTimer(profileId: string): void {
     const t = this.readyTimers.get(profileId);
     if (t) { clearTimeout(t); this.readyTimers.delete(profileId); }
@@ -295,9 +305,67 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
       // Step 2: Auto-reconnect profiles that have valid session data
       await this.autoReconnectProfiles();
-      
+
+      // Step 3: Start the periodic reconnect sweep (safety net for outages that
+      // outlast the inline retries). API mode only — the worker path returned early.
+      if (this.RECONNECT_SWEEP_INTERVAL_MS > 0) {
+        this.reconnectSweepTimer = setInterval(() => {
+          this.reconnectSweep().catch(err =>
+            this.logger.warn(`Reconnect sweep tick error: ${(err as Error).message}`));
+        }, this.RECONNECT_SWEEP_INTERVAL_MS);
+        this.logger.log(`Reconnect sweep enabled (every ${Math.round(this.RECONNECT_SWEEP_INTERVAL_MS / 1000)}s)`);
+      }
+
     } catch (error) {
       this.logger.error('Error in onModuleInit:', error);
+    }
+  }
+
+  /**
+   * True if the profile has on-disk session credentials — a whatsapp-web.js
+   * LocalAuth dir (`session-<id>/`) or a Baileys `creds.json` — i.e. it can
+   * reconnect without a fresh QR scan. A logged-out profile has neither.
+   */
+  private async hasValidSession(profileId: string): Promise<boolean> {
+    const fs = await import('fs/promises');
+    const sessionsDir = process.env.SESSIONS_DIR || '/data/sessions';
+    const sessionDir = path.join(sessionsDir, profileId);
+    try { await fs.access(path.join(sessionDir, `session-${profileId}`)); return true; } catch { /* not wwebjs */ }
+    try { await fs.access(path.join(sessionDir, 'creds.json')); return true; } catch { /* not baileys */ }
+    return false;
+  }
+
+  /**
+   * Periodic safety net: reconnect profiles stuck 'disconnected' that still hold a
+   * valid session (e.g. a network/hang outage that outlasted the inline retries).
+   * Skips profiles the operator disconnected on purpose, those already
+   * (re)connecting, and logged-out sessions (which need a fresh QR). Runs forever
+   * on RECONNECT_SWEEP_INTERVAL_MS so an outage of any length eventually recovers.
+   */
+  private async reconnectSweep(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      const profiles = await prisma.profile.findMany({
+        where: { status: 'disconnected' },
+        select: { id: true, displayName: true },
+      });
+      let attempted = 0;
+      for (const profile of profiles) {
+        if (this.manuallyDisconnected.has(profile.id)) continue; // intentional disconnect
+        if (this.engines.has(profile.id)) continue;              // already (re)connecting
+        if (!(await this.hasValidSession(profile.id))) continue;  // logged out — needs QR
+        this.logger.log(`Reconnect sweep: attempting ${profile.displayName || profile.id}`);
+        this.connectProfile(profile.id).catch(err =>
+          this.logger.warn(`Reconnect sweep failed for ${profile.displayName || profile.id}: ${(err as Error).message}`));
+        attempted++;
+        await new Promise(r => setTimeout(r, 2000)); // pace, don't overwhelm WhatsApp
+      }
+      if (attempted > 0) this.logger.log(`Reconnect sweep attempted ${attempted} profile(s)`);
+    } catch (err) {
+      this.logger.warn(`Reconnect sweep error: ${(err as Error).message}`);
+    } finally {
+      this.sweeping = false;
     }
   }
 
@@ -320,29 +388,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       let reconnectedCount = 0;
       
       for (const profile of profiles) {
-        const sessionDir = path.join(sessionsDir, profile.id);
-        // whatsapp-web.js LocalAuth (dataPath=sessionDir) stores data in
-        // {dataPath}/session-{clientId}/ — NOT under a .wwebjs_auth subdir.
-        const wwebjsSessionDir = path.join(sessionDir, `session-${profile.id}`);
-        // Also check for Baileys-style creds.json as fallback
-        const credsPath = path.join(sessionDir, 'creds.json');
-        
-        let hasSession = false;
-        try {
-          await fs.access(wwebjsSessionDir);
-          hasSession = true;
-          this.logger.log(`Found whatsapp-web.js session for: ${profile.displayName || profile.id}`);
-        } catch {
-          try {
-            await fs.access(credsPath);
-            hasSession = true;
-            this.logger.log(`Found Baileys session for: ${profile.displayName || profile.id}`);
-          } catch {
-            // No session found
-          }
-        }
-
-        if (!hasSession) {
+        if (!(await this.hasValidSession(profile.id))) {
           this.logger.debug(`No session found for profile: ${profile.displayName || profile.id}`);
           continue;
         }
@@ -436,6 +482,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   }
 
   async onModuleDestroy() {
+    if (this.reconnectSweepTimer) {
+      clearInterval(this.reconnectSweepTimer);
+      this.reconnectSweepTimer = null;
+    }
     // Cleanup all engines on shutdown
     for (const [profileId, instance] of this.engines) {
       try {
@@ -488,6 +538,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async connectProfile(profileId: string): Promise<{ status: string; message: string }> {
     this.logger.log(`Connecting profile: ${profileId}`);
+    // A (re)connect clears any "manually disconnected" marker so the reconnect
+    // sweep watches this profile again.
+    this.manuallyDisconnected.delete(profileId);
 
     // Check if already connected
     const existing = this.engines.get(profileId);
@@ -1157,6 +1210,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async disconnectProfile(profileId: string): Promise<{ status: string }> {
     this.logger.log(`Disconnecting profile: ${profileId}`);
+    // Operator-initiated disconnect — mark it so the reconnect sweep does not
+    // bring it back. Cleared when the operator connects it again.
+    this.manuallyDisconnected.add(profileId);
 
     const instance = this.engines.get(profileId);
     
