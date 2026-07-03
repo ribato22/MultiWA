@@ -8,7 +8,10 @@ import makeWASocket, {
   makeCacheableSignalKeyStore,
   WAMessageContent,
   proto,
+  makeInMemoryStore,
+  type WASocket,
 } from '@whiskeysockets/baileys';
+import type { Chat, Contact } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import * as qrcode from 'qrcode-terminal';
 import type {
@@ -21,13 +24,64 @@ import type {
   ContactOptions,
   PollOptions,
   SendMessageOptions,
+  RecentChat,
+  RecentChatMessage,
 } from '../types';
+
+/** Bound Baileys in-memory store for chat/message lookups during history sync. */
+interface BaileysInMemoryStore {
+  bind(ev: { on: (event: string, listener: (...args: unknown[]) => void) => void }): void;
+  loadMessages(jid: string, limit: number): Promise<proto.IWebMessageInfo[]>;
+  chats?: {
+    all(): Array<{
+      id?: string;
+      jid?: string;
+      conversationTimestamp?: number;
+      name?: string;
+    }>;
+  };
+  contacts?: Record<string, { name?: string; notify?: string; verifiedName?: string }>;
+}
+
+interface HistoryChatRow {
+  jid: string;
+  name: string;
+  isGroup: boolean;
+  sortTs: number;
+}
+
+/** File auth bundle from `useMultiFileAuthState`. */
+interface BaileysAuthBundle {
+  state: {
+    creds: Parameters<typeof makeWASocket>[0]['auth']['creds'];
+    keys: Parameters<typeof makeWASocket>[0]['auth']['keys'];
+  };
+  saveCreds: () => Promise<void>;
+}
+
+const BAILEYS_HISTORY_SYNC_WAIT_MS = 10_000;
+
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  return 'Unknown error';
+}
+
+const baileysSilentLogger = {
+  level: 'silent' as const,
+  trace: (..._args: unknown[]) => undefined,
+  debug: (..._args: unknown[]) => undefined,
+  info: (..._args: unknown[]) => undefined,
+  warn: (..._args: unknown[]) => undefined,
+  error: (..._args: unknown[]) => undefined,
+  child: () => baileysSilentLogger,
+};
 
 
 export class BaileysAdapter implements IWhatsAppEngine {
   readonly engineType = 'baileys' as const;
 
-  private socket: ReturnType<typeof makeWASocket> | null = null;
+  private socket: WASocket | null = null;
   private config: EngineConfig | null = null;
   private status: EngineStatus = {
     isConnected: false,
@@ -35,15 +89,21 @@ export class BaileysAdapter implements IWhatsAppEngine {
   };
   private currentQR: string | null = null;
   private qrCallbacks: ((qr: string) => void)[] = [];
-  private authState: any = null;
+  private authState: BaileysAuthBundle | null = null;
   private connectionRetryCount: number = 0;
   private maxConnectionRetries: number = 3;
   // Single-authority reconnect state. Baileys owns its own reconnection internally so it never
   // competes with EngineManager's onDisconnected auto-retry (a double-reconnect spawns multiple
   // sockets, each emitting a fresh pairing QR every few seconds → impossible to scan).
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
   private isReconnecting: boolean = false;
   private hasAuthenticated: boolean = false;
+  private dataStore: BaileysInMemoryStore | null = null;
+  private historyChats: Chat[] = [];
+  private historyMessages: proto.IWebMessageInfo[] = [];
+  private historyContacts: Record<string, Contact> = {};
+  private historySetReceived = false;
+  private historyWaiters = new Set<() => void>();
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -58,6 +118,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
     if (!this.authState) {
       throw new Error('Not initialized. Call initialize() first.');
     }
+    this.resetHistorySyncState();
 
     // Cancel any pending reconnect and tear down a prior socket. Each event handler is bound to
     // the socket instance that created it (see setupEventHandlers' isCurrent guard), so the old
@@ -73,7 +134,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
       const dying = this.socket;
       this.socket = null;
       try {
-        dying.end(undefined as any);
+        dying.end(undefined);
       } catch {
         /* ignore */
       }
@@ -95,19 +156,25 @@ export class BaileysAdapter implements IWhatsAppEngine {
       console.log(`[Baileys] Using fetched WA version ${version.join('.')}`);
     }
 
-    this.socket = makeWASocket({
+    const keyLogger = baileysSilentLogger as unknown as Parameters<typeof makeCacheableSignalKeyStore>[1];
+    const sock = makeWASocket({
       version,
       auth: {
         creds: this.authState.state.creds,
         keys: makeCacheableSignalKeyStore(
           this.authState.state.keys,
-          console as any
+          keyLogger
         ),
       },
       printQRInTerminal: false,
       generateHighQualityLinkPreview: true,
     });
 
+    this.socket = sock;
+    if (!this.dataStore) {
+      this.dataStore = makeInMemoryStore({ logger: keyLogger }) as unknown as BaileysInMemoryStore;
+    }
+    this.dataStore.bind(sock.ev);
     this.setupEventHandlers();
   }
 
@@ -277,6 +344,19 @@ export class BaileysAdapter implements IWhatsAppEngine {
 
         this.config?.onMessage?.(transformedMessage);
       }
+    });
+
+    // Initial WhatsApp history bundle. Baileys emits this after login; keep it
+    // local so EngineManager can backfill conversations without firing live
+    // message callbacks/webhooks.
+    this.socket.ev.on('messaging-history.set', ({ chats, messages, contacts }) => {
+      if (!isCurrent()) return;
+      this.historyChats = chats || [];
+      this.historyMessages = messages || [];
+      this.historyContacts = this.normalizeHistoryContacts(contacts);
+      this.historySetReceived = true;
+      for (const resolve of this.historyWaiters) resolve();
+      this.historyWaiters.clear();
     });
 
     // Message status
@@ -622,6 +702,140 @@ export class BaileysAdapter implements IWhatsAppEngine {
       console.error('[Baileys] Delete for everyone error:', error);
       throw error;
     }
+  }
+
+  async getRecentChats(chatLimit: number, perChatMessages: number): Promise<RecentChat[]> {
+    if (!this.isReady()) return [];
+    await this.waitForHistorySet();
+
+    const rows = this.collectHistoryChatRows()
+      .sort((a, b) => b.sortTs - a.sortTs)
+      .slice(0, Math.max(1, chatLimit));
+
+    return rows.map((chat) => {
+      const messages = this.historyMessages
+        .filter((message) => message.key?.remoteJid === chat.jid)
+        .sort((a, b) => this.messageTimestampMs(b) - this.messageTimestampMs(a))
+        .slice(0, Math.max(1, perChatMessages))
+        .map((message) => this.toRecentChatMessage(message))
+        .filter((message): message is RecentChatMessage => message !== null);
+
+      return {
+        jid: chat.jid,
+        name: chat.name,
+        isGroup: chat.isGroup,
+        messages,
+      };
+    });
+  }
+
+  private resetHistorySyncState(): void {
+    this.historyChats = [];
+    this.historyMessages = [];
+    this.historyContacts = {};
+    this.historySetReceived = false;
+    for (const resolve of this.historyWaiters) resolve();
+    this.historyWaiters.clear();
+  }
+
+  private async waitForHistorySet(): Promise<void> {
+    if (this.historySetReceived) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.historyWaiters.delete(done);
+        resolve();
+      }, BAILEYS_HISTORY_SYNC_WAIT_MS);
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.historyWaiters.add(done);
+    });
+  }
+
+  private collectHistoryChatRows(): HistoryChatRow[] {
+    const rows = new Map<string, HistoryChatRow>();
+    for (const chat of this.historyChats) {
+      const jid = chat.id;
+      if (!jid) continue;
+      rows.set(jid, {
+        jid,
+        name: this.getHistoryChatName(jid, chat.name),
+        isGroup: jid.endsWith('@g.us'),
+        sortTs: this.timestampValue(chat.conversationTimestamp),
+      });
+    }
+    for (const message of this.historyMessages) {
+      const jid = message.key?.remoteJid;
+      if (!jid || rows.has(jid)) continue;
+      rows.set(jid, {
+        jid,
+        name: this.getHistoryChatName(jid),
+        isGroup: jid.endsWith('@g.us'),
+        sortTs: this.messageTimestampMs(message),
+      });
+    }
+    return [...rows.values()];
+  }
+
+  private normalizeHistoryContacts(contacts: Contact[] | Record<string, Contact> | undefined): Record<string, Contact> {
+    if (!contacts) return {};
+    if (!Array.isArray(contacts)) return contacts;
+
+    const normalized: Record<string, Contact> = {};
+    for (const contact of contacts) {
+      normalized[contact.id] = contact;
+    }
+    return normalized;
+  }
+
+  private getHistoryChatName(jid: string, fallback?: string | null): string {
+    if (fallback?.trim()) return fallback.trim();
+    const contact = this.historyContacts[jid];
+    return contact?.name || contact?.notify || contact?.verifiedName || jid;
+  }
+
+  private toRecentChatMessage(message: proto.IWebMessageInfo): RecentChatMessage | null {
+    const id = message.key?.id;
+    const remoteJid = message.key?.remoteJid;
+    if (!id || !remoteJid) return null;
+    const content = message.message;
+    return {
+      id,
+      fromMe: Boolean(message.key?.fromMe),
+      from: remoteJid,
+      author: message.key?.participant || undefined,
+      body: this.getMessageBody(content),
+      type: this.getMessageType(content),
+      timestamp: this.messageTimestampMs(message),
+      hasMedia: this.hasMediaContent(content),
+    };
+  }
+
+  private getMessageBody(message: WAMessageContent | null | undefined): string {
+    if (!message) return '';
+    return message.conversation || message.extendedTextMessage?.text || message.imageMessage?.caption || message.videoMessage?.caption || '';
+  }
+
+  private hasMediaContent(message: WAMessageContent | null | undefined): boolean {
+    return Boolean(message?.imageMessage || message?.videoMessage || message?.audioMessage || message?.documentMessage);
+  }
+
+  private messageTimestampMs(message: proto.IWebMessageInfo): number {
+    return this.timestampValue(message.messageTimestamp);
+  }
+
+  private timestampValue(raw: unknown): number {
+    if (typeof raw === 'number') return raw > 10_000_000_000 ? raw : raw * 1000;
+    if (typeof raw === 'string') {
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? this.timestampValue(parsed) : Date.now();
+    }
+    if (raw && typeof raw === 'object' && 'toNumber' in raw && typeof raw.toNumber === 'function') {
+      const parsed = raw.toNumber();
+      return typeof parsed === 'number' ? this.timestampValue(parsed) : Date.now();
+    }
+    return Date.now();
   }
 
   // ========== QR CODE ==========

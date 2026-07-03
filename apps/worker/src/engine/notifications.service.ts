@@ -45,10 +45,10 @@ export class WorkerNotificationsService {
       if (!this.isNotificationEnabled(user.preferences as any, type)) continue;
       await prisma.notification
         .create({ data: { userId: user.id, type, title, body, metadata: metadata || undefined } })
-        .catch((err) => this.logger.warn(`Notification create failed: ${(err as Error).message}`));
+        .catch((err: unknown) => this.logger.warn(`Notification create failed: ${this.errorMessage(err)}`));
       // Fire-and-forget email/push (best-effort).
-      this.sendEmailIfEnabled(user.id, title, body).catch((err) => this.logger.warn(`Email notification failed: ${err.message}`));
-      this.sendPushIfEnabled(user.id, title, body, metadata).catch((err) => this.logger.warn(`Push notification failed: ${err.message}`));
+      this.sendEmailIfEnabled(user.id, title, body).catch((err: unknown) => this.logger.warn(`Email notification failed: ${this.errorMessage(err)}`));
+      this.sendPushIfEnabled(user.id, title, body, metadata).catch((err: unknown) => this.logger.warn(`Push notification failed: ${this.errorMessage(err)}`));
     }
   }
 
@@ -67,6 +67,12 @@ export class WorkerNotificationsService {
     const prefs = (user?.preferences as any) || {};
     if (prefs.pushNotifications === false) return;
     await this.pushService.sendPush(userId, title, body, metadata);
+  }
+
+  private errorMessage(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'string') return err;
+    return String(err);
   }
 
   private isNotificationEnabled(preferences: any, type: NotificationType): boolean {

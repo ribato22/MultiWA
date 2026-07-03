@@ -81,6 +81,11 @@ export class ContactImportItem {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @ApiPropertyOptional({ example: { tagColors: { vip: '#f59e0b' }, primaryTag: 'vip' } })
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, any>;
 }
 
 export class ImportContactsDto {
@@ -103,9 +108,9 @@ export class ImportCsvDto {
   @IsNotEmpty()
   profileId: string;
 
-  @ApiProperty({ 
-    example: 'phone,name,tags\n6281234567890,John Doe,customer;vip\n6287654321098,Jane Doe,prospect',
-    description: 'CSV data with header row. Columns: phone (required), name, tags (semicolon-separated)'
+  @ApiProperty({
+    example: 'phone,name,tags,metadata\n6281234567890,John Doe,customer;vip,"{\"tagColors\":{\"vip\":\"#f59e0b\"},\"primaryTag\":\"vip\"}"',
+    description: 'CSV/TSV/tab-delimited text with header row. Columns: phone (required), name, tags (semicolon-separated), metadata (JSON), primaryTag',
   })
   @IsString()
   @IsNotEmpty()

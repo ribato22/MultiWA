@@ -172,3 +172,40 @@ footer { padding: 48px 0; border-top: 1px solid var(--gray-200); }
   .features-grid { grid-template-columns: 1fr; }
   #hero h1 { font-size: 2rem; }
 }
+
+/* ── Language Switcher ──────────────── */
+.lang-select {
+  background: transparent;
+  border: 1px solid var(--gray-300);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: .85rem;
+  font-weight: 500;
+  color: var(--gray-600);
+  outline: none;
+  cursor: pointer;
+  transition: all .2s;
+}
+.lang-select:hover, .lang-select:focus {
+  border-color: var(--green-500);
+  color: var(--green-600);
+}
+/* RTL Overrides */
+html[dir="rtl"] {
+  direction: rtl;
+}
+html[dir="rtl"] body {
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+}
+html[dir="rtl"] th {
+  text-align: right;
+}
+html[dir="rtl"] .screenshot-card span {
+  left: auto;
+  right: 16px;
+}
+html[dir="rtl"] .stat-dot {
+  margin-right: 0;
+  margin-left: 8px;
+}
+

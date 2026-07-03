@@ -53,6 +53,13 @@ export interface DashboardStats {
   };
 }
 
+export interface MessageTrendPoint {
+  period: string;
+  incoming: number;
+  outgoing: number;
+}
+
+
 export interface Contact {
   id: string;
   profileId: string;
@@ -62,8 +69,30 @@ export interface Contact {
   avatar?: string;
   tags?: string[];
   notes?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   createdAt: string;
+}
+
+export interface ContactImportItem {
+  phone: string;
+  name?: string;
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface ContactImportResult {
+  created: number;
+  updated: number;
+  failed: number;
+  errors: string[];
+  error?: string;
+}
+
+export interface ContactsListResponse {
+  contacts: Contact[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface Template {
@@ -174,9 +203,11 @@ class ApiClient {
 
         const data = await res.json();
         const tokens = data.data || data;
-        if (tokens.accessToken) {
-          localStorage.setItem('accessToken', tokens.accessToken);
-          if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
+        const accessToken = tokens.accessToken || tokens.access_token;
+        const nextRefreshToken = tokens.refreshToken || tokens.refresh_token;
+        if (accessToken) {
+          localStorage.setItem('accessToken', accessToken);
+          if (nextRefreshToken) localStorage.setItem('refreshToken', nextRefreshToken);
           return true;
         }
         return false;
@@ -277,7 +308,7 @@ class ApiClient {
     if (options?.granularity) params.set('granularity', options.granularity);
     if (options?.startDate) params.set('startDate', options.startDate);
     if (options?.endDate) params.set('endDate', options.endDate);
-    return this.request<{ period: string; incoming: number; outgoing: number }[]>(`/statistics/messages/trend?${params.toString()}`);
+    return this.request<MessageTrendPoint[]>(`/statistics/messages/trend?${params.toString()}`);
   }
 
   async getContactStats(profileId: string) {
@@ -326,23 +357,31 @@ class ApiClient {
 
   // Contacts
   async getContacts(profileId: string) {
-    return this.request<Contact[]>(`/contacts?profileId=${profileId}&limit=1000`);
+    return this.request<ContactsListResponse>(`/contacts?profileId=${profileId}&limit=1000`);
   }
 
-  async createContact(data: { profileId: string; phone: string; name?: string; email?: string; tags?: string[]; notes?: string }) {
-    // Backend DTO accepts: profileId, phone, name, tags, metadata
-    // email and notes go into metadata since they're not in the Contact schema
-    const { email, notes, ...rest } = data;
-    const payload: any = { ...rest };
-    if (email || notes) {
-      payload.metadata = { ...(email ? { email } : {}), ...(notes ? { notes } : {}) };
+  async createContact(data: {
+    profileId: string;
+    phone: string;
+    name?: string;
+    email?: string;
+    tags?: string[];
+    notes?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    const { email, notes, metadata, ...rest } = data;
+    const payload: Record<string, unknown> = { ...rest };
+    const mergedMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
+    if (email) mergedMetadata.email = email;
+    if (notes) mergedMetadata.notes = notes;
+    if (Object.keys(mergedMetadata).length > 0) {
+      payload.metadata = mergedMetadata;
     }
     return this.request<Contact>('/contacts', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   }
-
   async deleteContact(id: string) {
     return this.request<void>(`/contacts/${id}`, {
       method: 'DELETE',
@@ -354,6 +393,20 @@ class ApiClient {
       `/contacts/sync/whatsapp?profileId=${profileId}`,
       { method: 'POST', body: JSON.stringify({}) }
     );
+  }
+
+  async importContacts(profileId: string, contacts: ContactImportItem[]) {
+    return this.request<ContactImportResult>('/contacts/import', {
+      method: 'POST',
+      body: JSON.stringify({ profileId, contacts }),
+    });
+  }
+
+  async importContactsCsv(profileId: string, csvData: string) {
+    return this.request<ContactImportResult>('/contacts/import/csv', {
+      method: 'POST',
+      body: JSON.stringify({ profileId, csvData }),
+    });
   }
 
   // Templates

@@ -12,6 +12,13 @@ import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AllowInDemo } from '../../common/guards/demo.guard';
 
+type AuthHttpRequest = {
+  ip?: string;
+  connection?: { remoteAddress?: string };
+  headers?: Record<string, string | string[] | undefined>;
+};
+
+
 @ApiTags('Authentication')
 @Controller('auth')
 export class AuthController {
@@ -26,8 +33,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a new user and organization' })
   @ApiResponse({ status: 201, description: 'User registered successfully', type: TokenResponseDto })
   @ApiValidationError()
-  async register(@Body() dto: RegisterDto): Promise<TokenResponseDto> {
-    return this.authService.register(dto);
+  async register(@Body() dto: RegisterDto, @Request() req: AuthHttpRequest): Promise<TokenResponseDto> {
+    const ip = req.ip || req.connection?.remoteAddress;
+    const userAgentHeader = req.headers?.['user-agent'];
+    const ua = Array.isArray(userAgentHeader) ? userAgentHeader[0] : userAgentHeader;
+    return this.authService.register(dto, ip, ua);
   }
 
   @Post('login')
@@ -68,12 +78,13 @@ export class AuthController {
   @ApiOperation({ summary: 'Refresh access token', description: 'Exchanges a valid refresh token for a new access/refresh token pair.' })
   @ApiResponse({ status: 200, description: 'Token refreshed', type: TokenResponseDto })
   @ApiValidationError()
-  async refresh(@Body('refreshToken') refreshToken: string): Promise<TokenResponseDto> {
-    return this.authService.refreshToken(refreshToken);
+  async refresh(@Body('refreshToken') refreshToken: string, @Request() req: AuthHttpRequest): Promise<TokenResponseDto> {
+    const ip = req.ip || req.connection?.remoteAddress;
+    const userAgentHeader = req.headers?.['user-agent'];
+    const ua = Array.isArray(userAgentHeader) ? userAgentHeader[0] : userAgentHeader;
+    return this.authService.refreshToken(refreshToken, ip, ua);
   }
 
-  @Post('logout')
-  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Logout and revoke current session' })
