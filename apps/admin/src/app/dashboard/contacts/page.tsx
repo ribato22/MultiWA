@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ChangeEvent } from 'react';
 import {
   Plus,
   RefreshCw,
@@ -14,8 +14,24 @@ import {
   Lightbulb,
   Users,
   Tag,
+  Upload,
+  Palette,
 } from 'lucide-react';
-import { api, Contact, Profile } from '@/lib/api';
+import {
+  api,
+  Contact,
+  ContactImportItem,
+  ContactImportResult,
+  Profile,
+} from '@/lib/api';
+import {
+  collectTagColorFilters,
+  getContactEmail,
+  getTagBadgeStyle,
+  getTagColorMap,
+  parseContactsImportFile,
+  parseTagInput,
+} from '@/lib/contact-tags';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -55,6 +71,14 @@ export default function ContactsPage() {
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const [selectedColor, setSelectedColor] = useState<string | null>(null);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importFileName, setImportFileName] = useState('');
+  const [importPreviewCount, setImportPreviewCount] = useState(0);
+  const [importResult, setImportResult] = useState<ContactImportResult | null>(null);
+  const [importItems, setImportItems] = useState<ContactImportItem[]>([]);
   const [search, setSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -90,16 +114,14 @@ export default function ContactsPage() {
     }
     if (!res.data?.length) setLoading(false);
   };
-
   const fetchContacts = async () => {
+
     if (!selectedProfile) return;
     setLoading(true);
     try {
       const res = await api.getContacts(selectedProfile);
       if (res.data) {
-        // API returns { contacts: [...], total, limit, offset }
-        const contactsList = (res.data as any).contacts || (Array.isArray(res.data) ? res.data : []);
-        setContacts(contactsList);
+        setContacts(res.data.contacts ?? []);
       }
     } catch (error) {
       console.error('Failed to fetch contacts:', error);
@@ -132,20 +154,27 @@ export default function ContactsPage() {
     }
   };
 
-  // Get unique tags from all contacts
   const allTags = [...new Set(contacts.flatMap(c => c.tags || []))];
+  const allTagColors = collectTagColorFilters(contacts);
 
-  // Filter contacts
   const filteredContacts = contacts.filter(contact => {
-    const matchesSearch = !search || 
+    const email = getContactEmail(contact);
+    const matchesSearch =
+      !search ||
       contact.name?.toLowerCase().includes(search.toLowerCase()) ||
       contact.phone?.includes(search) ||
-      contact.email?.toLowerCase().includes(search.toLowerCase());
-    
-    const matchesTag = !selectedTag ||
-      contact.tags?.includes(selectedTag);
-    
-    return matchesSearch && matchesTag;
+      email?.toLowerCase().includes(search.toLowerCase());
+
+    const matchesTag = !selectedTag || contact.tags?.includes(selectedTag);
+
+    const colorMap = getTagColorMap(contact);
+    const matchesColor =
+      !selectedColor ||
+      contact.tags?.some(
+        tag => colorMap[tag]?.toLowerCase() === selectedColor.toLowerCase(),
+      );
+
+    return matchesSearch && matchesTag && matchesColor;
   });
 
   const handleAddContact = async () => {
@@ -156,13 +185,22 @@ export default function ContactsPage() {
 
     setSaving(true);
     try {
+      const parsed = parseTagInput(newContact.tags);
+      const metadata: Record<string, unknown> = {};
+      if (Object.keys(parsed.tagColors).length > 0) {
+        metadata.tagColors = parsed.tagColors;
+      }
+      if (parsed.primaryTag) {
+        metadata.primaryTag = parsed.primaryTag;
+      }
       const res = await api.createContact({
         profileId: selectedProfile,
         name: newContact.name,
         phone: newContact.phone.replace(/\s+/g, '').replace(/-/g, ''),
         email: newContact.email || undefined,
-        tags: newContact.tags ? newContact.tags.split(',').map(t => t.trim()) : undefined,
+        tags: parsed.tags.length ? parsed.tags : undefined,
         notes: newContact.notes || undefined,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       });
       
       if (res.data) {
@@ -178,6 +216,88 @@ export default function ContactsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleImportFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      setImportFileName('');
+      setImportPreviewCount(0);
+      setImportItems([]);
+      setImportResult(null);
+      return;
+    }
+    setImportFileName(file.name);
+    setImportResult(null);
+    try {
+      const text = await file.text();
+      const items = parseContactsImportFile(text, file.name);
+      setImportItems(items);
+      setImportPreviewCount(items.length);
+      if (!items.length) {
+        toast({ title: 'No contacts found in file', variant: 'destructive' });
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Invalid file format';
+      toast({ title: 'Failed to parse file', description: message, variant: 'destructive' });
+      setImportItems([]);
+      setImportPreviewCount(0);
+    }
+  };
+
+  const handleRunImport = async () => {
+    if (!selectedProfile) {
+      toast({ title: 'Select a profile first', variant: 'destructive' });
+      return;
+    }
+    if (!importItems.length) {
+      toast({ title: 'Choose a file with contacts first', variant: 'destructive' });
+      return;
+    }
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const res = await api.importContacts(selectedProfile, importItems);
+      if (res.data) {
+        setImportResult(res.data);
+        toast({
+          title: 'Import finished',
+          description: `Created: ${res.data.created}, Updated: ${res.data.updated}, Failed: ${res.data.failed}`,
+        });
+        fetchContacts();
+      } else {
+        toast({ title: 'Import failed', description: res.error || 'Unknown error', variant: 'destructive' });
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Import failed';
+      toast({ title: 'Import failed', description: message, variant: 'destructive' });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const renderContactTags = (contact: Contact) => {
+    const colorMap = getTagColorMap(contact);
+    const tags = contact.tags || [];
+    return (
+      <div className="flex gap-1 flex-wrap">
+        {tags.slice(0, 3).map(tag => (
+          <Badge
+            key={tag}
+            variant="secondary"
+            className="text-xs border"
+            style={getTagBadgeStyle(tag, colorMap)}
+          >
+            {tag}
+          </Badge>
+        ))}
+        {tags.length > 3 && (
+          <Badge variant="outline" className="text-xs">
+            +{tags.length - 3}
+          </Badge>
+        )}
+      </div>
+    );
   };
 
   const handleDeleteContact = async (id: string) => {
@@ -256,6 +376,73 @@ export default function ContactsPage() {
             />
             {syncing ? 'Syncing...' : 'Sync from WhatsApp'}
           </Button>
+          <Dialog
+            open={isImportOpen}
+            onOpenChange={open => {
+              setIsImportOpen(open);
+              if (!open) {
+                setImportFileName('');
+                setImportPreviewCount(0);
+                setImportItems([]);
+                setImportResult(null);
+              }
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2" disabled={!selectedProfile}>
+                <Upload className="w-4 h-4" aria-hidden="true" />
+                Import
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Import contacts</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 py-2">
+                <div className="space-y-2">
+                  <Label htmlFor="import-file">File (.json, .csv, .txt, .tsv)</Label>
+                  <Input
+                    id="import-file"
+                    type="file"
+                    accept=".json,.csv,.txt,.tsv,text/csv,text/plain,application/json"
+                    onChange={handleImportFileChange}
+                  />
+                  {importFileName && (
+                    <p className="text-sm text-muted-foreground">
+                      {importFileName} — {importPreviewCount} contact{importPreviewCount === 1 ? '' : 's'} ready
+                    </p>
+                  )}
+                </div>
+                {importResult && (
+                  <div className="rounded-lg border border-border bg-secondary/30 p-3 text-sm space-y-1">
+                    <p>
+                      Created: <span className="font-medium tabular-nums">{importResult.created}</span>
+                      {' · '}
+                      Updated: <span className="font-medium tabular-nums">{importResult.updated}</span>
+                      {' · '}
+                      Failed: <span className="font-medium tabular-nums">{importResult.failed}</span>
+                    </p>
+                    {importResult.errors?.length > 0 && (
+                      <ul className="text-destructive text-xs list-disc pl-4 max-h-24 overflow-y-auto">
+                        {importResult.errors.slice(0, 8).map((err, i) => (
+                          <li key={`import-err-${i}`}>{err}</li>
+                        ))}
+                        {importResult.errors.length > 8 && (
+                          <li>…and {importResult.errors.length - 8} more</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsImportOpen(false)}>Close</Button>
+                <Button onClick={handleRunImport} disabled={importing || !importItems.length}>
+                  {importing ? 'Importing…' : 'Run import'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2">
@@ -302,8 +489,11 @@ export default function ContactsPage() {
                   id="tags"
                   value={newContact.tags}
                   onChange={e => setNewContact(prev => ({ ...prev, tags: e.target.value }))}
-                  placeholder="customer, vip"
+                  placeholder="customer, vip, lead:#3b82f6"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Use tag:#hex for colored tags (e.g. vip:#22c55e).
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="notes">Notes</Label>
@@ -359,24 +549,55 @@ export default function ContactsPage() {
               aria-label="Search contacts"
             />
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             <Button
-              variant={selectedTag === null ? "default" : "outline"}
+              variant={selectedTag === null ? 'default' : 'outline'}
               size="sm"
               onClick={() => setSelectedTag(null)}
             >
-              All
+              All tags
             </Button>
             {allTags.slice(0, 5).map(tag => (
               <Button
                 key={tag}
-                variant={selectedTag === tag ? "default" : "outline"}
+                variant={selectedTag === tag ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setSelectedTag(tag === selectedTag ? null : tag)}
               >
                 {tag}
               </Button>
             ))}
+            {allTagColors.length > 0 && (
+              <>
+                <span className="text-muted-foreground text-xs flex items-center gap-1 px-1">
+                  <Palette className="w-3 h-3" aria-hidden="true" />
+                  Color
+                </span>
+                <Button
+                  variant={selectedColor === null ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setSelectedColor(null)}
+                >
+                  Any
+                </Button>
+                {allTagColors.map(color => (
+                  <Button
+                    key={color}
+                    variant={selectedColor === color ? 'default' : 'outline'}
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => setSelectedColor(color === selectedColor ? null : color)}
+                    aria-label={`Filter by color ${color}`}
+                  >
+                    <span
+                      className="w-3 h-3 rounded-full border border-border"
+                      style={{ backgroundColor: color }}
+                      aria-hidden="true"
+                    />
+                  </Button>
+                ))}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -423,21 +644,8 @@ export default function ContactsPage() {
                   </TableCell>
                   <TableCell className="font-medium text-foreground">{contact.name}</TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">{contact.phone}</TableCell>
-                  <TableCell className="text-muted-foreground">{contact.email || <span className="text-muted-foreground/60">—</span>}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1 flex-wrap">
-                      {(contact.tags || []).slice(0, 3).map(tag => (
-                        <Badge key={tag} variant="secondary" className="text-xs">
-                          {tag}
-                        </Badge>
-                      ))}
-                      {(contact.tags?.length || 0) > 3 && (
-                        <Badge variant="outline" className="text-xs">
-                          +{(contact.tags?.length || 0) - 3}
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
+                  <TableCell className="text-muted-foreground">{getContactEmail(contact) || <span className="text-muted-foreground/60">—</span>}</TableCell>
+                  <TableCell>{renderContactTags(contact)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       <Button
@@ -491,20 +699,11 @@ export default function ContactsPage() {
                   </Button>
                 </div>
                 <div className="text-sm text-muted-foreground font-mono">{contact.phone}</div>
-                {contact.email && (
-                  <div className="text-sm text-muted-foreground truncate">{contact.email}</div>
+                {getContactEmail(contact) && (
+                  <div className="text-sm text-muted-foreground truncate">{getContactEmail(contact)}</div>
                 )}
                 {(contact.tags || []).length > 0 && (
-                  <div className="flex gap-1 flex-wrap mt-2">
-                    {(contact.tags || []).slice(0, 3).map(tag => (
-                      <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
-                    ))}
-                    {(contact.tags?.length || 0) > 3 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{(contact.tags?.length || 0) - 3}
-                      </Badge>
-                    )}
-                  </div>
+                  <div className="mt-2">{renderContactTags(contact)}</div>
                 )}
               </div>
             </div>
@@ -527,7 +726,7 @@ export default function ContactsPage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5" aria-hidden="true">•</span>
-              Import contacts via CSV from the API
+              Import contacts from JSON, CSV, or TXT using the Import button above
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5" aria-hidden="true">•</span>

@@ -1586,6 +1586,32 @@ export default function SettingsPage() {
   );
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object';
+}
+
+function getPushTestErrorDetail(result: unknown): string {
+  if (!isPlainObject(result)) {
+    return 'Could not send test push';
+  }
+  const results = result['results'];
+  if (Array.isArray(results) && results.length > 0 && isPlainObject(results[0])) {
+    const firstError = results[0]['error'];
+    if (typeof firstError === 'string' && firstError.length > 0) {
+      return firstError;
+    }
+  }
+  const topError = result['error'];
+  if (typeof topError === 'string' && topError.length > 0) {
+    return topError;
+  }
+  const message = result['message'];
+  if (typeof message === 'string' && message.length > 0) {
+    return message;
+  }
+  return 'Could not send test push';
+}
+
 /**
  * Push Notification Card — interactive enable/disable with test button
  */
@@ -1618,7 +1644,7 @@ function PushNotificationCard() {
     if (result?.success) {
       toast({ title: 'Test push sent!', description: `${result.message}. Check browser notifications.` });
     } else {
-      const errorDetail = result?.results?.[0]?.error || result?.error || result?.message || 'Could not send test push';
+      const errorDetail = getPushTestErrorDetail(result);
       toast({ title: 'Test failed', description: errorDetail, variant: 'destructive' });
     }
   };
