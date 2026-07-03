@@ -163,6 +163,20 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       const chats = await engine.getRecentChats(chatLimit, perChat);
       let newConvos = 0, newMsgs = 0;
 
+      // Optional webhook backfill (opt-in). Messages this sync inserts are ones the
+      // live stream never saw — they'd already be in the DB otherwise — i.e. exactly
+      // what arrived while the profile was disconnected. Collect the incoming ones
+      // (within the window, bounded) and replay them to the webhook after the sync.
+      const backfillEnabled =
+        String(process.env.WEBHOOK_BACKFILL_ON_RECONNECT).toLowerCase() === 'true';
+      const backfillWindowHours = Math.max(1, Number(process.env.WEBHOOK_BACKFILL_WINDOW_HOURS) || 24);
+      const backfillCutoff = new Date(Date.now() - backfillWindowHours * 3_600_000);
+      const BACKFILL_MAX = 200;
+      const missed: Array<{
+        id: string; senderJid: string; type: string;
+        content: Record<string, any>; timestamp: Date; conversationId: string;
+      }> = [];
+
       for (const chat of chats || []) {
         try {
           const rawJid: string = chat?.jid || '';
@@ -205,7 +219,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               : (isGroup ? (m.author || m.from || jid) : jid);
             const ts = this.normalizeTimestamp(m.timestamp);
 
-            await prisma.message.create({
+            const created = await prisma.message.create({
               data: {
                 profileId,
                 conversationId: conversation.id,
@@ -220,6 +234,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             });
             newMsgs++;
             if (!lastTs || ts > lastTs) lastTs = ts;
+            if (backfillEnabled && !fromMe && ts >= backfillCutoff && missed.length < BACKFILL_MAX) {
+              missed.push({
+                id: created.id, senderJid, type: created.type,
+                content, timestamp: ts, conversationId: conversation.id,
+              });
+            }
           }
 
           if (lastTs) {
@@ -233,6 +253,27 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       }
 
       this.logger.log(`History sync done for ${profileId}: +${newConvos} conversations, +${newMsgs} messages`);
+
+      // Replay the missed incoming messages to the webhook, oldest first, using the
+      // same MESSAGE.RECEIVED shape as the live path (plus a `backfilled` flag so
+      // consumers can tell them apart). Automation/notifications are NOT re-run.
+      if (backfillEnabled && missed.length > 0) {
+        missed.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        for (const msg of missed) {
+          this.emitEvent(AppEvents.MESSAGE.RECEIVED, {
+            profileId,
+            id: msg.id,
+            from: msg.senderJid,
+            body: msg.content?.text ?? msg.content?.caption ?? '',
+            type: msg.type,
+            hasMedia: !!(msg.content?.url || msg.content?.hasMedia),
+            timestamp: msg.timestamp,
+            conversationId: msg.conversationId,
+            backfilled: true,
+          });
+        }
+        this.logger.log(`Webhook backfill: replayed ${missed.length} missed incoming message(s) for ${profileId} (window ${backfillWindowHours}h)`);
+      }
     } finally {
       this.syncingHistory.delete(profileId);
     }
