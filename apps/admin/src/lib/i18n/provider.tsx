@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 import {
   LANGUAGE_OPTIONS,
+  LANGUAGE_STORAGE_KEY,
   type Language,
   type MessageKey,
   type TextDirection,
@@ -37,10 +38,15 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.dir = dir;
     document.body.dir = dir;
   }, [dir, language]);
-
   const value = useMemo<I18nContextValue>(() => {
     const setLanguage = (nextLanguage: Language) => {
-      localStorage.setItem('multiwa.language', nextLanguage);
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage);
+        }
+      } catch {
+        /* ignore quota / private mode */
+      }
       setLanguageState(nextLanguage);
     };
 

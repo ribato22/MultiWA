@@ -34,13 +34,14 @@ import {
   WifiOff,
   Lock,
   Wrench,
+  Languages,
   type LucideIcon,
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
 import { DemoBanner } from '@/components/demo-banner';
 import { formatRelative, formatFull } from '@/lib/datetime';
 import { useI18n } from '@/lib/i18n/provider';
-import type { MessageKey, Language } from '@/lib/i18n/messages';
+import type { MessageKey } from '@/lib/i18n/messages';
 
 type MenuItem = { key: MessageKey; href: string; Icon: LucideIcon };
 
@@ -297,24 +298,39 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center">
-                <label className="sr-only" htmlFor="dashboard-language">
-                  {t('header.language')}
-                </label>
-                <select
-                  id="dashboard-language"
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as Language)}
-                  className="h-9 min-w-[7.5rem] rounded-lg border border-border bg-secondary/30 text-sm text-foreground px-2.5 pr-8 cursor-pointer hover:bg-secondary/60 focus:outline-none focus:ring-2 focus:ring-primary/40 transition-colors"
-                  aria-label={t('header.language')}
-                >
-                  {options.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.nativeLabel}
-                    </option>
-                  ))}
-                </select>
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div
+                className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 p-1 shadow-sm"
+                role="group"
+                aria-label={t('header.language')}
+              >
+                <span className="hidden sm:inline-flex items-center gap-1 px-1.5 text-xs font-medium text-muted-foreground">
+                  <Languages className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <span>{t('header.language')}</span>
+                </span>
+                {options.map((opt) => {
+                  const isActive = language === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setLanguage(opt.value)}
+                      aria-pressed={isActive}
+                      aria-label={`${t('header.language')}: ${opt.label}`}
+                      title={opt.nativeLabel}
+                      className={`min-h-[36px] min-w-[36px] sm:min-h-8 sm:min-w-0 sm:px-2.5 rounded-md text-xs font-semibold transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40 ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'text-muted-foreground hover:bg-secondary hover:text-foreground'
+                      }`}
+                    >
+                      <span className="sm:hidden" aria-hidden="true">
+                        {opt.value.toUpperCase()}
+                      </span>
+                      <span className="hidden sm:inline">{opt.nativeLabel}</span>
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Notification Bell */}

@@ -33,8 +33,11 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a new user and organization' })
   @ApiResponse({ status: 201, description: 'User registered successfully', type: TokenResponseDto })
   @ApiValidationError()
-  async register(@Body() dto: RegisterDto): Promise<TokenResponseDto> {
-    return this.authService.register(dto);
+  async register(@Body() dto: RegisterDto, @Request() req: AuthHttpRequest): Promise<TokenResponseDto> {
+    const ip = req.ip || req.connection?.remoteAddress;
+    const userAgentHeader = req.headers?.['user-agent'];
+    const ua = Array.isArray(userAgentHeader) ? userAgentHeader[0] : userAgentHeader;
+    return this.authService.register(dto, ip, ua);
   }
 
   @Post('login')

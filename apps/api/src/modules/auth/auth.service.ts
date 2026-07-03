@@ -10,6 +10,8 @@ import { SessionsService } from './sessions.service';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 
+
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -18,7 +20,7 @@ export class AuthService {
     private readonly sessionsService: SessionsService,
   ) {}
 
-  async register(dto: RegisterDto): Promise<TokenResponseDto> {
+  async register(dto: RegisterDto, ipAddress?: string, userAgent?: string): Promise<TokenResponseDto> {
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
       where: { email: dto.email },
@@ -66,7 +68,16 @@ export class AuthService {
       },
     });
 
-    return this.generateTokens(user);
+    const tokens = await this.generateTokens(user);
+
+    await this.sessionsService.createSession(
+      user.id,
+      tokens.accessToken,
+      ipAddress,
+      userAgent,
+    );
+
+    return tokens;
   }
 
   async login(dto: LoginDto, ipAddress?: string, userAgent?: string): Promise<TokenResponseDto | { requires2FA: true; userId: string }> {
@@ -145,8 +156,9 @@ export class AuthService {
 
   async refreshToken(refreshToken: string, ipAddress?: string, userAgent?: string): Promise<TokenResponseDto> {
     try {
+      const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
       const payload = this.jwtService.verify(refreshToken, {
-        secret: process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET,
+        secret: refreshSecret,
       });
       const user = await prisma.user.findUnique({
         where: { id: payload.sub },
@@ -255,7 +267,8 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload);
-    const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
+    const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+    const refreshToken = this.jwtService.sign(payload, { secret: refreshSecret, expiresIn: '30d' });
 
     return {
       accessToken,
