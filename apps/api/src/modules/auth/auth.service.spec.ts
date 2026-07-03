@@ -179,6 +179,128 @@ describe('AuthService', () => {
         'TestBrowser/1.0',
       );
     });
+
+    it('should sign access and refresh JWTs with distinct jti values for the same user', async () => {
+      const signCalls: Array<{ payload: Record<string, unknown>; options?: unknown }> = [];
+      mockJwtService.sign.mockImplementation((payload: Record<string, unknown>, options?: unknown) => {
+        signCalls.push({ payload, options });
+        return `mock-${signCalls.length}`;
+      });
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.organization.create).mockResolvedValueOnce({
+        id: 'org-1',
+        name: 'TestOrg',
+        slug: 'testorg',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.workspace.create).mockResolvedValueOnce({
+        id: 'ws-1',
+        organizationId: 'org-1',
+        name: 'Default',
+        slug: 'default',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.user.create).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: '[邮箱]',
+          name: 'Test',
+          role: 'owner',
+          organizationId: 'org-1',
+        }),
+      );
+
+      await authService.register({
+        email: '[邮箱]',
+        password: 'password123',
+        name: 'Test',
+        organizationName: 'TestOrg',
+      });
+
+      expect(signCalls).toHaveLength(2);
+      const accessJti = signCalls[0].payload.jti;
+      const refreshJti = signCalls[1].payload.jti;
+      expect(typeof accessJti).toBe('string');
+      expect(typeof refreshJti).toBe('string');
+      expect(accessJti).not.toEqual(refreshJti);
+      expect(signCalls[0].payload).toMatchObject({
+        sub: 'user-1',
+        email: '[邮箱]',
+        organizationId: 'org-1',
+        role: 'owner',
+      });
+      expect(signCalls[1].payload).toMatchObject({
+        sub: 'user-1',
+        email: '[邮箱]',
+        organizationId: 'org-1',
+        role: 'owner',
+      });
+      expect(signCalls[0].options).toEqual({ expiresIn: '7d' });
+    });
+
+    it('should produce distinct sign payloads on two immediate token generations for the same user', async () => {
+      const payloads: Record<string, unknown>[] = [];
+      mockJwtService.sign.mockImplementation((payload: Record<string, unknown>) => {
+        payloads.push({ ...payload });
+        return `signed-${payloads.length}`;
+      });
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.organization.create).mockResolvedValueOnce({
+        id: 'org-1',
+        name: 'TestOrg',
+        slug: 'testorg',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.workspace.create).mockResolvedValueOnce({
+        id: 'ws-1',
+        organizationId: 'org-1',
+        name: 'Default',
+        slug: 'default',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.user.create).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: '[邮箱]',
+          name: 'Test',
+          role: 'owner',
+          organizationId: 'org-1',
+        }),
+      );
+
+      await authService.register({
+        email: '[邮箱]',
+        password: 'password123',
+        name: 'Test',
+        organizationName: 'TestOrg',
+      });
+
+      const registerTokens = payloads.map((p) => p.jti);
+      payloads.length = 0;
+
+      mockJwtService.verify.mockReturnValueOnce({ sub: 'user-1' });
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', isActive: true }),
+      );
+
+      await authService.refreshToken('valid-refresh');
+
+      const refreshTokens = payloads.map((p) => p.jti);
+      const allJtis = [...registerTokens, ...refreshTokens];
+      expect(allJtis).toHaveLength(4);
+      expect(new Set(allJtis).size).toBe(4);
+      expect(mockSessionsService.createSession).toHaveBeenCalledTimes(2);
+    });
   });
 
   // ──────────── refreshToken ────────────
@@ -220,6 +342,17 @@ describe('AuthService', () => {
         '10.0.0.1',
         'Agent/2',
       );
+    });
+
+    it('should not mask session persistence failures as invalid refresh token', async () => {
+      mockJwtService.verify.mockReturnValueOnce({ sub: 'user-1' });
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', isActive: true }),
+      );
+      const dbError = new Error('Unique constraint failed on the fields: (`token_hash`)');
+      mockSessionsService.createSession.mockRejectedValueOnce(dbError);
+
+      await expect(authService.refreshToken('valid-refresh')).rejects.toThrow(dbError);
     });
 
     it('should throw UnauthorizedException when verify fails', async () => {

@@ -155,25 +155,27 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string, ipAddress?: string, userAgent?: string): Promise<TokenResponseDto> {
+    const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+    let payload: { sub: string };
     try {
-      const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
-      const payload = this.jwtService.verify(refreshToken, {
+      payload = this.jwtService.verify(refreshToken, {
         secret: refreshSecret,
       });
-      const user = await prisma.user.findUnique({
-        where: { id: payload.sub },
-      });
-
-      if (!user || !user.isActive) {
-        throw new UnauthorizedException('Invalid token');
-      }
-
-      const tokens = await this.generateTokens(user);
-      await this.sessionsService.createSession(user.id, tokens.accessToken, ipAddress, userAgent);
-      return tokens;
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
+
+    const user = await prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
+
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    const tokens = await this.generateTokens(user);
+    await this.sessionsService.createSession(user.id, tokens.accessToken, ipAddress, userAgent);
+    return tokens;
   }
 
   /**
@@ -258,17 +260,29 @@ export class AuthService {
     return { success: true };
   }
 
-  private async generateTokens(user: any): Promise<TokenResponseDto> {
-    const payload = {
+  private async generateTokens(user: {
+    id: string;
+    email: string;
+    organizationId: string;
+    role: string;
+    name: string;
+  }): Promise<TokenResponseDto> {
+    const basePayload = {
       sub: user.id,
       email: user.email,
       organizationId: user.organizationId,
       role: user.role,
     };
 
-    const accessToken = this.jwtService.sign(payload);
+    const accessToken = this.jwtService.sign(
+      { ...basePayload, jti: crypto.randomUUID() },
+      { expiresIn: '7d' },
+    );
     const refreshSecret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
-    const refreshToken = this.jwtService.sign(payload, { secret: refreshSecret, expiresIn: '30d' });
+    const refreshToken = this.jwtService.sign(
+      { ...basePayload, jti: crypto.randomUUID() },
+      { secret: refreshSecret, expiresIn: '30d' },
+    );
 
     return {
       accessToken,
