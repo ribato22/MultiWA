@@ -39,11 +39,13 @@ export class ContactsController {
   async findAll(
     @Query('profileId') profileId: string,
     @Query('search') search?: string,
-    @Query('tags') tags?: string[],
+    @Query('tags') tags?: string[] | string,
     @Query('limit') limit?: number,
     @Query('offset') offset?: number,
   ) {
-    return this.service.findAll(profileId, { search, tags, limit, offset });
+    // A single ?tags=x arrives as a string; the service expects an array.
+    const tagList = tags ? (Array.isArray(tags) ? tags : [tags]) : undefined;
+    return this.service.findAll(profileId, { search, tags: tagList, limit, offset });
   }
 
   @Get(':id')
