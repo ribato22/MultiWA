@@ -57,6 +57,9 @@ export default function ContactsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 50;
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -74,11 +77,13 @@ export default function ContactsPage() {
     loadProfiles();
   }, []);
 
+  // Debounced server-side fetch whenever the profile, search, or tag changes.
   useEffect(() => {
-    if (selectedProfile) {
-      fetchContacts();
-    }
-  }, [selectedProfile]);
+    if (!selectedProfile) return;
+    const t = setTimeout(() => fetchContacts(true), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProfile, search, selectedTag]);
 
   const loadProfiles = async () => {
     const res = await api.getProfiles();
@@ -91,20 +96,28 @@ export default function ContactsPage() {
     if (!res.data?.length) setLoading(false);
   };
 
-  const fetchContacts = async () => {
+  // Server-side search + pagination. reset=true replaces the list (new query);
+  // reset=false appends the next page ("Load more").
+  const fetchContacts = async (reset = true) => {
     if (!selectedProfile) return;
-    setLoading(true);
+    const offset = reset ? 0 : contacts.length;
+    reset ? setLoading(true) : setLoadingMore(true);
     try {
-      const res = await api.getContacts(selectedProfile);
-      if (res.data) {
-        // API returns { contacts: [...], total, limit, offset }
-        const contactsList = (res.data as any).contacts || (Array.isArray(res.data) ? res.data : []);
-        setContacts(contactsList);
-      }
+      const res = await api.getContacts(selectedProfile, {
+        search: search.trim() || undefined,
+        tags: selectedTag || undefined,
+        limit: PAGE_SIZE,
+        offset,
+      });
+      const data: any = res.data || {};
+      const list: Contact[] = data.contacts || (Array.isArray(res.data) ? res.data : []);
+      setTotal(typeof data.total === 'number' ? data.total : list.length);
+      setContacts(prev => (reset ? list : [...prev, ...list]));
     } catch (error) {
       console.error('Failed to fetch contacts:', error);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
@@ -121,7 +134,7 @@ export default function ContactsPage() {
           title: 'Contacts synced from WhatsApp',
           description: `Synced: ${res.data.synced}, Created: ${res.data.created}, Updated: ${res.data.updated}`,
         });
-        fetchContacts(); // Refresh the list
+        fetchContacts(true); // Refresh the list
       } else {
         toast({ title: 'Sync failed', description: res.error || 'Unknown error', variant: 'destructive' });
       }
@@ -135,18 +148,7 @@ export default function ContactsPage() {
   // Get unique tags from all contacts
   const allTags = [...new Set(contacts.flatMap(c => c.tags || []))];
 
-  // Filter contacts
-  const filteredContacts = contacts.filter(contact => {
-    const matchesSearch = !search || 
-      contact.name?.toLowerCase().includes(search.toLowerCase()) ||
-      contact.phone?.includes(search) ||
-      contact.email?.toLowerCase().includes(search.toLowerCase());
-    
-    const matchesTag = !selectedTag ||
-      contact.tags?.includes(selectedTag);
-    
-    return matchesSearch && matchesTag;
-  });
+  // Search + tag filtering are now server-side (see fetchContacts); render `contacts` directly.
 
   const handleAddContact = async () => {
     if (!newContact.name || !newContact.phone) {
@@ -328,11 +330,11 @@ export default function ContactsPage() {
       </div>
 
       {/* Stats Bar */}
-      {!loading && contacts.length > 0 && (
+      {!loading && (contacts.length > 0 || !!search || !!selectedTag) && (
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 px-4 bg-secondary/40 border border-border/60 rounded-xl text-sm">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
-            <span className="font-semibold text-foreground tabular-nums">{contacts.length}</span>
+            <span className="font-semibold text-foreground tabular-nums">{total}</span>
             <span className="text-muted-foreground">Contacts</span>
           </div>
           <div className="flex items-center gap-2">
@@ -344,7 +346,7 @@ export default function ContactsPage() {
       )}
 
       {/* Search & Filters */}
-      {!loading && contacts.length > 0 && (
+      {!loading && (contacts.length > 0 || !!search || !!selectedTag) && (
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
             <Search
@@ -386,9 +388,9 @@ export default function ContactsPage() {
         <div className="bg-card rounded-2xl border border-border p-4">
           <LoadingTable />
         </div>
-      ) : contacts.length === 0 ? (
+      ) : contacts.length === 0 && !search && !selectedTag ? (
         <EmptyContacts />
-      ) : filteredContacts.length === 0 ? (
+      ) : contacts.length === 0 ? (
         <div className="bg-card rounded-2xl p-12 border border-border text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-secondary/60 text-muted-foreground">
             <SearchX className="w-7 h-7" aria-hidden="true" />
@@ -411,7 +413,7 @@ export default function ContactsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredContacts.map(contact => (
+              {contacts.map(contact => (
                 <TableRow key={contact.id} className="group">
                   <TableCell>
                     <Avatar className="w-10 h-10">
@@ -469,7 +471,7 @@ export default function ContactsPage() {
 
         {/* Mobile card list */}
         <div className="md:hidden space-y-2">
-          {filteredContacts.map(contact => (
+          {contacts.map(contact => (
             <div key={contact.id} className="bg-card border border-border rounded-xl p-4 flex items-start gap-3">
               <Avatar className="w-10 h-10 flex-shrink-0">
                 <AvatarImage src={contact.avatar} />
@@ -510,6 +512,17 @@ export default function ContactsPage() {
             </div>
           ))}
         </div>
+        {contacts.length < total && (
+          <div className="flex justify-center pt-2">
+            <Button
+              variant="outline"
+              onClick={() => fetchContacts(false)}
+              disabled={loadingMore}
+            >
+              {loadingMore ? 'Loading…' : `Load more (${contacts.length} of ${total})`}
+            </Button>
+          </div>
+        )}
         </>
       )}
 

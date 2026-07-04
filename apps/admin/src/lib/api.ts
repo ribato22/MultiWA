@@ -325,8 +325,20 @@ class ApiClient {
   }
 
   // Contacts
-  async getContacts(profileId: string) {
-    return this.request<Contact[]>(`/contacts?profileId=${profileId}&limit=1000`);
+  async getContacts(
+    profileId: string,
+    opts?: { search?: string; tags?: string; limit?: number; offset?: number },
+  ) {
+    const p = new URLSearchParams({
+      profileId,
+      limit: String(opts?.limit ?? 50),
+      offset: String(opts?.offset ?? 0),
+    });
+    if (opts?.search) p.set('search', opts.search);
+    if (opts?.tags) p.set('tags', opts.tags);
+    return this.request<{ contacts: Contact[]; total: number; limit: number; offset: number }>(
+      `/contacts?${p.toString()}`,
+    );
   }
 
   async createContact(data: { profileId: string; phone: string; name?: string; email?: string; tags?: string[]; notes?: string }) {
