@@ -159,13 +159,22 @@ today's `service` vs `cold` counts.
 
 ---
 
-## 6. Phase 2 — Delivery confirmation, health, circuit breaker (outline)
-- Track per-lane ack outcomes (`delivered`/`read` vs `unknown`/`failed`) over a
-  rolling window → per-profile **cold delivery-success rate**.
-- **Circuit breaker:** on sustained cold failures (the number is locked), auto-pause
-  the cold lanes and raise an alert, while SERVICE keeps flowing.
-- Per-send confirmation for `authentication`: await ack up to `otpAckTimeoutMs`
-  (e.g. 8 s); `unknown`/timeout → trigger failover (Phase 3).
+## 6. Phase 2 — Delivery confirmation, health, cold circuit breaker (implemented)
+Each outbound send persists its `lane` (service|cold) on the message. When a COLD
+message reaches a terminal ack, the breaker is re-evaluated from the last
+`COLD_CIRCUIT_WINDOW` (10) terminal cold outcomes: `delivered`/`read`/`played` =
+success, `unknown`/`failed` = failure.
+
+- **Open:** when the cold delivery-success rate drops below
+  `COLD_CIRCUIT_MIN_SUCCESS` (0.4) over at least `COLD_CIRCUIT_MIN_SAMPLES` (5)
+  samples, `Profile.coldCircuitState` → `open`. While open, cold sends are
+  rejected `429 COLD_CIRCUIT_OPEN`; **replies (service) keep flowing**. An org
+  `SYSTEM` alert fires on the transition.
+- **Half-open + recover:** after `COLD_CIRCUIT_COOLDOWN_MS` (30 min) the next cold
+  send is allowed as a probe; a delivered ack closes the breaker (recovered
+  alert), a failed one re-arms the cooldown.
+- All thresholds are env-overridable. Per-send OTP confirmation + failover is
+  Phase 3.
 
 ## 7. Phase 3 — Pluggable multi-channel failover (outline)
 - `SendChannel` interface: `whatsapp-web-js` (unofficial, primary), an optional

@@ -155,6 +155,11 @@ model Profile {
   serviceWindowHours Int     @default(24)
   coldDailyLimit    Int?
   coldMessageCount  Int      @default(0)
+  // Cold-lane circuit breaker: "closed" (normal) | "open" (cold sends paused after
+  // repeated delivery failures — the number is likely reach-out-locked). Replies
+  // keep flowing regardless. Auto half-opens for a probe after a cooldown.
+  coldCircuitState   String    @default("closed")
+  coldCircuitOpenedAt DateTime?
   // Per-profile engine selection. whatsapp-web-js (default, production) | baileys (EXPERIMENTAL) | mock (testing).
   engine          String   @default("whatsapp-web-js")
   lastConnectedAt DateTime?
@@ -250,7 +255,11 @@ model Message {
   type           String   // text, image, video, audio, document, location, contact
   content        Json
   quotedMessageId String?
-  status         String   @default("pending") // pending, sent, delivered, read, failed
+  status         String   @default("pending") // pending, sent, delivered, read, failed, unknown
+  // Send Policy Engine lane at send time: "service" (in-window reply) | "cold"
+  // (business-initiated). Null for inbound/history rows. Feeds the cold-circuit
+  // delivery-health evaluation.
+  lane           String?
   timestamp      DateTime
   metadata       Json?
   createdAt      DateTime @default(now())
@@ -262,6 +271,7 @@ model Message {
   @@index([conversationId, timestamp])
   @@index([messageId])
   @@index([profileId, status])
+  @@index([profileId, lane, createdAt])
   @@map("messages")
 }
 
