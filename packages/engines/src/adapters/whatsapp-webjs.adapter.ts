@@ -775,7 +775,15 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     if (!this.isReady() || !this.client) throw new Error('Client not ready');
     const digits = (phone || '').replace(/\D/g, '');
     if (!digits) throw new Error('Invalid phone number');
-    await (this.client as any).deleteAddressbookContact(digits);
+    // whatsapp-web.js's own deleteAddressbookContact feeds BARE digits to createWid(),
+    // which needs a full "<user>@c.us" wid and throws otherwise. Call the WA delete
+    // action directly with a correctly-formed wid instead.
+    const page: any = (this.client as any).pupPage;
+    if (!page) throw new Error('Client page not available');
+    await page.evaluate((jid: string) => {
+      const wid = (window as any).require('WAWebWidFactory').createWid(jid);
+      return (window as any).require('WAWebDeleteContactAction').deleteContactAction({ phoneNumber: wid });
+    }, `${digits}@c.us`);
     console.log(`[WhatsApp-WebJS] Deleted addressbook contact ${digits}`);
   }
 
