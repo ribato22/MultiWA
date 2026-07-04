@@ -17,6 +17,55 @@ import { prisma } from '@multiwa/database';
 
 /** WIB (Asia/Jakarta) is a fixed UTC+7 offset with no DST. */
 const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Integer index of the WIB calendar day containing `d` (same boundary as the daily reset). */
+function wibDayNumber(d: Date): number {
+  return Math.floor((d.getTime() + WIB_OFFSET_MS) / DAY_MS);
+}
+
+/** Minimal profile shape the warm-up cap needs (subset of the Prisma Profile row). */
+export interface WarmupCapInput {
+  dailyMessageLimit?: number | null;
+  warmupEnabled?: boolean | null;
+  warmupStartPerDay?: number | null;
+  warmupRampDays?: number | null;
+  warmupStartedAt?: Date | null;
+}
+
+/**
+ * Effective daily send cap for a profile at instant `now`, accounting for the
+ * warm-up ramp. Returns null when unlimited.
+ *
+ * When warm-up is enabled AND a daily limit (the ramp target) is set, the cap
+ * climbs linearly from warmupStartPerDay up to dailyMessageLimit over
+ * warmupRampDays WIB days, anchored at warmupStartedAt. Day 0 is the WIB day of
+ * the anchor. Missing/invalid warm-up config falls back to the plain daily limit
+ * (no surprise cap). Warm-up with an unlimited target is a no-op (needs a target).
+ * The result never exceeds the hard daily limit and never goes below 0.
+ */
+export function effectiveDailyCap(profile: WarmupCapInput, now: Date = new Date()): number | null {
+  const hardLimit = profile.dailyMessageLimit ?? null;
+  if (!profile.warmupEnabled) return hardLimit;
+  // Warm-up ramps toward the daily limit; with no numeric target there is nothing
+  // to ramp to, so leave it unlimited.
+  if (hardLimit == null) return null;
+
+  const start = profile.warmupStartPerDay;
+  const rampDays = profile.warmupRampDays;
+  const startedAt = profile.warmupStartedAt;
+  if (start == null || rampDays == null || rampDays < 1 || !startedAt) return hardLimit;
+
+  const dayIndex = wibDayNumber(now) - wibDayNumber(startedAt);
+  // Day 0 (and any future anchor) is exactly the start cap. This also makes a
+  // 1-day ramp behave sanely: day 0 = start, day 1+ = full limit.
+  if (dayIndex <= 0) return Math.max(0, Math.min(hardLimit, start));
+  if (dayIndex >= rampDays - 1) return hardLimit; // ramp complete
+
+  const progress = dayIndex / Math.max(1, rampDays - 1);
+  const capped = Math.round(start + (hardLimit - start) * progress);
+  return Math.max(0, Math.min(hardLimit, capped));
+}
 
 /**
  * The next 00:00 WIB after `from`, returned as the equivalent UTC instant.
@@ -80,15 +129,23 @@ export class SendGateService {
       where: { id: profileId },
       select: {
         messageDelayMs: true,
+        messageDelayJitterMs: true,
         dailyMessageLimit: true,
         dailyMessageCount: true,
         dailyResetAt: true,
+        warmupEnabled: true,
+        warmupStartPerDay: true,
+        warmupRampDays: true,
+        warmupStartedAt: true,
       },
     });
     if (!profile) throw new NotFoundException('Profile not found');
 
-    // 1. Inter-message delay (block-and-wait).
-    const delayMs = profile.messageDelayMs ?? 1500;
+    // 1. Inter-message delay (block-and-wait), with optional additive jitter.
+    // The base messageDelayMs is always the floor; jitter only ever slows sends.
+    const baseDelay = profile.messageDelayMs ?? 1500;
+    const jitterMax = Math.max(0, profile.messageDelayJitterMs ?? 0);
+    const delayMs = baseDelay + (jitterMax > 0 ? Math.floor(Math.random() * (jitterMax + 1)) : 0);
     const last = this.lastSentAt.get(profileId) ?? 0;
     const wait = Math.max(0, delayMs - (Date.now() - last));
     if (wait > 0) await sleep(wait);
@@ -106,8 +163,8 @@ export class SendGateService {
         data: { dailyMessageCount: 0, dailyResetAt: nextMidnightWIB(now) },
       });
     }
-    const limit = profile.dailyMessageLimit;
-    // null/undefined limit means unlimited.
+    // Effective cap accounts for the warm-up ramp; null means unlimited.
+    const limit = effectiveDailyCap(profile, now);
     if (limit != null && count >= limit) {
       throw new HttpException(
         {

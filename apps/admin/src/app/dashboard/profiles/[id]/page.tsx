@@ -67,8 +67,13 @@ interface Profile {
   createdAt: string;
   updatedAt: string;
   messageDelayMs?: number;
+  messageDelayJitterMs?: number;
   dailyMessageLimit?: number | null;
   dailyMessageCount?: number;
+  warmupEnabled?: boolean;
+  warmupStartPerDay?: number | null;
+  warmupRampDays?: number | null;
+  warmupStartedAt?: string | null;
   sessionData?: {
     jid?: string;
     name?: string;
@@ -77,6 +82,18 @@ interface Profile {
 }
 
 type WireStatus = 'connected' | 'disconnected' | 'connecting' | 'error' | 'qr_ready' | string;
+
+// WIB day math, mirroring the server-side send gate so the "today's effective
+// cap" preview matches what the gate will actually enforce.
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const wibDay = (ms: number) => Math.floor((ms + WIB_OFFSET_MS) / DAY_MS);
+
+// Preset options for the delay/jitter selects. A stored value set via the API
+// that isn't a preset is surfaced as a synthetic option so it stays visible and
+// preservable rather than rendering a blank trigger.
+const DELAY_PRESETS = [1500, 3000, 6000, 10000];
+const JITTER_PRESETS = [0, 1500, 3000, 6000];
 
 const fmtPhone = (raw: string | null | undefined): string => {
   if (!raw) return '—';
@@ -202,7 +219,11 @@ export default function ProfileDetailPage() {
 
   // Sending-guardrail form state (delay + daily limit), prefilled from the profile.
   const [delayMs, setDelayMs] = useState<number>(1500);
+  const [jitterMs, setJitterMs] = useState<number>(0);
   const [dailyLimit, setDailyLimit] = useState<string>(''); // '' means unlimited
+  const [warmupEnabled, setWarmupEnabled] = useState(false);
+  const [warmupStart, setWarmupStart] = useState<string>(''); // per-day start, string for number input
+  const [warmupRampDays, setWarmupRampDays] = useState<string>('');
   const [savingGuardrails, setSavingGuardrails] = useState(false);
 
   const profileId = params.id as string;
@@ -406,22 +427,48 @@ export default function ProfileDetailPage() {
   useEffect(() => {
     if (!profile) return;
     setDelayMs(profile.messageDelayMs ?? 1500);
+    setJitterMs(profile.messageDelayJitterMs ?? 0);
     setDailyLimit(
       profile.dailyMessageLimit != null ? String(profile.dailyMessageLimit) : '',
     );
+    setWarmupEnabled(profile.warmupEnabled ?? false);
+    setWarmupStart(profile.warmupStartPerDay != null ? String(profile.warmupStartPerDay) : '');
+    setWarmupRampDays(profile.warmupRampDays != null ? String(profile.warmupRampDays) : '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id]);
 
   const handleSaveGuardrails = async () => {
     const trimmed = dailyLimit.trim();
     const parsedLimit = trimmed === '' ? null : Math.floor(Number(trimmed));
-    if (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 0)) {
+    if (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 1)) {
       toast({
         title: 'Invalid daily limit',
-        description: 'Enter a whole number, or leave empty for unlimited.',
+        description: 'Enter a whole number of 1 or more, or leave empty for unlimited.',
         variant: 'destructive',
       });
       return;
+    }
+    // Warm-up ramps toward the daily limit, so it needs a numeric target + a valid
+    // start and ramp length.
+    const parsedStart = warmupStart.trim() === '' ? null : Math.floor(Number(warmupStart));
+    const parsedRampDays = warmupRampDays.trim() === '' ? null : Math.floor(Number(warmupRampDays));
+    if (warmupEnabled) {
+      if (parsedLimit == null) {
+        toast({
+          title: 'Warm-up needs a daily limit',
+          description: 'Set a daily message limit — the ramp climbs up to it.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (parsedStart == null || !Number.isFinite(parsedStart) || parsedStart < 1) {
+        toast({ title: 'Invalid warm-up start', description: 'Enter a start-per-day of 1 or more.', variant: 'destructive' });
+        return;
+      }
+      if (parsedRampDays == null || !Number.isFinite(parsedRampDays) || parsedRampDays < 1) {
+        toast({ title: 'Invalid ramp days', description: 'Enter a ramp length of 1 day or more.', variant: 'destructive' });
+        return;
+      }
     }
     setSavingGuardrails(true);
     try {
@@ -432,7 +479,14 @@ export default function ProfileDetailPage() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ messageDelayMs: delayMs, dailyMessageLimit: parsedLimit }),
+        body: JSON.stringify({
+          messageDelayMs: delayMs,
+          messageDelayJitterMs: jitterMs,
+          dailyMessageLimit: parsedLimit,
+          warmupEnabled,
+          warmupStartPerDay: parsedStart,
+          warmupRampDays: parsedRampDays,
+        }),
       });
       if (res.ok) {
         toast({ title: 'Guardrails saved', description: 'Sending limits updated.' });
@@ -537,8 +591,36 @@ export default function ProfileDetailPage() {
   // Guardrail form: derived "unlimited" flag + dirty check (disables Save when unchanged).
   const unlimited = dailyLimit.trim() === '';
   const normalizedFormLimit = unlimited ? null : Math.floor(Number(dailyLimit));
+  const warmupStartN = warmupStart.trim() === '' ? null : Math.floor(Number(warmupStart));
+  const warmupRampN = warmupRampDays.trim() === '' ? null : Math.floor(Number(warmupRampDays));
+
+  // Today's effective cap preview, using the same ramp formula as the send gate.
+  // Falls back to the plain limit when warm-up is off or misconfigured.
+  const effectiveCapToday: number | null = (() => {
+    const hard = normalizedFormLimit;
+    if (!warmupEnabled || hard == null || warmupStartN == null || warmupRampN == null || warmupRampN < 1 || Number.isNaN(warmupStartN)) {
+      return hard;
+    }
+    // Match the server's re-anchor rule: the stored anchor is authoritative only
+    // when warm-up is already enabled in the DB. If it is off in the DB, saving
+    // (a false->true transition) will re-anchor to now, so preview from now.
+    const anchor =
+      profile.warmupEnabled && profile.warmupStartedAt
+        ? new Date(profile.warmupStartedAt).getTime()
+        : Date.now();
+    const dayIndex = wibDay(Date.now()) - wibDay(anchor);
+    if (dayIndex < 0) return Math.max(0, Math.min(hard, warmupStartN));
+    if (dayIndex >= warmupRampN - 1) return hard;
+    const progress = dayIndex / Math.max(1, warmupRampN - 1);
+    return Math.max(0, Math.min(hard, Math.round(warmupStartN + (hard - warmupStartN) * progress)));
+  })();
+
   const guardrailsDirty =
     delayMs !== (profile.messageDelayMs ?? 1500) ||
+    jitterMs !== (profile.messageDelayJitterMs ?? 0) ||
+    warmupEnabled !== (profile.warmupEnabled ?? false) ||
+    (warmupStartN ?? null) !== (profile.warmupStartPerDay ?? null) ||
+    (warmupRampN ?? null) !== (profile.warmupRampDays ?? null) ||
     (Number.isNaN(normalizedFormLimit as number)
       ? true
       : normalizedFormLimit !== (profile.dailyMessageLimit ?? null));
@@ -753,6 +835,11 @@ export default function ProfileDetailPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {!DELAY_PRESETS.includes(delayMs) && (
+                  <SelectItem value={String(delayMs)}>
+                    Custom ({(delayMs / 1000).toFixed(1)}s)
+                  </SelectItem>
+                )}
                 <SelectItem value="1500">1.5 seconds</SelectItem>
                 <SelectItem value="3000">3 seconds</SelectItem>
                 <SelectItem value="6000">6 seconds</SelectItem>
@@ -760,6 +847,31 @@ export default function ProfileDetailPage() {
               </SelectContent>
             </Select>
             <p className="text-[11px] text-slate-500">Minimum gap enforced between two sends.</p>
+            <div className="pt-2 space-y-1.5">
+              <Label htmlFor="jitter" className="text-xs text-slate-300">
+                Delay jitter
+              </Label>
+              <Select value={String(jitterMs)} onValueChange={(v) => setJitterMs(Number(v))}>
+                <SelectTrigger
+                  id="jitter"
+                  className="bg-slate-950/40 border-slate-800 text-slate-100"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {!JITTER_PRESETS.includes(jitterMs) && (
+                    <SelectItem value={String(jitterMs)}>
+                      Custom (up to +{(jitterMs / 1000).toFixed(1)}s)
+                    </SelectItem>
+                  )}
+                  <SelectItem value="0">Off (fixed spacing)</SelectItem>
+                  <SelectItem value="1500">up to +1.5s</SelectItem>
+                  <SelectItem value="3000">up to +3s</SelectItem>
+                  <SelectItem value="6000">up to +6s</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-slate-500">Random extra delay per send so timing looks less robotic.</p>
+            </div>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="limit" className="text-xs text-slate-300">
@@ -790,6 +902,72 @@ export default function ProfileDetailPage() {
             </div>
           </div>
         </div>
+
+        {/* Warm-up ramp */}
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3 max-w-2xl">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <Label htmlFor="warmup" className="text-xs font-medium text-slate-200 cursor-pointer">
+                Warm-up ramp
+              </Label>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Gradually raise the daily cap from a low start up to the limit — recommended for
+                new or recently rate-locked numbers.
+              </p>
+            </div>
+            <Switch id="warmup" checked={warmupEnabled} onCheckedChange={setWarmupEnabled} />
+          </div>
+          {warmupEnabled && (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="warmupStart" className="text-xs text-slate-300">
+                    Start per day
+                  </Label>
+                  <Input
+                    id="warmupStart"
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    placeholder="20"
+                    value={warmupStart}
+                    onChange={(e) => setWarmupStart(e.target.value)}
+                    className="bg-slate-950/40 border-slate-800 text-slate-100"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="warmupDays" className="text-xs text-slate-300">
+                    Ramp days
+                  </Label>
+                  <Input
+                    id="warmupDays"
+                    type="number"
+                    min={1}
+                    inputMode="numeric"
+                    placeholder="14"
+                    value={warmupRampDays}
+                    onChange={(e) => setWarmupRampDays(e.target.value)}
+                    className="bg-slate-950/40 border-slate-800 text-slate-100"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Ramps from <span className="font-mono text-slate-300">{warmupStart || '—'}</span> to{' '}
+                <span className="font-mono text-slate-300">
+                  {unlimited ? '(set a daily limit)' : dailyLimit}
+                </span>
+                /day over <span className="font-mono text-slate-300">{warmupRampDays || '—'}</span> days.
+                {!unlimited && effectiveCapToday != null && (
+                  <>
+                    {' '}Today&apos;s effective cap:{' '}
+                    <span className="font-mono text-emerald-300">{effectiveCapToday}</span>.
+                  </>
+                )}
+              </p>
+            </>
+          )}
+        </div>
+
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <p className="text-[11px] text-slate-500">
             Sent today:{' '}
@@ -797,7 +975,9 @@ export default function ProfileDetailPage() {
             {!unlimited && (
               <>
                 {' / '}
-                <span className="font-mono text-slate-300">{dailyLimit}</span>
+                <span className="font-mono text-slate-300">
+                  {warmupEnabled && effectiveCapToday != null ? effectiveCapToday : dailyLimit}
+                </span>
               </>
             )}
           </p>

@@ -9,6 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
+import { effectiveDailyCap } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1119,17 +1120,19 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           };
 
           // Fast-fail guard: skip automation entirely when the profile is at its
-          // daily cap. The actual counter increment is owned by SendGateService
-          // (every automation reply ultimately goes through MessagesService →
-          // the send gate), so incrementing here too would double-count.
-          // null dailyMessageLimit means unlimited.
+          // daily cap. Uses the same warm-up-aware effective cap as the send gate
+          // so this short-circuit matches what the gate would enforce. The actual
+          // counter increment is owned by SendGateService (every automation reply
+          // ultimately goes through MessagesService → the send gate), so
+          // incrementing here too would double-count. null cap means unlimited.
           const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
+          const effectiveCap = currentProfile ? effectiveDailyCap(currentProfile, new Date()) : null;
           if (
             currentProfile &&
-            currentProfile.dailyMessageLimit != null &&
-            currentProfile.dailyMessageCount >= currentProfile.dailyMessageLimit
+            effectiveCap != null &&
+            currentProfile.dailyMessageCount >= effectiveCap
           ) {
-            this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${currentProfile.dailyMessageLimit}, skipping automation`);
+            this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${effectiveCap}, skipping automation`);
           } else {
             const results = await this.ruleEngineService.processMessage(incomingMsg);
 
