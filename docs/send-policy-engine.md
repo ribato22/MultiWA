@@ -185,16 +185,24 @@ success, `unknown`/`failed` = failure.
 - All thresholds are env-overridable. Per-send OTP confirmation + failover is
   Phase 3.
 
-## 7. Phase 3 — Pluggable multi-channel failover (outline)
-- `SendChannel` interface: `whatsapp-web-js` (unofficial, primary), an optional
-  secondary channel, and optional SMS. The interface is generic; any concrete
-  channel is provided by the operator.
-- Per-category routing + failover: OTP primary = unofficial number; on
-  non-confirmation, fail over to a secondary channel (e.g. an official
-  authentication-template channel, reliable for OTP with no reach-out-lock).
-- All channel endpoints and credentials are read from environment variables
-  only, never committed. Concrete provider wiring (endpoints, account IDs,
-  tokens) is deployment-specific and lives outside this repository.
+## 7. Phase 3 — OTP delivery-confirmed failover (implemented)
+`POST /messages/otp` sends an OTP with automatic failover to a generic secondary
+template channel:
+
+- **Cold circuit open** → straight to the secondary channel (the number is
+  reach-out-locked; don't waste an attempt).
+- **Otherwise** → send over the primary (unofficial) number, wait up to
+  `OTP_ACK_TIMEOUT_MS` (8 s) for a delivered/read ack; if it isn't confirmed, or
+  the send is rejected (cold cap / circuit), fail over to the secondary channel.
+- The response reports which channel delivered it (`whatsapp` | `fallback`).
+
+The secondary channel is a **generic** template-send HTTP adapter configured
+entirely through env: `OTP_FALLBACK_URL`, `OTP_FALLBACK_COMPANY_UUID`,
+`OTP_FALLBACK_TEMPLATE_UUID`, `OTP_FALLBACK_CHATBOT_UUID`, `OTP_FALLBACK_VAR_KEY`,
+and an **optional** auth header (`OTP_FALLBACK_AUTH_HEADER` + `OTP_FALLBACK_TOKEN`)
+for providers that require one. Leaving `OTP_FALLBACK_URL` empty disables failover.
+No provider name, endpoint, or credential lives in this repository — concrete
+wiring is deployment-specific (server `.env` only).
 
 ---
 

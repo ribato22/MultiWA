@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 216,
+  "routeCount": 217,
   "routes": [
     {
       "method": "DELETE",
@@ -560,6 +560,10 @@
     {
       "method": "POST",
       "path": "/api/v1/messages/mark-read"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/messages/otp"
     },
     {
       "method": "POST",

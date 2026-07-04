@@ -133,6 +133,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/messages/text` | Send text message |
+| `POST` | `/messages/otp` | Send an OTP with delivery-confirmed failover to a secondary channel |
 | `POST` | `/messages/image` | Send image |
 | `POST` | `/messages/video` | Send video |
 | `POST` | `/messages/audio` | Send audio/voice |

@@ -24,7 +24,9 @@ import {
   DeleteForEveryoneDto,
   ScheduleMessageDto,
   SendMessageResponse,
+  SendOtpDto,
 } from './dto';
+import { OtpService } from './otp.service';
 import { AuditService, AuditAction } from '../audit/audit.service';
 
 // Composite for the send endpoints: operation summary + the queued 201 response +
@@ -46,6 +48,7 @@ const ApiSend = (summary: string, description?: string) =>
 export class MessagesController {
   constructor(
     private readonly service: MessagesService,
+    private readonly otp: OtpService,
     private readonly auditService: AuditService,
   ) {}
 
@@ -60,6 +63,25 @@ export class MessagesController {
       userId: req.user?.id,
       resourceType: 'message',
       metadata: { type: 'text', profileId: dto.profileId, to: dto.to },
+      ...AuditService.fromRequest(req),
+    }).catch(() => {});
+    return result;
+  }
+
+  // Send OTP with delivery-confirmed failover to a secondary channel.
+  @Post('otp')
+  @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
+  @ApiSend(
+    'Send an OTP with failover',
+    'Sends the OTP over the primary WhatsApp number; if the cold circuit is open or delivery is not confirmed within the ack timeout, it fails over to the configured secondary template channel. Returns which channel delivered it.',
+  )
+  async sendOtp(@Body() dto: SendOtpDto, @Req() req: any) {
+    const result = await this.otp.sendOtp(dto.profileId, dto.to, dto.text, dto.code);
+    this.auditService.log({
+      action: AuditAction.MESSAGE_SEND,
+      userId: req.user?.id,
+      resourceType: 'message',
+      metadata: { type: 'otp', profileId: dto.profileId, to: dto.to, channel: result.channel },
       ...AuditService.fromRequest(req),
     }).catch(() => {});
     return result;
