@@ -110,6 +110,8 @@ export class ProfilesService {
     if (dto.messageDelayJitterMs !== undefined) data.messageDelayJitterMs = dto.messageDelayJitterMs;
     if (dto.warmupStartPerDay !== undefined) data.warmupStartPerDay = dto.warmupStartPerDay;
     if (dto.warmupRampDays !== undefined) data.warmupRampDays = dto.warmupRampDays;
+    if (dto.serviceWindowHours !== undefined) data.serviceWindowHours = dto.serviceWindowHours;
+    if (dto.coldDailyLimit !== undefined) data.coldDailyLimit = dto.coldDailyLimit;
     if (dto.warmupEnabled !== undefined) {
       data.warmupEnabled = dto.warmupEnabled;
       // Anchor the ramp at "today" each time warm-up is turned on (false -> true),

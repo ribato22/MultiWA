@@ -90,6 +90,72 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Default cold-lane daily cap when neither coldDailyLimit nor dailyMessageLimit is set. */
+const COLD_DEFAULT_DAILY_LIMIT = Number(process.env.COLD_DEFAULT_DAILY_LIMIT) || 250;
+
+/**
+ * Classify an outbound send as "cold" (business-initiated) vs "service" (reply).
+ *
+ * A send is a SERVICE reply when the recipient messaged this profile within
+ * serviceWindowHours (WhatsApp's customer-service window) — those are not subject
+ * to the reach-out lock and must flow freely. Everything else to a person is COLD
+ * (first contact / outside the window: OTP, notifications, marketing). Group,
+ * broadcast and newsletter sends are never cold outreach. A missing recipient
+ * defaults to service so we never block a send we cannot classify.
+ */
+export async function classifyColdSend(
+  profileId: string,
+  recipient: string | undefined,
+  serviceWindowHours: number,
+  now: Date = new Date(),
+): Promise<boolean> {
+  if (!recipient) return false;
+  const jid = recipient.replace(/@c\.us$/, '@s.whatsapp.net');
+  if (jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return false;
+  const since = new Date(now.getTime() - Math.max(0, serviceWindowHours) * 60 * 60 * 1000);
+
+  // A contact can be stored under either its phone JID or its hidden @lid form
+  // (multi-device). Gather every linked JID so an in-window reply persisted under
+  // the alternate form still matches. (Truly unresolved @lid inbound with no
+  // stored link can't be connected without the live engine — a known limitation.)
+  const candidates = new Set<string>([jid]);
+  const linked = await prisma.conversation.findMany({
+    where: { profileId, OR: [{ jid }, { metadata: { path: ['lidJid'], equals: jid } }] },
+    select: { jid: true, metadata: true },
+  });
+  for (const c of linked) {
+    candidates.add(c.jid);
+    const lid = (c.metadata as any)?.lidJid;
+    if (typeof lid === 'string' && lid) candidates.add(lid);
+  }
+
+  const lastInbound = await prisma.message.findFirst({
+    where: {
+      profileId,
+      direction: 'incoming',
+      conversation: { is: { profileId, jid: { in: [...candidates] } } },
+    },
+    orderBy: { timestamp: 'desc' },
+    select: { timestamp: true },
+  });
+  return !lastInbound || lastInbound.timestamp < since;
+}
+
+/** Fields the lane cap resolver reads (superset of WarmupCapInput). */
+export type LaneCapInput = WarmupCapInput & { coldDailyLimit?: number | null };
+
+/**
+ * Effective daily cap for a lane. Replies (service) only hit the plain daily
+ * backstop with no warm-up throttling; cold sends hit the cold cap
+ * (coldDailyLimit → dailyMessageLimit → the conservative default), ramped by the
+ * warm-up schedule. Null means uncapped.
+ */
+export function effectiveCapForLane(profile: LaneCapInput, isCold: boolean, now: Date = new Date()): number | null {
+  if (!isCold) return profile.dailyMessageLimit ?? null;
+  const baseColdLimit = profile.coldDailyLimit ?? profile.dailyMessageLimit ?? COLD_DEFAULT_DAILY_LIMIT;
+  return effectiveDailyCap({ ...profile, dailyMessageLimit: baseColdLimit }, now);
+}
+
 @Injectable()
 export class SendGateService {
   private readonly logger = new Logger(SendGateService.name);
@@ -106,12 +172,16 @@ export class SendGateService {
    * counter on success. Returns sendFn's result, or rejects with the send error
    * / a 429 HttpException.
    */
-  async executeWithGate<T>(profileId: string, sendFn: () => Promise<T>): Promise<T> {
+  async executeWithGate<T>(
+    profileId: string,
+    sendFn: () => Promise<T>,
+    recipient?: string,
+  ): Promise<T> {
     const prev = this.profileChains.get(profileId) ?? Promise.resolve();
     // Run after the previous send for this profile, whether it resolved or rejected.
     const runResult = prev.then(
-      () => this.gatedRun(profileId, sendFn),
-      () => this.gatedRun(profileId, sendFn),
+      () => this.gatedRun(profileId, sendFn, recipient),
+      () => this.gatedRun(profileId, sendFn, recipient),
     );
     // The stored tail must never reject (or it poisons the chain).
     this.profileChains.set(
@@ -124,7 +194,11 @@ export class SendGateService {
     return runResult;
   }
 
-  private async gatedRun<T>(profileId: string, sendFn: () => Promise<T>): Promise<T> {
+  private async gatedRun<T>(
+    profileId: string,
+    sendFn: () => Promise<T>,
+    recipient?: string,
+  ): Promise<T> {
     const profile = await prisma.profile.findUnique({
       where: { id: profileId },
       select: {
@@ -137,6 +211,9 @@ export class SendGateService {
         warmupStartPerDay: true,
         warmupRampDays: true,
         warmupStartedAt: true,
+        serviceWindowHours: true,
+        coldDailyLimit: true,
+        coldMessageCount: true,
       },
     });
     if (!profile) throw new NotFoundException('Profile not found');
@@ -153,35 +230,48 @@ export class SendGateService {
     // inter-message spacing.
     this.lastSentAt.set(profileId, Date.now());
 
-    // 2. Lazy daily reset (WIB boundary) + limit check.
+    // 2. Lazy daily reset (WIB boundary) for both the total and cold counters.
     const now = new Date();
     let count = profile.dailyMessageCount ?? 0;
+    let coldCount = profile.coldMessageCount ?? 0;
+    let resetAt = profile.dailyResetAt ?? nextMidnightWIB(now);
     if (!profile.dailyResetAt || profile.dailyResetAt <= now) {
       count = 0;
+      coldCount = 0;
+      resetAt = nextMidnightWIB(now);
       await prisma.profile.update({
         where: { id: profileId },
-        data: { dailyMessageCount: 0, dailyResetAt: nextMidnightWIB(now) },
+        data: { dailyMessageCount: 0, coldMessageCount: 0, dailyResetAt: resetAt },
       });
     }
-    // Effective cap accounts for the warm-up ramp; null means unlimited.
-    const limit = effectiveDailyCap(profile, now);
-    if (limit != null && count >= limit) {
+
+    // 3. Lane-aware cap. Replies (in service window) only hit the high overall
+    // backstop; cold sends hit the dedicated cold cap (warm-up ramps toward it).
+    const isCold = await classifyColdSend(profileId, recipient, profile.serviceWindowHours ?? 24, now);
+    const cap = effectiveCapForLane(profile, isCold, now);
+    const laneCount = isCold ? coldCount : count;
+    if (cap != null && laneCount >= cap) {
       throw new HttpException(
         {
-          error: 'DAILY_LIMIT_REACHED',
-          limit,
-          count,
-          resetAt: profile.dailyResetAt ?? nextMidnightWIB(now),
+          error: isCold ? 'COLD_DAILY_LIMIT_REACHED' : 'DAILY_LIMIT_REACHED',
+          lane: isCold ? 'cold' : 'service',
+          limit: cap,
+          count: laneCount,
+          resetAt,
         },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
-    // 3. Send, then increment the counter only on a real successful send.
+    // 4. Send, then increment counters only on a real successful send. Cold sends
+    // advance both the total and the cold counter; replies advance only the total.
     const result = await sendFn();
     await prisma.profile.update({
       where: { id: profileId },
-      data: { dailyMessageCount: { increment: 1 } },
+      data: {
+        dailyMessageCount: { increment: 1 },
+        ...(isCold ? { coldMessageCount: { increment: 1 } } : {}),
+      },
     });
     return result;
   }

@@ -111,4 +111,22 @@ export class UpdateProfileDto {
   @IsInt()
   @Min(1)
   warmupRampDays?: number | null;
+
+  @ApiPropertyOptional({
+    example: 24,
+    description: 'Customer-service window (hours). A send is a "reply" (unthrottled) if the recipient messaged within this window; otherwise it is "cold".',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  serviceWindowHours?: number;
+
+  @ApiPropertyOptional({
+    example: 250,
+    description: 'Daily cap for COLD (business-initiated / out-of-window) sends only — replies are not counted against it. Omit to fall back to dailyMessageLimit, then a conservative default.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  coldDailyLimit?: number | null;
 }
