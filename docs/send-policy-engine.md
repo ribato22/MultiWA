@@ -199,10 +199,26 @@ template channel:
 The secondary channel is a **generic** template-send HTTP adapter configured
 entirely through env: `OTP_FALLBACK_URL`, `OTP_FALLBACK_COMPANY_UUID`,
 `OTP_FALLBACK_TEMPLATE_UUID`, `OTP_FALLBACK_CHATBOT_UUID`, `OTP_FALLBACK_VAR_KEY`,
-and an **optional** auth header (`OTP_FALLBACK_AUTH_HEADER` + `OTP_FALLBACK_TOKEN`)
-for providers that require one. Leaving `OTP_FALLBACK_URL` empty disables failover.
-No provider name, endpoint, or credential lives in this repository — concrete
-wiring is deployment-specific (server `.env` only).
+`OTP_FALLBACK_TIMEOUT_MS`, and an **optional** auth header
+(`OTP_FALLBACK_AUTH_HEADER` + `OTP_FALLBACK_TOKEN`) for providers that require one.
+Leaving `OTP_FALLBACK_URL` empty disables failover. No provider name, endpoint, or
+credential lives in this repository — concrete wiring is deployment-specific
+(server `.env` only).
+
+Hardening applied: immediate failover on a synchronously-known non-delivery (no
+wasted ack wait); a final status recheck + best-effort `deleteForEveryone` recall
+before failover to reduce duplicate OTPs; an abort timeout on the fallback HTTP
+call; recipient JIDs without a phone form (`@lid`/`@g.us`) are rejected for the
+template channel; and total delivery failure returns HTTP 502 (not a 200 with
+`success:false`).
+
+**Known limitations / follow-ups:** (1) reliable per-OTP confirmation assumes
+**synchronous send mode** (`ENGINE_HOST=api`, `DURABLE_SEND` off) — in durable
+mode the primary is only enqueued, so it fails over immediately. (2) The fallback
+channel does **not** count against the per-profile cold cap / circuit, so OTP
+volume is bounded only by the endpoint's auth + the provider's own limits; a
+dedicated per-profile fallback quota is a possible follow-up. (3) A late-delivered
+primary can still race the recall (at-least-once OTP delivery).
 
 ---
 

@@ -1,7 +1,7 @@
 // MultiWA Gateway - Enhanced Messages Controller
 // apps/api/src/modules/messages/messages.controller.ts
 
-import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req, applyDecorators } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req, applyDecorators, HttpException, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery, ApiCreatedResponse } from '@nestjs/swagger';
 import { ApiAuthErrors, ApiValidationError, ApiRateLimited, ApiNotFound } from '../../common/decorators/api-responses';
 import { MessagesService } from './messages.service';
@@ -81,9 +81,17 @@ export class MessagesController {
       action: AuditAction.MESSAGE_SEND,
       userId: req.user?.id,
       resourceType: 'message',
-      metadata: { type: 'otp', profileId: dto.profileId, to: dto.to, channel: result.channel },
+      metadata: { type: 'otp', profileId: dto.profileId, to: dto.to, channel: result.channel, success: result.success },
       ...AuditService.fromRequest(req),
     }).catch(() => {});
+    // Total delivery failure (no channel delivered) must surface as a non-2xx so
+    // callers that gate on HTTP status don't treat an undelivered OTP as sent.
+    if (!result.success) {
+      throw new HttpException(
+        { error: 'OTP_DELIVERY_FAILED', channel: result.channel, reason: result.reason },
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
     return result;
   }
 

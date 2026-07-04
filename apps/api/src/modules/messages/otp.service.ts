@@ -65,16 +65,33 @@ export class OtpService {
       send = await this.messages.sendText({ profileId, to, text } as any);
     } catch (err: any) {
       this.logger.warn(`OTP for ${profileId}: unofficial send rejected (${err?.message}) → fallback`);
-      return this.viaFallback(to, code, `whatsapp-rejected:${err?.message ?? 'error'}`);
+      return this.viaFallback(to, code, 'whatsapp-rejected');
     }
-    if (!send?.messageId) {
-      return this.viaFallback(to, code, 'whatsapp-no-message-id');
+    // Fail over IMMEDIATELY on a synchronously-known non-delivery (soft-fail, or the
+    // message was only enqueued / the profile is offline) — don't burn the ack timeout.
+    // NB: reliable per-OTP confirmation assumes synchronous send mode
+    // (ENGINE_HOST=api, DURABLE_SEND off); in durable mode the primary is only queued.
+    if (!send?.messageId || send?.success === false || send?.status === 'failed' || send?.status === 'pending') {
+      return this.viaFallback(to, code, 'whatsapp-not-sent');
     }
 
     // Wait for a delivered/read ack; failover if it doesn't confirm in time.
-    const delivered = await this.waitForDelivery(send.messageId, this.ackTimeoutMs);
-    if (delivered) {
+    if (await this.waitForDelivery(send.messageId, this.ackTimeoutMs)) {
       return { success: true, channel: 'whatsapp', messageId: send.messageId, waMessageId: send.waMessageId };
+    }
+    // Final status recheck closes the poll gap so a just-delivered OTP doesn't double-send.
+    const late = await prisma.message.findUnique({ where: { id: send.messageId }, select: { status: true } });
+    if (late && (late.status === 'delivered' || late.status === 'read' || late.status === 'played')) {
+      return { success: true, channel: 'whatsapp', messageId: send.messageId, waMessageId: send.waMessageId };
+    }
+    // Best-effort recall of the primary before failover: both messages carry the same
+    // code, so deleting a late-delivered copy is harmless. Non-fatal.
+    if (send.waMessageId) {
+      try {
+        await this.messages.deleteForEveryone(profileId, to, send.waMessageId);
+      } catch (e: any) {
+        this.logger.warn(`OTP primary recall failed: ${e?.message}`);
+      }
     }
     this.logger.warn(`OTP for ${profileId}: not confirmed within ${this.ackTimeoutMs}ms → fallback`);
     return this.viaFallback(to, code, 'whatsapp-not-delivered');
@@ -93,6 +110,24 @@ export class OtpService {
   }
 
   /**
+   * Extract a plain phone number (digits) for the template channel, or null when
+   * the recipient is a non-phone JID (@lid / @g.us / …) that has no phone form —
+   * `to.replace(/\D/g,'')` would otherwise mangle those into a bogus number.
+   */
+  private fallbackNumber(to: string): string | null {
+    const t = to.trim();
+    if (t.includes('@')) {
+      if (t.endsWith('@s.whatsapp.net') || t.endsWith('@c.us')) {
+        const digits = t.split('@')[0].split(':')[0].replace(/\D/g, '');
+        return digits.length >= 7 ? digits : null;
+      }
+      return null; // @lid, @g.us, @broadcast, @newsletter — no phone number
+    }
+    const digits = t.replace(/\D/g, '');
+    return digits.length >= 7 ? digits : null;
+  }
+
+  /**
    * Deliver the OTP via the generic template fallback channel. Endpoint,
    * credentials and template identifiers are all read from environment variables;
    * the request body mirrors a standard template-send API. An optional auth header
@@ -105,7 +140,11 @@ export class OtpService {
       this.logger.error(`OTP fallback requested (${reason}) but OTP_FALLBACK_URL is not configured`);
       return { success: false, channel: 'fallback', reason, error: 'fallback-not-configured' };
     }
-    const number = to.replace(/\D/g, '');
+    const number = this.fallbackNumber(to);
+    if (!number) {
+      this.logger.error(`OTP fallback (${reason}): recipient has no usable phone number`);
+      return { success: false, channel: 'fallback', reason, error: 'no-phone-number' };
+    }
     const varKey = this.config.get<string>('OTP_FALLBACK_VAR_KEY') || '{{1}}';
     const body = {
       company_uuid: this.config.get<string>('OTP_FALLBACK_COMPANY_UUID'),
@@ -119,7 +158,13 @@ export class OtpService {
     if (authHeader && token) headers[authHeader] = token;
 
     try {
-      const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      const timeoutMs = Number(this.config.get('OTP_FALLBACK_TIMEOUT_MS')) || 10000;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
       const ok = res.ok;
       if (!ok) {
         const detail = (await res.text().catch(() => '')).slice(0, 200);
