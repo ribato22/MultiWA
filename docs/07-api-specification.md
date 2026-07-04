@@ -229,6 +229,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/contacts/profile/:profileId/validate/:phone` | Validate a single phone number on WhatsApp |
 | `POST` | `/contacts/profile/:profileId/validate` | Validate a batch of phone numbers |
 | `POST` | `/contacts/sync/whatsapp` | Sync contacts from WhatsApp |
+| `POST` | `/contacts/profile/:profileId/save-to-whatsapp` | Save a contact into the WhatsApp account addressbook (whatsapp-web-js only) |
+| `DELETE` | `/contacts/profile/:profileId/whatsapp/:phone` | Delete a contact from the WhatsApp account addressbook (whatsapp-web-js only) |
 
 ### Templates (`/templates`)
 

@@ -8,11 +8,34 @@ import {
   IsArray,
   IsObject,
   IsNotEmpty,
+  IsBoolean,
   ValidateNested,
   ArrayNotEmpty,
   IsPhoneNumber,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export class SaveWhatsAppContactDto {
+  @ApiProperty({ example: '6281234567890', description: 'Phone with country code' })
+  @IsString()
+  @IsNotEmpty()
+  phone: string;
+
+  @ApiPropertyOptional({ example: 'John' })
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @ApiPropertyOptional({ example: 'Doe' })
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
+  @ApiPropertyOptional({ example: false, description: "Also mirror to the phone's address book" })
+  @IsOptional()
+  @IsBoolean()
+  syncToPhone?: boolean;
+}
 
 export class CreateContactDto {
   @ApiProperty({ example: 'profile-uuid' })

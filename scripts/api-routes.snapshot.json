@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 214,
+  "routeCount": 216,
   "routes": [
     {
       "method": "DELETE",
@@ -387,11 +387,19 @@
     },
     {
       "method": "POST",
+      "path": "/api/v1/contacts/profile/:profileId/save-to-whatsapp"
+    },
+    {
+      "method": "POST",
       "path": "/api/v1/contacts/profile/:profileId/validate"
     },
     {
       "method": "GET",
       "path": "/api/v1/contacts/profile/:profileId/validate/:phone"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/contacts/profile/:profileId/whatsapp/:phone"
     },
     {
       "method": "POST",
