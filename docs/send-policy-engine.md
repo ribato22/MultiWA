@@ -173,6 +173,15 @@ success, `unknown`/`failed` = failure.
 - **Half-open + recover:** after `COLD_CIRCUIT_COOLDOWN_MS` (30 min) the next cold
   send is allowed as a probe; a delivered ack closes the breaker (recovered
   alert), a failed one re-arms the cooldown.
+- The health signal counts only **transmitted** cold sends (real WhatsApp id) with
+  an ack-derived terminal state — policy 429s / send errors keep a placeholder id
+  and are excluded, so the breaker never counts its own blocks. State transitions
+  are atomic (compare-and-set) and evaluated once per message (first terminal ack).
+- **Known limitation:** the breaker relies on undelivered cold sends producing a
+  terminal `unknown` ack (whatsapp-web.js does; a reach-out-locked send yields
+  ack=-1). An engine that leaves silently-dropped sends at non-terminal `sent`
+  (e.g. Baileys) would need a stuck-`sent` reconciliation sweep to feed the signal
+  — a small follow-up, not required for the whatsapp-web.js path.
 - All thresholds are env-overridable. Per-send OTP confirmation + failover is
   Phase 3.
 

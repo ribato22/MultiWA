@@ -1168,6 +1168,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // (pending, sent, delivered, read, played)
           // No need for double-mapping
           
+          // Read prior state before updating so we can fire the cold-circuit eval on
+          // the FIRST terminal transition only (a message emits delivered→read→played).
+          const prior = await prisma.message.findFirst({
+            where: { messageId },
+            select: { status: true, lane: true },
+          });
+
           const updated = await prisma.message.updateMany({
             where: { messageId },
             data: { status },
@@ -1190,28 +1197,24 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             this.emitEvent(ackEvent, { profileId, messageId, status });
           }
 
-          // Cold-circuit health: when a COLD send reaches a terminal ack, re-evaluate
-          // the breaker (delivered = success; unknown/failed = failure) and alert on a
-          // state transition. Replies never affect the circuit.
-          const terminal =
-            status === 'delivered' || status === 'read' || status === 'played' ||
-            status === 'unknown' || status === 'failed';
-          if (terminal) {
-            const msg = await prisma.message.findFirst({ where: { messageId }, select: { lane: true } });
-            if (msg?.lane === 'cold') {
-              const success = status === 'delivered' || status === 'read' || status === 'played';
-              const transition = await evaluateColdCircuit(profileId, success);
-              if (transition === 'opened') {
-                this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '🧊 Cold circuit opened',
-                  'Cold (business-initiated) sends are paused after repeated delivery failures — the number is likely rate-locked. Replies still work; it will auto-retry after a cooldown.',
-                  { profileId, reason: 'cold-circuit-open' },
-                ).catch((err) => this.logger.warn(`Notification error (cold-circuit-open): ${err.message}`));
-              } else if (transition === 'closed') {
-                this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '✅ Cold circuit recovered',
-                  'Cold sending recovered and has resumed.',
-                  { profileId, reason: 'cold-circuit-closed' },
-                ).catch((err) => this.logger.warn(`Notification error (cold-circuit-closed): ${err.message}`));
-              }
+          // Cold-circuit health: evaluate the breaker ONCE, on the first terminal
+          // transition of a COLD message (delivered/read/played = success, unknown =
+          // failure). Later acks on the same message don't re-run the state machine.
+          const TERMINAL_ACKS = ['delivered', 'read', 'played', 'unknown'];
+          const wasTerminal = prior ? TERMINAL_ACKS.includes(prior.status) : false;
+          if (prior?.lane === 'cold' && !wasTerminal && TERMINAL_ACKS.includes(status)) {
+            const success = status === 'delivered' || status === 'read' || status === 'played';
+            const transition = await evaluateColdCircuit(profileId, success);
+            if (transition === 'opened') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '🧊 Cold circuit opened',
+                'Cold (business-initiated) sends are paused after repeated delivery failures — the number is likely rate-locked. Replies still work; it will auto-retry after a cooldown.',
+                { profileId, reason: 'cold-circuit-open' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-open): ${err.message}`));
+            } else if (transition === 'closed') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '✅ Cold circuit recovered',
+                'Cold sending recovered and has resumed.',
+                { profileId, reason: 'cold-circuit-closed' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-closed): ${err.message}`));
             }
           }
         } catch (error) {

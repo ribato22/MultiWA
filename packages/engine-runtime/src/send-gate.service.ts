@@ -168,7 +168,10 @@ const COLD_CIRCUIT_MIN_SAMPLES = Number(process.env.COLD_CIRCUIT_MIN_SAMPLES) ||
 export const COLD_CIRCUIT_COOLDOWN_MS = Number(process.env.COLD_CIRCUIT_COOLDOWN_MS) || 30 * 60 * 1000;
 
 const DELIVERED_STATUSES = ['delivered', 'read', 'played'];
-const TERMINAL_STATUSES = [...DELIVERED_STATUSES, 'unknown', 'failed'];
+// Ack-derived terminal states only. 'failed' is deliberately excluded: it is set
+// by the SEND path (policy 429s / engine throws), never by an ack, and always on
+// a never-transmitted row — counting it would let the breaker poison itself.
+const TERMINAL_STATUSES = [...DELIVERED_STATUSES, 'unknown'];
 
 /**
  * Is the cold circuit currently blocking sends? Returns true when the breaker is
@@ -203,24 +206,33 @@ export async function evaluateColdCircuit(
 
   if (profile.coldCircuitState === 'open') {
     if (ackWasSuccess) {
-      // A cold send got through (the half-open probe worked) → recovered.
-      await prisma.profile.update({
-        where: { id: profileId },
+      // Half-open probe delivered → recovered. CAS guarded to 'open' so only the
+      // ack that actually performs the transition returns 'closed' (no double-alert).
+      const r = await prisma.profile.updateMany({
+        where: { id: profileId, coldCircuitState: 'open' },
         data: { coldCircuitState: 'closed', coldCircuitOpenedAt: null },
       });
-      return 'closed';
+      return r.count === 1 ? 'closed' : null;
     }
-    // Still failing → re-arm the cooldown so it doesn't half-open immediately.
-    await prisma.profile.update({
-      where: { id: profileId },
+    // Still failing → re-arm the cooldown so it doesn't immediately half-open again.
+    await prisma.profile.updateMany({
+      where: { id: profileId, coldCircuitState: 'open' },
       data: { coldCircuitOpenedAt: new Date() },
     });
     return null;
   }
 
-  // Closed: open only when the recent terminal cold outcomes are mostly failures.
+  // Closed: open only when the recent REAL (transmitted) cold outcomes are mostly
+  // failures. Exclude never-transmitted rows — policy 429s and engine-throw failures
+  // keep the `pending_` placeholder id — so the breaker never counts its own blocks.
   const recent = await prisma.message.findMany({
-    where: { profileId, lane: 'cold', direction: 'outgoing', status: { in: TERMINAL_STATUSES } },
+    where: {
+      profileId,
+      lane: 'cold',
+      direction: 'outgoing',
+      status: { in: TERMINAL_STATUSES },
+      NOT: { messageId: { startsWith: 'pending_' } },
+    },
     orderBy: { createdAt: 'desc' },
     take: COLD_CIRCUIT_WINDOW,
     select: { status: true },
@@ -228,11 +240,11 @@ export async function evaluateColdCircuit(
   if (recent.length < COLD_CIRCUIT_MIN_SAMPLES) return null;
   const delivered = recent.filter((m) => DELIVERED_STATUSES.includes(m.status)).length;
   if (delivered / recent.length < COLD_CIRCUIT_MIN_SUCCESS) {
-    await prisma.profile.update({
-      where: { id: profileId },
+    const r = await prisma.profile.updateMany({
+      where: { id: profileId, coldCircuitState: 'closed' },
       data: { coldCircuitState: 'open', coldCircuitOpenedAt: new Date() },
     });
-    return 'opened';
+    return r.count === 1 ? 'opened' : null;
   }
   return null;
 }
@@ -337,12 +349,22 @@ export class SendGateService {
 
     // 3a. Cold circuit breaker: pause cold sends while open (delivery is failing /
     // the number is reach-out-locked). Replies are never blocked here.
-    if (isCold && isColdCircuitBlocking(profile.coldCircuitState, profile.coldCircuitOpenedAt, now)) {
-      const retryAt = new Date((profile.coldCircuitOpenedAt?.getTime() ?? now.getTime()) + COLD_CIRCUIT_COOLDOWN_MS);
-      throw new HttpException(
-        { error: 'COLD_CIRCUIT_OPEN', lane: 'cold', retryAt },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
+    if (isCold && profile.coldCircuitState === 'open') {
+      if (isColdCircuitBlocking(profile.coldCircuitState, profile.coldCircuitOpenedAt, now)) {
+        const retryAt = new Date((profile.coldCircuitOpenedAt?.getTime() ?? now.getTime()) + COLD_CIRCUIT_COOLDOWN_MS);
+        throw new HttpException({ error: 'COLD_CIRCUIT_OPEN', lane: 'cold', retryAt }, HttpStatus.TOO_MANY_REQUESTS);
+      }
+      // Cooldown elapsed → admit exactly ONE half-open probe. CAS on openedAt so a
+      // concurrent burst can't all probe; the winner re-arms the cooldown, and its
+      // ack will close (recovered) or re-arm the breaker.
+      const claim = await prisma.profile.updateMany({
+        where: { id: profileId, coldCircuitState: 'open', coldCircuitOpenedAt: profile.coldCircuitOpenedAt },
+        data: { coldCircuitOpenedAt: now },
+      });
+      if (claim.count !== 1) {
+        const retryAt = new Date(now.getTime() + COLD_CIRCUIT_COOLDOWN_MS);
+        throw new HttpException({ error: 'COLD_CIRCUIT_OPEN', lane: 'cold', retryAt }, HttpStatus.TOO_MANY_REQUESTS);
+      }
     }
 
     const cap = effectiveCapForLane(profile, isCold, now);

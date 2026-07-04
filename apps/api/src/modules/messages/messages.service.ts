@@ -454,11 +454,16 @@ export class MessagesService {
       throw new Error(`Profile ${profileId} not connected; retrying queued send`);
     }
 
+    // Use the lane classified + persisted at enqueue time so the gate's governance
+    // and the cold-circuit health accounting agree with the message's stored lane.
+    const laneRow = await prisma.message.findUnique({ where: { id: messageDbId }, select: { lane: true } });
+
     try {
       const result = await this.sendGate.executeWithGate(
         profileId,
         () => this.dispatchToEngine(engine, type, to, content, quotedMessageId),
         to,
+        laneRow?.lane === 'cold',
       );
       await prisma.message.update({
         where: { id: messageDbId },
