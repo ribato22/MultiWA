@@ -57,7 +57,9 @@ export function effectiveDailyCap(profile: WarmupCapInput, now: Date = new Date(
   if (start == null || rampDays == null || rampDays < 1 || !startedAt) return hardLimit;
 
   const dayIndex = wibDayNumber(now) - wibDayNumber(startedAt);
-  if (dayIndex < 0) return Math.max(0, Math.min(hardLimit, start)); // anchor in the future
+  // Day 0 (and any future anchor) is exactly the start cap. This also makes a
+  // 1-day ramp behave sanely: day 0 = start, day 1+ = full limit.
+  if (dayIndex <= 0) return Math.max(0, Math.min(hardLimit, start));
   if (dayIndex >= rampDays - 1) return hardLimit; // ramp complete
 
   const progress = dayIndex / Math.max(1, rampDays - 1);

@@ -89,6 +89,12 @@ const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const wibDay = (ms: number) => Math.floor((ms + WIB_OFFSET_MS) / DAY_MS);
 
+// Preset options for the delay/jitter selects. A stored value set via the API
+// that isn't a preset is surfaced as a synthetic option so it stays visible and
+// preservable rather than rendering a blank trigger.
+const DELAY_PRESETS = [1500, 3000, 6000, 10000];
+const JITTER_PRESETS = [0, 1500, 3000, 6000];
+
 const fmtPhone = (raw: string | null | undefined): string => {
   if (!raw) return '—';
   const digits = raw.replace(/\D/g, '');
@@ -434,10 +440,10 @@ export default function ProfileDetailPage() {
   const handleSaveGuardrails = async () => {
     const trimmed = dailyLimit.trim();
     const parsedLimit = trimmed === '' ? null : Math.floor(Number(trimmed));
-    if (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 0)) {
+    if (parsedLimit != null && (!Number.isFinite(parsedLimit) || parsedLimit < 1)) {
       toast({
         title: 'Invalid daily limit',
-        description: 'Enter a whole number, or leave empty for unlimited.',
+        description: 'Enter a whole number of 1 or more, or leave empty for unlimited.',
         variant: 'destructive',
       });
       return;
@@ -595,7 +601,13 @@ export default function ProfileDetailPage() {
     if (!warmupEnabled || hard == null || warmupStartN == null || warmupRampN == null || warmupRampN < 1 || Number.isNaN(warmupStartN)) {
       return hard;
     }
-    const anchor = profile.warmupStartedAt ? new Date(profile.warmupStartedAt).getTime() : Date.now();
+    // Match the server's re-anchor rule: the stored anchor is authoritative only
+    // when warm-up is already enabled in the DB. If it is off in the DB, saving
+    // (a false->true transition) will re-anchor to now, so preview from now.
+    const anchor =
+      profile.warmupEnabled && profile.warmupStartedAt
+        ? new Date(profile.warmupStartedAt).getTime()
+        : Date.now();
     const dayIndex = wibDay(Date.now()) - wibDay(anchor);
     if (dayIndex < 0) return Math.max(0, Math.min(hard, warmupStartN));
     if (dayIndex >= warmupRampN - 1) return hard;
@@ -823,6 +835,11 @@ export default function ProfileDetailPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {!DELAY_PRESETS.includes(delayMs) && (
+                  <SelectItem value={String(delayMs)}>
+                    Custom ({(delayMs / 1000).toFixed(1)}s)
+                  </SelectItem>
+                )}
                 <SelectItem value="1500">1.5 seconds</SelectItem>
                 <SelectItem value="3000">3 seconds</SelectItem>
                 <SelectItem value="6000">6 seconds</SelectItem>
@@ -842,6 +859,11 @@ export default function ProfileDetailPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  {!JITTER_PRESETS.includes(jitterMs) && (
+                    <SelectItem value={String(jitterMs)}>
+                      Custom (up to +{(jitterMs / 1000).toFixed(1)}s)
+                    </SelectItem>
+                  )}
                   <SelectItem value="0">Off (fixed spacing)</SelectItem>
                   <SelectItem value="1500">up to +1.5s</SelectItem>
                   <SelectItem value="3000">up to +3s</SelectItem>
