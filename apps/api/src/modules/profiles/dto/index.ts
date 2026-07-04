@@ -2,7 +2,7 @@
 // apps/api/src/modules/profiles/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUrl, IsEnum, IsInt, Min } from 'class-validator';
+import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min } from 'class-validator';
 
 export enum EngineType {
   WHATSAPP_WEB_JS = 'whatsapp-web-js',
@@ -76,4 +76,39 @@ export class UpdateProfileDto {
   @IsInt()
   @Min(1)
   dailyMessageLimit?: number | null;
+
+  @ApiPropertyOptional({
+    example: 3000,
+    description: 'Max extra random milliseconds added on top of messageDelayMs per send (anti-ban jitter). 0 = fixed spacing. Actual delay is always >= messageDelayMs.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  messageDelayJitterMs?: number;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Enable the warm-up ramp: the effective daily cap climbs from warmupStartPerDay to dailyMessageLimit over warmupRampDays days. Requires dailyMessageLimit to be set.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  warmupEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    example: 20,
+    description: 'Starting daily cap on day 0 of the warm-up ramp.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  warmupStartPerDay?: number | null;
+
+  @ApiPropertyOptional({
+    example: 14,
+    description: 'Number of days for the warm-up ramp to climb from warmupStartPerDay to the daily limit.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  warmupRampDays?: number | null;
 }

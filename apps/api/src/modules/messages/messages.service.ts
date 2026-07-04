@@ -18,7 +18,7 @@ import {
   SendPollDto,
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
-import { SendGateService } from '@multiwa/engine-runtime';
+import { SendGateService, effectiveDailyCap } from '@multiwa/engine-runtime';
 import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import {
   OUTBOUND_SEND_QUEUE,
@@ -235,16 +235,19 @@ export class MessagesService {
       // 429 (the send gate in the consumer is the authoritative increment).
       const now = new Date();
       const resetDue = !profile.dailyResetAt || profile.dailyResetAt <= now;
+      // Effective cap accounts for the warm-up ramp (mirrors the authoritative
+      // send-gate check so warm-up-limited sends get a synchronous 429 too).
+      const effectiveLimit = effectiveDailyCap(profile, now);
       if (
-        profile.dailyMessageLimit != null &&
+        effectiveLimit != null &&
         !resetDue &&
-        (profile.dailyMessageCount ?? 0) >= profile.dailyMessageLimit
+        (profile.dailyMessageCount ?? 0) >= effectiveLimit
       ) {
         await prisma.message.update({ where: { id: message.id }, data: { status: 'failed' } });
         throw new HttpException(
           {
             error: 'DAILY_LIMIT_REACHED',
-            limit: profile.dailyMessageLimit,
+            limit: effectiveLimit,
             count: profile.dailyMessageCount,
             resetAt: profile.dailyResetAt,
           },

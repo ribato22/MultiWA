@@ -135,9 +135,20 @@ model Profile {
   webhookSecret   String?
   settings        Json     @default("{}")
   messageDelayMs  Int      @default(1500)
+  // Max extra random ms added on top of messageDelayMs per send (anti-ban jitter).
+  // 0 = fixed spacing. Actual delay is always >= messageDelayMs (base is the floor).
+  messageDelayJitterMs Int @default(0)
   dailyMessageLimit Int?
   dailyMessageCount Int    @default(0)
   dailyResetAt    DateTime?
+  // Warm-up ramp: when enabled, the effective daily cap climbs from
+  // warmupStartPerDay up to dailyMessageLimit over warmupRampDays days, anchored
+  // at warmupStartedAt (WIB day boundaries). Reduces cold-outreach risk for new
+  // or recovering numbers. All nullable so `prisma db push` applies them safely.
+  warmupEnabled     Boolean  @default(false)
+  warmupStartPerDay Int?
+  warmupRampDays    Int?
+  warmupStartedAt   DateTime?
   // Per-profile engine selection. whatsapp-web-js (default, production) | baileys (EXPERIMENTAL) | mock (testing).
   engine          String   @default("whatsapp-web-js")
   lastConnectedAt DateTime?
