@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 import { MessagesController } from './messages.controller';
 import { MessagesService } from './messages.service';
+import { OtpService } from './otp.service';
 import { ScheduledMessageCron } from './scheduled-message.cron';
 import { SendGateService } from '@multiwa/engine-runtime';
 import { DailyResetCron } from './daily-reset.cron';
@@ -17,6 +18,7 @@ import { ProfilesModule } from '../profiles/profiles.module';
   controllers: [MessagesController],
   providers: [
     MessagesService,
+    OtpService,
     ScheduledMessageCron,
     SendGateService,
     DailyResetCron,
