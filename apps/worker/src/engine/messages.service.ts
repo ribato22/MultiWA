@@ -9,7 +9,7 @@
 import { Injectable, Logger, HttpException, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
-import { SendGateService } from '@multiwa/engine-runtime';
+import { SendGateService, classifyColdSend } from '@multiwa/engine-runtime';
 import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import { EngineManagerService } from './engine-manager.service';
 
@@ -70,6 +70,9 @@ export class WorkerMessagesService {
       });
     }
 
+    // Classify the send lane once (service reply vs cold) and persist it.
+    const isCold = await classifyColdSend(profileId, jid, (profile as any).serviceWindowHours ?? 24);
+
     const message = await prisma.message.create({
       data: {
         profileId,
@@ -80,6 +83,7 @@ export class WorkerMessagesService {
         type,
         content,
         status: 'pending',
+        lane: isCold ? 'cold' : 'service',
         timestamp: new Date(),
         quotedMessageId,
       },
@@ -96,6 +100,7 @@ export class WorkerMessagesService {
         profileId,
         () => this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
         jid,
+        isCold,
       );
       if (result?.messageId) {
         await prisma.message.update({ where: { id: message.id }, data: { messageId: result.messageId, status: 'sent' } });
@@ -120,11 +125,14 @@ export class WorkerMessagesService {
       }
       throw new Error(`Profile ${profileId} not connected; retrying queued send`);
     }
+    // Reuse the lane persisted at enqueue so gate governance matches the stored lane.
+    const laneRow = await prisma.message.findUnique({ where: { id: messageDbId }, select: { lane: true } });
     try {
       const result = await this.sendGate.executeWithGate(
         profileId,
         () => this.dispatchToEngine(engine, type, to, content, quotedMessageId),
         to,
+        laneRow?.lane === 'cold',
       );
       await prisma.message.update({
         where: { id: messageDbId },

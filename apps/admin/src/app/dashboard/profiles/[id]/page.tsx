@@ -77,6 +77,8 @@ interface Profile {
   serviceWindowHours?: number;
   coldDailyLimit?: number | null;
   coldMessageCount?: number;
+  coldCircuitState?: string;
+  coldCircuitOpenedAt?: string | null;
   sessionData?: {
     jid?: string;
     name?: string;
@@ -926,7 +928,18 @@ export default function ProfileDetailPage() {
         {/* Cold-traffic (business-initiated) limits */}
         <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3 max-w-2xl">
           <div>
-            <Label className="text-xs font-medium text-slate-200">Cold-traffic limits</Label>
+            <div className="flex items-center gap-2">
+              <Label className="text-xs font-medium text-slate-200">Cold-traffic limits</Label>
+              {profile.coldCircuitState === 'open' ? (
+                <span className="inline-flex items-center rounded-full bg-red-500/15 text-red-300 border border-red-500/30 px-2 py-0.5 text-[10px] font-medium">
+                  ● Cold circuit paused
+                </span>
+              ) : (
+                <span className="inline-flex items-center rounded-full bg-slate-700/40 text-slate-400 px-2 py-0.5 text-[10px]">
+                  ● Cold circuit OK
+                </span>
+              )}
+            </div>
             <p className="text-[11px] text-slate-500 mt-0.5">
               &ldquo;Cold&rdquo; = messages to people who have not messaged this number within the
               service window (first contact, OTP, notifications). These carry the reach-out-lock

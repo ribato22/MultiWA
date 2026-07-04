@@ -9,6 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
+import { evaluateColdCircuit } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -954,6 +955,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // (pending, sent, delivered, read, played)
           // No need for double-mapping
           
+          // Read prior state before updating so the cold-circuit eval fires only on
+          // the FIRST terminal transition (a message emits delivered→read→played).
+          const prior = await prisma.message.findFirst({
+            where: { messageId },
+            select: { status: true, lane: true },
+          });
+
           const updated = await prisma.message.updateMany({
             where: { messageId },
             data: { status },
@@ -974,6 +982,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
                 : null;
           if (ackEvent) {
             this.emitEvent(ackEvent, { profileId, messageId, status });
+          }
+
+          // Cold-circuit health: evaluate ONCE, on the first terminal transition of a
+          // COLD message (delivered/read/played = success, unknown = failure).
+          const TERMINAL_ACKS = ['delivered', 'read', 'played', 'unknown'];
+          const wasTerminal = prior ? TERMINAL_ACKS.includes(prior.status) : false;
+          if (prior?.lane === 'cold' && !wasTerminal && TERMINAL_ACKS.includes(status)) {
+            const success = status === 'delivered' || status === 'read' || status === 'played';
+            const transition = await evaluateColdCircuit(profileId, success);
+            if (transition === 'opened') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '🧊 Cold circuit opened',
+                'Cold (business-initiated) sends are paused after repeated delivery failures — the number is likely rate-locked. Replies still work; it will auto-retry after a cooldown.',
+                { profileId, reason: 'cold-circuit-open' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-open): ${err.message}`));
+            } else if (transition === 'closed') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '✅ Cold circuit recovered',
+                'Cold sending recovered and has resumed.',
+                { profileId, reason: 'cold-circuit-closed' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-closed): ${err.message}`));
+            }
           }
         } catch (error) {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
