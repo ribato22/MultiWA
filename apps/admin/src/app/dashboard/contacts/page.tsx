@@ -59,6 +59,10 @@ export default function ContactsPage() {
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  // True once the first fetch has resolved. Search/stats bars gate on this
+  // (not `loading`) so a search-triggered refetch never unmounts the search
+  // input — which would otherwise steal focus mid-typing.
+  const [hasLoaded, setHasLoaded] = useState(false);
   const PAGE_SIZE = 50;
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -118,6 +122,7 @@ export default function ContactsPage() {
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      setHasLoaded(true);
     }
   };
 
@@ -330,7 +335,7 @@ export default function ContactsPage() {
       </div>
 
       {/* Stats Bar */}
-      {!loading && (contacts.length > 0 || !!search || !!selectedTag) && (
+      {hasLoaded && (contacts.length > 0 || !!search || !!selectedTag) && (
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 px-4 bg-secondary/40 border border-border/60 rounded-xl text-sm">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
@@ -346,7 +351,7 @@ export default function ContactsPage() {
       )}
 
       {/* Search & Filters */}
-      {!loading && (contacts.length > 0 || !!search || !!selectedTag) && (
+      {hasLoaded && (contacts.length > 0 || !!search || !!selectedTag) && (
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
             <Search
@@ -384,7 +389,7 @@ export default function ContactsPage() {
       )}
 
       {/* Contacts Table */}
-      {loading ? (
+      {loading && !hasLoaded ? (
         <div className="bg-card rounded-2xl border border-border p-4">
           <LoadingTable />
         </div>
