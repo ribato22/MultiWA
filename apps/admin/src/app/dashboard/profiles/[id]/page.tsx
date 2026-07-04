@@ -608,7 +608,8 @@ export default function ProfileDetailPage() {
   const coldLimitN = coldDailyLimit.trim() === '' ? null : Math.floor(Number(coldDailyLimit));
   const serviceWindowN = serviceWindowHours.trim() === '' ? null : Math.floor(Number(serviceWindowHours));
   // The warm-up ramp climbs toward the COLD cap target: coldDailyLimit → daily
-  // limit → the conservative default (250).
+  // limit → the conservative default. Mirrors the server's COLD_DEFAULT_DAILY_LIMIT
+  // (env-overridable) — this preview assumes the built-in 250 default.
   const COLD_DEFAULT = 250;
   const coldTarget = coldLimitN ?? normalizedFormLimit ?? COLD_DEFAULT;
 
@@ -626,7 +627,7 @@ export default function ProfileDetailPage() {
         ? new Date(profile.warmupStartedAt).getTime()
         : Date.now();
     const dayIndex = wibDay(Date.now()) - wibDay(anchor);
-    if (dayIndex < 0) return Math.max(0, Math.min(hard, warmupStartN));
+    if (dayIndex <= 0) return Math.max(0, Math.min(hard, warmupStartN));
     if (dayIndex >= warmupRampN - 1) return hard;
     const progress = dayIndex / Math.max(1, warmupRampN - 1);
     return Math.max(0, Math.min(hard, Math.round(warmupStartN + (hard - warmupStartN) * progress)));

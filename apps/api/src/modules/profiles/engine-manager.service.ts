@@ -1129,9 +1129,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // backstop — never the cold/warm-up cap, which would wrongly skip replies.
           const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
           const backstop = currentProfile?.dailyMessageLimit ?? null;
+          // A pending WIB reset means the counter is stale; let automation through
+          // so the send gate performs its lazy reset (mirrors the pre-enqueue guard).
+          const resetDue = !currentProfile?.dailyResetAt || currentProfile.dailyResetAt <= new Date();
           if (
             currentProfile &&
             backstop != null &&
+            !resetDue &&
             currentProfile.dailyMessageCount >= backstop
           ) {
             this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${backstop}, skipping automation`);

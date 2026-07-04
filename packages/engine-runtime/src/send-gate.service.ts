@@ -113,8 +113,28 @@ export async function classifyColdSend(
   const jid = recipient.replace(/@c\.us$/, '@s.whatsapp.net');
   if (jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return false;
   const since = new Date(now.getTime() - Math.max(0, serviceWindowHours) * 60 * 60 * 1000);
+
+  // A contact can be stored under either its phone JID or its hidden @lid form
+  // (multi-device). Gather every linked JID so an in-window reply persisted under
+  // the alternate form still matches. (Truly unresolved @lid inbound with no
+  // stored link can't be connected without the live engine — a known limitation.)
+  const candidates = new Set<string>([jid]);
+  const linked = await prisma.conversation.findMany({
+    where: { profileId, OR: [{ jid }, { metadata: { path: ['lidJid'], equals: jid } }] },
+    select: { jid: true, metadata: true },
+  });
+  for (const c of linked) {
+    candidates.add(c.jid);
+    const lid = (c.metadata as any)?.lidJid;
+    if (typeof lid === 'string' && lid) candidates.add(lid);
+  }
+
   const lastInbound = await prisma.message.findFirst({
-    where: { profileId, direction: 'incoming', conversation: { is: { jid } } },
+    where: {
+      profileId,
+      direction: 'incoming',
+      conversation: { is: { profileId, jid: { in: [...candidates] } } },
+    },
     orderBy: { timestamp: 'desc' },
     select: { timestamp: true },
   });
@@ -214,18 +234,19 @@ export class SendGateService {
     const now = new Date();
     let count = profile.dailyMessageCount ?? 0;
     let coldCount = profile.coldMessageCount ?? 0;
+    let resetAt = profile.dailyResetAt ?? nextMidnightWIB(now);
     if (!profile.dailyResetAt || profile.dailyResetAt <= now) {
       count = 0;
       coldCount = 0;
+      resetAt = nextMidnightWIB(now);
       await prisma.profile.update({
         where: { id: profileId },
-        data: { dailyMessageCount: 0, coldMessageCount: 0, dailyResetAt: nextMidnightWIB(now) },
+        data: { dailyMessageCount: 0, coldMessageCount: 0, dailyResetAt: resetAt },
       });
     }
 
     // 3. Lane-aware cap. Replies (in service window) only hit the high overall
     // backstop; cold sends hit the dedicated cold cap (warm-up ramps toward it).
-    const resetAt = profile.dailyResetAt ?? nextMidnightWIB(now);
     const isCold = await classifyColdSend(profileId, recipient, profile.serviceWindowHours ?? 24, now);
     const cap = effectiveCapForLane(profile, isCold, now);
     const laneCount = isCold ? coldCount : count;
