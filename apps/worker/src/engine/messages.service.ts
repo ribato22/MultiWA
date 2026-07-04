@@ -92,8 +92,10 @@ export class WorkerMessagesService {
     }
 
     try {
-      const result = await this.sendGate.executeWithGate(profileId, () =>
-        this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
+      const result = await this.sendGate.executeWithGate(
+        profileId,
+        () => this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
+        jid,
       );
       if (result?.messageId) {
         await prisma.message.update({ where: { id: message.id }, data: { messageId: result.messageId, status: 'sent' } });
@@ -119,8 +121,10 @@ export class WorkerMessagesService {
       throw new Error(`Profile ${profileId} not connected; retrying queued send`);
     }
     try {
-      const result = await this.sendGate.executeWithGate(profileId, () =>
-        this.dispatchToEngine(engine, type, to, content, quotedMessageId),
+      const result = await this.sendGate.executeWithGate(
+        profileId,
+        () => this.dispatchToEngine(engine, type, to, content, quotedMessageId),
+        to,
       );
       await prisma.message.update({
         where: { id: messageDbId },

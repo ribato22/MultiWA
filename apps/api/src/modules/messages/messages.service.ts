@@ -18,7 +18,7 @@ import {
   SendPollDto,
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
-import { SendGateService, effectiveDailyCap } from '@multiwa/engine-runtime';
+import { SendGateService, classifyColdSend, effectiveCapForLane } from '@multiwa/engine-runtime';
 import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import {
   OUTBOUND_SEND_QUEUE,
@@ -235,20 +235,20 @@ export class MessagesService {
       // 429 (the send gate in the consumer is the authoritative increment).
       const now = new Date();
       const resetDue = !profile.dailyResetAt || profile.dailyResetAt <= now;
-      // Effective cap accounts for the warm-up ramp (mirrors the authoritative
-      // send-gate check so warm-up-limited sends get a synchronous 429 too).
-      const effectiveLimit = effectiveDailyCap(profile, now);
-      if (
-        effectiveLimit != null &&
-        !resetDue &&
-        (profile.dailyMessageCount ?? 0) >= effectiveLimit
-      ) {
+      // Lane-aware pre-enqueue check (mirrors the authoritative send-gate): a cold
+      // send hits the cold cap on the cold counter; a reply hits the overall
+      // backstop. Gives the common case a synchronous 429 instead of an async fail.
+      const isCold = await classifyColdSend(profileId, jid, profile.serviceWindowHours ?? 24, now);
+      const laneCap = effectiveCapForLane(profile, isCold, now);
+      const laneCount = isCold ? (profile.coldMessageCount ?? 0) : (profile.dailyMessageCount ?? 0);
+      if (laneCap != null && !resetDue && laneCount >= laneCap) {
         await prisma.message.update({ where: { id: message.id }, data: { status: 'failed' } });
         throw new HttpException(
           {
-            error: 'DAILY_LIMIT_REACHED',
-            limit: effectiveLimit,
-            count: profile.dailyMessageCount,
+            error: isCold ? 'COLD_DAILY_LIMIT_REACHED' : 'DAILY_LIMIT_REACHED',
+            lane: isCold ? 'cold' : 'service',
+            limit: laneCap,
+            count: laneCount,
             resetAt: profile.dailyResetAt,
           },
           HttpStatus.TOO_MANY_REQUESTS,
@@ -288,8 +288,10 @@ export class MessagesService {
 
     let result: any;
     try {
-      result = await this.sendGate.executeWithGate(profileId, () =>
-        this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
+      result = await this.sendGate.executeWithGate(
+        profileId,
+        () => this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
+        jid,
       );
     } catch (error: any) {
       await prisma.message.update({
@@ -433,8 +435,10 @@ export class MessagesService {
     }
 
     try {
-      const result = await this.sendGate.executeWithGate(profileId, () =>
-        this.dispatchToEngine(engine, type, to, content, quotedMessageId),
+      const result = await this.sendGate.executeWithGate(
+        profileId,
+        () => this.dispatchToEngine(engine, type, to, content, quotedMessageId),
+        to,
       );
       await prisma.message.update({
         where: { id: messageDbId },

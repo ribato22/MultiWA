@@ -149,6 +149,12 @@ model Profile {
   warmupStartPerDay Int?
   warmupRampDays    Int?
   warmupStartedAt   DateTime?
+  // Send Policy Engine: a send is a "reply" (safe) if the recipient messaged this
+  // profile within serviceWindowHours; otherwise it is "cold" (business-initiated)
+  // and governed by coldDailyLimit (+ the warm-up ramp) via its own counter.
+  serviceWindowHours Int     @default(24)
+  coldDailyLimit    Int?
+  coldMessageCount  Int      @default(0)
   // Per-profile engine selection. whatsapp-web-js (default, production) | baileys (EXPERIMENTAL) | mock (testing).
   engine          String   @default("whatsapp-web-js")
   lastConnectedAt DateTime?

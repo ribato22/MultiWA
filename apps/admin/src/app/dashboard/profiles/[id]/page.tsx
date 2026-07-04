@@ -74,6 +74,9 @@ interface Profile {
   warmupStartPerDay?: number | null;
   warmupRampDays?: number | null;
   warmupStartedAt?: string | null;
+  serviceWindowHours?: number;
+  coldDailyLimit?: number | null;
+  coldMessageCount?: number;
   sessionData?: {
     jid?: string;
     name?: string;
@@ -224,6 +227,8 @@ export default function ProfileDetailPage() {
   const [warmupEnabled, setWarmupEnabled] = useState(false);
   const [warmupStart, setWarmupStart] = useState<string>(''); // per-day start, string for number input
   const [warmupRampDays, setWarmupRampDays] = useState<string>('');
+  const [coldDailyLimit, setColdDailyLimit] = useState<string>(''); // '' = fall back to default
+  const [serviceWindowHours, setServiceWindowHours] = useState<string>('24');
   const [savingGuardrails, setSavingGuardrails] = useState(false);
 
   const profileId = params.id as string;
@@ -434,6 +439,8 @@ export default function ProfileDetailPage() {
     setWarmupEnabled(profile.warmupEnabled ?? false);
     setWarmupStart(profile.warmupStartPerDay != null ? String(profile.warmupStartPerDay) : '');
     setWarmupRampDays(profile.warmupRampDays != null ? String(profile.warmupRampDays) : '');
+    setColdDailyLimit(profile.coldDailyLimit != null ? String(profile.coldDailyLimit) : '');
+    setServiceWindowHours(profile.serviceWindowHours != null ? String(profile.serviceWindowHours) : '24');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile?.id]);
 
@@ -448,19 +455,22 @@ export default function ProfileDetailPage() {
       });
       return;
     }
-    // Warm-up ramps toward the daily limit, so it needs a numeric target + a valid
-    // start and ramp length.
+    // Cold-traffic controls.
+    const parsedCold = coldDailyLimit.trim() === '' ? null : Math.floor(Number(coldDailyLimit));
+    if (parsedCold != null && (!Number.isFinite(parsedCold) || parsedCold < 1)) {
+      toast({ title: 'Invalid cold daily limit', description: 'Enter a whole number of 1 or more, or leave empty for the default.', variant: 'destructive' });
+      return;
+    }
+    const parsedWindow = serviceWindowHours.trim() === '' ? null : Math.floor(Number(serviceWindowHours));
+    if (parsedWindow != null && (!Number.isFinite(parsedWindow) || parsedWindow < 1)) {
+      toast({ title: 'Invalid service window', description: 'Enter a whole number of hours (1 or more).', variant: 'destructive' });
+      return;
+    }
+    // Warm-up ramps the COLD cap toward its target (coldDailyLimit → dailyMessageLimit
+    // → default), so it needs a valid start + ramp length.
     const parsedStart = warmupStart.trim() === '' ? null : Math.floor(Number(warmupStart));
     const parsedRampDays = warmupRampDays.trim() === '' ? null : Math.floor(Number(warmupRampDays));
     if (warmupEnabled) {
-      if (parsedLimit == null) {
-        toast({
-          title: 'Warm-up needs a daily limit',
-          description: 'Set a daily message limit — the ramp climbs up to it.',
-          variant: 'destructive',
-        });
-        return;
-      }
       if (parsedStart == null || !Number.isFinite(parsedStart) || parsedStart < 1) {
         toast({ title: 'Invalid warm-up start', description: 'Enter a start-per-day of 1 or more.', variant: 'destructive' });
         return;
@@ -486,6 +496,8 @@ export default function ProfileDetailPage() {
           warmupEnabled,
           warmupStartPerDay: parsedStart,
           warmupRampDays: parsedRampDays,
+          coldDailyLimit: parsedCold,
+          serviceWindowHours: parsedWindow ?? 24,
         }),
       });
       if (res.ok) {
@@ -593,11 +605,16 @@ export default function ProfileDetailPage() {
   const normalizedFormLimit = unlimited ? null : Math.floor(Number(dailyLimit));
   const warmupStartN = warmupStart.trim() === '' ? null : Math.floor(Number(warmupStart));
   const warmupRampN = warmupRampDays.trim() === '' ? null : Math.floor(Number(warmupRampDays));
+  const coldLimitN = coldDailyLimit.trim() === '' ? null : Math.floor(Number(coldDailyLimit));
+  const serviceWindowN = serviceWindowHours.trim() === '' ? null : Math.floor(Number(serviceWindowHours));
+  // The warm-up ramp climbs toward the COLD cap target: coldDailyLimit → daily
+  // limit → the conservative default (250).
+  const COLD_DEFAULT = 250;
+  const coldTarget = coldLimitN ?? normalizedFormLimit ?? COLD_DEFAULT;
 
-  // Today's effective cap preview, using the same ramp formula as the send gate.
-  // Falls back to the plain limit when warm-up is off or misconfigured.
+  // Today's effective COLD cap preview, using the same ramp formula as the send gate.
   const effectiveCapToday: number | null = (() => {
-    const hard = normalizedFormLimit;
+    const hard = coldTarget;
     if (!warmupEnabled || hard == null || warmupStartN == null || warmupRampN == null || warmupRampN < 1 || Number.isNaN(warmupStartN)) {
       return hard;
     }
@@ -621,6 +638,8 @@ export default function ProfileDetailPage() {
     warmupEnabled !== (profile.warmupEnabled ?? false) ||
     (warmupStartN ?? null) !== (profile.warmupStartPerDay ?? null) ||
     (warmupRampN ?? null) !== (profile.warmupRampDays ?? null) ||
+    (coldLimitN ?? null) !== (profile.coldDailyLimit ?? null) ||
+    (serviceWindowN ?? 24) !== (profile.serviceWindowHours ?? 24) ||
     (Number.isNaN(normalizedFormLimit as number)
       ? true
       : normalizedFormLimit !== (profile.dailyMessageLimit ?? null));
@@ -903,6 +922,52 @@ export default function ProfileDetailPage() {
           </div>
         </div>
 
+        {/* Cold-traffic (business-initiated) limits */}
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3 max-w-2xl">
+          <div>
+            <Label className="text-xs font-medium text-slate-200">Cold-traffic limits</Label>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              &ldquo;Cold&rdquo; = messages to people who have not messaged this number within the
+              service window (first contact, OTP, notifications). These carry the reach-out-lock
+              risk; replies inside the window are never capped by this.
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="coldLimit" className="text-xs text-slate-300">
+                Cold daily limit
+              </Label>
+              <Input
+                id="coldLimit"
+                type="number"
+                min={1}
+                inputMode="numeric"
+                placeholder="250 (default)"
+                value={coldDailyLimit}
+                onChange={(e) => setColdDailyLimit(e.target.value)}
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              />
+              <p className="text-[11px] text-slate-500">Max cold sends/day. Empty = 250 default.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="serviceWindow" className="text-xs text-slate-300">
+                Service window (hours)
+              </Label>
+              <Input
+                id="serviceWindow"
+                type="number"
+                min={1}
+                inputMode="numeric"
+                placeholder="24"
+                value={serviceWindowHours}
+                onChange={(e) => setServiceWindowHours(e.target.value)}
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              />
+              <p className="text-[11px] text-slate-500">A reply within this window isn&apos;t &ldquo;cold&rdquo;.</p>
+            </div>
+          </div>
+        </div>
+
         {/* Warm-up ramp */}
         <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3 max-w-2xl">
           <div className="flex items-start justify-between gap-3">
@@ -911,8 +976,9 @@ export default function ProfileDetailPage() {
                 Warm-up ramp
               </Label>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Gradually raise the daily cap from a low start up to the limit — recommended for
-                new or recently rate-locked numbers.
+                Gradually raise the <strong className="font-medium text-slate-300">cold</strong> cap
+                from a low start up to its target — recommended for new or recently rate-locked
+                numbers. Replies are never throttled.
               </p>
             </div>
             <Switch id="warmup" checked={warmupEnabled} onCheckedChange={setWarmupEnabled} />
@@ -952,14 +1018,12 @@ export default function ProfileDetailPage() {
                 </div>
               </div>
               <p className="text-[11px] text-slate-500">
-                Ramps from <span className="font-mono text-slate-300">{warmupStart || '—'}</span> to{' '}
-                <span className="font-mono text-slate-300">
-                  {unlimited ? '(set a daily limit)' : dailyLimit}
-                </span>
+                Cold sends ramp from <span className="font-mono text-slate-300">{warmupStart || '—'}</span> to{' '}
+                <span className="font-mono text-slate-300">{coldTarget}</span>
                 /day over <span className="font-mono text-slate-300">{warmupRampDays || '—'}</span> days.
-                {!unlimited && effectiveCapToday != null && (
+                {effectiveCapToday != null && (
                   <>
-                    {' '}Today&apos;s effective cap:{' '}
+                    {' '}Today&apos;s effective cold cap:{' '}
                     <span className="font-mono text-emerald-300">{effectiveCapToday}</span>.
                   </>
                 )}
@@ -975,9 +1039,15 @@ export default function ProfileDetailPage() {
             {!unlimited && (
               <>
                 {' / '}
-                <span className="font-mono text-slate-300">
-                  {warmupEnabled && effectiveCapToday != null ? effectiveCapToday : dailyLimit}
-                </span>
+                <span className="font-mono text-slate-300">{dailyLimit}</span>
+              </>
+            )}
+            {' · cold '}
+            <span className="font-mono text-slate-300">{profile.coldMessageCount || 0}</span>
+            {effectiveCapToday != null && (
+              <>
+                {' / '}
+                <span className="font-mono text-slate-300">{effectiveCapToday}</span>
               </>
             )}
           </p>

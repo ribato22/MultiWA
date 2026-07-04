@@ -9,7 +9,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { effectiveDailyCap } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -917,12 +916,14 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // Uses the same warm-up-aware effective cap as the send gate. The send
           // gate owns the single counter increment (automation replies go through
           // it), so this guard must NOT increment. null cap = unlimited.
+          // Automation replies are within the customer-service window, so they are
+          // SERVICE traffic and hit only the overall backstop — not the cold/warm-up cap.
           const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
-          const effectiveCap = currentProfile ? effectiveDailyCap(currentProfile, new Date()) : null;
+          const backstop = currentProfile?.dailyMessageLimit ?? null;
           if (
             currentProfile &&
-            effectiveCap != null &&
-            currentProfile.dailyMessageCount >= effectiveCap
+            backstop != null &&
+            currentProfile.dailyMessageCount >= backstop
           ) {
             this.logger.warn(`Daily message limit reached for profile ${profileId}, skipping automation`);
           } else {

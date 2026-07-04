@@ -9,7 +9,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { effectiveDailyCap } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1125,14 +1124,17 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // counter increment is owned by SendGateService (every automation reply
           // ultimately goes through MessagesService → the send gate), so
           // incrementing here too would double-count. null cap means unlimited.
+          // Automation replies are within the customer-service window (the sender
+          // just messaged us), so they are SERVICE traffic and hit only the overall
+          // backstop — never the cold/warm-up cap, which would wrongly skip replies.
           const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
-          const effectiveCap = currentProfile ? effectiveDailyCap(currentProfile, new Date()) : null;
+          const backstop = currentProfile?.dailyMessageLimit ?? null;
           if (
             currentProfile &&
-            effectiveCap != null &&
-            currentProfile.dailyMessageCount >= effectiveCap
+            backstop != null &&
+            currentProfile.dailyMessageCount >= backstop
           ) {
-            this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${effectiveCap}, skipping automation`);
+            this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${backstop}, skipping automation`);
           } else {
             const results = await this.ruleEngineService.processMessage(incomingMsg);
 
