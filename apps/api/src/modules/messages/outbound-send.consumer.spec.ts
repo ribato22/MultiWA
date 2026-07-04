@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { HttpException, HttpStatus } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({
-  prisma: { message: { update: vi.fn() } },
+  prisma: { message: { update: vi.fn(), findUnique: vi.fn() } },
 }));
 
 // Stub the engine-manager module so importing MessagesService does not pull in
@@ -43,6 +43,8 @@ function makeService(over: { engine?: any; gate?: any } = {}) {
 describe('MessagesService.deliverQueued', () => {
   beforeEach(() => {
     vi.mocked(prisma.message.update).mockReset().mockResolvedValue({} as any);
+    // deliverQueued reads the persisted lane to gate cold vs service.
+    vi.mocked(prisma.message.findUnique).mockReset().mockResolvedValue({ lane: null } as any);
   });
 
   it('sends through the gate and marks the message sent + emits message.sent', async () => {
