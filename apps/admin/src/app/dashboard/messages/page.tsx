@@ -117,6 +117,7 @@ export default function MessagesPage() {
   const [loadingRecipients, setLoadingRecipients] = useState(false);
   const [recipientSearch, setRecipientSearch] = useState('');
   const [selectedRecipientName, setSelectedRecipientName] = useState('');
+  const [contactTotal, setContactTotal] = useState(0);
   
   // Template picker state
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
@@ -196,6 +197,14 @@ export default function MessagesPage() {
     }
   }, [selectedProfile]);
 
+  // Debounced server-side contact search while the Contact picker is open.
+  useEffect(() => {
+    if (!selectedProfile || recipientMode !== 'contact') return;
+    const t = setTimeout(() => fetchContacts(selectedProfile, recipientSearch), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProfile, recipientMode, recipientSearch]);
+
   const fetchProfiles = async () => {
     try {
       const token = localStorage.getItem('accessToken');
@@ -265,22 +274,34 @@ export default function MessagesPage() {
     }
   };
 
-  const fetchContactsAndGroups = async (profileId: string) => {
+  // Server-side contact search (one page of 50). An empty query returns the
+  // first page. This replaces the old "load 1000 and filter in the browser"
+  // approach so contacts beyond the first 1000 are reachable.
+  const fetchContacts = async (profileId: string, q: string) => {
     setLoadingRecipients(true);
     const token = localStorage.getItem('accessToken');
-    
     try {
-      // Fetch contacts
-      const contactsRes = await fetch(`/api/v1/contacts?profileId=${profileId}&limit=1000`, {
+      const qs = `profileId=${profileId}&limit=50${q.trim() ? `&search=${encodeURIComponent(q.trim())}` : ''}`;
+      const res = await fetch(`/api/v1/contacts?${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (contactsRes.ok) {
-        const data = await contactsRes.json();
-        const contactsList = Array.isArray(data) ? data : (data.contacts || data.data || []);
-        setContacts(contactsList);
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.contacts || data.data || []);
+        setContacts(list);
+        setContactTotal(typeof data?.total === 'number' ? data.total : list.length);
       }
+    } catch (error) {
+      console.error('Failed to fetch contacts:', error);
+    } finally {
+      setLoadingRecipients(false);
+    }
+  };
 
-      // Fetch groups
+  const fetchContactsAndGroups = async (profileId: string) => {
+    fetchContacts(profileId, '');
+    const token = localStorage.getItem('accessToken');
+    try {
       const groupsRes = await fetch(`/api/v1/groups/profile/${profileId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -290,9 +311,7 @@ export default function MessagesPage() {
         setGroups(groupsList);
       }
     } catch (error) {
-      console.error('Failed to fetch contacts/groups:', error);
-    } finally {
-      setLoadingRecipients(false);
+      console.error('Failed to fetch groups:', error);
     }
   };
 
@@ -308,13 +327,9 @@ export default function MessagesPage() {
     setSelectedRecipientName(group.name);
   };
 
-  // Filter contacts/groups by search
-  const filteredContacts = contacts.filter(c => 
-    c.name.toLowerCase().includes(recipientSearch.toLowerCase()) ||
-    c.phone.includes(recipientSearch)
-  );
-
-  const filteredGroups = groups.filter(g => 
+  // Contacts are filtered server-side (see fetchContacts); render `contacts`
+  // directly. Groups are small enough to filter in the browser.
+  const filteredGroups = groups.filter(g =>
     g.name.toLowerCase().includes(recipientSearch.toLowerCase())
   );
 
@@ -663,7 +678,7 @@ export default function MessagesPage() {
                       }`}
                     >
                       <User className="w-3.5 h-3.5" aria-hidden="true" />
-                      Contact ({contacts.length})
+                      Contact ({contactTotal})
                     </button>
                     <button
                       type="button"
@@ -720,12 +735,12 @@ export default function MessagesPage() {
                           <div className="max-h-40 overflow-y-auto border border-border rounded-xl">
                             {loadingRecipients ? (
                               <div className="p-4 text-center text-muted-foreground text-sm">Loading...</div>
-                            ) : filteredContacts.length === 0 ? (
+                            ) : contacts.length === 0 ? (
                               <div className="p-4 text-center text-muted-foreground text-sm">
-                                {contacts.length === 0 ? 'No contacts saved yet' : 'No contacts match'}
+                                {recipientSearch.trim() ? 'No contacts match' : 'No contacts saved yet'}
                               </div>
                             ) : (
-                              filteredContacts.map((contact) => (
+                              contacts.map((contact) => (
                                 <button
                                   key={contact.id}
                                   onClick={() => selectContact(contact)}
