@@ -9,7 +9,7 @@ import { ContactsService } from './contacts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
-import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto, ValidateBulkDto } from './dto';
+import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto, ValidateBulkDto, SaveWhatsAppContactDto } from './dto';
 
 @ApiTags('Contacts')
 @Controller('contacts')
@@ -169,5 +169,31 @@ export class ContactsController {
       throw new BadRequestException('profileId is required as query param');
     }
     return this.service.syncFromWhatsApp(profileId);
+  }
+
+  // Save a number into the WhatsApp account's addressbook (whatsapp-web.js only).
+  // Writes to WhatsApp itself (not just the MultiWA DB), turning an unknown number
+  // into a known contact.
+  @Post('profile/:profileId/save-to-whatsapp')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
+  @ApiOperation({ summary: "Save a contact into the WhatsApp account's addressbook (whatsapp-web-js only)" })
+  @ApiValidationError()
+  @ApiNotFound('Profile')
+  async saveToWhatsApp(
+    @Param('profileId') profileId: string,
+    @Body() dto: SaveWhatsAppContactDto,
+  ) {
+    return this.service.saveToWhatsApp(profileId, dto.phone, dto.firstName, dto.lastName, dto.syncToPhone);
+  }
+
+  @Delete('profile/:profileId/whatsapp/:phone')
+  @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
+  @ApiOperation({ summary: "Delete a contact from the WhatsApp account's addressbook (whatsapp-web-js only)" })
+  @ApiNotFound('Profile')
+  async deleteFromWhatsApp(
+    @Param('profileId') profileId: string,
+    @Param('phone') phone: string,
+  ) {
+    return this.service.deleteFromWhatsApp(profileId, phone);
   }
 }

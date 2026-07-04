@@ -174,6 +174,13 @@ export interface IWhatsAppEngine {
   // Contacts - fetch contacts from WhatsApp
   getContacts(): Promise<ContactInfo[]>;
 
+  // Save/remove a contact in the WhatsApp ACCOUNT's addressbook (optional; supported
+  // by whatsapp-web.js, not Baileys). Unlike the MultiWA contacts DB, this writes to
+  // WhatsApp itself, moving an "unknown" number into a known contact — which WhatsApp
+  // treats more leniently. syncToPhone=true also saves it to the phone's address book.
+  saveWhatsAppContact?(phone: string, firstName: string, lastName?: string, syncToPhone?: boolean): Promise<void>;
+  deleteWhatsAppContact?(phone: string): Promise<void>;
+
   // Resolve a JID's real identity (maps @lid <-> phone number + best name).
   // Returns null when the engine can't resolve it.
   resolveIdentity(jid: string): Promise<ResolvedIdentity | null>;

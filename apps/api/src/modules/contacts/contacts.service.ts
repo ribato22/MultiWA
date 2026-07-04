@@ -383,6 +383,49 @@ export class ContactsService {
     };
   }
 
+  // Save a number into the WhatsApp ACCOUNT's addressbook (whatsapp-web.js only).
+  // Unlike create()/import (MultiWA DB only), this writes to WhatsApp itself, so an
+  // "unknown" number becomes a known contact — which WhatsApp treats more leniently.
+  async saveToWhatsApp(
+    profileId: string,
+    phone: string,
+    firstName?: string,
+    lastName?: string,
+    syncToPhone?: boolean,
+  ) {
+    const normalized = this.normalizePhone(phone);
+    const profile = await prisma.profile.findUnique({ where: { id: profileId } });
+    if (!profile) throw new NotFoundException('Profile not found');
+    if (profile.status !== 'connected') {
+      throw new BadRequestException('Profile must be connected to save a WhatsApp contact');
+    }
+    const engine = isWorkerEngine() ? null : this.engineManager.getEngine(profileId);
+    if (!engine || typeof engine.saveWhatsAppContact !== 'function') {
+      throw new BadRequestException(
+        'This engine does not support saving WhatsApp contacts (whatsapp-web-js only)',
+      );
+    }
+    await engine.saveWhatsAppContact(normalized, firstName || normalized, lastName || '', !!syncToPhone);
+    return {
+      success: true,
+      phone: normalized,
+      savedToWhatsAppAddressbook: true,
+      syncedToPhone: !!syncToPhone,
+    };
+  }
+
+  async deleteFromWhatsApp(profileId: string, phone: string) {
+    const normalized = this.normalizePhone(phone);
+    const engine = isWorkerEngine() ? null : this.engineManager.getEngine(profileId);
+    if (!engine || typeof engine.deleteWhatsAppContact !== 'function') {
+      throw new BadRequestException(
+        'This engine does not support WhatsApp addressbook deletion (whatsapp-web-js only)',
+      );
+    }
+    await engine.deleteWhatsAppContact(normalized);
+    return { success: true, phone: normalized, deletedFromWhatsAppAddressbook: true };
+  }
+
   // Normalize phone number
   private normalizePhone(phone: string): string {
     let normalized = phone.replace(/\D/g, '');
