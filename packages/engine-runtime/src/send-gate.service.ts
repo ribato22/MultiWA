@@ -17,6 +17,55 @@ import { prisma } from '@multiwa/database';
 
 /** WIB (Asia/Jakarta) is a fixed UTC+7 offset with no DST. */
 const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Integer index of the WIB calendar day containing `d` (same boundary as the daily reset). */
+function wibDayNumber(d: Date): number {
+  return Math.floor((d.getTime() + WIB_OFFSET_MS) / DAY_MS);
+}
+
+/** Minimal profile shape the warm-up cap needs (subset of the Prisma Profile row). */
+export interface WarmupCapInput {
+  dailyMessageLimit?: number | null;
+  warmupEnabled?: boolean | null;
+  warmupStartPerDay?: number | null;
+  warmupRampDays?: number | null;
+  warmupStartedAt?: Date | null;
+}
+
+/**
+ * Effective daily send cap for a profile at instant `now`, accounting for the
+ * warm-up ramp. Returns null when unlimited.
+ *
+ * When warm-up is enabled AND a daily limit (the ramp target) is set, the cap
+ * climbs linearly from warmupStartPerDay up to dailyMessageLimit over
+ * warmupRampDays WIB days, anchored at warmupStartedAt. Day 0 is the WIB day of
+ * the anchor. Missing/invalid warm-up config falls back to the plain daily limit
+ * (no surprise cap). Warm-up with an unlimited target is a no-op (needs a target).
+ * The result never exceeds the hard daily limit and never goes below 0.
+ */
+export function effectiveDailyCap(profile: WarmupCapInput, now: Date = new Date()): number | null {
+  const hardLimit = profile.dailyMessageLimit ?? null;
+  if (!profile.warmupEnabled) return hardLimit;
+  // Warm-up ramps toward the daily limit; with no numeric target there is nothing
+  // to ramp to, so leave it unlimited.
+  if (hardLimit == null) return null;
+
+  const start = profile.warmupStartPerDay;
+  const rampDays = profile.warmupRampDays;
+  const startedAt = profile.warmupStartedAt;
+  if (start == null || rampDays == null || rampDays < 1 || !startedAt) return hardLimit;
+
+  const dayIndex = wibDayNumber(now) - wibDayNumber(startedAt);
+  // Day 0 (and any future anchor) is exactly the start cap. This also makes a
+  // 1-day ramp behave sanely: day 0 = start, day 1+ = full limit.
+  if (dayIndex <= 0) return Math.max(0, Math.min(hardLimit, start));
+  if (dayIndex >= rampDays - 1) return hardLimit; // ramp complete
+
+  const progress = dayIndex / Math.max(1, rampDays - 1);
+  const capped = Math.round(start + (hardLimit - start) * progress);
+  return Math.max(0, Math.min(hardLimit, capped));
+}
 
 /**
  * The next 00:00 WIB after `from`, returned as the equivalent UTC instant.
@@ -41,6 +90,165 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Default cold-lane daily cap when neither coldDailyLimit nor dailyMessageLimit is set. */
+const COLD_DEFAULT_DAILY_LIMIT = Number(process.env.COLD_DEFAULT_DAILY_LIMIT) || 250;
+
+/**
+ * Classify an outbound send as "cold" (business-initiated) vs "service" (reply).
+ *
+ * A send is a SERVICE reply when the recipient messaged this profile within
+ * serviceWindowHours (WhatsApp's customer-service window) — those are not subject
+ * to the reach-out lock and must flow freely. Everything else to a person is COLD
+ * (first contact / outside the window: OTP, notifications, marketing). Group,
+ * broadcast and newsletter sends are never cold outreach. A missing recipient
+ * defaults to service so we never block a send we cannot classify.
+ */
+export async function classifyColdSend(
+  profileId: string,
+  recipient: string | undefined,
+  serviceWindowHours: number,
+  now: Date = new Date(),
+): Promise<boolean> {
+  if (!recipient) return false;
+  const jid = recipient.replace(/@c\.us$/, '@s.whatsapp.net');
+  if (jid.endsWith('@g.us') || jid.endsWith('@broadcast') || jid.endsWith('@newsletter')) return false;
+  const since = new Date(now.getTime() - Math.max(0, serviceWindowHours) * 60 * 60 * 1000);
+
+  // A contact can be stored under either its phone JID or its hidden @lid form
+  // (multi-device). Gather every linked JID so an in-window reply persisted under
+  // the alternate form still matches. (Truly unresolved @lid inbound with no
+  // stored link can't be connected without the live engine — a known limitation.)
+  const candidates = new Set<string>([jid]);
+  const linked = await prisma.conversation.findMany({
+    where: { profileId, OR: [{ jid }, { metadata: { path: ['lidJid'], equals: jid } }] },
+    select: { jid: true, metadata: true },
+  });
+  for (const c of linked) {
+    candidates.add(c.jid);
+    const lid = (c.metadata as any)?.lidJid;
+    if (typeof lid === 'string' && lid) candidates.add(lid);
+  }
+
+  const lastInbound = await prisma.message.findFirst({
+    where: {
+      profileId,
+      direction: 'incoming',
+      conversation: { is: { profileId, jid: { in: [...candidates] } } },
+    },
+    orderBy: { timestamp: 'desc' },
+    select: { timestamp: true },
+  });
+  return !lastInbound || lastInbound.timestamp < since;
+}
+
+/** Fields the lane cap resolver reads (superset of WarmupCapInput). */
+export type LaneCapInput = WarmupCapInput & { coldDailyLimit?: number | null };
+
+/**
+ * Effective daily cap for a lane. Replies (service) only hit the plain daily
+ * backstop with no warm-up throttling; cold sends hit the cold cap
+ * (coldDailyLimit → dailyMessageLimit → the conservative default), ramped by the
+ * warm-up schedule. Null means uncapped.
+ */
+export function effectiveCapForLane(profile: LaneCapInput, isCold: boolean, now: Date = new Date()): number | null {
+  if (!isCold) return profile.dailyMessageLimit ?? null;
+  const baseColdLimit = profile.coldDailyLimit ?? profile.dailyMessageLimit ?? COLD_DEFAULT_DAILY_LIMIT;
+  return effectiveDailyCap({ ...profile, dailyMessageLimit: baseColdLimit }, now);
+}
+
+// ---- Cold-lane circuit breaker (delivery-health protection) ------------------
+// When cold (business-initiated) sends stop being delivered — the classic sign a
+// number is reach-out-locked — pause the COLD lane so we stop digging the hole and
+// stop wasting OTP attempts. Replies (service lane) are never affected. After a
+// cooldown the breaker half-opens: one probe cold send is allowed, and its ack
+// closes (recovered) or re-arms (still failing) the breaker.
+const COLD_CIRCUIT_WINDOW = Number(process.env.COLD_CIRCUIT_WINDOW) || 10;
+const COLD_CIRCUIT_MIN_SUCCESS = Number(process.env.COLD_CIRCUIT_MIN_SUCCESS) || 0.4;
+const COLD_CIRCUIT_MIN_SAMPLES = Number(process.env.COLD_CIRCUIT_MIN_SAMPLES) || 5;
+export const COLD_CIRCUIT_COOLDOWN_MS = Number(process.env.COLD_CIRCUIT_COOLDOWN_MS) || 30 * 60 * 1000;
+
+const DELIVERED_STATUSES = ['delivered', 'read', 'played'];
+// Ack-derived terminal states only. 'failed' is deliberately excluded: it is set
+// by the SEND path (policy 429s / engine throws), never by an ack, and always on
+// a never-transmitted row — counting it would let the breaker poison itself.
+const TERMINAL_STATUSES = [...DELIVERED_STATUSES, 'unknown'];
+
+/**
+ * Is the cold circuit currently blocking sends? Returns true when the breaker is
+ * open AND still within its cooldown. Once the cooldown elapses it returns false
+ * so the next cold send acts as a half-open probe.
+ */
+export function isColdCircuitBlocking(
+  state: string | null | undefined,
+  openedAt: Date | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (state !== 'open') return false;
+  const opened = openedAt?.getTime() ?? 0;
+  return now.getTime() - opened < COLD_CIRCUIT_COOLDOWN_MS;
+}
+
+/**
+ * Re-evaluate the cold circuit after a cold message reaches a terminal ack.
+ * Returns the state transition ('opened' | 'closed') so the caller can alert, or
+ * null when nothing changed. `ackWasSuccess` = the just-resolved cold ack was a
+ * delivery (delivered/read/played) rather than a failure (unknown/failed).
+ */
+export async function evaluateColdCircuit(
+  profileId: string,
+  ackWasSuccess: boolean,
+): Promise<'opened' | 'closed' | null> {
+  const profile = await prisma.profile.findUnique({
+    where: { id: profileId },
+    select: { coldCircuitState: true },
+  });
+  if (!profile) return null;
+
+  if (profile.coldCircuitState === 'open') {
+    if (ackWasSuccess) {
+      // Half-open probe delivered → recovered. CAS guarded to 'open' so only the
+      // ack that actually performs the transition returns 'closed' (no double-alert).
+      const r = await prisma.profile.updateMany({
+        where: { id: profileId, coldCircuitState: 'open' },
+        data: { coldCircuitState: 'closed', coldCircuitOpenedAt: null },
+      });
+      return r.count === 1 ? 'closed' : null;
+    }
+    // Still failing → re-arm the cooldown so it doesn't immediately half-open again.
+    await prisma.profile.updateMany({
+      where: { id: profileId, coldCircuitState: 'open' },
+      data: { coldCircuitOpenedAt: new Date() },
+    });
+    return null;
+  }
+
+  // Closed: open only when the recent REAL (transmitted) cold outcomes are mostly
+  // failures. Exclude never-transmitted rows — policy 429s and engine-throw failures
+  // keep the `pending_` placeholder id — so the breaker never counts its own blocks.
+  const recent = await prisma.message.findMany({
+    where: {
+      profileId,
+      lane: 'cold',
+      direction: 'outgoing',
+      status: { in: TERMINAL_STATUSES },
+      NOT: { messageId: { startsWith: 'pending_' } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: COLD_CIRCUIT_WINDOW,
+    select: { status: true },
+  });
+  if (recent.length < COLD_CIRCUIT_MIN_SAMPLES) return null;
+  const delivered = recent.filter((m) => DELIVERED_STATUSES.includes(m.status)).length;
+  if (delivered / recent.length < COLD_CIRCUIT_MIN_SUCCESS) {
+    const r = await prisma.profile.updateMany({
+      where: { id: profileId, coldCircuitState: 'closed' },
+      data: { coldCircuitState: 'open', coldCircuitOpenedAt: new Date() },
+    });
+    return r.count === 1 ? 'opened' : null;
+  }
+  return null;
+}
+
 @Injectable()
 export class SendGateService {
   private readonly logger = new Logger(SendGateService.name);
@@ -57,12 +265,17 @@ export class SendGateService {
    * counter on success. Returns sendFn's result, or rejects with the send error
    * / a 429 HttpException.
    */
-  async executeWithGate<T>(profileId: string, sendFn: () => Promise<T>): Promise<T> {
+  async executeWithGate<T>(
+    profileId: string,
+    sendFn: () => Promise<T>,
+    recipient?: string,
+    isCold?: boolean,
+  ): Promise<T> {
     const prev = this.profileChains.get(profileId) ?? Promise.resolve();
     // Run after the previous send for this profile, whether it resolved or rejected.
     const runResult = prev.then(
-      () => this.gatedRun(profileId, sendFn),
-      () => this.gatedRun(profileId, sendFn),
+      () => this.gatedRun(profileId, sendFn, recipient, isCold),
+      () => this.gatedRun(profileId, sendFn, recipient, isCold),
     );
     // The stored tail must never reject (or it poisons the chain).
     this.profileChains.set(
@@ -75,20 +288,38 @@ export class SendGateService {
     return runResult;
   }
 
-  private async gatedRun<T>(profileId: string, sendFn: () => Promise<T>): Promise<T> {
+  private async gatedRun<T>(
+    profileId: string,
+    sendFn: () => Promise<T>,
+    recipient?: string,
+    isColdArg?: boolean,
+  ): Promise<T> {
     const profile = await prisma.profile.findUnique({
       where: { id: profileId },
       select: {
         messageDelayMs: true,
+        messageDelayJitterMs: true,
         dailyMessageLimit: true,
         dailyMessageCount: true,
         dailyResetAt: true,
+        warmupEnabled: true,
+        warmupStartPerDay: true,
+        warmupRampDays: true,
+        warmupStartedAt: true,
+        serviceWindowHours: true,
+        coldDailyLimit: true,
+        coldMessageCount: true,
+        coldCircuitState: true,
+        coldCircuitOpenedAt: true,
       },
     });
     if (!profile) throw new NotFoundException('Profile not found');
 
-    // 1. Inter-message delay (block-and-wait).
-    const delayMs = profile.messageDelayMs ?? 1500;
+    // 1. Inter-message delay (block-and-wait), with optional additive jitter.
+    // The base messageDelayMs is always the floor; jitter only ever slows sends.
+    const baseDelay = profile.messageDelayMs ?? 1500;
+    const jitterMax = Math.max(0, profile.messageDelayJitterMs ?? 0);
+    const delayMs = baseDelay + (jitterMax > 0 ? Math.floor(Math.random() * (jitterMax + 1)) : 0);
     const last = this.lastSentAt.get(profileId) ?? 0;
     const wait = Math.max(0, delayMs - (Date.now() - last));
     if (wait > 0) await sleep(wait);
@@ -96,35 +327,70 @@ export class SendGateService {
     // inter-message spacing.
     this.lastSentAt.set(profileId, Date.now());
 
-    // 2. Lazy daily reset (WIB boundary) + limit check.
+    // 2. Lazy daily reset (WIB boundary) for both the total and cold counters.
     const now = new Date();
     let count = profile.dailyMessageCount ?? 0;
+    let coldCount = profile.coldMessageCount ?? 0;
+    let resetAt = profile.dailyResetAt ?? nextMidnightWIB(now);
     if (!profile.dailyResetAt || profile.dailyResetAt <= now) {
       count = 0;
+      coldCount = 0;
+      resetAt = nextMidnightWIB(now);
       await prisma.profile.update({
         where: { id: profileId },
-        data: { dailyMessageCount: 0, dailyResetAt: nextMidnightWIB(now) },
+        data: { dailyMessageCount: 0, coldMessageCount: 0, dailyResetAt: resetAt },
       });
     }
-    const limit = profile.dailyMessageLimit;
-    // null/undefined limit means unlimited.
-    if (limit != null && count >= limit) {
+
+    // 3. Lane-aware governance. Replies (in service window) only hit the high
+    // overall backstop; cold sends hit the circuit breaker + the dedicated cold cap.
+    const isCold =
+      isColdArg ?? (await classifyColdSend(profileId, recipient, profile.serviceWindowHours ?? 24, now));
+
+    // 3a. Cold circuit breaker: pause cold sends while open (delivery is failing /
+    // the number is reach-out-locked). Replies are never blocked here.
+    if (isCold && profile.coldCircuitState === 'open') {
+      if (isColdCircuitBlocking(profile.coldCircuitState, profile.coldCircuitOpenedAt, now)) {
+        const retryAt = new Date((profile.coldCircuitOpenedAt?.getTime() ?? now.getTime()) + COLD_CIRCUIT_COOLDOWN_MS);
+        throw new HttpException({ error: 'COLD_CIRCUIT_OPEN', lane: 'cold', retryAt }, HttpStatus.TOO_MANY_REQUESTS);
+      }
+      // Cooldown elapsed → admit exactly ONE half-open probe. CAS on openedAt so a
+      // concurrent burst can't all probe; the winner re-arms the cooldown, and its
+      // ack will close (recovered) or re-arm the breaker.
+      const claim = await prisma.profile.updateMany({
+        where: { id: profileId, coldCircuitState: 'open', coldCircuitOpenedAt: profile.coldCircuitOpenedAt },
+        data: { coldCircuitOpenedAt: now },
+      });
+      if (claim.count !== 1) {
+        const retryAt = new Date(now.getTime() + COLD_CIRCUIT_COOLDOWN_MS);
+        throw new HttpException({ error: 'COLD_CIRCUIT_OPEN', lane: 'cold', retryAt }, HttpStatus.TOO_MANY_REQUESTS);
+      }
+    }
+
+    const cap = effectiveCapForLane(profile, isCold, now);
+    const laneCount = isCold ? coldCount : count;
+    if (cap != null && laneCount >= cap) {
       throw new HttpException(
         {
-          error: 'DAILY_LIMIT_REACHED',
-          limit,
-          count,
-          resetAt: profile.dailyResetAt ?? nextMidnightWIB(now),
+          error: isCold ? 'COLD_DAILY_LIMIT_REACHED' : 'DAILY_LIMIT_REACHED',
+          lane: isCold ? 'cold' : 'service',
+          limit: cap,
+          count: laneCount,
+          resetAt,
         },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
-    // 3. Send, then increment the counter only on a real successful send.
+    // 4. Send, then increment counters only on a real successful send. Cold sends
+    // advance both the total and the cold counter; replies advance only the total.
     const result = await sendFn();
     await prisma.profile.update({
       where: { id: profileId },
-      data: { dailyMessageCount: { increment: 1 } },
+      data: {
+        dailyMessageCount: { increment: 1 },
+        ...(isCold ? { coldMessageCount: { increment: 1 } } : {}),
+      },
     });
     return result;
   }

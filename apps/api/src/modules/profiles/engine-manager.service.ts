@@ -9,6 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
+import { evaluateColdCircuit } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -42,6 +43,16 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   private readyTimeoutRetries = new Map<string, number>();
   private readonly READY_TIMEOUT_MS = Number(process.env.READY_TIMEOUT_MS) || 120000;
   private readonly READY_TIMEOUT_MAX_RETRIES = Number(process.env.READY_TIMEOUT_MAX_RETRIES) || 3;
+
+  // Periodic reconnect sweep: a safety net that reconnects profiles stuck
+  // 'disconnected' but still holding a valid session (a network/hang outage that
+  // outlasted the inline retries). RECONNECT_SWEEP_INTERVAL_MS=0 disables it.
+  private reconnectSweepTimer: NodeJS.Timeout | null = null;
+  private sweeping = false;
+  private readonly RECONNECT_SWEEP_INTERVAL_MS = Number(process.env.RECONNECT_SWEEP_INTERVAL_MS) || 180000;
+  // Profiles the operator disconnected on purpose — the sweep must NOT bring these
+  // back. Added on manual disconnect, cleared on manual (re)connect.
+  private manuallyDisconnected = new Set<string>();
 
   private clearReadyTimer(profileId: string): void {
     const t = this.readyTimers.get(profileId);
@@ -163,6 +174,20 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       const chats = await engine.getRecentChats(chatLimit, perChat);
       let newConvos = 0, newMsgs = 0;
 
+      // Optional webhook backfill (opt-in). Messages this sync inserts are ones the
+      // live stream never saw — they'd already be in the DB otherwise — i.e. exactly
+      // what arrived while the profile was disconnected. Collect the incoming ones
+      // (within the window, bounded) and replay them to the webhook after the sync.
+      const backfillEnabled =
+        String(process.env.WEBHOOK_BACKFILL_ON_RECONNECT).toLowerCase() === 'true';
+      const backfillWindowHours = Math.max(1, Number(process.env.WEBHOOK_BACKFILL_WINDOW_HOURS) || 24);
+      const backfillCutoff = new Date(Date.now() - backfillWindowHours * 3_600_000);
+      const BACKFILL_MAX = 200;
+      const missed: Array<{
+        id: string; senderJid: string; type: string;
+        content: Record<string, any>; timestamp: Date; conversationId: string;
+      }> = [];
+
       for (const chat of chats || []) {
         try {
           const rawJid: string = chat?.jid || '';
@@ -205,7 +230,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
               : (isGroup ? (m.author || m.from || jid) : jid);
             const ts = this.normalizeTimestamp(m.timestamp);
 
-            await prisma.message.create({
+            const created = await prisma.message.create({
               data: {
                 profileId,
                 conversationId: conversation.id,
@@ -220,6 +245,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             });
             newMsgs++;
             if (!lastTs || ts > lastTs) lastTs = ts;
+            if (backfillEnabled && !fromMe && ts >= backfillCutoff && missed.length < BACKFILL_MAX) {
+              missed.push({
+                id: created.id, senderJid, type: created.type,
+                content, timestamp: ts, conversationId: conversation.id,
+              });
+            }
           }
 
           if (lastTs) {
@@ -233,6 +264,27 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       }
 
       this.logger.log(`History sync done for ${profileId}: +${newConvos} conversations, +${newMsgs} messages`);
+
+      // Replay the missed incoming messages to the webhook, oldest first, using the
+      // same MESSAGE.RECEIVED shape as the live path (plus a `backfilled` flag so
+      // consumers can tell them apart). Automation/notifications are NOT re-run.
+      if (backfillEnabled && missed.length > 0) {
+        missed.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        for (const msg of missed) {
+          this.emitEvent(AppEvents.MESSAGE.RECEIVED, {
+            profileId,
+            id: msg.id,
+            from: msg.senderJid,
+            body: msg.content?.text ?? msg.content?.caption ?? '',
+            type: msg.type,
+            hasMedia: !!(msg.content?.url || msg.content?.hasMedia),
+            timestamp: msg.timestamp,
+            conversationId: msg.conversationId,
+            backfilled: true,
+          });
+        }
+        this.logger.log(`Webhook backfill: replayed ${missed.length} missed incoming message(s) for ${profileId} (window ${backfillWindowHours}h)`);
+      }
     } finally {
       this.syncingHistory.delete(profileId);
     }
@@ -295,9 +347,67 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
       // Step 2: Auto-reconnect profiles that have valid session data
       await this.autoReconnectProfiles();
-      
+
+      // Step 3: Start the periodic reconnect sweep (safety net for outages that
+      // outlast the inline retries). API mode only — the worker path returned early.
+      if (this.RECONNECT_SWEEP_INTERVAL_MS > 0) {
+        this.reconnectSweepTimer = setInterval(() => {
+          this.reconnectSweep().catch(err =>
+            this.logger.warn(`Reconnect sweep tick error: ${(err as Error).message}`));
+        }, this.RECONNECT_SWEEP_INTERVAL_MS);
+        this.logger.log(`Reconnect sweep enabled (every ${Math.round(this.RECONNECT_SWEEP_INTERVAL_MS / 1000)}s)`);
+      }
+
     } catch (error) {
       this.logger.error('Error in onModuleInit:', error);
+    }
+  }
+
+  /**
+   * True if the profile has on-disk session credentials — a whatsapp-web.js
+   * LocalAuth dir (`session-<id>/`) or a Baileys `creds.json` — i.e. it can
+   * reconnect without a fresh QR scan. A logged-out profile has neither.
+   */
+  private async hasValidSession(profileId: string): Promise<boolean> {
+    const fs = await import('fs/promises');
+    const sessionsDir = process.env.SESSIONS_DIR || '/data/sessions';
+    const sessionDir = path.join(sessionsDir, profileId);
+    try { await fs.access(path.join(sessionDir, `session-${profileId}`)); return true; } catch { /* not wwebjs */ }
+    try { await fs.access(path.join(sessionDir, 'creds.json')); return true; } catch { /* not baileys */ }
+    return false;
+  }
+
+  /**
+   * Periodic safety net: reconnect profiles stuck 'disconnected' that still hold a
+   * valid session (e.g. a network/hang outage that outlasted the inline retries).
+   * Skips profiles the operator disconnected on purpose, those already
+   * (re)connecting, and logged-out sessions (which need a fresh QR). Runs forever
+   * on RECONNECT_SWEEP_INTERVAL_MS so an outage of any length eventually recovers.
+   */
+  private async reconnectSweep(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      const profiles = await prisma.profile.findMany({
+        where: { status: 'disconnected' },
+        select: { id: true, displayName: true },
+      });
+      let attempted = 0;
+      for (const profile of profiles) {
+        if (this.manuallyDisconnected.has(profile.id)) continue; // intentional disconnect
+        if (this.engines.has(profile.id)) continue;              // already (re)connecting
+        if (!(await this.hasValidSession(profile.id))) continue;  // logged out — needs QR
+        this.logger.log(`Reconnect sweep: attempting ${profile.displayName || profile.id}`);
+        this.connectProfile(profile.id).catch(err =>
+          this.logger.warn(`Reconnect sweep failed for ${profile.displayName || profile.id}: ${(err as Error).message}`));
+        attempted++;
+        await new Promise(r => setTimeout(r, 2000)); // pace, don't overwhelm WhatsApp
+      }
+      if (attempted > 0) this.logger.log(`Reconnect sweep attempted ${attempted} profile(s)`);
+    } catch (err) {
+      this.logger.warn(`Reconnect sweep error: ${(err as Error).message}`);
+    } finally {
+      this.sweeping = false;
     }
   }
 
@@ -320,29 +430,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       let reconnectedCount = 0;
       
       for (const profile of profiles) {
-        const sessionDir = path.join(sessionsDir, profile.id);
-        // whatsapp-web.js LocalAuth (dataPath=sessionDir) stores data in
-        // {dataPath}/session-{clientId}/ — NOT under a .wwebjs_auth subdir.
-        const wwebjsSessionDir = path.join(sessionDir, `session-${profile.id}`);
-        // Also check for Baileys-style creds.json as fallback
-        const credsPath = path.join(sessionDir, 'creds.json');
-        
-        let hasSession = false;
-        try {
-          await fs.access(wwebjsSessionDir);
-          hasSession = true;
-          this.logger.log(`Found whatsapp-web.js session for: ${profile.displayName || profile.id}`);
-        } catch {
-          try {
-            await fs.access(credsPath);
-            hasSession = true;
-            this.logger.log(`Found Baileys session for: ${profile.displayName || profile.id}`);
-          } catch {
-            // No session found
-          }
-        }
-
-        if (!hasSession) {
+        if (!(await this.hasValidSession(profile.id))) {
           this.logger.debug(`No session found for profile: ${profile.displayName || profile.id}`);
           continue;
         }
@@ -436,6 +524,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   }
 
   async onModuleDestroy() {
+    if (this.reconnectSweepTimer) {
+      clearInterval(this.reconnectSweepTimer);
+      this.reconnectSweepTimer = null;
+    }
     // Cleanup all engines on shutdown
     for (const [profileId, instance] of this.engines) {
       try {
@@ -488,6 +580,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async connectProfile(profileId: string): Promise<{ status: string; message: string }> {
     this.logger.log(`Connecting profile: ${profileId}`);
+    // A (re)connect clears any "manually disconnected" marker so the reconnect
+    // sweep watches this profile again.
+    this.manuallyDisconnected.delete(profileId);
 
     // Check if already connected
     const existing = this.engines.get(profileId);
@@ -1025,17 +1120,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           };
 
           // Fast-fail guard: skip automation entirely when the profile is at its
-          // daily cap. The actual counter increment is owned by SendGateService
-          // (every automation reply ultimately goes through MessagesService →
-          // the send gate), so incrementing here too would double-count.
-          // null dailyMessageLimit means unlimited.
+          // daily cap. Uses the same warm-up-aware effective cap as the send gate
+          // so this short-circuit matches what the gate would enforce. The actual
+          // counter increment is owned by SendGateService (every automation reply
+          // ultimately goes through MessagesService → the send gate), so
+          // incrementing here too would double-count. null cap means unlimited.
+          // Automation replies are within the customer-service window (the sender
+          // just messaged us), so they are SERVICE traffic and hit only the overall
+          // backstop — never the cold/warm-up cap, which would wrongly skip replies.
           const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
+          const backstop = currentProfile?.dailyMessageLimit ?? null;
+          // A pending WIB reset means the counter is stale; let automation through
+          // so the send gate performs its lazy reset (mirrors the pre-enqueue guard).
+          const resetDue = !currentProfile?.dailyResetAt || currentProfile.dailyResetAt <= new Date();
           if (
             currentProfile &&
-            currentProfile.dailyMessageLimit != null &&
-            currentProfile.dailyMessageCount >= currentProfile.dailyMessageLimit
+            backstop != null &&
+            !resetDue &&
+            currentProfile.dailyMessageCount >= backstop
           ) {
-            this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${currentProfile.dailyMessageLimit}, skipping automation`);
+            this.logger.warn(`Daily message limit reached for profile ${profileId}: ${currentProfile.dailyMessageCount}/${backstop}, skipping automation`);
           } else {
             const results = await this.ruleEngineService.processMessage(incomingMsg);
 
@@ -1064,6 +1168,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // (pending, sent, delivered, read, played)
           // No need for double-mapping
           
+          // Read prior state before updating so we can fire the cold-circuit eval on
+          // the FIRST terminal transition only (a message emits delivered→read→played).
+          const prior = await prisma.message.findFirst({
+            where: { messageId },
+            select: { status: true, lane: true },
+          });
+
           const updated = await prisma.message.updateMany({
             where: { messageId },
             data: { status },
@@ -1084,6 +1195,27 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
                 : null;
           if (ackEvent) {
             this.emitEvent(ackEvent, { profileId, messageId, status });
+          }
+
+          // Cold-circuit health: evaluate the breaker ONCE, on the first terminal
+          // transition of a COLD message (delivered/read/played = success, unknown =
+          // failure). Later acks on the same message don't re-run the state machine.
+          const TERMINAL_ACKS = ['delivered', 'read', 'played', 'unknown'];
+          const wasTerminal = prior ? TERMINAL_ACKS.includes(prior.status) : false;
+          if (prior?.lane === 'cold' && !wasTerminal && TERMINAL_ACKS.includes(status)) {
+            const success = status === 'delivered' || status === 'read' || status === 'played';
+            const transition = await evaluateColdCircuit(profileId, success);
+            if (transition === 'opened') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '🧊 Cold circuit opened',
+                'Cold (business-initiated) sends are paused after repeated delivery failures — the number is likely rate-locked. Replies still work; it will auto-retry after a cooldown.',
+                { profileId, reason: 'cold-circuit-open' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-open): ${err.message}`));
+            } else if (transition === 'closed') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '✅ Cold circuit recovered',
+                'Cold sending recovered and has resumed.',
+                { profileId, reason: 'cold-circuit-closed' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-closed): ${err.message}`));
+            }
           }
         } catch (error) {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
@@ -1157,6 +1289,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async disconnectProfile(profileId: string): Promise<{ status: string }> {
     this.logger.log(`Disconnecting profile: ${profileId}`);
+    // Operator-initiated disconnect — mark it so the reconnect sweep does not
+    // bring it back. Cleared when the operator connects it again.
+    this.manuallyDisconnected.add(profileId);
 
     const instance = this.engines.get(profileId);
     

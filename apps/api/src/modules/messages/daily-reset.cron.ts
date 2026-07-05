@@ -18,7 +18,7 @@ export class DailyResetCron {
   async handleReset(): Promise<void> {
     const resetAt = nextMidnightWIB(new Date());
     const res = await prisma.profile.updateMany({
-      data: { dailyMessageCount: 0, dailyResetAt: resetAt },
+      data: { dailyMessageCount: 0, coldMessageCount: 0, dailyResetAt: resetAt },
     });
     this.logger.log(
       `Daily message counters reset for ${res.count} profile(s); next reset ${resetAt.toISOString()}`,

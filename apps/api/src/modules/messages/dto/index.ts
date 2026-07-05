@@ -58,6 +58,25 @@ export class SendMessageResponse {
   status: string;
 }
 
+// OTP with delivery-confirmed failover to a secondary channel (Send Policy Phase 3).
+export class SendOtpDto extends BaseMessageDto {
+  @ApiProperty({
+    example: 'Kode OTP Anda: 563842. Jangan bagikan kode ini kepada siapa pun.',
+    description: 'The OTP message text sent over the primary (unofficial) WhatsApp number.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  text: string;
+
+  @ApiProperty({
+    example: '563842',
+    description: 'The OTP code substituted into the fallback template variable when failing over.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  code: string;
+}
+
 // Text message
 export class SendTextDto extends BaseMessageDto {
   @ApiProperty({ example: 'Hello, World!' })

@@ -107,6 +107,19 @@ export class ProfilesService {
     };
     if (dto.messageDelayMs !== undefined) data.messageDelayMs = dto.messageDelayMs;
     if (dto.dailyMessageLimit !== undefined) data.dailyMessageLimit = dto.dailyMessageLimit;
+    if (dto.messageDelayJitterMs !== undefined) data.messageDelayJitterMs = dto.messageDelayJitterMs;
+    if (dto.warmupStartPerDay !== undefined) data.warmupStartPerDay = dto.warmupStartPerDay;
+    if (dto.warmupRampDays !== undefined) data.warmupRampDays = dto.warmupRampDays;
+    if (dto.serviceWindowHours !== undefined) data.serviceWindowHours = dto.serviceWindowHours;
+    if (dto.coldDailyLimit !== undefined) data.coldDailyLimit = dto.coldDailyLimit;
+    if (dto.warmupEnabled !== undefined) {
+      data.warmupEnabled = dto.warmupEnabled;
+      // Anchor the ramp at "today" each time warm-up is turned on (false -> true),
+      // so the cap always starts fresh from warmupStartPerDay. Tweaking the numbers
+      // while it is already on does not restart the ramp.
+      const wasEnabled = (existing as any).warmupEnabled === true;
+      if (dto.warmupEnabled && !wasEnabled) data.warmupStartedAt = new Date();
+    }
     if (dto.engine !== undefined) data.engine = dto.engine;
 
     const updated = await prisma.profile.update({ where: { id }, data });

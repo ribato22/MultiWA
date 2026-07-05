@@ -18,7 +18,13 @@ import {
   SendPollDto,
 } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
-import { SendGateService } from '@multiwa/engine-runtime';
+import {
+  SendGateService,
+  classifyColdSend,
+  effectiveCapForLane,
+  isColdCircuitBlocking,
+  COLD_CIRCUIT_COOLDOWN_MS,
+} from '@multiwa/engine-runtime';
 import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import {
   OUTBOUND_SEND_QUEUE,
@@ -203,6 +209,10 @@ export class MessagesService {
       });
     }
 
+    // Classify the send lane ONCE (service reply vs cold) and persist it, so the
+    // gate, the pre-enqueue check, and the cold-circuit health eval all agree.
+    const isCold = await classifyColdSend(profileId, jid, (profile as any).serviceWindowHours ?? 24);
+
     // Create message record
     const message = await prisma.message.create({
       data: {
@@ -214,6 +224,7 @@ export class MessagesService {
         type,
         content,
         status: 'pending',
+        lane: isCold ? 'cold' : 'service',
         timestamp: new Date(),
         quotedMessageId,
       },
@@ -235,17 +246,28 @@ export class MessagesService {
       // 429 (the send gate in the consumer is the authoritative increment).
       const now = new Date();
       const resetDue = !profile.dailyResetAt || profile.dailyResetAt <= now;
-      if (
-        profile.dailyMessageLimit != null &&
-        !resetDue &&
-        (profile.dailyMessageCount ?? 0) >= profile.dailyMessageLimit
-      ) {
+      // Lane-aware pre-enqueue check (mirrors the authoritative send-gate): a cold
+      // send hits the cold cap on the cold counter; a reply hits the overall
+      // backstop. Gives the common case a synchronous 429 instead of an async fail.
+      // Reuses the lane classified once above.
+      // Cold circuit breaker: reject synchronously while open.
+      if (isCold && isColdCircuitBlocking((profile as any).coldCircuitState, (profile as any).coldCircuitOpenedAt, now)) {
+        await prisma.message.update({ where: { id: message.id }, data: { status: 'failed' } });
+        throw new HttpException(
+          { error: 'COLD_CIRCUIT_OPEN', lane: 'cold', retryAt: new Date(((profile as any).coldCircuitOpenedAt?.getTime() ?? now.getTime()) + COLD_CIRCUIT_COOLDOWN_MS) },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      const laneCap = effectiveCapForLane(profile, isCold, now);
+      const laneCount = isCold ? (profile.coldMessageCount ?? 0) : (profile.dailyMessageCount ?? 0);
+      if (laneCap != null && !resetDue && laneCount >= laneCap) {
         await prisma.message.update({ where: { id: message.id }, data: { status: 'failed' } });
         throw new HttpException(
           {
-            error: 'DAILY_LIMIT_REACHED',
-            limit: profile.dailyMessageLimit,
-            count: profile.dailyMessageCount,
+            error: isCold ? 'COLD_DAILY_LIMIT_REACHED' : 'DAILY_LIMIT_REACHED',
+            lane: isCold ? 'cold' : 'service',
+            limit: laneCap,
+            count: laneCount,
             resetAt: profile.dailyResetAt,
           },
           HttpStatus.TOO_MANY_REQUESTS,
@@ -285,8 +307,11 @@ export class MessagesService {
 
     let result: any;
     try {
-      result = await this.sendGate.executeWithGate(profileId, () =>
-        this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
+      result = await this.sendGate.executeWithGate(
+        profileId,
+        () => this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
+        jid,
+        isCold,
       );
     } catch (error: any) {
       await prisma.message.update({
@@ -429,9 +454,16 @@ export class MessagesService {
       throw new Error(`Profile ${profileId} not connected; retrying queued send`);
     }
 
+    // Use the lane classified + persisted at enqueue time so the gate's governance
+    // and the cold-circuit health accounting agree with the message's stored lane.
+    const laneRow = await prisma.message.findUnique({ where: { id: messageDbId }, select: { lane: true } });
+
     try {
-      const result = await this.sendGate.executeWithGate(profileId, () =>
-        this.dispatchToEngine(engine, type, to, content, quotedMessageId),
+      const result = await this.sendGate.executeWithGate(
+        profileId,
+        () => this.dispatchToEngine(engine, type, to, content, quotedMessageId),
+        to,
+        laneRow?.lane === 'cold',
       );
       await prisma.message.update({
         where: { id: messageDbId },

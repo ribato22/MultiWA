@@ -9,6 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
+import { evaluateColdCircuit } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -913,13 +914,21 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           };
 
           // Fast-fail guard: skip automation when the profile is at its daily cap.
-          // The send gate owns the single counter increment (automation replies go
-          // through it), so this guard must NOT increment. null = unlimited.
+          // Uses the same warm-up-aware effective cap as the send gate. The send
+          // gate owns the single counter increment (automation replies go through
+          // it), so this guard must NOT increment. null cap = unlimited.
+          // Automation replies are within the customer-service window, so they are
+          // SERVICE traffic and hit only the overall backstop — not the cold/warm-up cap.
           const currentProfile = await prisma.profile.findUnique({ where: { id: profileId } });
+          const backstop = currentProfile?.dailyMessageLimit ?? null;
+          // A pending WIB reset means the counter is stale; let automation through
+          // so the send gate performs its lazy reset (mirrors the pre-enqueue guard).
+          const resetDue = !currentProfile?.dailyResetAt || currentProfile.dailyResetAt <= new Date();
           if (
             currentProfile &&
-            currentProfile.dailyMessageLimit != null &&
-            currentProfile.dailyMessageCount >= currentProfile.dailyMessageLimit
+            backstop != null &&
+            !resetDue &&
+            currentProfile.dailyMessageCount >= backstop
           ) {
             this.logger.warn(`Daily message limit reached for profile ${profileId}, skipping automation`);
           } else {
@@ -946,6 +955,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           // (pending, sent, delivered, read, played)
           // No need for double-mapping
           
+          // Read prior state before updating so the cold-circuit eval fires only on
+          // the FIRST terminal transition (a message emits delivered→read→played).
+          const prior = await prisma.message.findFirst({
+            where: { messageId },
+            select: { status: true, lane: true },
+          });
+
           const updated = await prisma.message.updateMany({
             where: { messageId },
             data: { status },
@@ -966,6 +982,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
                 : null;
           if (ackEvent) {
             this.emitEvent(ackEvent, { profileId, messageId, status });
+          }
+
+          // Cold-circuit health: evaluate ONCE, on the first terminal transition of a
+          // COLD message (delivered/read/played = success, unknown = failure).
+          const TERMINAL_ACKS = ['delivered', 'read', 'played', 'unknown'];
+          const wasTerminal = prior ? TERMINAL_ACKS.includes(prior.status) : false;
+          if (prior?.lane === 'cold' && !wasTerminal && TERMINAL_ACKS.includes(status)) {
+            const success = status === 'delivered' || status === 'read' || status === 'played';
+            const transition = await evaluateColdCircuit(profileId, success);
+            if (transition === 'opened') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '🧊 Cold circuit opened',
+                'Cold (business-initiated) sends are paused after repeated delivery failures — the number is likely rate-locked. Replies still work; it will auto-retry after a cooldown.',
+                { profileId, reason: 'cold-circuit-open' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-open): ${err.message}`));
+            } else if (transition === 'closed') {
+              this.notifyOrgUsers(profileId, NotificationType.SYSTEM, '✅ Cold circuit recovered',
+                'Cold sending recovered and has resumed.',
+                { profileId, reason: 'cold-circuit-closed' },
+              ).catch((err) => this.logger.warn(`Notification error (cold-circuit-closed): ${err.message}`));
+            }
           }
         } catch (error) {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
