@@ -1,0 +1,176 @@
+# ============================================
+# MultiWA — Dokploy / Traefik Compose
+# ============================================
+#
+# Server-side compose for Dokploy deployments (wa.v244.net).
+# Unlike the local docker-compose.yml, this file:
+#   - publishes NO host ports (Traefik routes via the external
+#     dokploy-network to the admin service; everything else is internal)
+#   - has no fixed container_name (avoids conflicts with other stacks)
+#   - takes all secrets/urls from the Dokploy environment tab
+#   - keeps the *_dev volume names so existing data is preserved
+#
+# Required environment variables (set in Dokploy → Environment):
+#   DB_PASSWORD, JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY
+#   NEXT_PUBLIC_API_URL   e.g. https://wa.v244.net
+#   ADMIN_URL / CORS_ORIGINS
+# Optional:
+#   DB_NAME (default multiwa_dev), DEFAULT_ENGINE (default baileys),
+#   BAILEYS_WA_VERSION, INTERNAL_API_URL (default http://multiwa-dev-api:3333)
+
+services:
+  # ─── Database ──────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: multiwa
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-multiwa_dev}
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U multiwa -d ${DB_NAME:-multiwa_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - multiwa_dev_net
+
+  # ─── Cache & Queue ─────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data_dev:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - multiwa_dev_net
+
+  # ─── API Server (NestJS + WhatsApp Engine) ─
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    restart: unless-stopped
+    shm_size: "1gb"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://multiwa:${DB_PASSWORD}@postgres:5432/${DB_NAME:-multiwa_dev}?schema=public
+      REDIS_URL: redis://redis:6379
+      API_PORT: "3333"
+      API_HOST: 0.0.0.0
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      ADMIN_URL: ${ADMIN_URL:-https://wa.v244.net}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://wa.v244.net}
+      WHATSAPP_ENGINE: ${DEFAULT_ENGINE:-baileys}
+      DEFAULT_ENGINE: ${DEFAULT_ENGINE:-baileys}
+      BAILEYS_WA_VERSION: ${BAILEYS_WA_VERSION:-}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      SESSIONS_DIR: /data/sessions
+    # Sync the Prisma schema before boot so a fresh database is usable.
+    command: ["sh", "-c", "cd /app/packages/database && until prisma db push --skip-generate; do echo 'waiting for database schema sync'; sleep 2; done; cd /app/apps/api && exec node dist/main.js"]
+    expose:
+      - "3333"
+    volumes:
+      - sessions_data_dev:/data/sessions
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3333/api/v1/health', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      multiwa_dev_net:
+        # Private alias so the admin proxy can never resolve another
+        # stack's `api` service by accident.
+        aliases:
+          - multiwa-dev-api
+
+  # ─── Background Worker (BullMQ) ────────────
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    shm_size: "1gb"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://multiwa:${DB_PASSWORD}@postgres:5432/${DB_NAME:-multiwa_dev}?schema=public
+      REDIS_URL: redis://redis:6379
+      ENGINE_HOST: ${ENGINE_HOST:-multiwa-dev-api}
+      WHATSAPP_ENGINE: ${DEFAULT_ENGINE:-baileys}
+      DEFAULT_ENGINE: ${DEFAULT_ENGINE:-baileys}
+      BAILEYS_WA_VERSION: ${BAILEYS_WA_VERSION:-}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      SESSIONS_DIR: /data/sessions
+      WEBHOOK_LOG_PAYLOAD_MAX_BYTES: ${WEBHOOK_LOG_PAYLOAD_MAX_BYTES:-512}
+    volumes:
+      - sessions_data_dev:/data/sessions
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - multiwa_dev_net
+
+  # ─── Admin Dashboard (Next.js) ─────────────
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: admin
+      args:
+        # Baked into the Next.js build — must be build args.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://wa.v244.net}
+        INTERNAL_API_URL: ${INTERNAL_API_URL:-http://multiwa-dev-api:3333}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://wa.v244.net}
+      INTERNAL_API_URL: ${INTERNAL_API_URL:-http://multiwa-dev-api:3333}
+    # No host ports: Traefik reaches the admin service through the
+    # shared dokploy-network on the domain configured in Dokploy.
+    expose:
+      - "3001"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - multiwa_dev_net
+      - dokploy-network
+
+volumes:
+  postgres_data_dev:
+  redis_data_dev:
+  sessions_data_dev:
+
+networks:
+  multiwa_dev_net:
+    driver: bridge
+  dokploy-network:
+    external: true
