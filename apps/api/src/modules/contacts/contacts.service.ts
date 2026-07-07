@@ -476,6 +476,7 @@ export class ContactsService {
     }
     result.push(current.trim().replace(/^"|"$/g, ''));
     return result;
+  }
   // Save a number into the WhatsApp ACCOUNT's addressbook (whatsapp-web.js only).
   // Unlike create()/import (MultiWA DB only), this writes to WhatsApp itself, so an
   // "unknown" number becomes a known contact — which WhatsApp treats more leniently.
