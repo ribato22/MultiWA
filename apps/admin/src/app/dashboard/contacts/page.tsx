@@ -123,9 +123,6 @@ export default function ContactsPage() {
     }
     if (!res.data?.length) setLoading(false);
   };
-  const fetchContacts = async () => {
-
-
   // Server-side search + pagination. reset=true replaces the list (new query);
   // reset=false appends the next page ("Load more").
   const fetchContacts = async (reset = true) => {
@@ -133,10 +130,6 @@ export default function ContactsPage() {
     const offset = reset ? 0 : contacts.length;
     reset ? setLoading(true) : setLoadingMore(true);
     try {
-      const res = await api.getContacts(selectedProfile);
-      if (res.data) {
-        setContacts(res.data.contacts ?? []);
-      }
       const res = await api.getContacts(selectedProfile, {
         search: search.trim() || undefined,
         tags: selectedTag || undefined,

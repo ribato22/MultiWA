@@ -85,6 +85,8 @@ export class AuthController {
     return this.authService.refreshToken(refreshToken, ip, ua);
   }
 
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Logout and revoke current session' })

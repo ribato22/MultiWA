@@ -88,12 +88,6 @@ export interface ContactImportResult {
   error?: string;
 }
 
-export interface ContactsListResponse {
-  contacts: Contact[];
-  total: number;
-  limit: number;
-  offset: number;
-}
 
 export interface Template {
   id: string;
@@ -356,8 +350,6 @@ class ApiClient {
   }
 
   // Contacts
-  async getContacts(profileId: string) {
-    return this.request<ContactsListResponse>(`/contacts?profileId=${profileId}&limit=1000`);
   async getContacts(
     profileId: string,
     opts?: { search?: string; tags?: string; limit?: number; offset?: number },
