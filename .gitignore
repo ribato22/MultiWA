@@ -79,3 +79,10 @@ temp/
 
 # Docusaurus
 docs-site/.docusaurus/
+
+# Accidental OMP session state dropped at repo root (never public)
+~/
+
+# Local session / ops notes (never public)
+/HANDOFF.md
+/WATCHDOG.md
