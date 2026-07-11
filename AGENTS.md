@@ -20,8 +20,10 @@ scheduled/background jobs; S3 only when `STORAGE_TYPE=s3`, default is local disk
 Start them at the beginning of a session:
 ```bash
 sudo pg_ctlcluster 16 main start      # PostgreSQL
-sudo redis-server --daemonize yes --appendonly yes   # Redis
+sudo redis-server /etc/redis/redis.conf --daemonize yes   # Redis (data in /var/lib/redis)
 ```
+Start Redis via the packaged config (not from the repo root) so its append-only data
+lands in `/var/lib/redis` instead of creating an `appendonlydir/` in the working tree.
 Dev DB credentials: user `multiwa` / password `multiwa123` / db `multiwa_gateway`
 (matches `DATABASE_URL` in `.env`). The schema is already applied.
 
