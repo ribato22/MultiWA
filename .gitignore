@@ -60,6 +60,10 @@ sessions/
 .wwebjs_auth/
 .wwebjs_cache/
 
+# Redis local data (if a dev accidentally starts redis from the repo root)
+appendonlydir/
+dump.rdb
+
 # Plugins runtime data
 plugins/*/node_modules/
 
