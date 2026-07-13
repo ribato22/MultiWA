@@ -165,7 +165,7 @@ const SelectContent = React.forwardRef<
         else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node
       }}
       role="listbox"
-      style={{ position: "fixed", top: rect.top, left: rect.left, minWidth: rect.width }}
+      style={{ position: "fixed", top: rect.top, insetInlineStart: rect.left, minWidth: rect.width }}
       className={cn(
         "z-50 max-h-72 overflow-y-auto overflow-x-hidden rounded-lg border bg-popover text-popover-foreground shadow-astryx-md p-1 animate-fade-in",
         className

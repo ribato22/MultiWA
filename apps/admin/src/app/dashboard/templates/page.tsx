@@ -51,6 +51,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
+import { useI18n } from '@/lib/i18n/provider';
 
 // Template categories
 type Category = { value: string; label: string; Icon: LucideIcon; tone: string };
@@ -73,6 +74,7 @@ const VARIABLE_HINTS = [
 ];
 
 export default function TemplatesPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -239,12 +241,12 @@ export default function TemplatesPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Templates</h1>
-          <p className="text-muted-foreground mt-1">Create and manage message templates</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('templates.title')}</h1>
+          <p className="text-muted-foreground mt-1">{t('templates.subtitle')}</p>
         </div>
         <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
           <Plus className="w-4 h-4" aria-hidden="true" />
-          Create Template
+          {t('templates.create')}
         </Button>
       </div>
 

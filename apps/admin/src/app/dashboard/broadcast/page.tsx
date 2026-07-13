@@ -37,6 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { useI18n } from '@/lib/i18n/provider';
 import {
   Dialog,
   DialogContent,
@@ -97,6 +98,7 @@ const MEDIA_ICON_MAP: Record<MessageType, LucideIcon> = {
 };
 
 export default function BroadcastPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
@@ -590,9 +592,9 @@ export default function BroadcastPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Broadcast</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t('broadcast.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Send bulk messages to multiple contacts
+            {t('broadcast.subtitle')}
           </p>
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

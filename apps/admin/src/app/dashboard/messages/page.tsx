@@ -71,7 +71,10 @@ const MEDIA_ICON_MAP: Partial<Record<MessageType, LucideIcon>> = {
   DOCUMENT: FileText,
 };
 
+import { useI18n } from '@/lib/i18n/provider';
+
 export default function MessagesPage() {
+  const { t } = useI18n();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [recipient, setRecipient] = useState('');
@@ -599,8 +602,8 @@ export default function MessagesPage() {
     <>
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Messages</h1>
-        <p className="text-muted-foreground mt-1">Send WhatsApp messages with file upload support</p>
+        <h1 className="text-2xl font-bold text-foreground">{t('messages.title')}</h1>
+        <p className="text-muted-foreground mt-1">{t('messages.subtitle')}</p>
       </div>
 
       {profiles.length === 0 ? (

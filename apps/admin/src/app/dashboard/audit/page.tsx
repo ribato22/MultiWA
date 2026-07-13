@@ -86,7 +86,10 @@ const RESOURCES = [
   { value: 'user', label: 'Users' },
 ];
 
+import { useI18n } from '@/lib/i18n/provider';
+
 export default function AuditPage() {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -178,9 +181,9 @@ export default function AuditPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Audit Logs</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t('audit.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Track all actions and changes in your organization
+            {t('audit.subtitle')}
           </p>
         </div>
         <Button variant="outline" className="gap-2 cursor-pointer">

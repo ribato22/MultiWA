@@ -41,6 +41,7 @@ import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { useI18n } from '@/lib/i18n/provider';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import {
   Tabs,
@@ -81,6 +82,7 @@ const ROLES = [
 ];
 
 export default function SettingsPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -476,9 +478,9 @@ export default function SettingsPage() {
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+        <h1 className="text-2xl font-bold text-foreground">{t('settings.title')}</h1>
         <p className="text-muted-foreground mt-1">
-          Configure your gateway settings and preferences
+          {t('settings.subtitle')}
         </p>
       </div>
 

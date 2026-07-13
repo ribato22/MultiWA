@@ -200,12 +200,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Sidebar */}
       <aside
-        className={`fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ${
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
-        } md:translate-x-0 ${sidebarOpen ? 'w-64' : 'md:w-20 w-64'}`}
+        className={`fixed top-0 start-0 z-50 h-screen transition-transform duration-300 ${
+          mobileOpen ? 'translate-x-0' : 'sidebar-mobile-hidden md:translate-x-0'
+        } ${sidebarOpen ? 'w-64' : 'md:w-20 w-64'}`}
         aria-label={t('nav.primary')}
       >
-        <div className="h-full bg-card border-r border-border flex flex-col">
+        <div className="h-full bg-card border-e border-border flex flex-col">
           {/* Logo */}
           <div className="p-4 border-b border-border">
             <Link href="/dashboard" className="flex items-center gap-3 group">
@@ -249,7 +249,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <Icon className="w-5 h-5" aria-hidden="true" />
                     {badge > 0 && !sidebarOpen && (
                       <span
-                        className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] bg-destructive text-destructive-foreground text-[9px] font-bold rounded-full flex items-center justify-center px-1 tabular-nums ring-2 ring-card"
+                        className="absolute -top-1.5 -end-1.5 min-w-[16px] h-[16px] bg-destructive text-destructive-foreground text-[9px] font-bold rounded-full flex items-center justify-center px-1 tabular-nums ring-2 ring-card"
                         aria-hidden="true"
                       >
                         {badgeLabel}
@@ -259,7 +259,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {sidebarOpen && <span className="font-medium text-sm">{t(item.key)}</span>}
                   {sidebarOpen && badge > 0 && (
                     <span
-                      className="ml-auto min-w-[20px] h-5 bg-destructive text-destructive-foreground text-[11px] font-bold rounded-full flex items-center justify-center px-1.5 tabular-nums"
+                      className="ms-auto min-w-[20px] h-5 bg-destructive text-destructive-foreground text-[11px] font-bold rounded-full flex items-center justify-center px-1.5 tabular-nums"
                       aria-label={t('chat.unread', { count: badge })}
                     >
                       {badgeLabel}
@@ -276,7 +276,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Main Content */}
       <main
         className={`transition-all duration-300 ${
-          sidebarOpen ? 'md:ml-64' : 'md:ml-20'
+          sidebarOpen ? 'md:ms-64' : 'md:ms-20'
         }`}
       >
         {/* Header */}
@@ -345,7 +345,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <Bell className="w-5 h-5" aria-hidden="true" />
                   {unreadCount > 0 && (
                     <span
-                      className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full flex items-center justify-center px-1 tabular-nums ring-2 ring-background"
+                      className="absolute -top-0.5 -end-0.5 min-w-[18px] h-[18px] bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full flex items-center justify-center px-1 tabular-nums ring-2 ring-background"
                       aria-hidden="true"
                     >
                       {unreadCount > 99 ? '99+' : unreadCount}
@@ -358,7 +358,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <div
                     role="dialog"
                     aria-label={t('header.notifications')}
-                    className="absolute right-0 top-full mt-2 w-96 bg-card rounded-xl shadow-2xl shadow-black/40 border border-border overflow-hidden z-50"
+                    className="absolute end-0 top-full mt-2 w-96 bg-card rounded-xl shadow-2xl shadow-black/40 border border-border overflow-hidden z-50"
                   >
                     {/* Header */}
                     <div className="flex items-center justify-between px-4 py-3 border-b border-border">
@@ -391,7 +391,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             <button
                               key={notif.id}
                               type="button"
-                              className={`w-full flex items-start gap-3 px-4 py-3 hover:bg-secondary/40 cursor-pointer transition-colors border-b border-border/60 text-left focus:outline-none focus:bg-secondary/40 ${
+                              className={`w-full flex items-start gap-3 px-4 py-3 hover:bg-secondary/40 cursor-pointer transition-colors border-b border-border/60 text-start focus:outline-none focus:bg-secondary/40 ${
                                 !notif.isRead ? 'bg-primary/5' : ''
                               }`}
                               onClick={() => !notif.isRead && handleMarkRead(notif.id)}
@@ -442,12 +442,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   onClick={() => setShowUserMenu((v) => !v)}
                   aria-label={t('header.accountMenu')}
                   aria-expanded={showUserMenu}
-                  className="inline-flex items-center gap-2 rounded-lg p-1 sm:pr-2 hover:bg-secondary/60 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="inline-flex items-center gap-2 rounded-lg p-1 sm:pe-2 hover:bg-secondary/60 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
                   <span className="w-9 h-9 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center font-medium flex-shrink-0">
                     {user.name?.[0]?.toUpperCase() || 'U'}
                   </span>
-                  <span className="hidden sm:block max-w-[160px] text-left leading-tight">
+                  <span className="hidden sm:block max-w-[160px] text-start leading-tight">
                     <span className="block text-sm font-medium text-foreground truncate">{user.name}</span>
                     <span className="block text-xs text-muted-foreground truncate">{user.email}</span>
                   </span>
@@ -458,7 +458,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <div
                     role="menu"
                     aria-label={t('header.accountMenu')}
-                    className="absolute right-0 top-full mt-2 w-60 bg-card rounded-xl shadow-2xl shadow-black/40 border border-border overflow-hidden z-50"
+                    className="absolute end-0 top-full mt-2 w-60 bg-card rounded-xl shadow-2xl shadow-black/40 border border-border overflow-hidden z-50"
                   >
                     <div className="px-4 py-3 border-b border-border">
                       <p className="text-sm font-medium text-foreground truncate">{user.name}</p>

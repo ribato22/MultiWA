@@ -15,7 +15,6 @@ import {
   Users,
   Tag,
   Upload,
-  Palette,
 } from 'lucide-react';
 import {
   api,
@@ -30,8 +29,11 @@ import {
   getTagBadgeStyle,
   getTagColorMap,
   parseContactsImportFile,
-  parseTagInput,
 } from '@/lib/contact-tags';
+import { ColorFilter } from '@/components/contacts/ColorFilter';
+import { ColorPicker } from '@/components/contacts/ColorPicker';
+import { TagInput } from '@/components/contacts/TagInput';
+import { useI18n } from '@/lib/i18n/provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -66,6 +68,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 
 export default function ContactsPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
@@ -97,7 +100,9 @@ export default function ContactsPage() {
     name: '',
     phone: '',
     email: '',
-    tags: '',
+    tags: [] as string[],
+    tagColors: {} as Record<string, string>,
+    contactColor: null as string | null,
     notes: ''
   });
 
@@ -195,44 +200,50 @@ export default function ContactsPage() {
 
     return matchesSearch && matchesTag && matchesColor;
   });
-  // Search + tag filtering are now server-side (see fetchContacts); render `contacts` directly.
+  const displayContacts = selectedColor ? filteredContacts : contacts;
 
   const handleAddContact = async () => {
     if (!newContact.name || !newContact.phone) {
-      toast({ title: 'Name and phone are required', variant: 'destructive' });
+      toast({ title: t('contacts.requiredFields'), variant: 'destructive' });
       return;
     }
 
     setSaving(true);
     try {
-      const parsed = parseTagInput(newContact.tags);
       const metadata: Record<string, unknown> = {};
-      if (Object.keys(parsed.tagColors).length > 0) {
-        metadata.tagColors = parsed.tagColors;
+      if (Object.keys(newContact.tagColors).length > 0) {
+        metadata.tagColors = newContact.tagColors;
       }
-      if (parsed.primaryTag) {
-        metadata.primaryTag = parsed.primaryTag;
+      if (newContact.contactColor && newContact.tags.length > 0) {
+        const primary = newContact.tags[0];
+        metadata.tagColors = {
+          ...newContact.tagColors,
+          [primary]: newContact.contactColor,
+        };
+      }
+      if (newContact.tags.length === 1) {
+        metadata.primaryTag = newContact.tags[0];
       }
       const res = await api.createContact({
         profileId: selectedProfile,
         name: newContact.name,
         phone: newContact.phone.replace(/\s+/g, '').replace(/-/g, ''),
         email: newContact.email || undefined,
-        tags: parsed.tags.length ? parsed.tags : undefined,
+        tags: newContact.tags.length ? newContact.tags : undefined,
         notes: newContact.notes || undefined,
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       });
       
       if (res.data) {
-        toast({ title: 'Contact added successfully' });
-        setNewContact({ name: '', phone: '', email: '', tags: '', notes: '' });
+        toast({ title: t('contacts.addSuccess') });
+        setNewContact({ name: '', phone: '', email: '', tags: [], tagColors: {}, contactColor: null, notes: '' });
         setIsDialogOpen(false);
         fetchContacts();
       } else {
-        toast({ title: res.error || 'Failed to add contact', variant: 'destructive' });
+        toast({ title: res.error || t('contacts.addFailed'), variant: 'destructive' });
       }
     } catch (error) {
-      toast({ title: 'Failed to add contact', variant: 'destructive' });
+      toast({ title: t('contacts.addFailed'), variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -321,14 +332,14 @@ export default function ContactsPage() {
   };
 
   const handleDeleteContact = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this contact?')) return;
+    if (!confirm(t('contacts.deleteConfirm'))) return;
     
     try {
       await api.deleteContact(id);
-      toast({ title: 'Contact deleted' });
+      toast({ title: t('contacts.deleteSuccess') });
       fetchContacts();
     } catch (error) {
-      toast({ title: 'Failed to delete contact', variant: 'destructive' });
+      toast({ title: t('contacts.deleteFailed'), variant: 'destructive' });
     }
   };
 
@@ -353,16 +364,16 @@ export default function ContactsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Contacts</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t('contacts.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Manage your WhatsApp contacts and tags
+            {t('contacts.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">
           {profiles.length > 0 && (
             <Select value={selectedProfile} onValueChange={setSelectedProfile}>
               <SelectTrigger className="w-[200px]">
-                <SelectValue placeholder="Select profile" />
+                <SelectValue placeholder={t('contacts.selectProfile')} />
               </SelectTrigger>
               <SelectContent>
                 {profiles.map(profile => (
@@ -376,7 +387,7 @@ export default function ContactsPage() {
                         }`}
                         aria-hidden="true"
                       />
-                      {profile.displayName || profile.name || 'Unnamed'}
+                      {profile.displayName || profile.name || t('common.unnamed')}
                     </div>
                   </SelectItem>
                 ))}
@@ -394,7 +405,7 @@ export default function ContactsPage() {
               className={`w-4 h-4 ${syncing ? 'mw-spin' : ''}`}
               aria-hidden="true"
             />
-            {syncing ? 'Syncing...' : 'Sync from WhatsApp'}
+            {syncing ? t('contacts.syncing') : t('contacts.syncFromWhatsapp')}
           </Button>
           <Dialog
             open={isImportOpen}
@@ -411,16 +422,16 @@ export default function ContactsPage() {
             <DialogTrigger asChild>
               <Button variant="outline" className="gap-2" disabled={!selectedProfile}>
                 <Upload className="w-4 h-4" aria-hidden="true" />
-                Import
+                {t('contacts.import')}
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
-                <DialogTitle>Import contacts</DialogTitle>
+                <DialogTitle>{t('contacts.import.title')}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 py-2">
                 <div className="space-y-2">
-                  <Label htmlFor="import-file">File (.json, .csv, .txt, .tsv)</Label>
+                  <Label htmlFor="import-file">{t('contacts.import.file')}</Label>
                   <Input
                     id="import-file"
                     type="file"
@@ -467,69 +478,75 @@ export default function ContactsPage() {
           <DialogTrigger asChild>
             <Button className="gap-2">
               <Plus className="w-5 h-5" aria-hidden="true" />
-              Add Contact
+              {t('contacts.addContact')}
             </Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Add New Contact</DialogTitle>
+              <DialogTitle>{t('contacts.addNewContact')}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Name *</Label>
+                <Label htmlFor="name">{t('contacts.name')} *</Label>
                 <Input
                   id="name"
                   value={newContact.name}
                   onChange={e => setNewContact(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="John Doe"
+                  placeholder={t('contacts.namePlaceholder')}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="phone">Phone *</Label>
+                <Label htmlFor="phone">{t('contacts.phone')} *</Label>
                 <Input
                   id="phone"
                   value={newContact.phone}
                   onChange={e => setNewContact(prev => ({ ...prev, phone: e.target.value }))}
-                  placeholder="628123456789"
+                  placeholder={t('contacts.phonePlaceholder')}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{t('contacts.email')}</Label>
                 <Input
                   id="email"
                   type="email"
                   value={newContact.email}
                   onChange={e => setNewContact(prev => ({ ...prev, email: e.target.value }))}
-                  placeholder="john@example.com"
+                  placeholder={t('contacts.emailPlaceholder')}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="tags">Tags (comma separated)</Label>
-                <Input
-                  id="tags"
-                  value={newContact.tags}
-                  onChange={e => setNewContact(prev => ({ ...prev, tags: e.target.value }))}
-                  placeholder="customer, vip, lead:#3b82f6"
+                <Label>{t('contacts.tags')}</Label>
+                <TagInput
+                  tags={newContact.tags}
+                  tagColors={newContact.tagColors}
+                  suggestions={allTags}
+                  onChange={(tags, tagColors) =>
+                    setNewContact(prev => ({ ...prev, tags, tagColors }))
+                  }
                 />
                 <p className="text-xs text-muted-foreground">
-                  Use tag:#hex for colored tags (e.g. vip:#22c55e).
+                  {t('contacts.tagsHint')}
                 </p>
               </div>
+              <ColorPicker
+                value={newContact.contactColor}
+                onChange={color => setNewContact(prev => ({ ...prev, contactColor: color }))}
+              />
               <div className="space-y-2">
-                <Label htmlFor="notes">Notes</Label>
+                <Label htmlFor="notes">{t('contacts.notes')}</Label>
                 <Textarea
                   id="notes"
                   value={newContact.notes}
                   onChange={e => setNewContact(prev => ({ ...prev, notes: e.target.value }))}
-                  placeholder="Additional notes..."
+                  placeholder={t('contacts.notesPlaceholder')}
                   rows={3}
                 />
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setIsDialogOpen(false)}>{t('contacts.cancel')}</Button>
               <Button onClick={handleAddContact} disabled={saving}>
-                {saving ? 'Saving...' : 'Add Contact'}
+                {saving ? t('contacts.saving') : t('contacts.addContact')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -543,12 +560,12 @@ export default function ContactsPage() {
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
             <span className="font-semibold text-foreground tabular-nums">{total}</span>
-            <span className="text-muted-foreground">Contacts</span>
+            <span className="text-muted-foreground">{t('contacts.statsContacts')}</span>
           </div>
           <div className="flex items-center gap-2">
             <Tag className="w-4 h-4 text-primary" aria-hidden="true" />
             <span className="font-semibold text-primary tabular-nums">{allTags.length}</span>
-            <span className="text-muted-foreground">Tags</span>
+            <span className="text-muted-foreground">{t('contacts.statsTags')}</span>
           </div>
         </div>
       )}
@@ -558,15 +575,15 @@ export default function ContactsPage() {
         <div className="flex flex-col sm:flex-row gap-4">
           <div className="relative flex-1">
             <Search
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
+              className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
               aria-hidden="true"
             />
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search contacts..."
-              className="pl-10"
-              aria-label="Search contacts"
+              placeholder={t('contacts.searchPlaceholder')}
+              className="ps-10"
+              aria-label={t('contacts.searchPlaceholder')}
             />
           </div>
           <div className="flex gap-2 flex-wrap items-center">
@@ -575,7 +592,7 @@ export default function ContactsPage() {
               size="sm"
               onClick={() => setSelectedTag(null)}
             >
-              All tags
+              {t('contacts.allTags')}
             </Button>
             {allTags.slice(0, 5).map(tag => (
               <Button
@@ -587,37 +604,11 @@ export default function ContactsPage() {
                 {tag}
               </Button>
             ))}
-            {allTagColors.length > 0 && (
-              <>
-                <span className="text-muted-foreground text-xs flex items-center gap-1 px-1">
-                  <Palette className="w-3 h-3" aria-hidden="true" />
-                  Color
-                </span>
-                <Button
-                  variant={selectedColor === null ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setSelectedColor(null)}
-                >
-                  Any
-                </Button>
-                {allTagColors.map(color => (
-                  <Button
-                    key={color}
-                    variant={selectedColor === color ? 'default' : 'outline'}
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => setSelectedColor(color === selectedColor ? null : color)}
-                    aria-label={`Filter by color ${color}`}
-                  >
-                    <span
-                      className="w-3 h-3 rounded-full border border-border"
-                      style={{ backgroundColor: color }}
-                      aria-hidden="true"
-                    />
-                  </Button>
-                ))}
-              </>
-            )}
+            <ColorFilter
+              colors={allTagColors}
+              value={selectedColor}
+              onChange={setSelectedColor}
+            />
           </div>
         </div>
       )}
@@ -627,15 +618,15 @@ export default function ContactsPage() {
         <div className="bg-card rounded-2xl border border-border p-4">
           <LoadingTable />
         </div>
-      ) : contacts.length === 0 && !search && !selectedTag ? (
+      ) : displayContacts.length === 0 && !search && !selectedTag && !selectedColor ? (
         <EmptyContacts />
-      ) : contacts.length === 0 ? (
+      ) : displayContacts.length === 0 ? (
         <div className="bg-card rounded-2xl p-12 border border-border text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-secondary/60 text-muted-foreground">
             <SearchX className="w-7 h-7" aria-hidden="true" />
           </div>
-          <h3 className="text-lg font-semibold text-foreground mb-2">No matches found</h3>
-          <p className="text-muted-foreground">Try adjusting your search or filters</p>
+          <h3 className="text-lg font-semibold text-foreground mb-2">{t('contacts.noMatchesTitle')}</h3>
+          <p className="text-muted-foreground">{t('contacts.noMatchesDesc')}</p>
         </div>
       ) : (
         <>
@@ -644,15 +635,15 @@ export default function ContactsPage() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-12"></TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Tags</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t('contacts.tableName')}</TableHead>
+                <TableHead>{t('contacts.tablePhone')}</TableHead>
+                <TableHead>{t('contacts.tableEmail')}</TableHead>
+                <TableHead>{t('contacts.tableTags')}</TableHead>
+                <TableHead className="text-end">{t('contacts.tableActions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {contacts.map(contact => (
+              {displayContacts.map(contact => (
                 <TableRow key={contact.id} className="group">
                   <TableCell>
                     <Avatar className="w-10 h-10">
@@ -666,7 +657,7 @@ export default function ContactsPage() {
                   <TableCell className="text-muted-foreground font-mono text-xs">{contact.phone}</TableCell>
                   <TableCell className="text-muted-foreground">{getContactEmail(contact) || <span className="text-muted-foreground/60">—</span>}</TableCell>
                   <TableCell>{renderContactTags(contact)}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-end">
                     <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       <Button
                         variant="ghost"
@@ -711,7 +702,7 @@ export default function ContactsPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10 -mt-1 -mr-2 cursor-pointer"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10 -mt-1 -me-2 cursor-pointer"
                     onClick={() => handleDeleteContact(contact.id)}
                     aria-label={`Delete ${contact.name}`}
                   >
@@ -736,7 +727,7 @@ export default function ContactsPage() {
               onClick={() => fetchContacts(false)}
               disabled={loadingMore}
             >
-              {loadingMore ? 'Loading…' : `Load more (${contacts.length} of ${total})`}
+              {loadingMore ? t('contacts.loadingMore') : t('contacts.loadMore', { loaded: contacts.length, total })}
             </Button>
           </div>
         )}
@@ -748,20 +739,20 @@ export default function ContactsPage() {
         <div className="bg-card rounded-2xl p-6 border border-border">
           <h3 className="flex items-center gap-2 font-semibold text-foreground mb-3">
             <Lightbulb className="w-4 h-4 text-primary" aria-hidden="true" />
-            Tips
+            {t('contacts.tips.title')}
           </h3>
           <ul className="space-y-2 text-sm text-muted-foreground">
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5" aria-hidden="true">•</span>
-              Use tags to organize contacts into groups for broadcasts
+              {t('contacts.tips.1')}
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5" aria-hidden="true">•</span>
-              Import contacts from JSON, CSV, or TXT using the Import button above
+              {t('contacts.tips.2')}
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary mt-0.5" aria-hidden="true">•</span>
-              Contacts are auto-saved when people message your profiles
+              {t('contacts.tips.3')}
             </li>
           </ul>
         </div>

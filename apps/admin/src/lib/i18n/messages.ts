@@ -263,6 +263,105 @@ const en = {
   'contacts.colorPicker.none': 'No color',
   'contacts.colorFilter.label': 'Filter by color',
 
+  // ---- Profiles ----
+  'profiles.title': 'WhatsApp Profiles',
+  'profiles.subtitle': 'Manage connected WhatsApp devices and sessions',
+  'profiles.add': 'Add profile',
+  'profiles.connect': 'Connect',
+  'profiles.disconnect': 'Disconnect',
+  'profiles.status': 'Status',
+  'profiles.noProfiles': 'No profiles yet',
+  'profiles.new.title': 'Add new profile',
+  'profiles.new.subtitle': 'Connect a WhatsApp device via QR code',
+
+  // ---- Chat ----
+  'chat.title': 'Chat',
+  'chat.subtitle': 'Real-time conversations with your contacts',
+  'chat.search': 'Search conversations',
+  'chat.typeMessage': 'Type a message…',
+  'chat.send': 'Send',
+  'chat.noConversations': 'No conversations yet',
+  'chat.selectConversation': 'Select a conversation to start chatting',
+
+  // ---- Messages ----
+  'messages.title': 'Send Message',
+  'messages.subtitle': 'Send a quick test message from the dashboard',
+  'messages.recipient': 'Recipient phone',
+  'messages.message': 'Message',
+  'messages.send': 'Send message',
+
+  // ---- Broadcast ----
+  'broadcast.title': 'Broadcast',
+  'broadcast.subtitle': 'Send bulk messages to contact groups',
+  'broadcast.create': 'Create broadcast',
+  'broadcast.name': 'Broadcast name',
+  'broadcast.recipients': 'Recipients',
+  'broadcast.schedule': 'Schedule',
+  'broadcast.send': 'Send broadcast',
+
+  // ---- Automation ----
+  'automation.title': 'Automation',
+  'automation.subtitle': 'Rule-based autoreplies and workflow triggers',
+  'automation.create': 'Create automation',
+  'automation.builder': 'Flow builder',
+  'automation.enabled': 'Enabled',
+  'automation.disabled': 'Disabled',
+
+  // ---- Templates ----
+  'templates.title': 'Message Templates',
+  'templates.subtitle': 'Reusable message templates for broadcasts and API',
+  'templates.create': 'Create template',
+  'templates.name': 'Template name',
+  'templates.body': 'Body',
+
+  // ---- Webhooks ----
+  'webhooks.title': 'Webhooks',
+  'webhooks.subtitle': 'Real-time event delivery to your endpoints',
+  'webhooks.add': 'Add webhook',
+  'webhooks.url': 'Endpoint URL',
+  'webhooks.events': 'Events',
+
+  // ---- Settings ----
+  'settings.title': 'Settings',
+  'settings.subtitle': 'Organization, account, and notification preferences',
+  'settings.general': 'General',
+  'settings.notifications': 'Notifications',
+  'settings.security': 'Security',
+  'settings.save': 'Save changes',
+
+  // ---- Analytics ----
+  'analytics.title': 'Analytics',
+  'analytics.subtitle': 'Message volume, delivery rates, and trends',
+  'analytics.period': 'Time period',
+  'analytics.messages': 'Messages',
+  'analytics.delivery': 'Delivery rate',
+
+  // ---- Audit ----
+  'audit.title': 'Audit Log',
+  'audit.subtitle': 'Activity and security events across your organization',
+  'audit.action': 'Action',
+  'audit.user': 'User',
+  'audit.timestamp': 'Timestamp',
+
+  // ---- API Keys ----
+  'apiKeys.title': 'API Keys',
+  'apiKeys.subtitle': 'Manage API access tokens for integrations',
+  'apiKeys.create': 'Create API key',
+  'apiKeys.name': 'Key name',
+  'apiKeys.revoke': 'Revoke',
+
+  // ---- Integrations ----
+  'integrations.title': 'Integrations',
+  'integrations.subtitle': 'Connect third-party services and tools',
+  'integrations.connect': 'Connect',
+  'integrations.configure': 'Configure',
+
+  // ---- Knowledge ----
+  'knowledge.title': 'Knowledge Base',
+  'knowledge.subtitle': 'Documents and FAQs for your support bot',
+  'knowledge.add': 'Add article',
+  'knowledge.search': 'Search articles',
+
   // ---- Chat unread ----
   'chat.unread': '{count} unread',
 } as const;
@@ -509,6 +608,92 @@ const fa: Record<MessageKey, string> = {
   'contacts.colorPicker.none': 'بدون رنگ',
   'contacts.colorFilter.label': 'فیلتر بر اساس رنگ',
 
+  'profiles.title': 'پروفایل‌های واتس‌اپ',
+  'profiles.subtitle': 'مدیریت دستگاه‌ها و نشست‌های واتس‌اپ متصل',
+  'profiles.add': 'افزودن پروفایل',
+  'profiles.connect': 'اتصال',
+  'profiles.disconnect': 'قطع اتصال',
+  'profiles.status': 'وضعیت',
+  'profiles.noProfiles': 'هنوز پروفایلی وجود ندارد',
+  'profiles.new.title': 'افزودن پروفایل جدید',
+  'profiles.new.subtitle': 'اتصال دستگاه واتس‌اپ از طریق QR',
+
+  'chat.title': 'گفتگو',
+  'chat.subtitle': 'مکالمات بلادرنگ با مخاطبین',
+  'chat.search': 'جستجوی مکالمات',
+  'chat.typeMessage': 'پیام بنویسید…',
+  'chat.send': 'ارسال',
+  'chat.noConversations': 'هنوز مکالمه‌ای وجود ندارد',
+  'chat.selectConversation': 'یک مکالمه را برای شروع انتخاب کنید',
+
+  'messages.title': 'ارسال پیام',
+  'messages.subtitle': 'ارسال پیام آزمایشی سریع از داشبورد',
+  'messages.recipient': 'شماره گیرنده',
+  'messages.message': 'پیام',
+  'messages.send': 'ارسال پیام',
+
+  'broadcast.title': 'پخش گروهی',
+  'broadcast.subtitle': 'ارسال پیام گروهی به مخاطبین',
+  'broadcast.create': 'ایجاد پخش',
+  'broadcast.name': 'نام پخش',
+  'broadcast.recipients': 'گیرندگان',
+  'broadcast.schedule': 'زمان‌بندی',
+  'broadcast.send': 'ارسال پخش',
+
+  'automation.title': 'اتوماسیون',
+  'automation.subtitle': 'پاسخ خودکار و تریگرهای گردش کار',
+  'automation.create': 'ایجاد اتوماسیون',
+  'automation.builder': 'سازنده جریان',
+  'automation.enabled': 'فعال',
+  'automation.disabled': 'غیرفعال',
+
+  'templates.title': 'قالب‌های پیام',
+  'templates.subtitle': 'قالب‌های قابل استفاده مجدد برای پخش و API',
+  'templates.create': 'ایجاد قالب',
+  'templates.name': 'نام قالب',
+  'templates.body': 'متن',
+
+  'webhooks.title': 'وب‌هوک‌ها',
+  'webhooks.subtitle': 'تحویل رویداد بلادرنگ به endpointهای شما',
+  'webhooks.add': 'افزودن وب‌هوک',
+  'webhooks.url': 'آدرس endpoint',
+  'webhooks.events': 'رویدادها',
+
+  'settings.title': 'تنظیمات',
+  'settings.subtitle': 'سازمان، حساب و اعلان‌ها',
+  'settings.general': 'عمومی',
+  'settings.notifications': 'اعلان‌ها',
+  'settings.security': 'امنیت',
+  'settings.save': 'ذخیره تغییرات',
+
+  'analytics.title': 'تحلیل‌ها',
+  'analytics.subtitle': 'حجم پیام، نرخ تحویل و روندها',
+  'analytics.period': 'بازه زمانی',
+  'analytics.messages': 'پیام‌ها',
+  'analytics.delivery': 'نرخ تحویل',
+
+  'audit.title': 'گزارش ممیزی',
+  'audit.subtitle': 'فعالیت و رویدادهای امنیتی سازمان',
+  'audit.action': 'عملیات',
+  'audit.user': 'کاربر',
+  'audit.timestamp': 'زمان',
+
+  'apiKeys.title': 'کلیدهای API',
+  'apiKeys.subtitle': 'مدیریت توکن‌های دسترسی API',
+  'apiKeys.create': 'ایجاد کلید API',
+  'apiKeys.name': 'نام کلید',
+  'apiKeys.revoke': 'لغو',
+
+  'integrations.title': 'یکپارچه‌سازی‌ها',
+  'integrations.subtitle': 'اتصال سرویس‌ها و ابزارهای شخص ثالث',
+  'integrations.connect': 'اتصال',
+  'integrations.configure': 'پیکربندی',
+
+  'knowledge.title': 'پایگاه دانش',
+  'knowledge.subtitle': 'مستندات و سوالات متداول برای ربات پشتیبانی',
+  'knowledge.add': 'افزودن مقاله',
+  'knowledge.search': 'جستجوی مقالات',
+
   'chat.unread': '{count} خوانده‌نشده',
 };
 
@@ -751,6 +936,92 @@ const ar: Record<MessageKey, string> = {
   'contacts.colorPicker.label': 'تحديد اللون',
   'contacts.colorPicker.none': 'بدون لون',
   'contacts.colorFilter.label': 'تصفية بحسب اللون',
+
+  'profiles.title': 'ملفات واتساب',
+  'profiles.subtitle': 'إدارة أجهزة واتساب والجلسات المتصلة',
+  'profiles.add': 'إضافة ملف',
+  'profiles.connect': 'اتصال',
+  'profiles.disconnect': 'قطع الاتصال',
+  'profiles.status': 'الحالة',
+  'profiles.noProfiles': 'لا توجد ملفات بعد',
+  'profiles.new.title': 'إضافة ملف جديد',
+  'profiles.new.subtitle': 'ربط جهاز واتساب عبر رمز QR',
+
+  'chat.title': 'الدردشة',
+  'chat.subtitle': 'محادثات فورية مع جهات الاتصال',
+  'chat.search': 'البحث في المحادثات',
+  'chat.typeMessage': 'اكتب رسالة…',
+  'chat.send': 'إرسال',
+  'chat.noConversations': 'لا توجد محادثات بعد',
+  'chat.selectConversation': 'اختر محادثة لبدء الدردشة',
+
+  'messages.title': 'إرسال رسالة',
+  'messages.subtitle': 'إرسال رسالة اختبار سريعة من لوحة التحكم',
+  'messages.recipient': 'هاتف المستلم',
+  'messages.message': 'الرسالة',
+  'messages.send': 'إرسال الرسالة',
+
+  'broadcast.title': 'البث',
+  'broadcast.subtitle': 'إرسال رسائل جماعية لمجموعات جهات الاتصال',
+  'broadcast.create': 'إنشاء بث',
+  'broadcast.name': 'اسم البث',
+  'broadcast.recipients': 'المستلمون',
+  'broadcast.schedule': 'الجدولة',
+  'broadcast.send': 'إرسال البث',
+
+  'automation.title': 'الأتمتة',
+  'automation.subtitle': 'الردود التلقائية ومشغلات سير العمل',
+  'automation.create': 'إنشاء أتمتة',
+  'automation.builder': 'منشئ التدفق',
+  'automation.enabled': 'مفعّل',
+  'automation.disabled': 'معطّل',
+
+  'templates.title': 'قوالب الرسائل',
+  'templates.subtitle': 'قوالب قابلة لإعادة الاستخدام للبث وAPI',
+  'templates.create': 'إنشاء قالب',
+  'templates.name': 'اسم القالب',
+  'templates.body': 'المحتوى',
+
+  'webhooks.title': 'Webhooks',
+  'webhooks.subtitle': 'تسليم الأحداث الفوري إلى نقاط النهاية',
+  'webhooks.add': 'إضافة webhook',
+  'webhooks.url': 'رابط نقطة النهاية',
+  'webhooks.events': 'الأحداث',
+
+  'settings.title': 'الإعدادات',
+  'settings.subtitle': 'المؤسسة والحساب وتفضيلات الإشعارات',
+  'settings.general': 'عام',
+  'settings.notifications': 'الإشعارات',
+  'settings.security': 'الأمان',
+  'settings.save': 'حفظ التغييرات',
+
+  'analytics.title': 'التحليلات',
+  'analytics.subtitle': 'حجم الرسائل ومعدلات التسليم والاتجاهات',
+  'analytics.period': 'الفترة الزمنية',
+  'analytics.messages': 'الرسائل',
+  'analytics.delivery': 'معدل التسليم',
+
+  'audit.title': 'سجل التدقيق',
+  'audit.subtitle': 'النشاط وأحداث الأمان في مؤسستك',
+  'audit.action': 'الإجراء',
+  'audit.user': 'المستخدم',
+  'audit.timestamp': 'الوقت',
+
+  'apiKeys.title': 'مفاتيح API',
+  'apiKeys.subtitle': 'إدارة رموز الوصول للتكاملات',
+  'apiKeys.create': 'إنشاء مفتاح API',
+  'apiKeys.name': 'اسم المفتاح',
+  'apiKeys.revoke': 'إلغاء',
+
+  'integrations.title': 'التكاملات',
+  'integrations.subtitle': 'ربط خدمات وأدوات الطرف الثالث',
+  'integrations.connect': 'ربط',
+  'integrations.configure': 'تكوين',
+
+  'knowledge.title': 'قاعدة المعرفة',
+  'knowledge.subtitle': 'مستندات وأسئلة شائعة لروبوت الدعم',
+  'knowledge.add': 'إضافة مقال',
+  'knowledge.search': 'البحث في المقالات',
 
   'chat.unread': '{count} غير مقروءة',
 };

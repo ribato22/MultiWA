@@ -896,8 +896,8 @@ export default function ChatPage() {
                     <div
                       className={`max-w-[70%] rounded-2xl px-4 py-2 overflow-hidden ${
                         msg.direction === 'outgoing'
-                          ? 'bg-[rgb(34 197 94 / 0.18)] dark:bg-[rgb(22 163 74 / 0.30)] text-foreground rounded-br-sm'
-                          : 'bg-card text-foreground rounded-bl-sm shadow-sm'
+                          ? 'message-sent bg-[rgb(34 197 94 / 0.18)] dark:bg-[rgb(22 163 74 / 0.30)] text-foreground'
+                          : 'message-received bg-card text-foreground shadow-sm'
                       }`}
                     >
                       {/* Message Content */}

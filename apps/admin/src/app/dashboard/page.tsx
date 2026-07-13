@@ -29,6 +29,7 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
+import { useI18n } from '@/lib/i18n/provider';
 
 const MessageChart = dynamic(() => import('@/components/dashboard/MessageChart'), {
   ssr: false,
@@ -38,6 +39,7 @@ const MessageChart = dynamic(() => import('@/components/dashboard/MessageChart')
 });
 
 export default function DashboardPage() {
+  const { t } = useI18n();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -119,10 +121,10 @@ export default function DashboardPage() {
       <header className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-semibold text-slate-100">
-            Welcome back{firstName ? `, ${firstName}` : ''}
+            {firstName ? `${t('dashboard.welcome')}, ${firstName}` : t('dashboard.welcome')}
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Here&apos;s what&apos;s happening with your WhatsApp gateway today.
+            {t('dashboard.subtitle')}
           </p>
         </div>
 
@@ -138,38 +140,38 @@ export default function DashboardPage() {
               className={`w-3.5 h-3.5 ${refreshing ? 'mw-spin' : ''}`}
               aria-hidden
             />
-            Refresh
+            {t('common.refresh')}
           </button>
         </div>
       </header>
 
       {/* Stats grid */}
       <section
-        aria-label="Key metrics"
+        aria-label={t('dashboard.activity')}
         className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
       >
         <StatCard
-          title="Connected profiles"
+          title={t('dashboard.stat.connectedProfiles')}
           value={stats?.profiles.connected || 0}
           icon={<Smartphone className="w-5 h-5" />}
-          description={`${stats?.profiles.total || 0} total profiles`}
+          description={t('dashboard.stat.totalProfiles', { count: stats?.profiles.total || 0 })}
           loading={loading}
         />
         <StatCard
-          title="Messages today"
+          title={t('dashboard.stat.messagesToday')}
           value={stats?.messages.today || 0}
           icon={<MessageCircle className="w-5 h-5" />}
-          description={`${stats?.messages.total || 0} total messages`}
+          description={t('dashboard.stat.totalMessages', { count: stats?.messages.total || 0 })}
           loading={loading}
         />
         <StatCard
-          title="Total contacts"
+          title={t('dashboard.stat.totalContacts')}
           value={stats?.contacts.total || 0}
           icon={<Users className="w-5 h-5" />}
           loading={loading}
         />
         <StatCard
-          title="Broadcasts"
+          title={t('dashboard.stat.broadcasts')}
           value={stats?.broadcasts.total || 0}
           icon={<Megaphone className="w-5 h-5" />}
           loading={loading}
@@ -178,52 +180,52 @@ export default function DashboardPage() {
 
       {/* Quick actions */}
       <section
-        aria-label="Quick actions"
+        aria-label={t('dashboard.quickActions')}
         className="rounded-xl border border-slate-800 bg-slate-900/50 p-6"
       >
         <h2 className="text-sm font-semibold text-slate-100 mb-4 uppercase tracking-wide">
-          Quick actions
+          {t('dashboard.quickActions')}
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <QuickAction
             href="/dashboard/profiles/new"
             icon={Plus}
-            title="Add profile"
-            desc="Connect a new WhatsApp device"
+            title={t('dashboard.action.addProfile.title')}
+            desc={t('dashboard.action.addProfile.desc')}
             primary
           />
           <QuickAction
             href="/dashboard/messages"
             icon={Send}
-            title="Send message"
-            desc="Send a quick test message"
+            title={t('dashboard.action.sendMessage.title')}
+            desc={t('dashboard.action.sendMessage.desc')}
           />
           <QuickAction
             href="/dashboard/broadcast"
             icon={Megaphone}
-            title="Create broadcast"
-            desc="Bulk message a contact list"
+            title={t('dashboard.action.createBroadcast.title')}
+            desc={t('dashboard.action.createBroadcast.desc')}
           />
           <QuickAction
             href="/api/docs"
             icon={BookOpen}
-            title="API docs"
-            desc="Swagger interactive reference"
+            title={t('dashboard.action.apiDocs.title')}
+            desc={t('dashboard.action.apiDocs.desc')}
             external
           />
         </div>
       </section>
 
       {/* Activity chart */}
-      <section aria-label="Message activity">
+      <section aria-label={t('dashboard.activity')}>
         <MessageChart />
       </section>
 
       {/* Profiles row */}
-      <section aria-label="Profiles">
+      <section aria-label={t('dashboard.yourProfiles')}>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-slate-100 uppercase tracking-wide">
-            Your profiles
+            {t('dashboard.yourProfiles')}
           </h2>
           <Link href="/dashboard/profiles">
             <Button
@@ -231,8 +233,8 @@ export default function DashboardPage() {
               size="sm"
               className="text-slate-300 hover:text-slate-100 hover:bg-slate-800"
             >
-              View all
-              <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+              {t('common.viewAll')}
+              <ArrowRight className="w-3.5 h-3.5 ms-1.5" />
             </Button>
           </Link>
         </div>
@@ -249,7 +251,7 @@ export default function DashboardPage() {
               <ProfileCard
                 key={profile.id}
                 id={profile.id}
-                name={profile.displayName || profile.name || 'Unnamed'}
+                name={profile.displayName || profile.name || t('common.unnamed')}
                 phone={profile.sessionData?.jid?.split('@')[0]}
                 avatar={profile.sessionData?.avatar}
                 status={
@@ -274,7 +276,7 @@ export default function DashboardPage() {
       {/* Getting started card — only when no profiles */}
       {!loading && profiles.length === 0 && (
         <section
-          aria-label="Getting started"
+          aria-label={t('dashboard.gettingStarted.title')}
           className="rounded-xl border p-6"
           style={{
             background:
@@ -291,16 +293,15 @@ export default function DashboardPage() {
             </div>
             <div className="flex-1">
               <h3 className="text-base font-semibold text-slate-100">
-                Get started in 60 seconds
+                {t('dashboard.gettingStarted.title')}
               </h3>
               <p className="text-sm text-slate-300 mt-1">
-                Connect your first WhatsApp device. Scan a QR code, then start sending
-                messages via REST API, the dashboard chat, or webhooks.
+                {t('dashboard.gettingStarted.desc')}
               </p>
               <Link href="/dashboard/profiles/new">
                 <Button className="mt-4 bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Add your first profile
+                  <Plus className="w-4 h-4 me-2" />
+                  {t('dashboard.gettingStarted.cta')}
                 </Button>
               </Link>
             </div>
@@ -312,6 +313,7 @@ export default function DashboardPage() {
 }
 
 function ConnectionPill({ connected }: { connected: boolean }) {
+  const { t } = useI18n();
   // Matches the Refresh button geometry (h-8, rounded-full, text-xs) so the
   // status row reads as a single coherent toolbar.
   if (connected) {
@@ -330,7 +332,7 @@ function ConnectionPill({ connected }: { connected: boolean }) {
           style={{ animation: 'mw-spin 2s ease-in-out infinite' }}
         />
         <Wifi className="w-3.5 h-3.5" />
-        Live
+        {t('dashboard.live')}
       </span>
     );
   }
@@ -344,7 +346,7 @@ function ConnectionPill({ connected }: { connected: boolean }) {
       }}
     >
       <WifiOff className="w-3.5 h-3.5" />
-      Reconnecting…
+      {t('dashboard.reconnecting')}
     </span>
   );
 }

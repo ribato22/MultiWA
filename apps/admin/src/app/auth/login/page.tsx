@@ -14,8 +14,10 @@ import {
   Loader2,
   ArrowLeft,
 } from 'lucide-react';
+import { useI18n } from '@/lib/i18n/provider';
 
 export default function LoginPage() {
+  const { t } = useI18n();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -54,7 +56,7 @@ export default function LoginPage() {
       const result = await res.json();
 
       if (!res.ok) {
-        throw new Error(result.message || result.error?.message || 'Login failed');
+        throw new Error(result.message || result.error?.message || t('auth.login.error'));
       }
 
       const data = result.data || result;
@@ -204,8 +206,8 @@ export default function LoginPage() {
               >
                 <Check className="w-10 h-10" aria-hidden="true" strokeWidth={3} />
               </div>
-              <h2 className="text-xl font-bold text-foreground mb-2">Verified</h2>
-              <p className="text-muted-foreground text-sm">Redirecting to dashboard...</p>
+              <h2 className="text-xl font-bold text-foreground mb-2">{t('auth.2fa.verified')}</h2>
+              <p className="text-muted-foreground text-sm">{t('auth.2fa.redirecting')}</p>
               <div className="mt-4 flex justify-center">
                 <Loader2 className="w-6 h-6 text-primary mw-spin" aria-hidden="true" />
               </div>
@@ -218,12 +220,12 @@ export default function LoginPage() {
                   <ShieldCheck className="w-8 h-8" aria-hidden="true" />
                 </div>
                 <h1 className="text-2xl font-bold text-foreground mb-2">
-                  Two-Factor Authentication
+                  {t('auth.2fa.title')}
                 </h1>
                 <p className="text-muted-foreground text-sm">
                   {useBackupCode
-                    ? 'Enter one of your backup codes to verify your identity'
-                    : 'Enter the 6-digit code from your authenticator app'}
+                    ? t('auth.2fa.subtitleBackup')
+                    : t('auth.2fa.subtitleTotp')}
                 </p>
               </div>
 
@@ -242,7 +244,7 @@ export default function LoginPage() {
                 <div className="space-y-5">
                   <div>
                     <label htmlFor="backup-code" className="block text-sm font-medium text-foreground mb-2">
-                      Backup Code
+                      {t('auth.2fa.backupCodeLabel')}
                     </label>
                     <input
                       id="backup-code"
@@ -264,16 +266,16 @@ export default function LoginPage() {
                     {loading ? (
                       <span className="flex items-center justify-center gap-2">
                         <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
-                        Verifying...
+                        {t('auth.2fa.verifying')}
                       </span>
-                    ) : 'Verify Backup Code'}
+                    ) : t('auth.2fa.verifyBackup')}
                   </button>
                   <button
                     type="button"
                     onClick={() => { setUseBackupCode(false); setBackupCode(''); setError(''); }}
                     className="w-full text-sm text-primary hover:text-primary/80 font-medium cursor-pointer"
                   >
-                    Use authenticator app instead
+                    {t('auth.2fa.useAuthenticator')}
                   </button>
                 </div>
               ) : (
@@ -311,9 +313,9 @@ export default function LoginPage() {
                     {loading ? (
                       <span className="flex items-center justify-center gap-2">
                         <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
-                        Verifying...
+                        {t('auth.2fa.verifying')}
                       </span>
-                    ) : 'Verify'}
+                    ) : t('auth.2fa.verify')}
                   </button>
 
                   <div className="flex items-center justify-between text-sm">
@@ -322,7 +324,7 @@ export default function LoginPage() {
                       onClick={() => { setUseBackupCode(true); setError(''); setTotpDigits(['', '', '', '', '', '']); }}
                       className="text-primary hover:text-primary/80 font-medium cursor-pointer"
                     >
-                      Use backup code
+                      {t('auth.2fa.useBackupCode')}
                     </button>
                     <button
                       type="button"
@@ -330,7 +332,7 @@ export default function LoginPage() {
                       className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground cursor-pointer"
                     >
                       <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-                      Back to login
+                      {t('auth.2fa.backToLogin')}
                     </button>
                   </div>
                 </div>
@@ -340,10 +342,10 @@ export default function LoginPage() {
             /* ========== Normal Login Form ========== */
             <>
               <h1 className="text-2xl font-bold text-foreground mb-2">
-                Welcome back
+                {t('auth.login.title')}
               </h1>
               <p className="text-muted-foreground mb-8">
-                Sign in to your account to continue
+                {t('auth.login.subtitle')}
               </p>
 
               {error && (
@@ -359,7 +361,7 @@ export default function LoginPage() {
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium text-foreground mb-2">
-                    Email address
+                    {t('auth.login.email')}
                   </label>
                   <input
                     id="email"
@@ -374,7 +376,7 @@ export default function LoginPage() {
 
                 <div>
                   <label htmlFor="password" className="block text-sm font-medium text-foreground mb-2">
-                    Password
+                    {t('auth.login.password')}
                   </label>
                   <input
                     id="password"
@@ -393,10 +395,10 @@ export default function LoginPage() {
                       type="checkbox"
                       className="w-4 h-4 rounded border-border accent-primary"
                     />
-                    <span className="text-sm text-muted-foreground">Remember me</span>
+                    <span className="text-sm text-muted-foreground">{t('auth.login.rememberMe')}</span>
                   </label>
                   <a href="#" className="text-sm text-primary hover:text-primary/80">
-                    Forgot password?
+                    {t('auth.login.forgotPassword')}
                   </a>
                 </div>
 
@@ -408,9 +410,9 @@ export default function LoginPage() {
                   {loading ? (
                     <span className="flex items-center justify-center gap-2">
                       <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
-                      Signing in...
+                      {t('auth.login.signingIn')}
                     </span>
-                  ) : 'Sign in'}
+                  ) : t('auth.login.signIn')}
                 </button>
               </form>
             </>
@@ -419,9 +421,9 @@ export default function LoginPage() {
 
         {!requires2FA && (
           <p className="text-center mt-6 text-muted-foreground">
-            Don&apos;t have an account?{' '}
+            {t('auth.login.noAccount')}{' '}
             <Link href="/auth/register" className="text-primary hover:text-primary/80 font-medium">
-              Create one
+              {t('auth.login.createOne')}
             </Link>
           </p>
         )}
