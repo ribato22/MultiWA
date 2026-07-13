@@ -39,7 +39,7 @@ export default function RootLayout({
     // (Dark Mode OLED). Tailwind's darkMode: "class" wiring is in
     // tailwind.config.js, so the `.dark` CSS variables in globals.css become
     // active here.
-    <html lang="en" className="dark" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body className={`${lalezar.variable} font-sans antialiased bg-background text-foreground min-h-screen`}>
         <I18nProvider>{children}</I18nProvider>
         <Toaster />

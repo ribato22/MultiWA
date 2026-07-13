@@ -83,6 +83,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  useEffect(() => {
+    document.documentElement.classList.add('dark');
+    return () => {
+      document.documentElement.classList.remove('dark');
+    };
+  }, []);
+
   // Auto-close drawer when route changes (mobile)
   useEffect(() => {
     setMobileOpen(false);

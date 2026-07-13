@@ -2,7 +2,18 @@
 const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
-  transpilePackages: ["@multiwa/core", "@multiwa/database"],
+  transpilePackages: [
+    "@multiwa/core",
+    "@multiwa/database",
+    "@astryxdesign/core",
+    "@astryxdesign/theme-neutral",
+    "@astryxdesign/theme-butter",
+    "@astryxdesign/theme-chocolate",
+    "@astryxdesign/theme-matcha",
+    "@astryxdesign/theme-stone",
+    "@astryxdesign/theme-gothic",
+    "@astryxdesign/theme-y2k",
+  ],
   // Ignore ESLint and TypeScript errors during production build
   // This prevents version mismatch issues on different servers
   eslint: {

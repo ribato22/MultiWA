@@ -128,6 +128,81 @@ const en = {
   'landing.feature.analytics.desc':
     'Message stats, broadcast reports, and automation performance.',
 
+  'landing.themePicker.label': 'Theme',
+  'landing.themePicker.description':
+    'Pick a visual identity — every component below restyles instantly.',
+  'landing.themeGallery.eyebrow': '7 Built-in Themes',
+  'landing.themeGallery.title': 'See what Astryx can look like',
+  'landing.themeGallery.subtitle':
+    'From minimal neutral to retro Y2K — switch themes live and explore the full design system.',
+  'landing.features.eyebrow': 'Platform',
+  'landing.features.title': 'Everything you need to run WhatsApp at scale',
+  'landing.features.subtitle':
+    'Multi-engine profiles, broadcasts, automation, and enterprise controls in one gateway.',
+  'landing.playground.eyebrow': 'Live Preview',
+  'landing.playground.title': 'Component playground',
+  'landing.playground.subtitle':
+    'Buttons, badges, forms, and banners rendered with the {theme} theme.',
+  'landing.playground.buttons': 'Buttons',
+  'landing.playground.badges': 'Badges',
+  'landing.playground.forms': 'Form controls',
+  'landing.playground.feedback': 'Feedback',
+  'landing.playground.bannerTitle': 'Theme applied successfully',
+  'landing.playground.bannerDescription':
+    'This banner, like every Astryx component, follows the active theme tokens.',
+  'landing.stats.messages': 'Messages routed',
+  'landing.stats.uptime': 'Uptime SLA',
+  'landing.stats.engines': 'WhatsApp engines',
+  'landing.stats.license': 'Open source',
+  'landing.integrations.eyebrow': 'Ecosystem',
+  'landing.integrations.title': 'Plugs into your stack',
+  'landing.integrations.subtitle':
+    'Connect automation tools, CRMs, and custom apps through webhooks and SDKs.',
+  'landing.pricing.eyebrow': 'Pricing',
+  'landing.pricing.title': 'Start free, scale when ready',
+  'landing.pricing.subtitle': 'Self-host on your infrastructure with no vendor lock-in.',
+  'landing.pricing.free.name': 'Community',
+  'landing.pricing.free.price': '$0',
+  'landing.pricing.free.desc': 'For developers and small teams getting started.',
+  'landing.pricing.free.features':
+    'Unlimited profiles · Broadcast · Webhooks · MIT license',
+  'landing.pricing.free.cta': 'Get started',
+  'landing.pricing.pro.name': 'Pro',
+  'landing.pricing.pro.price': 'Self-hosted',
+  'landing.pricing.pro.desc': 'For growing teams that need automation and analytics.',
+  'landing.pricing.pro.features':
+    'Everything in Community · Automation builder · Analytics · Priority support',
+  'landing.pricing.pro.cta': 'Start trial',
+  'landing.pricing.enterprise.name': 'Enterprise',
+  'landing.pricing.enterprise.price': 'Custom',
+  'landing.pricing.enterprise.desc': 'Multi-tenant RBAC, audit logs, and SLA options.',
+  'landing.pricing.enterprise.features':
+    'SSO · Organizations · Audit trail · Dedicated support',
+  'landing.pricing.enterprise.cta': 'Contact sales',
+  'landing.faq.eyebrow': 'FAQ',
+  'landing.faq.title': 'Common questions',
+  'landing.faq.q1': 'What is MultiWA?',
+  'landing.faq.a1':
+    'MultiWA is an open-source WhatsApp Business API gateway with multi-engine support, broadcasts, and automation.',
+  'landing.faq.q2': 'Which WhatsApp libraries are supported?',
+  'landing.faq.a2':
+    'You can run whatsapp-web.js for stability or Baileys for performance — per profile.',
+  'landing.faq.q3': 'Can I self-host?',
+  'landing.faq.a3':
+    'Yes. Deploy with Docker on your own servers and keep full control of your data.',
+  'landing.faq.q4': 'Is there a cloud version?',
+  'landing.faq.a4':
+    'MultiWA is designed for self-hosting. You can deploy to any cloud provider you choose.',
+  'landing.faq.q5': 'How do themes work on this page?',
+  'landing.faq.a5':
+    'This landing page uses Meta Astryx — pick a theme and every component restyles via CSS variables.',
+  'landing.cta.title': 'Ready to connect WhatsApp?',
+  'landing.cta.subtitle':
+    'Deploy MultiWA in minutes and start sending messages through your own gateway.',
+  'landing.cta.button': 'Create free account',
+  'landing.footer.docs': 'Documentation',
+  'landing.footer.github': 'GitHub',
+
   // ---- Auth: login ----
   'auth.login.title': 'Welcome back',
   'auth.login.subtitle': 'Sign in to your account to continue',
@@ -476,6 +551,81 @@ const fa: Record<MessageKey, string> = {
   'landing.feature.analytics.title': 'تحلیل‌ها',
   'landing.feature.analytics.desc': 'آمار پیام‌ها، گزارش‌های پخش و عملکرد اتوماسیون.',
 
+  'landing.themePicker.label': 'تم',
+  'landing.themePicker.description':
+    'یک هویت بصری انتخاب کنید — همه اجزا فوراً بازطراحی می‌شوند.',
+  'landing.themeGallery.eyebrow': '۷ تم آماده',
+  'landing.themeGallery.title': 'ببینید Astryx چه شکلی می‌تواند باشد',
+  'landing.themeGallery.subtitle':
+    'از مینیمال خنثی تا Y2K رترو — تم‌ها را زنده عوض کنید و سیستم طراحی را ببینید.',
+  'landing.features.eyebrow': 'پلتفرم',
+  'landing.features.title': 'همه‌چیز برای اجرای واتس‌اپ در مقیاس',
+  'landing.features.subtitle':
+    'پروفایل چندموتوره، پخش، اتوماسیون و کنترل سازمانی در یک دروازه.',
+  'landing.playground.eyebrow': 'پیش‌نمایش زنده',
+  'landing.playground.title': 'محوطه آزمایش اجزا',
+  'landing.playground.subtitle':
+    'دکمه‌ها، نشان‌ها، فرم‌ها و بنرها با تم {theme} رندر می‌شوند.',
+  'landing.playground.buttons': 'دکمه‌ها',
+  'landing.playground.badges': 'نشان‌ها',
+  'landing.playground.forms': 'کنترل‌های فرم',
+  'landing.playground.feedback': 'بازخورد',
+  'landing.playground.bannerTitle': 'تم با موفقیت اعمال شد',
+  'landing.playground.bannerDescription':
+    'این بنر، مانند هر جزء Astryx، از توکن‌های تم فعال پیروی می‌کند.',
+  'landing.stats.messages': 'پیام‌های مسیریابی‌شده',
+  'landing.stats.uptime': 'آپتایم SLA',
+  'landing.stats.engines': 'موتورهای واتس‌اپ',
+  'landing.stats.license': 'متن‌باز',
+  'landing.integrations.eyebrow': 'اکوسیستم',
+  'landing.integrations.title': 'به پشته شما متصل می‌شود',
+  'landing.integrations.subtitle':
+    'ابزارهای اتوماسیون، CRM و اپ‌های سفارشی را از طریق وب‌هوک و SDK وصل کنید.',
+  'landing.pricing.eyebrow': 'قیمت‌گذاری',
+  'landing.pricing.title': 'رایگان شروع کنید، وقتی آماده شدید مقیاس دهید',
+  'landing.pricing.subtitle': 'روی زیرساخت خود میزبانی کنید بدون وابستگی به فروشنده.',
+  'landing.pricing.free.name': 'انجمن',
+  'landing.pricing.free.price': '$۰',
+  'landing.pricing.free.desc': 'برای توسعه‌دهندگان و تیم‌های کوچک در شروع کار.',
+  'landing.pricing.free.features':
+    'پروفایل نامحدود · پخش · وب‌هوک · مجوز MIT',
+  'landing.pricing.free.cta': 'شروع کنید',
+  'landing.pricing.pro.name': 'حرفه‌ای',
+  'landing.pricing.pro.price': 'میزبانی‌شده',
+  'landing.pricing.pro.desc': 'برای تیم‌های در حال رشد که به اتوماسیون و آنالیتیکس نیاز دارند.',
+  'landing.pricing.pro.features':
+    'همه Community · سازنده اتوماسیون · آنالیتیکس · پشتیبانی اولویت‌دار',
+  'landing.pricing.pro.cta': 'شروع آزمایشی',
+  'landing.pricing.enterprise.name': 'سازمانی',
+  'landing.pricing.enterprise.price': 'سفارشی',
+  'landing.pricing.enterprise.desc': 'RBAC چندمستأجره، لاگ ممیزی و گزینه‌های SLA.',
+  'landing.pricing.enterprise.features':
+    'SSO · سازمان‌ها · مسیر ممیزی · پشتیبانی اختصاصی',
+  'landing.pricing.enterprise.cta': 'تماس با فروش',
+  'landing.faq.eyebrow': 'سوالات متداول',
+  'landing.faq.title': 'سوالات رایج',
+  'landing.faq.q1': 'مولتی‌وا چیست؟',
+  'landing.faq.a1':
+    'مولتی‌وا یک دروازه متن‌باز API واتس‌اپ بیزینس با پشتیبانی چندموتوره، پخش و اتوماسیون است.',
+  'landing.faq.q2': 'کدام کتابخانه‌های واتس‌اپ پشتیبانی می‌شوند؟',
+  'landing.faq.a2':
+    'می‌توانید whatsapp-web.js برای پایداری یا Baileys برای عملکرد را — به ازای هر پروفایل — اجرا کنید.',
+  'landing.faq.q3': 'آیا می‌توانم خود میزبانی کنم؟',
+  'landing.faq.a3':
+    'بله. با Docker روی سرورهای خود مستقر کنید و کنترل کامل داده‌ها را داشته باشید.',
+  'landing.faq.q4': 'نسخه ابری وجود دارد؟',
+  'landing.faq.a4':
+    'مولتی‌وا برای میزبانی خود طراحی شده است. می‌توانید روی هر ارائه‌دهنده ابری مستقر کنید.',
+  'landing.faq.q5': 'تم‌ها در این صفحه چگونه کار می‌کنند؟',
+  'landing.faq.a5':
+    'این صفحه از Meta Astryx استفاده می‌کند — یک تم انتخاب کنید و همه اجزا از طریق متغیرهای CSS بازطراحی می‌شوند.',
+  'landing.cta.title': 'آماده اتصال واتس‌اپ هستید؟',
+  'landing.cta.subtitle':
+    'مولتی‌وا را در چند دقیقه مستقر کنید و از دروازه خود پیام بفرستید.',
+  'landing.cta.button': 'ایجاد حساب رایگان',
+  'landing.footer.docs': 'مستندات',
+  'landing.footer.github': 'گیت‌هاب',
+
   'auth.login.title': 'خوش برگشتید',
   'auth.login.subtitle': 'برای ادامه وارد حساب خود شوید',
   'auth.login.email': 'آدرس ایمیل',
@@ -804,6 +954,81 @@ const ar: Record<MessageKey, string> = {
   'landing.feature.webhooks.desc': 'تسليم الأحداث في الوقت الفعلي بتوقيع HMAC ومنطق إعادة المحاولة.',
   'landing.feature.analytics.title': 'التحليلات',
   'landing.feature.analytics.desc': 'إحصاءات الرسائل، تقارير البث، وأداء الأتمتة.',
+
+  'landing.themePicker.label': 'السمة',
+  'landing.themePicker.description':
+    'اختر هوية بصرية — كل المكوّنات تعاد تنسيقها فوراً.',
+  'landing.themeGallery.eyebrow': '٧ سمات جاهزة',
+  'landing.themeGallery.title': 'اكتشف مظهر Astryx',
+  'landing.themeGallery.subtitle':
+    'من المحايد البسيط إلى Y2K الرجعي — بدّل السمات مباشرة واستكشف نظام التصميم.',
+  'landing.features.eyebrow': 'المنصة',
+  'landing.features.title': 'كل ما تحتاجه لتشغيل واتساب على نطاق واسع',
+  'landing.features.subtitle':
+    'ملفات متعددة المحركات، البث، الأتمتة، وضوابط المؤسسات في بوابة واحدة.',
+  'landing.playground.eyebrow': 'معاينة حية',
+  'landing.playground.title': 'ساحة تجربة المكوّنات',
+  'landing.playground.subtitle':
+    'أزرار وشارات ونماذج ولافتات معروضة بسمة {theme}.',
+  'landing.playground.buttons': 'أزرار',
+  'landing.playground.badges': 'شارات',
+  'landing.playground.forms': 'عناصر النماذج',
+  'landing.playground.feedback': 'تغذية راجعة',
+  'landing.playground.bannerTitle': 'تم تطبيق السمة بنجاح',
+  'landing.playground.bannerDescription':
+    'هذه اللافتة، مثل كل مكوّن Astryx، تتبع رموز السمة النشطة.',
+  'landing.stats.messages': 'رسائل موجّهة',
+  'landing.stats.uptime': 'اتفاقية التشغيل',
+  'landing.stats.engines': 'محركات واتساب',
+  'landing.stats.license': 'مفتوح المصدر',
+  'landing.integrations.eyebrow': 'النظام البيئي',
+  'landing.integrations.title': 'يتكامل مع مكدسك',
+  'landing.integrations.subtitle':
+    'اربط أدوات الأتمتة وCRM والتطبيقات المخصصة عبر webhooks وSDK.',
+  'landing.pricing.eyebrow': 'التسعير',
+  'landing.pricing.title': 'ابدأ مجاناً ووسّع عند الجاهزية',
+  'landing.pricing.subtitle': 'استضف ذاتياً على بنيتك دون قيود المورّد.',
+  'landing.pricing.free.name': 'مجتمع',
+  'landing.pricing.free.price': '$0',
+  'landing.pricing.free.desc': 'للمطورين والفرق الصغيرة في البداية.',
+  'landing.pricing.free.features':
+    'ملفات غير محدودة · بث · webhooks · ترخيص MIT',
+  'landing.pricing.free.cta': 'ابدأ',
+  'landing.pricing.pro.name': 'احترافي',
+  'landing.pricing.pro.price': 'استضافة ذاتية',
+  'landing.pricing.pro.desc': 'للفرق النامية التي تحتاج أتمتة وتحليلات.',
+  'landing.pricing.pro.features':
+    'كل Community · منشئ الأتمتة · تحليلات · دعم أولوية',
+  'landing.pricing.pro.cta': 'تجربة مجانية',
+  'landing.pricing.enterprise.name': 'مؤسسات',
+  'landing.pricing.enterprise.price': 'مخصص',
+  'landing.pricing.enterprise.desc': 'RBAC متعدد المستأجرين وسجلات تدقيق وSLA.',
+  'landing.pricing.enterprise.features':
+    'SSO · مؤسسات · مسار تدقيق · دعم مخصص',
+  'landing.pricing.enterprise.cta': 'تواصل مع المبيعات',
+  'landing.faq.eyebrow': 'الأسئلة الشائعة',
+  'landing.faq.title': 'أسئلة شائعة',
+  'landing.faq.q1': 'ما هو MultiWA؟',
+  'landing.faq.a1':
+    'MultiWA بوابة مفتوحة المصدر لـ WhatsApp Business API مع دعم متعدد المحركات والبث والأتمتة.',
+  'landing.faq.q2': 'ما مكتبات واتساب المدعومة؟',
+  'landing.faq.a2':
+    'يمكنك تشغيل whatsapp-web.js للاستقرار أو Baileys للأداء — لكل ملف.',
+  'landing.faq.q3': 'هل يمكن الاستضافة الذاتية؟',
+  'landing.faq.a3':
+    'نعم. انشر عبر Docker على خوادمك وتحكم كاملاً ببياناتك.',
+  'landing.faq.q4': 'هل يوجد نسخة سحابية؟',
+  'landing.faq.a4':
+    'MultiWA مصمم للاستضافة الذاتية. يمكنك النشر على أي مزود سحابي.',
+  'landing.faq.q5': 'كيف تعمل السمات في هذه الصفحة؟',
+  'landing.faq.a5':
+    'تستخدم هذه الصفحة Meta Astryx — اختر سمة وكل المكوّنات تعاد تنسيقها عبر متغيرات CSS.',
+  'landing.cta.title': 'جاهز لربط واتساب؟',
+  'landing.cta.subtitle':
+    'انشر MultiWA في دقائق وابدأ إرسال الرسائل عبر بوابتك.',
+  'landing.cta.button': 'إنشاء حساب مجاني',
+  'landing.footer.docs': 'التوثيق',
+  'landing.footer.github': 'GitHub',
 
   'auth.login.title': 'مرحبًا بعودتك',
   'auth.login.subtitle': 'سجّل الدخول إلى حسابك للمتابعة',
