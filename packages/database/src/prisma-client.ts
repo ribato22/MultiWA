@@ -1,13 +1,10 @@
 // MultiWA Gateway - Prisma Client Singleton
 // packages/database/src/prisma-client.ts
 
-import { config } from 'dotenv';
-import { resolve } from 'path';
+import { loadMonorepoEnv } from './load-env';
 import { PrismaClient } from '@prisma/client';
 
-// Load .env file from CWD (apps/api/.env) before anything else
-// This ensures DATABASE_URL is available before PrismaClient is constructed
-config({ path: resolve(process.cwd(), '.env') });
+loadMonorepoEnv();
 
 declare global {
   // eslint-disable-next-line no-var

@@ -1,9 +1,7 @@
 // apps/worker/src/processors/automation.processor.ts
 import { Job } from 'bullmq';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@multiwa/database';
 import pino from 'pino';
-
-const prisma = new PrismaClient();
 const logger = pino({ name: 'automation-processor' });
 
 export interface AutomationJob {
