@@ -2,7 +2,7 @@
 
 ## Introduction
 
-The MultiWA admin dashboard has multiple deficiencies affecting internationalization, accessibility, visual design, and contact management. The application currently lacks complete Farsi language support across all pages, does not properly handle RTL layout for Persian content, uses the wrong font family (Inter instead of Lalezar), is missing contact tagging/color-grouping UI, and has an outdated visual design that should be rebuilt with the facebook/astryx component library. These issues collectively make the application unusable for Farsi-speaking users and fail to meet the desired UX quality bar.
+The MultiWA admin dashboard has multiple deficiencies affecting internationalization, accessibility, visual design, and contact management. The application currently lacks complete Farsi language support across all pages, does not properly handle RTL layout for Persian content, uses the wrong font family (Inter instead of Lalezar), is missing contact tagging/color-grouping UI, and has inconsistent visual and interaction behavior that fails the desired UX quality bar.
 
 ## Bug Analysis
 
@@ -18,7 +18,7 @@ The MultiWA admin dashboard has multiple deficiencies affecting internationaliza
 
 1.5 WHEN a user navigates to the Contacts page THEN the system does not provide a UI to assign colors to contacts or filter/group contacts by color
 
-1.6 WHEN the application renders any page (landing, auth, dashboard, settings) THEN the system uses outdated shadcn/ui components and styling that do not meet the desired modern design standard
+1.6 WHEN the application renders any page (landing, auth, dashboard, settings) THEN its interactive components have inconsistent visual, accessibility, keyboard, focus, and RTL behavior that does not meet the desired modern design standard
 
 1.7 WHEN the user selects Indonesian or English THEN the system provides those languages, but there is no Arabic language option which is one of the three required supported languages
 
@@ -34,7 +34,7 @@ The MultiWA admin dashboard has multiple deficiencies affecting internationaliza
 
 2.5 WHEN a user navigates to the Contacts page THEN the system SHALL provide a UI to assign a color to each contact and to filter/group the contacts list by color
 
-2.6 WHEN the application renders any page THEN the system SHALL use the facebook/astryx UI component library with a modern, clean design language applied consistently from the landing page through all dashboard pages
+2.6 WHEN the application renders any page THEN it SHALL provide a consistent, modern design across landing, auth, and dashboard pages. An enabled Button SHALL activate once, a disabled Button SHALL not activate, and keyboard focus SHALL be visible. Select and Menu SHALL expose open and selected state and support Arrow, Enter, Space, and Escape keys; Tabs SHALL expose selected tab and active panel state and support Arrow, Home, End, Enter, and Space keys. Dialog and AlertDialog SHALL expose accessible names and descriptions, contain and restore focus, and close on Escape when dismissal is allowed. Toasts SHALL announce status and dismiss on user action. Popups SHALL align with logical inline edges in LTR and RTL. Existing functionality SHALL remain preserved.
 
 2.7 WHEN the user opens the language selector THEN the system SHALL offer three language options: English, Farsi (فارسی), and Arabic (العربية), with full translation coverage for all three
 

@@ -15,6 +15,7 @@ import {
   Users,
   Tag,
   Upload,
+  Pencil,
 } from 'lucide-react';
 import {
   api,
@@ -29,16 +30,19 @@ import {
   getTagBadgeStyle,
   getTagColorMap,
   parseContactsImportFile,
+  getContactMetadata,
 } from '@/lib/contact-tags';
-import { ColorFilter } from '@/components/contacts/ColorFilter';
-import { ColorPicker } from '@/components/contacts/ColorPicker';
-import { TagInput } from '@/components/contacts/TagInput';
-import { useI18n } from '@/lib/i18n/provider';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { useI18n } from '@/lib/i18n/provider';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { TagInput } from '@/components/contacts/TagInput';
+import { ColorPicker } from '@/components/contacts/ColorPicker';
+import { ColorFilter } from '@/components/contacts/ColorFilter';
+import { Textarea } from '@/components/ui/textarea';
 import { EmptyContacts } from '@/components/ui/empty-state';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -64,8 +68,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 
 export default function ContactsPage() {
   const { t } = useI18n();
@@ -95,16 +97,18 @@ export default function ContactsPage() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   
-  // New contact form
-  const [newContact, setNewContact] = useState({
+  const emptyContactForm = {
     name: '',
     phone: '',
     email: '',
     tags: [] as string[],
     tagColors: {} as Record<string, string>,
     contactColor: null as string | null,
-    notes: ''
-  });
+    notes: '',
+  };
+  const [newContact, setNewContact] = useState(emptyContactForm);
+  const [editingContact, setEditingContact] = useState<Contact | null>(null);
+  const [editContact, setEditContact] = useState(emptyContactForm);
 
   useEffect(() => {
     loadProfiles();
@@ -178,8 +182,17 @@ export default function ContactsPage() {
     }
   };
 
+  const getContactColor = (contact: Contact): string | null => {
+    const color = contact.metadata?.contactColor;
+    return typeof color === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)
+      ? color
+      : null;
+  };
   const allTags = [...new Set(contacts.flatMap(c => c.tags || []))];
-  const allTagColors = collectTagColorFilters(contacts);
+  const allTagColors = [...new Set([
+    ...collectTagColorFilters(contacts),
+    ...contacts.map(getContactColor).filter((color): color is string => color !== null),
+  ])];
 
   const filteredContacts = contacts.filter(contact => {
     const email = getContactEmail(contact);
@@ -188,19 +201,15 @@ export default function ContactsPage() {
       contact.name?.toLowerCase().includes(search.toLowerCase()) ||
       contact.phone?.includes(search) ||
       email?.toLowerCase().includes(search.toLowerCase());
-
     const matchesTag = !selectedTag || contact.tags?.includes(selectedTag);
-
     const colorMap = getTagColorMap(contact);
     const matchesColor =
       !selectedColor ||
-      contact.tags?.some(
-        tag => colorMap[tag]?.toLowerCase() === selectedColor.toLowerCase(),
-      );
-
+      getContactColor(contact)?.toLowerCase() === selectedColor.toLowerCase() ||
+      contact.tags?.some(tag => colorMap[tag]?.toLowerCase() === selectedColor.toLowerCase());
     return matchesSearch && matchesTag && matchesColor;
   });
-  const displayContacts = selectedColor ? filteredContacts : contacts;
+  const displayContacts = filteredContacts;
 
   const handleAddContact = async () => {
     if (!newContact.name || !newContact.phone) {
@@ -211,15 +220,9 @@ export default function ContactsPage() {
     setSaving(true);
     try {
       const metadata: Record<string, unknown> = {};
-      if (Object.keys(newContact.tagColors).length > 0) {
-        metadata.tagColors = newContact.tagColors;
-      }
-      if (newContact.contactColor && newContact.tags.length > 0) {
-        const primary = newContact.tags[0];
-        metadata.tagColors = {
-          ...newContact.tagColors,
-          [primary]: newContact.contactColor,
-        };
+      metadata.tagColors = { ...newContact.tagColors };
+      if (newContact.contactColor) {
+        metadata.contactColor = newContact.contactColor;
       }
       if (newContact.tags.length === 1) {
         metadata.primaryTag = newContact.tags[0];
@@ -236,7 +239,7 @@ export default function ContactsPage() {
       
       if (res.data) {
         toast({ title: t('contacts.addSuccess') });
-        setNewContact({ name: '', phone: '', email: '', tags: [], tagColors: {}, contactColor: null, notes: '' });
+        setNewContact(emptyContactForm);
         setIsDialogOpen(false);
         fetchContacts();
       } else {
@@ -244,6 +247,53 @@ export default function ContactsPage() {
       }
     } catch (error) {
       toast({ title: t('contacts.addFailed'), variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEditContact = (contact: Contact) => {
+    const md = contact.metadata ?? {};
+    setEditingContact(contact);
+    setEditContact({
+      name: contact.name ?? '',
+      phone: contact.phone,
+      email: getContactEmail(contact) ?? '',
+      tags: contact.tags ?? [],
+      tagColors: getTagColorMap(contact),
+      contactColor: getContactColor(contact),
+      notes: typeof md.notes === 'string' ? md.notes : contact.notes ?? '',
+    });
+  };
+
+  const handleEditContact = async () => {
+    if (!editingContact || !editContact.name || !editContact.phone) return;
+    setSaving(true);
+    const newMeta: Record<string, unknown> = { ...(getContactMetadata(editingContact) as Record<string, unknown>) };
+    if (editContact.email) newMeta.email = editContact.email;
+    else delete newMeta.email;
+    if (editContact.notes) newMeta.notes = editContact.notes;
+    else delete newMeta.notes;
+    if (Object.keys(editContact.tagColors).length > 0) newMeta.tagColors = editContact.tagColors;
+    else delete newMeta.tagColors;
+    if (editContact.contactColor) newMeta.contactColor = editContact.contactColor;
+    else delete newMeta.contactColor;
+    try {
+      const res = await api.updateContact(editingContact.id, {
+        name: editContact.name,
+        phone: editContact.phone.replace(/\s+/g, '').replace(/-/g, ''),
+        tags: editContact.tags,
+        metadata: newMeta,
+      });
+      if (res.data) {
+        toast({ title: t('contacts.save') });
+        setEditingContact(null);
+        fetchContacts();
+      } else {
+        toast({ title: res.error || t('contacts.save'), variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: t('contacts.save'), variant: 'destructive' });
     } finally {
       setSaving(false);
     }
@@ -551,6 +601,40 @@ export default function ContactsPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        <Dialog open={editingContact !== null} onOpenChange={open => !open && setEditingContact(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{t('contacts.editContact')}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">{t('contacts.name')} *</Label>
+                <Input id="edit-name" value={editContact.name} onChange={e => setEditContact(prev => ({ ...prev, name: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-phone">{t('contacts.phone')} *</Label>
+                <Input id="edit-phone" value={editContact.phone} onChange={e => setEditContact(prev => ({ ...prev, phone: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-email">{t('contacts.email')}</Label>
+                <Input id="edit-email" type="email" value={editContact.email} onChange={e => setEditContact(prev => ({ ...prev, email: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>{t('contacts.tags')}</Label>
+                <TagInput tags={editContact.tags} tagColors={editContact.tagColors} suggestions={allTags} onChange={(tags, tagColors) => setEditContact(prev => ({ ...prev, tags, tagColors }))} />
+              </div>
+              <ColorPicker value={editContact.contactColor} onChange={color => setEditContact(prev => ({ ...prev, contactColor: color }))} />
+              <div className="space-y-2">
+                <Label htmlFor="edit-notes">{t('contacts.notes')}</Label>
+                <Textarea id="edit-notes" value={editContact.notes} onChange={e => setEditContact(prev => ({ ...prev, notes: e.target.value }))} rows={3} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditingContact(null)}>{t('contacts.cancel')}</Button>
+              <Button onClick={handleEditContact} disabled={saving}>{saving ? t('contacts.saving') : t('contacts.save')}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         </div>
       </div>
 
@@ -672,6 +756,14 @@ export default function ContactsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        onClick={() => openEditContact(contact)}
+                        aria-label={`Edit ${contact.name}`}
+                      >
+                        <Pencil className="w-4 h-4" aria-hidden="true" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => handleDeleteContact(contact.id)}
                         aria-label={`Delete ${contact.name}`}
@@ -688,7 +780,7 @@ export default function ContactsPage() {
 
         {/* Mobile card list */}
         <div className="md:hidden space-y-2">
-          {contacts.map(contact => (
+          {displayContacts.map(contact => (
             <div key={contact.id} className="bg-card border border-border rounded-xl p-4 flex items-start gap-3">
               <Avatar className="w-10 h-10 flex-shrink-0">
                 <AvatarImage src={contact.avatar} />
@@ -699,15 +791,25 @@ export default function ContactsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-medium text-foreground truncate">{contact.name}</div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10 -mt-1 -me-2 cursor-pointer"
-                    onClick={() => handleDeleteContact(contact.id)}
-                    aria-label={`Delete ${contact.name}`}
-                  >
-                    <Trash2 className="w-4 h-4" aria-hidden="true" />
-                  </Button>
+                  <div className="flex items-center -mt-1 -me-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openEditContact(contact)}
+                      aria-label={`Edit ${contact.name}`}
+                    >
+                      <Pencil className="w-4 h-4" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => handleDeleteContact(contact.id)}
+                      aria-label={`Delete ${contact.name}`}
+                    >
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    </Button>
+                  </div>
                 </div>
                 <div className="text-sm text-muted-foreground font-mono">{contact.phone}</div>
                 {getContactEmail(contact) && (

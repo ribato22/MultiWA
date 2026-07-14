@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MultiWA admin dashboard suffers from multiple compounding deficiencies that collectively render it unusable for RTL-language users and fail to meet the target visual quality. The i18n system only covers ~35 navigation/header keys while the app has hundreds of UI strings across 15+ pages. RTL layout is declared but never enforced at the component level. The font is wrong (Inter instead of Lalezar). Contact tagging UI is missing despite having backend utilities. Indonesian must be replaced with Arabic. The component library must migrate from shadcn/ui (Radix) to a custom Astryx-inspired design system.
+The MultiWA admin dashboard suffers from multiple compounding deficiencies that collectively render it unusable for RTL-language users and fail to meet the target visual quality. The i18n system only covers ~35 navigation/header keys while the app has hundreds of UI strings across 15+ pages. RTL layout is declared but never enforced at the component level. The font is wrong (Inter instead of Lalezar). Contact tagging UI is missing despite having backend utilities. Indonesian must be replaced with Arabic. Interactive controls need a consistent, observable accessibility, keyboard, focus, feedback, and RTL contract while retaining the current Tailwind token stack where it already describes layout and theming.
 
 This design formalizes each deficiency as a bug condition, defines preservation boundaries, hypothesizes root causes, and outlines implementation changes with a property-based testing strategy.
 
@@ -14,7 +14,7 @@ This design formalizes each deficiency as a bug condition, defines preservation 
 - **i18n catalog**: The `messages.ts` file at `apps/admin/src/lib/i18n/messages.ts` containing translation keys and catalogs for each language
 - **I18nProvider**: The React context at `apps/admin/src/lib/i18n/provider.tsx` that provides `t()`, `language`, `dir`, and `setLanguage` to the component tree
 - **Logical CSS properties**: CSS properties using `inline-start`/`inline-end`/`block-start`/`block-end` instead of physical `left`/`right`/`top`/`bottom`, enabling automatic RTL mirroring
-- **Astryx**: A custom component library inspired by Meta/Facebook design patterns — clean typography, subtle depth, generous whitespace, functional minimalism — replacing shadcn/ui Radix primitives
+- **Interactive UI contract**: Observable behavior shared by controls across pages: enabled Button activates once, disabled Button does not activate, and focus is visible; Select and Menu expose open/selected state and support Arrow, Enter, Space, and Escape; Tabs expose selected tab/active panel state and support Arrow, Home, End, Enter, and Space; Dialog and AlertDialog expose accessible name/description, contain and restore focus, and support Escape dismissal when allowed; Toast announces/dismisses; popups use logical RTL alignment.
 - **Contact metadata**: The `metadata` JSON field on Contact records that stores `primaryTag`, `tagColors`, and other extensible properties
 - **Lalezar**: A Persian display font from Google Fonts that supports Latin, Arabic, and Persian scripts
 
@@ -22,7 +22,7 @@ This design formalizes each deficiency as a bug condition, defines preservation 
 
 ### Bug Condition
 
-The bug manifests as seven interrelated failures whenever a user interacts with the admin dashboard in a non-English context or expects modern UX patterns. The conditions overlap — an RTL user simultaneously hits C1.1 (untranslated content), C1.2 (broken mirroring), C1.3 (wrong font), and C1.6 (outdated components).
+The bug manifests as seven interrelated failures whenever a user interacts with the admin dashboard in a non-English context or expects modern UX patterns. The conditions overlap — an RTL user simultaneously hits C1.1 (untranslated content), C1.2 (broken mirroring), C1.3 (wrong font), and C1.6 (inconsistent interactive behavior).
 
 **Formal Specification:**
 ```
@@ -49,15 +49,15 @@ FUNCTION isBugCondition(input)
   LET missingColorUI = input.page == 'contacts'
     AND input.interaction IN ['assign_color', 'filter_by_color']
   
-  // C6: Outdated components
-  LET outdatedComponents = pageUsesRadixPrimitives(input.page)
+  // C6: Inconsistent interactive UI behavior
+  LET inconsistentInteractiveUI = interactiveControlsFailContract(input.page)
   
   // C7: Missing Arabic
   LET missingArabic = input.language == 'ar'
     AND NOT languageAvailable('ar')
   
   RETURN untranslated OR brokenRTL OR wrongFont OR missingTagUI
-         OR missingColorUI OR outdatedComponents OR missingArabic
+         OR missingColorUI OR inconsistentInteractiveUI OR missingArabic
 END FUNCTION
 ```
 
@@ -68,7 +68,7 @@ END FUNCTION
 - **C1.3**: Any page load → body renders in Inter font (400/500/600/700) instead of Lalezar
 - **C1.4**: User opens Contacts → sees contact list but no tag input, no tag chips, no way to add "#VIP" to a contact
 - **C1.5**: User opens Contacts → no color picker, no colored dots, no filter-by-color dropdown
-- **C1.6**: Button/Dialog/Select components use Radix primitives with shadcn styling — not the target Astryx aesthetic
+- **C1.6**: A Button, Select, Menu, Tabs, Dialog, AlertDialog, or Toast lacks its observable disabled/activation/focus, keyboard/state, accessible modal, announcement/dismissal, or logical RTL-alignment behavior
 - **C1.7**: User opens language dropdown → sees only English, فارسی, Bahasa Indonesia — no العربية option
 
 ## Expected Behavior
@@ -103,7 +103,7 @@ Based on the bug description and code analysis, the root causes are:
 
 4. **Missing UI components (C1.4, C1.5)**: The `contact-tags.ts` utility has full data-layer support (parse tags, color maps, badge styles) but no React components consume it. No `<TagInput>`, `<ColorPicker>`, or `<ColorFilter>` components exist. The contacts page renders a basic list without tag management or color assignment.
 
-5. **Outdated component library (C1.6)**: All UI components in `src/components/ui/` are shadcn/ui implementations wrapping Radix primitives. Migration to Astryx requires replacing these with a custom library that uses the same CSS variable infrastructure but different visual patterns (Meta-inspired functional minimalism).
+5. **Inconsistent interactive UI behavior (C1.6)**: Existing UI controls do not uniformly demonstrate the required disabled/activation/focus, keyboard/state, accessible modal, toast, and logical RTL popup behaviors. The current Tailwind token and utility stack remains the styling foundation where it already covers tokens and RTL layout.
 
 ## Correctness Properties
 
@@ -137,9 +137,9 @@ _For any_ user interaction on the Contacts page where the intent is to assign or
 
 **Validates: Requirements 2.5**
 
-Property 6: Bug Condition - Astryx Component Library
+Property 6: Bug Condition - Interactive UI Contract
 
-_For any_ page render (isBugCondition C1.6 holds), the system SHALL use the Astryx component library with consistent modern design language applied from landing through all dashboard pages, replacing all shadcn/ui Radix primitives.
+_For any_ page render or supported control interaction (isBugCondition C1.6 holds), the system SHALL provide a consistent modern interface with observable behavior: enabled Button activation exactly once, disabled Button no activation, and visible focus; Select and Menu open/selected state plus Arrow, Enter, Space, and Escape handling; Tabs selected tab/active panel state plus Arrow, Home, End, Enter, and Space handling; Dialog and AlertDialog accessible name/description, focus containment/restoration, and Escape dismissal when allowed; Toast announcement/dismissal; and logical RTL popup alignment.
 
 **Validates: Requirements 2.6**
 
@@ -208,18 +208,18 @@ Assuming our root cause analysis is correct:
 - Wire mutations to API (PATCH contact metadata with tags/colors)
 - Add autocomplete source from existing tags across all contacts
 
-**5. Astryx Component Library Migration**
+**5. Interactive UI Contract Completion**
 
-**Files**: All files in `apps/admin/src/components/ui/`
+**Files**: Existing files in `apps/admin/src/components/ui/` as required by behavior
 
 **Specific Changes**:
-- Create new Astryx-style components that share the same CSS variable infrastructure
-- Replace Radix primitive imports with custom implementations using native HTML + controlled state
-- Design language: generous padding (12-16px), 8px border-radius, subtle depth via box-shadow not borders, clear type hierarchy, functional minimalism
-- Maintain the same component API surface (props, variants) where possible to minimize page-level refactoring
-- Key components to rebuild: Button, Card, Dialog, Select, Input, Tabs, Table, Badge, Avatar, DropdownMenu, Switch, Checkbox, Toast
-- Remove `@radix-ui/*` dependencies from package.json after migration
-- Keep `class-variance-authority` and `tailwind-merge` for variant management
+- Preserve the current Tailwind token and utility infrastructure for theming, spacing, and logical RTL layout.
+- Ensure an enabled Button activates exactly once, a disabled Button does not activate, and keyboard focus is visibly indicated.
+- Ensure Select and Menu expose open and selected state and support Arrow, Enter, Space, and Escape keys; ensure Tabs expose selected tab and active panel state and support Arrow, Home, End, Enter, and Space keys.
+- Ensure Dialog and AlertDialog have accessible names and descriptions, contain focus while open, restore focus to the trigger on close, and close on Escape when dismissal is allowed.
+- Ensure Toasts announce meaningful status and can be dismissed through user action.
+- Ensure popup positioning uses logical inline alignment so the same control aligns correctly in LTR and RTL.
+- Verify visual consistency on desktop and mobile browser viewports without implementation or package identity as a pass/fail criterion.
 
 **6. Design Token Overhaul**
 
@@ -247,7 +247,7 @@ The testing strategy follows a two-phase approach: first, surface counterexample
 2. Layout direction properties are correct (computed styles use logical values)
 3. Font-family resolves to Lalezar
 4. Tag/color UI exists on contacts page
-
+5. C1.6 controls expose observable contracts: enabled Button activates once, disabled Button activates zero times, focus is visible; Select/Menu support Arrow, Enter, Space, Escape with open/selected state; Tabs support Arrow, Home, End, Enter, Space with selected tab/active panel state; Dialog/AlertDialog expose name/description, contain and restore focus, and dismiss on allowed Escape; Toast announces through a live region and dismisses; RTL/LTR popup edges align logically
 Run on UNFIXED code to observe failures and validate root causes.
 
 **Test Cases**:
@@ -256,6 +256,7 @@ Run on UNFIXED code to observe failures and validate root causes.
 3. **Font Test**: Render any page → assert `font-family` computed on body includes "Lalezar" (will fail — Inter is the only loaded font)
 4. **Tag UI Test**: Render contacts detail → query for tag input element (will fail — component doesn't exist)
 5. **Arabic Language Test**: Attempt to set language to 'ar' → assert it's accepted as valid (will fail — `isLanguage()` only accepts 'en'|'fa'|'id')
+6. **Interactive UI Contract Test**: Exercise Button, Select, Menu, Tabs, Dialog, AlertDialog, and Toast through accessible roles and keyboard input; assert the C1.6 states, focus lifecycle, live announcement/dismissal, and logical RTL/LTR popup alignment described above
 
 **Expected Counterexamples**:
 - Dashboard stat cards, form labels, button text render in English when Farsi is selected
@@ -284,7 +285,10 @@ FOR ALL input WHERE isBugCondition(input) DO
     IF input involves C1.5:
       ASSERT colorPickerExists(result) AND colorFilterExists(result)
     IF input involves C1.6:
-      ASSERT noRadixPrimitivesImported(result)
+      ASSERT enabledButtonActivatesOnce(result) AND disabledButtonDoesNotActivate(result)
+      AND visibleFocus(result) AND selectMenuKeyboardAndState(result)
+      AND tabsKeyboardAndState(result) AND accessibleModalFocusLifecycle(result)
+      AND toastAnnouncementAndDismissal(result) AND logicalPopupAlignment(result)
     IF input involves C1.7:
       ASSERT languageOptions(result).includes('ar')
 END FOR
@@ -331,8 +335,8 @@ END FOR
 - Test `parseTagInput()` handles edge cases (empty string, duplicate tags, invalid colors)
 - Test `getTagBadgeStyle()` returns correct styles for each color
 - Test `collectTagColorFilters()` aggregates colors from contact set
-- Test Astryx Button component renders all variants (primary, secondary, destructive, ghost)
-- Test RTL utility classes flip correctly
+- Test enabled Button activation once, disabled Button zero activation, and visible focus
+- Test Select and Menu open/selected state plus Arrow, Enter, Space, and Escape; test Tabs selected tab/active panel plus Arrow, Home, End, Enter, and Space
 
 ### Property-Based Tests
 
@@ -346,4 +350,4 @@ END FOR
 - Test full page navigation flow in each language: switch language → navigate all routes → verify no untranslated content
 - Test contact CRUD with tags and colors: create contact → add tags → assign color → verify persistence → edit → delete tag → verify removal
 - Test language switch during active session: start in English → switch to Farsi mid-page → verify layout flips and content translates without page reload
-- Test component library migration: render each dashboard page → verify no Radix-specific ARIA patterns leak through → verify Astryx components have correct accessibility attributes
+- Test interactive UI contracts across dashboard pages: keyboard/state behavior, accessible modal focus behavior, toast announcement/dismissal, and logical RTL popup alignment; complete browser visual checks at desktop and mobile viewports

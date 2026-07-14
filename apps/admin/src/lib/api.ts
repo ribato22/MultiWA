@@ -388,6 +388,16 @@ class ApiClient {
       body: JSON.stringify(payload),
     });
   }
+
+  async updateContact(
+    id: string,
+    data: { name?: string; phone?: string; tags?: string[]; metadata?: Record<string, unknown> },
+  ) {
+    return this.request<Contact>(`/contacts/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
   async deleteContact(id: string) {
     return this.request<void>(`/contacts/${id}`, {
       method: 'DELETE',

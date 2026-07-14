@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [~] 1. Write bug condition exploration test
+- [x] 1. Write bug condition exploration test
   - **Property 1: Bug Condition** - i18n/RTL/Font/UI Deficiency Detection
   - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bugs exist
   - **DO NOT attempt to fix the test or the code when it fails**
@@ -13,6 +13,7 @@
   - Test that Contacts page contains a `[data-testid="tag-input"]` element (from Bug Condition C1.4)
   - Test that Contacts page contains a `[data-testid="color-picker"]` and `[data-testid="color-filter"]` (from Bug Condition C1.5)
   - Test that no `@radix-ui` primitives are imported in rendered components (from Bug Condition C1.6)
+  - Historical execution evidence only; import absence does not validate the current Requirement 2.6 contract.
   - Test that language selector includes Arabic (`ar`) as a valid option (from Bug Condition C1.7)
   - Run test on UNFIXED code - expect FAILURE (this confirms the bugs exist)
   - **EXPECTED OUTCOME**: Test FAILS — counterexamples include: stat cards in English when Farsi selected, sidebar has `left: 0` regardless of `dir="rtl"`, `fontFamily` returns "Inter", tag input element is null, Arabic not in language options
@@ -20,7 +21,7 @@
   - Mark task complete when test is written, run, and failure is documented
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7_
 
-- [~] 2. Write preservation property tests (BEFORE implementing fix)
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
   - **Property 2: Preservation** - English LTR Layout & Feature Stability
   - **IMPORTANT**: Follow observation-first methodology
   - Observe: Render all pages in English (`en`) on unfixed code — verify LTR layout, left sidebar, left-aligned text, proper responsive breakpoints
@@ -43,30 +44,30 @@
 
 - [ ] 3. Implement i18n Catalog Expansion & Arabic Addition
 
-  - [~] 3.1 Expand translation catalogs from ~35 keys to full coverage (~300+ keys)
+  - [~] 3.1 Expand translation catalogs toward full coverage (~300+ keys)
     - Add translation keys for all pages: dashboard stats, form labels, buttons, placeholders, error messages, table headers, tooltips, empty states, widget titles
     - Cover pages: dashboard, contacts, profiles, chat, broadcast, automation, templates, webhooks, settings, analytics, audit, api-keys, integrations, knowledge
     - Add keys for common UI patterns: confirmation dialogs, loading states, success/error toasts, pagination, search
-    - Ensure Farsi (`fa`) catalog has complete translations for all new keys
+    - Farsi (`fa`) catalog coverage has expanded, but rendered coverage remains incomplete while component JSX still contains hardcoded strings
     - _Bug_Condition: isBugCondition C1.1 — language IN ['fa', 'ar'] AND pageHasUntranslatedStrings(page)_
     - _Expected_Behavior: allVisibleText(result).every(t => isInLanguage(t, input.language))_
     - _Preservation: English translations that are already correct must remain unchanged_
     - _Requirements: 1.1, 2.1_
 
-  - [~] 3.2 Replace Indonesian with Arabic language support
+  - [x] 3.2 Replace Indonesian with Arabic language mechanics
     - Change `Language` type from `'en' | 'fa' | 'id'` to `'en' | 'fa' | 'ar'`
     - Remove Indonesian (`id`) catalog entirely
-    - Add Arabic (`ar`) catalog with full translations matching Farsi key coverage
+    - Add Arabic (`ar`) catalog entries for implemented keys; this completion records locale mechanics, not full rendered Arabic coverage
     - Update `LANGUAGE_OPTIONS` to include `{ value: 'ar', label: 'Arabic', nativeLabel: 'العربية' }`
     - Update `languageToDir()` to return `'rtl'` for both `'fa'` and `'ar'`
     - Update `languageToHtmlLang()` to return `'ar'` for Arabic
     - Update `isLanguage()` to accept `'ar'` and reject `'id'`
     - _Bug_Condition: isBugCondition C1.7 — language == 'ar' AND NOT languageAvailable('ar')_
-    - _Expected_Behavior: languageOptions(result).includes('ar') AND allVisibleText in Arabic_
-    - _Preservation: English and Farsi translations unchanged_
+    - _Expected_Behavior: languageOptions(result).includes('ar')_
+    - _Preservation: English and Farsi language mechanics unchanged_
     - _Requirements: 1.7, 2.7_
 
-  - [~] 3.3 Replace all hardcoded English strings in component JSX with `t()` calls
+  - [-] 3.3 Replace all hardcoded English strings in component JSX with `t()` calls
     - Scan all component files for hardcoded English text in JSX
     - Replace with appropriate `t('namespace.key')` calls
     - Verify no English text leaks when language is set to Farsi or Arabic
@@ -171,54 +172,47 @@
     - _Preservation: Existing contacts with tags and color metadata preserved (Req 3.5)_
     - _Requirements: 2.4, 2.5, 3.5_
 
-- [ ] 7. Implement Astryx Component Library Migration
+- [ ] 7. Complete interactive UI contracts
 
-  - [~] 7.1 Create Astryx base components (Button, Input, Card)
-    - Rebuild Button with Astryx design: generous padding (12-16px), 8px border-radius, subtle box-shadow depth, functional minimalism
-    - Rebuild Input with consistent styling, proper focus states, RTL support
-    - Rebuild Card with subtle depth via box-shadow (not borders), generous whitespace
-    - Use same CSS variable infrastructure for theming
-    - Maintain same component API (props, variants) via `class-variance-authority`
-    - _Bug_Condition: isBugCondition C1.6 — pageUsesRadixPrimitives(page)_
-    - _Expected_Behavior: noRadixPrimitivesImported(result) AND Astryx styling applied_
+  - [~] 7.1 Complete Button, Input, and Card behavior
+    - Use current local components and Tailwind tokens for visual consistency
+    - Implement enabled Button single activation, disabled Button zero activation, and visible keyboard focus
+    - Implement accessible Input naming, clear focus state, and RTL support
+    - Keep Card readable at desktop and mobile widths
+    - _Bug_Condition: isBugCondition C1.6 — interactiveControlsFailContract(page)_
+    - _Expected_Behavior: Button disabled/activation/focus contract is satisfied_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.2 Create Astryx interactive components (Dialog, Select, DropdownMenu, Tabs)
-    - Replace Radix Dialog with custom modal using native `<dialog>` + controlled state
-    - Replace Radix Select with custom select using `<details>`/`<summary>` or controlled dropdown
-    - Replace Radix DropdownMenu with custom implementation
-    - Replace Radix Tabs with custom tab implementation
-    - Ensure proper accessibility (ARIA attributes, keyboard navigation, focus management)
-    - _Expected_Behavior: All interactive components function identically without Radix deps_
+  - [~] 7.2 Complete Select, Menu, and Tabs interaction
+    - Implement Select and Menu open/selected state with Arrow, Enter, Space, and Escape handling
+    - Implement Tabs selected tab/active panel state with Arrow, Home, End, Enter, and Space handling
+    - Implement logical inline popup positioning in RTL and LTR
+    - _Expected_Behavior: interactive state and keyboard contracts are satisfied_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.3 Create Astryx form and feedback components (Checkbox, Switch, Toast, Badge, Avatar)
-    - Rebuild Checkbox, Switch with native HTML + CSS animations
-    - Rebuild Toast notification system without Radix Toast
-    - Rebuild Badge and Avatar with Astryx styling
-    - Apply consistent design language: Meta-inspired functional minimalism, clear type hierarchy
-    - _Expected_Behavior: Form and feedback components render with Astryx aesthetics_
+  - [~] 7.3 Complete feedback and form interaction
+    - Implement correct checked state and keyboard behavior for Checkbox and Switch
+    - Implement Toast status announcement and user dismissal
+    - Preserve semantic names for Badge and Avatar where needed
+    - _Expected_Behavior: feedback is announced and controls communicate state_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.4 Create Astryx data components (Table, AlertDialog, Skeleton)
-    - Rebuild Table with Astryx styling and RTL support
-    - Replace Radix AlertDialog with custom confirmation dialog
-    - Update Skeleton loading states with Astryx design
-    - _Expected_Behavior: Data components render with Astryx styling_
+  - [~] 7.4 Complete Dialog, AlertDialog, and data components
+    - Implement accessible names and descriptions for Dialog and AlertDialog
+    - Implement modal focus containment while open, trigger focus restoration after close, and Escape close when dismissal is allowed
+    - Keep Table and Skeleton readable with RTL-aware alignment
+    - _Expected_Behavior: modal and data-component accessibility contracts are satisfied_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.5 Remove Radix UI dependencies
-    - Remove all `@radix-ui/*` packages from `package.json`
-    - Verify no remaining imports of Radix primitives across codebase
-    - Update any components that directly imported Radix utilities
-    - Keep `class-variance-authority` and `tailwind-merge` for variant management
-    - _Expected_Behavior: noRadixPrimitivesImported across entire codebase_
+  - [~] 7.5 Complete shared UI behavior without package-identity criteria
+    - Use existing local components through public UI behavior
+    - Do not use import paths, package presence, or UI-library identity as pass/fail evidence
+    - _Expected_Behavior: every checked control satisfies its observable interaction contract_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.6 Apply Astryx design consistently across all pages
-    - Update landing page, auth pages, and all dashboard pages to use Astryx components
-    - Ensure consistent visual language from landing through all dashboard pages
-    - Verify no mixed styling (no remnants of old shadcn/ui styling)
+  - [~] 7.6 Apply consistent UI behavior across pages
+    - Apply completed interaction contracts to landing, auth, and dashboard flows
+    - Use logical RTL popup alignment and preserve user flows at desktop and mobile widths
     - _Expected_Behavior: consistent modern design from landing through dashboard_
     - _Preservation: Same functionality and user flows preserved (Req 3.2, 3.3, 3.6)_
     - _Requirements: 2.6, 3.2, 3.3, 3.6_
@@ -236,24 +230,22 @@
   - [~] 8.2 Update Tailwind config for new design tokens
     - Map new CSS variables to Tailwind theme extensions
     - Add RTL-aware animation keyframes (slide directions flip with `dir`)
-    - Ensure all Astryx components consume new tokens
+    - Ensure current local UI components consume new tokens
     - _Requirements: 2.6_
 
 - [ ] 9. Fix verification
 
-  - [~] 9.1 Verify bug condition exploration test now passes
+  - [~] 9.1 Verify bug condition and interactive UI contract checks
     - **Property 1: Expected Behavior** - i18n/RTL/Font/UI Deficiency Resolution
-    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
-    - The test from task 1 encodes the expected behavior for all seven bug conditions
-    - When this test passes, it confirms all expected behaviors are satisfied:
-      - All text in Farsi/Arabic when those languages selected (Req 2.1, 2.7)
-      - RTL layout mirrors correctly (Req 2.2)
-      - Lalezar font renders (Req 2.3)
-      - Tag and color UI exists on contacts (Req 2.4, 2.5)
-      - No Radix primitives imported (Req 2.6)
-      - Arabic available in language selector (Req 2.7)
-    - Run bug condition exploration test from step 1
-    - **EXPECTED OUTCOME**: Test PASSES (confirms all bugs are fixed)
+    - Re-run task-1 exploration checks for their recorded historical scope.
+    - Add focused C1.6 checks for:
+      - enabled Button one activation, disabled Button zero activation, and focus-visible state
+      - Select and Menu Arrow, Enter, Space, and Escape behavior with open/selected state
+      - Tabs Arrow, Home, End, Enter, and Space behavior with selected tab/active panel state
+      - Dialog and AlertDialog accessible name/description, focus containment/restoration, and allowed Escape dismissal
+      - Toast live-region announcement and user dismissal
+      - LTR and RTL logical popup edge alignment
+    - Record pass/fail per requirement; 9.1 cannot be completed until rendered i18n acceptance tracked by partial task 3.1 passes. Task 3.3 remains separate unfinished work.
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
 
   - [~] 9.2 Verify preservation tests still pass
@@ -269,11 +261,10 @@
       - Existing contact tag/color data displays (Req 3.5)
       - Auth flow unchanged (Req 3.6)
 
-- [~] 10. Checkpoint - Ensure all tests pass
-  - Run full test suite to confirm no regressions
-  - Verify bug condition test (Property 1) passes — all seven deficiencies resolved
-  - Verify preservation test (Property 2) passes — all existing functionality intact
-  - Verify unit tests pass (languageToDir, isLanguage, parseTagInput, getTagBadgeStyle, Astryx components)
-  - Run TypeScript typecheck (`tsc --noEmit`) to ensure type safety
-  - Run linter (`next lint`) to ensure code quality
-  - Ensure all tests pass, ask the user if questions arise
+- [~] 10. Checkpoint - Complete behavior and browser verification
+  - Run focused behavior checks for UI contracts and preservation flows
+  - Verify bug condition checks cover all seven deficiencies through observable behavior, recording pass/fail for incomplete work
+  - Verify preservation: English LTR layout, WhatsApp profile operations, broadcast/automation/templates/webhooks, mobile responsiveness, stored contact metadata, and authentication flows
+  - Record desktop and mobile browser visual evidence at 1440px, 768px, and 375px viewports for English LTR and Farsi/Arabic RTL
+  - At each viewport, inspect Button focus/disabled presentation, open Select/Menu and Tabs state, Dialog/AlertDialog focus behavior, Toast dismissal, and popup inline-edge alignment
+  - Do not use package removal, import absence, or UI-library identity as verification criteria

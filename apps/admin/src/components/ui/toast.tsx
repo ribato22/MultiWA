@@ -39,17 +39,28 @@ const toastVariants = cva(
   }
 )
 
+
 export interface ToastRootProps
   extends React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof toastVariants> {
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }
+const ToastContext = React.createContext<Pick<ToastRootProps, "onOpenChange">>({})
 
 const Toast = React.forwardRef<HTMLDivElement, ToastRootProps>(
   ({ className, variant, open, onOpenChange, ...props }, ref) => {
     if (open === false) return null
-    return <div ref={ref} className={cn(toastVariants({ variant }), className)} {...props} />
+
+    return (
+      <ToastContext.Provider value={{ onOpenChange }}>
+        <div
+          ref={ref}
+          className={cn(toastVariants({ variant }), className)}
+          {...props}
+        />
+      </ToastContext.Provider>
+    )
   }
 )
 Toast.displayName = "Toast"
@@ -70,20 +81,28 @@ const ToastAction = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttribut
 ToastAction.displayName = "ToastAction"
 
 const ToastClose = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement>>(
-  ({ className, ...props }, ref) => (
-    <button
-      ref={ref}
-      type="button"
-      aria-label="Close"
-      className={cn(
-        "absolute end-1 top-1 rounded-md p-1 text-foreground/50 opacity-0 transition-opacity hover:text-foreground focus:opacity-100 focus:outline-none focus:ring-1 group-hover:opacity-100 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600 cursor-pointer",
-        className
-      )}
-      {...props}
-    >
-      <X className="h-4 w-4" />
-    </button>
-  )
+  ({ className, onClick, ...props }, ref) => {
+    const { onOpenChange } = React.useContext(ToastContext)
+
+    return (
+      <button
+        ref={ref}
+        type="button"
+        aria-label="Close"
+        className={cn(
+          "absolute end-1 top-1 rounded-md p-1 text-foreground/50 transition-opacity hover:text-foreground focus:outline-none focus:ring-1 group-[.destructive]:text-red-300 group-[.destructive]:hover:text-red-50 group-[.destructive]:focus:ring-red-400 group-[.destructive]:focus:ring-offset-red-600 cursor-pointer",
+          className
+        )}
+        onClick={(event) => {
+          onClick?.(event)
+          if (!event.defaultPrevented) onOpenChange?.(false)
+        }}
+        {...props}
+      >
+        <X className="h-4 w-4" />
+      </button>
+    )
+  }
 )
 ToastClose.displayName = "ToastClose"
 

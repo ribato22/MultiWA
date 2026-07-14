@@ -13,6 +13,7 @@ import { buttonVariants } from "@/components/ui/button"
 interface AlertDialogContextValue {
   open: boolean
   onOpenChange: (open: boolean) => void
+  titleId: string
 }
 const AlertDialogContext = React.createContext<AlertDialogContextValue | null>(null)
 
@@ -29,8 +30,10 @@ interface AlertDialogProps {
 }
 
 function AlertDialog({ open = false, onOpenChange = () => {}, children }: AlertDialogProps) {
+  const titleId = React.useId()
+
   return (
-    <AlertDialogContext.Provider value={{ open, onOpenChange }}>
+    <AlertDialogContext.Provider value={{ open, onOpenChange, titleId }}>
       {children}
     </AlertDialogContext.Provider>
   )
@@ -78,8 +81,8 @@ AlertDialogOverlay.displayName = "AlertDialogOverlay"
 const AlertDialogContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => {
-  const { open, onOpenChange } = useAlertDialogContext()
+>(({ className, children, ...props }, ref) => {
+  const { open, onOpenChange, titleId } = useAlertDialogContext()
   const contentRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
@@ -104,6 +107,7 @@ const AlertDialogContent = React.forwardRef<
           else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = node
         }}
         role="alertdialog"
+        aria-labelledby={titleId}
         aria-modal="true"
         tabIndex={-1}
         className={cn(
@@ -111,7 +115,9 @@ const AlertDialogContent = React.forwardRef<
           className
         )}
         {...props}
-      />
+      >
+        {children}
+      </div>
     </AlertDialogPortal>
   )
 })
@@ -127,10 +133,13 @@ const AlertDialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDiv
 )
 AlertDialogFooter.displayName = "AlertDialogFooter"
 
-const AlertDialogTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
-  ({ className, ...props }, ref) => (
-    <h2 ref={ref} className={cn("text-lg font-semibold", className)} {...props} />
-  )
+type AlertDialogTitleProps = Omit<React.HTMLAttributes<HTMLHeadingElement>, "id">
+
+const AlertDialogTitle = React.forwardRef<HTMLHeadingElement, AlertDialogTitleProps>(
+  ({ className, ...props }, ref) => {
+    const { titleId } = useAlertDialogContext()
+    return <h2 ref={ref} id={titleId} className={cn("text-lg font-semibold", className)} {...props} />
+  }
 )
 AlertDialogTitle.displayName = "AlertDialogTitle"
 
@@ -140,7 +149,6 @@ const AlertDialogDescription = React.forwardRef<HTMLParagraphElement, React.HTML
   )
 )
 AlertDialogDescription.displayName = "AlertDialogDescription"
-
 const AlertDialogAction = React.forwardRef<
   HTMLButtonElement,
   React.ButtonHTMLAttributes<HTMLButtonElement>

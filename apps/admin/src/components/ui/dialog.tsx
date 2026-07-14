@@ -15,6 +15,7 @@ import { Slot } from "@/lib/slot"
 interface DialogContextValue {
   open: boolean
   onOpenChange: (open: boolean) => void
+  titleId: string
 }
 const DialogContext = React.createContext<DialogContextValue | null>(null)
 
@@ -31,8 +32,9 @@ interface DialogProps {
 }
 
 function Dialog({ open = false, onOpenChange = () => {}, children }: DialogProps) {
+  const titleId = React.useId()
   return (
-    <DialogContext.Provider value={{ open, onOpenChange }}>{children}</DialogContext.Provider>
+    <DialogContext.Provider value={{ open, onOpenChange, titleId }}>{children}</DialogContext.Provider>
   )
 }
 
@@ -105,21 +107,27 @@ DialogOverlay.displayName = "DialogOverlay"
 
 const DialogContent = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, children, ...props }, ref) => {
-  const { open, onOpenChange } = useDialogContext()
+  React.HTMLAttributes<HTMLDivElement> & { closeButtonAriaLabel?: string }
+>(({ className, children, closeButtonAriaLabel, ...props }, ref) => {
+  const { open, onOpenChange, titleId } = useDialogContext()
   const contentRef = React.useRef<HTMLDivElement>(null)
+  const previousActiveElement = React.useRef<Element | null>(null)
 
   React.useEffect(() => {
     if (!open) return
+    previousActiveElement.current = document.activeElement
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onOpenChange(false)
     }
     document.addEventListener("keydown", onKeyDown)
-    // Focus the panel when it opens for keyboard users.
     contentRef.current?.focus()
-    return () => document.removeEventListener("keydown", onKeyDown)
-  }, [open, onOpenChange])
+    return () => {
+      document.removeEventListener("keydown", onKeyDown)
+      if (previousActiveElement.current instanceof HTMLElement) {
+        previousActiveElement.current.focus()
+      }
+    }
+  }, [open])
 
   if (!open) return null
 
@@ -134,6 +142,7 @@ const DialogContent = React.forwardRef<
         }}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
         className={cn(
@@ -145,6 +154,7 @@ const DialogContent = React.forwardRef<
         {children}
         <button
           type="button"
+          aria-label={closeButtonAriaLabel ?? "Close dialog"}
           onClick={() => onOpenChange(false)}
           className="absolute end-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none cursor-pointer"
         >
@@ -171,9 +181,12 @@ const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
 DialogFooter.displayName = "DialogFooter"
 
 const DialogTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
-  ({ className, ...props }, ref) => (
-    <h2 ref={ref} className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />
-  )
+  ({ className, id, ...props }, ref) => {
+    const { titleId } = useDialogContext()
+    return (
+      <h2 ref={ref} id={id ?? titleId} className={cn("text-lg font-semibold leading-none tracking-tight", className)} {...props} />
+    )
+  }
 )
 DialogTitle.displayName = "DialogTitle"
 

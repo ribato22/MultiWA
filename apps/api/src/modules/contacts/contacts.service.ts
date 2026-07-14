@@ -91,11 +91,21 @@ export class ContactsService {
 
   // Update contact
   async update(id: string, dto: UpdateContactDto) {
+    const existingContact = await prisma.contact.findUnique({ where: { id } });
     await this.findOne(id);
     return prisma.contact.update({
       where: { id },
-      data: dto,
+      data: {
+        ...dto,
+        metadata: dto.metadata 
+          ? this.mergeContactMetadata(existingContact?.metadata as Record<string, unknown> | null, dto.metadata)
+          : existingContact?.metadata,
+      },
     });
+  }
+
+  private mergeContactMetadata(existing: Record<string, unknown> | null, updates: Record<string, unknown>) {
+    return { ...(existing || {}), ...updates };
   }
 
   // Delete contact
