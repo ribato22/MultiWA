@@ -100,7 +100,10 @@ function DonutChart({ segments, size = 120 }: { segments: { label: string; value
   );
 }
 
+import { useI18n } from '@/lib/i18n/provider';
+
 export default function AnalyticsPage() {
+  const { t } = useI18n();
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('all');
@@ -210,8 +213,8 @@ export default function AnalyticsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
-          <p className="text-muted-foreground mt-1">Message volume, contacts, and automation insights</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('analytics.title')}</h1>
+          <p className="text-muted-foreground mt-1">{t('analytics.subtitle')}</p>
         </div>
         <div className="flex items-center gap-3">
           <Select value={selectedProfile} onValueChange={setSelectedProfile}>

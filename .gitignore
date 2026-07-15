@@ -2,6 +2,12 @@
 node_modules/
 .pnpm-store/
 
+# Lockfiles from non-canonical package managers (repo uses pnpm)
+bun.lock
+bun.lockb
+package-lock.json
+yarn.lock
+
 # Build outputs
 dist/
 .next/
@@ -60,6 +66,10 @@ sessions/
 .wwebjs_auth/
 .wwebjs_cache/
 
+# Redis local data (if a dev accidentally starts redis from the repo root)
+appendonlydir/
+dump.rdb
+
 # Plugins runtime data
 plugins/*/node_modules/
 
@@ -79,3 +89,10 @@ temp/
 
 # Docusaurus
 docs-site/.docusaurus/
+
+# Accidental OMP session state dropped at repo root (never public)
+~/
+
+# Local session / ops notes (never public)
+/HANDOFF.md
+/WATCHDOG.md

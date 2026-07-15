@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MultiWA — Open Source WhatsApp Business API Gateway</title>
-  <meta name="description" content="The most complete open-source WhatsApp Business API gateway. Multi-engine, self-hosted, enterprise-ready. Send messages, broadcasts, and automate workflows.">
+  <title data-i18n="meta.title">MultiWA — Open Source WhatsApp Business API Gateway</title>
+  <meta name="description" content="High-fidelity, open-source WhatsApp Business API gateway. Multi-engine, self-hosted, and sovereign. Deploy mass broadcasts and automate workflows.">
   <meta name="keywords" content="whatsapp api, whatsapp gateway, open source, self-hosted, whatsapp business, bulk messaging">
   <meta property="og:title" content="MultiWA — Open Source WhatsApp API Gateway">
   <meta property="og:description" content="Multi-engine, self-hosted WhatsApp Business API. Docker one-click setup.">
   <meta property="og:image" content="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/social-preview.png">
   <meta property="og:url" content="https://ribato22.github.io/MultiWA/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -20,16 +21,22 @@
     <div class="nav-inner">
       <a href="#" class="logo">
         <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/apps/admin/public/logo.png" alt="MultiWA" width="36" height="36">
-        <span>MultiWA</span>
+        <span data-i18n="app.name">MultiWA</span>
       </a>
       <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#screenshots">Screenshots</a>
-        <a href="#quickstart">Quick Start</a>
-        <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank">Docs</a>
+        <a href="#features" data-i18n="nav.features">Features</a>
+        <a href="#screenshots" data-i18n="nav.screenshots">Console</a>
+        <a href="#comparison" data-i18n="nav.comparison">Compare</a>
+        <a href="#quickstart" data-i18n="nav.quickstart">Quickstart</a>
+        <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank" data-i18n="nav.docs">Docs</a>
+        <select id="lang-select" class="lang-select" aria-label="Select Language">
+          <option value="en">English</option>
+          <option value="fa">فارسی</option>
+          <option value="id">Bahasa Indonesia</option>
+        </select>
         <a href="https://github.com/ribato22/MultiWA" class="btn btn-nav" target="_blank">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-          Star on GitHub
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span data-i18n="nav.star">Star on GitHub</span>
         </a>
       </div>
     </div>
@@ -37,29 +44,29 @@
 
   <!-- Hero -->
   <section id="hero">
-    <div class="hero-glow"></div>
+    <div class="hero-glow" aria-hidden="true"></div>
     <div class="container">
-      <div class="badge">Open Source · Self-Hosted · Multi-Engine</div>
-      <h1>WhatsApp Gateway<br><span class="gradient-text">for Everyone</span></h1>
-      <p class="subtitle">The most complete open-source WhatsApp Business API gateway.<br>Multi-engine support, broadcast, automation, and enterprise-ready features.</p>
+      <div class="badge" data-i18n="hero.badge">SYSTEM PROTOCOL: ONE-CLICK RUN · MIT LICENSED · DIAL-UP SCALE</div>
+      <h1><span data-i18n="hero.title">The Ultimate WhatsApp</span><br><span class="gradient-text" data-i18n="hero.titleGradient">Matrix Gateway</span></h1>
+      <p class="subtitle" data-i18n="hero.subtitle">Connect your terminal to the global WhatsApp grid. MultiWA is the most complete, self-hosted, multi-engine broadcast matrix ever engineered. Zero sub-licensing fees required.</p>
       <div class="hero-actions">
         <a href="#quickstart" class="btn btn-primary btn-lg">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-          Quick Start
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          <span data-i18n="hero.quickstart">Initialize Setup</span>
         </a>
         <a href="https://github.com/ribato22/MultiWA" class="btn btn-outline btn-lg" target="_blank">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-          View on GitHub
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          <span data-i18n="hero.viewGithub">View Repository</span>
         </a>
       </div>
       <div class="hero-stats">
-        <div class="stat"><strong>19+</strong><span>GitHub Stars</span></div>
-        <div class="stat-divider"></div>
-        <div class="stat"><strong>MIT</strong><span>License</span></div>
-        <div class="stat-divider"></div>
-        <div class="stat"><strong>3</strong><span>SDKs</span></div>
-        <div class="stat-divider"></div>
-        <div class="stat"><strong>2</strong><span>Engines</span></div>
+        <div class="stat"><strong>19+</strong><span data-i18n="hero.stats.stars">G_Stars</span></div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat"><strong>MIT</strong><span data-i18n="hero.stats.license">Sovereign</span></div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat"><strong>3</strong><span data-i18n="hero.stats.sdks">Dev Kits</span></div>
+        <div class="stat-divider" aria-hidden="true"></div>
+        <div class="stat"><strong>2</strong><span data-i18n="hero.stats.engines">Engines</span></div>
       </div>
     </div>
   </section>
@@ -67,48 +74,48 @@
   <!-- Features -->
   <section id="features">
     <div class="container">
-      <h2 class="section-title">Everything You Need</h2>
-      <p class="section-sub">Enterprise-grade WhatsApp integration, without the enterprise price tag.</p>
+      <h2 class="section-title" data-i18n="features.title">System Core Modules</h2>
+      <p class="section-sub" data-i18n="features.sub">High-fidelity WhatsApp integration. Robust, sovereign, and MIT-licensed.</p>
       <div class="features-grid">
         <div class="feature-card">
-          <div class="feature-icon">📱</div>
-          <h3>Multi-Session</h3>
-          <p>Connect unlimited WhatsApp accounts through a single unified API.</p>
+          <div class="feature-icon" aria-hidden="true">🌐</div>
+          <h3 data-i18n="features.session.title">Multi-Node Matrix</h3>
+          <p data-i18n="features.session.desc">Connect unlimited WhatsApp accounts and synchronise terminals via a single unified API pipe.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🔌</div>
-          <h3>Multi-Engine</h3>
-          <p>Switch between whatsapp-web.js and Baileys adapters seamlessly.</p>
+          <div class="feature-icon" aria-hidden="true">⚡</div>
+          <h3 data-i18n="features.engine.title">Dual-Core Engines</h3>
+          <p data-i18n="features.engine.desc_landing">Toggle between whatsapp-web.js and Baileys backend adapters seamlessly with zero downtime.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">📢</div>
-          <h3>Broadcast</h3>
-          <p>Bulk messaging with templates, variables, and delivery tracking.</p>
+          <div class="feature-icon" aria-hidden="true">📟</div>
+          <h3 data-i18n="features.broadcast.title">Cyber Broadcasts</h3>
+          <p data-i18n="features.broadcast.desc">Deploy mass broadcast syndications with dynamic payload variables and live delivery metrics.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🤖</div>
-          <h3>AI Automation</h3>
-          <p>Visual flow builder with OpenAI and Google AI knowledge base.</p>
+          <div class="feature-icon" aria-hidden="true">🤖</div>
+          <h3 data-i18n="features.automation.title">Neural Flow Matrix</h3>
+          <p data-i18n="features.automation.desc">Visual drag-and-drop flow builder with native OpenAI and Google AI knowledge base integrations.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">📊</div>
-          <h3>Analytics</h3>
-          <p>Real-time dashboards with message volume, delivery rates, and more.</p>
+          <div class="feature-icon" aria-hidden="true">📈</div>
+          <h3 data-i18n="features.analytics.title">Telemetry Console</h3>
+          <p data-i18n="features.analytics.desc">Inspect real-time dashboards tracking message volume, routing queues, and system telemetry.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🔗</div>
-          <h3>Webhooks & SDKs</h3>
-          <p>Official TypeScript, Python, and PHP SDKs. Real-time webhooks.</p>
+          <div class="feature-icon" aria-hidden="true">💾</div>
+          <h3 data-i18n="features.sdks.title">Matrix SDKs</h3>
+          <p data-i18n="features.sdks.desc">Integrate with official TypeScript, Python, and PHP devkits. Real-time webhook events.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🐳</div>
-          <h3>Docker Ready</h3>
-          <p>One-command setup. Production-ready containers with health checks.</p>
+          <div class="feature-icon" aria-hidden="true">📦</div>
+          <h3 data-i18n="features.docker.title">One-Click Run</h3>
+          <p data-i18n="features.docker.desc">Instant node deployment using secure container nodes. One-command system orchestration.</p>
         </div>
         <div class="feature-card">
-          <div class="feature-icon">🛡️</div>
-          <h3>Enterprise Security</h3>
-          <p>JWT auth, rate limiting, encryption at rest, GDPR compliance.</p>
+          <div class="feature-icon" aria-hidden="true">🔑</div>
+          <h3 data-i18n="features.security.title">Terminal Security</h3>
+          <p data-i18n="features.security.desc">JWT handshake encryption, granular rate limiting, and encrypted session databases.</p>
         </div>
       </div>
     </div>
@@ -117,24 +124,36 @@
   <!-- Screenshots -->
   <section id="screenshots">
     <div class="container">
-      <h2 class="section-title">Beautiful Admin Dashboard</h2>
-      <p class="section-sub">Manage everything from a modern, intuitive interface.</p>
+      <h2 class="section-title" data-i18n="screenshots.title">MultiWA System Console</h2>
+      <p class="section-sub" data-i18n="screenshots.sub">Orchestrate your nodes, triggers, and pipelines from a high-fidelity control deck.</p>
       <div class="screenshots-grid">
-        <div class="screenshot-card">
+        <div class="screenshot-card" data-title="System Directory: Contacts_Manager.exe">
+          <div class="window-controls">
+            <span></span><span></span><span></span>
+          </div>
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/contacts.png" alt="Contacts" loading="lazy">
-          <span>Contacts</span>
+          <span class="window-label" data-i18n="screenshots.contacts">Contacts_Manager.exe</span>
         </div>
-        <div class="screenshot-card">
+        <div class="screenshot-card" data-title="System Directory: Automation_Matrix.exe">
+          <div class="window-controls">
+            <span></span><span></span><span></span>
+          </div>
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/automation.png" alt="Automation" loading="lazy">
-          <span>Automation</span>
+          <span class="window-label" data-i18n="screenshots.automation">Automation_Matrix.exe</span>
         </div>
-        <div class="screenshot-card">
+        <div class="screenshot-card" data-title="System Directory: Node_Profiles.exe">
+          <div class="window-controls">
+            <span></span><span></span><span></span>
+          </div>
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/profiles.png" alt="Profiles" loading="lazy">
-          <span>Profiles</span>
+          <span class="window-label" data-i18n="screenshots.profiles">Node_Profiles.exe</span>
         </div>
-        <div class="screenshot-card">
+        <div class="screenshot-card" data-title="System Directory: System_Configuration.exe">
+          <div class="window-controls">
+            <span></span><span></span><span></span>
+          </div>
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/docs/screenshots/settings.png" alt="Settings" loading="lazy">
-          <span>Settings</span>
+          <span class="window-label" data-i18n="screenshots.settings">System_Configuration.exe</span>
         </div>
       </div>
     </div>
@@ -143,21 +162,61 @@
   <!-- Comparison -->
   <section id="comparison">
     <div class="container">
-      <h2 class="section-title">Why MultiWA?</h2>
-      <p class="section-sub">See how we compare to alternatives.</p>
+      <h2 class="section-title" data-i18n="comparison.title">Mainframe System Audit</h2>
+      <p class="section-sub" data-i18n="comparison.sub">Inspect how our unified gateway stacks against legacy and commercial pipelines.</p>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Feature</th><th class="highlight">MultiWA</th><th>WhatsApp Cloud API</th><th>Evolution API</th></tr>
+            <tr>
+              <th data-i18n="comparison.th.feature">System Protocol</th>
+              <th class="highlight" data-i18n="comparison.th.multiwa">MultiWA.EXE</th>
+              <th data-i18n="comparison.th.cloud">Meta Cloud Hub</th>
+              <th data-i18n="comparison.th.evolution">Legacy Gateways</th>
+            </tr>
           </thead>
           <tbody>
-            <tr><td>Self-hosted</td><td class="highlight">✅ Full control</td><td>❌ Meta-hosted</td><td>✅</td></tr>
-            <tr><td>Multi-engine</td><td class="highlight">✅ 2 engines</td><td>❌ Single</td><td>❌ Fixed</td></tr>
-            <tr><td>Admin Dashboard</td><td class="highlight">✅ Full-featured</td><td>❌ None</td><td>⚠️ Basic</td></tr>
-            <tr><td>Visual Automation</td><td class="highlight">✅ Flow builder</td><td>❌</td><td>❌</td></tr>
-            <tr><td>AI Knowledge Base</td><td class="highlight">✅ OpenAI + Google</td><td>❌</td><td>❌</td></tr>
-            <tr><td>Official SDKs</td><td class="highlight">✅ TS, Python, PHP</td><td>✅ Multiple</td><td>⚠️ Community</td></tr>
-            <tr><td>Free</td><td class="highlight">✅ MIT License</td><td>⚠️ Per-message</td><td>✅</td></tr>
+            <tr>
+              <td data-i18n="comparison.row.selfhosted">Sovereignty</td>
+              <td class="highlight" data-i18n="comparison.row.selfhosted.multiwa">✅ Local Host Node</td>
+              <td data-i18n="comparison.row.selfhosted.cloud">❌ Remote Server Grid</td>
+              <td data-i18n="comparison.row.selfhosted.evolution">✅ Local Host</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.multiengine">Engine Modules</td>
+              <td class="highlight" data-i18n="comparison.row.multiengine.multiwa">✅ Dual-Core (2 Engines)</td>
+              <td data-i18n="comparison.row.multiengine.cloud">❌ Single Core</td>
+              <td data-i18n="comparison.row.multiengine.evolution">❌ Hardcoded Core</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.admin">Operator Dashboard</td>
+              <td class="highlight" data-i18n="comparison.row.admin.multiwa">✅ Desktop System GUI</td>
+              <td data-i18n="comparison.row.admin.cloud">❌ Headless Terminal Only</td>
+              <td data-i18n="comparison.row.admin.evolution">⚠️ Basic Console</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.visauto">Neural Automation</td>
+              <td class="highlight" data-i18n="comparison.row.visauto.multiwa">✅ Flow Matrix Builder</td>
+              <td data-i18n="comparison.row.visauto.cloud">❌</td>
+              <td data-i18n="comparison.row.visauto.evolution">❌</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.aikb">AI Knowledge Engine</td>
+              <td class="highlight" data-i18n="comparison.row.aikb.multiwa">✅ OpenAI + Google AI</td>
+              <td data-i18n="comparison.row.aikb.cloud">❌ Not Integrated</td>
+              <td data-i18n="comparison.row.aikb.evolution">❌ External Wrapper Only</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.sdk">Official SDKs</td>
+              <td class="highlight" data-i18n="comparison.row.sdk.multiwa">✅ TS, Python, PHP</td>
+              <td data-i18n="comparison.row.sdk.cloud">✅ Multi-Platform</td>
+              <td data-i18n="comparison.row.sdk.evolution">⚠️ Community Ports</td>
+            </tr>
+            <tr>
+              <td data-i18n="comparison.row.free">Maintenance Cost</td>
+              <td class="highlight" data-i18n="comparison.row.free.multiwa">✅ Free (MIT License)</td>
+              <td data-i18n="comparison.row.free.cloud">⚠️ Per-Message Tolls</td>
+              <td data-i18n="comparison.row.free.evolution">✅ Open Source</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -167,24 +226,24 @@
   <!-- Quick Start -->
   <section id="quickstart">
     <div class="container">
-      <h2 class="section-title">Get Started in Seconds</h2>
-      <p class="section-sub">Four commands. That's all it takes.</p>
+      <h2 class="section-title" data-i18n="quickstart.title">Bootstrap System Core</h2>
+      <p class="section-sub" data-i18n="quickstart.sub">Execute four commands in your console directory to deploy the mainframe.</p>
       <div class="code-block">
         <div class="code-header">
-          <div class="dots"><span></span><span></span><span></span></div>
-          <span>Terminal</span>
+          <div class="dots" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span data-i18n="quickstart.terminal">OPERATOR_SHELL.EXE — System Loader</span>
         </div>
-        <pre><code><span class="c"># Clone the repository</span>
+        <pre><code><span class="c" data-i18n="quickstart.comment.clone"># 1. Download system archive</span>
 git clone https://github.com/ribato22/MultiWA.git
 cd MultiWA
 
-<span class="c"># Configure and run</span>
+<span class="c" data-i18n="quickstart.comment.config"># 2. Configure environment manifest</span>
 cp .env.docker .env
 docker compose up -d
 
-<span class="c"># 🎉 Done! Access:</span>
-<span class="c"># Admin Dashboard → http://localhost:3001</span>
-<span class="c"># API Swagger     → http://localhost:3333/api/docs</span></code></pre>
+<span class="c" data-i18n="quickstart.comment.done"># 🎉 Core Initialised! Access terminal console:</span>
+<span class="c" data-i18n="quickstart.comment.admin"># Telemetry Desk  → http://localhost:3001</span>
+<span class="c" data-i18n="quickstart.comment.swagger"># API Swagger Doc  → http://localhost:3333/api/docs</span></code></pre>
       </div>
     </div>
   </section>
@@ -195,17 +254,368 @@ docker compose up -d
       <div class="footer-inner">
         <div class="footer-brand">
           <img src="https://raw.githubusercontent.com/ribato22/MultiWA/main/apps/admin/public/logo.png" alt="MultiWA" width="32" height="32">
-          <span>MultiWA</span>
+          <span data-i18n="app.name">MultiWA</span>
         </div>
         <div class="footer-links">
-          <a href="https://github.com/ribato22/MultiWA" target="_blank">GitHub</a>
-          <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank">Documentation</a>
-          <a href="https://github.com/ribato22/MultiWA/issues" target="_blank">Issues</a>
-          <a href="https://github.com/ribato22/MultiWA/blob/main/LICENSE" target="_blank">MIT License</a>
+          <a href="https://github.com/ribato22/MultiWA" target="_blank" data-i18n="footer.links.github">Repository Grid</a>
+          <a href="https://ribato22.github.io/MultiWA/docs/" target="_blank" data-i18n="footer.links.docs">Documentation Manual</a>
+          <a href="https://github.com/ribato22/MultiWA/issues" target="_blank" data-i18n="footer.links.issues">Bug Telemetry</a>
+          <a href="https://github.com/ribato22/MultiWA/blob/main/LICENSE" target="_blank" data-i18n="footer.links.license">MIT License Agreement</a>
         </div>
       </div>
-      <p class="copyright">Made with ❤️ by the MultiWA team</p>
+      <p class="copyright" data-i18n="footer.copyright">Matrix Interface crafted with care for the Y2K Millennium · MultiWA Protocol © 2000-2026</p>
     </div>
   </footer>
+
+  <script>
+    const translations = {
+      "en": {
+        "meta.title": "MultiWA — Open Source WhatsApp Business API Gateway",
+        "meta.description": "High-fidelity, open-source WhatsApp Business API gateway. Multi-engine, self-hosted, and sovereign. Deploy mass broadcasts and automate workflows.",
+        "meta.ogTitle": "MultiWA — Open Source WhatsApp API Gateway",
+        "meta.ogDescription": "Multi-engine, self-hosted WhatsApp Business API. Docker one-click setup.",
+        "app.name": "MultiWA",
+        "nav.features": "Features",
+        "nav.screenshots": "Console",
+        "nav.comparison": "Compare",
+        "nav.quickstart": "Quickstart",
+        "nav.docs": "Docs",
+        "nav.star": "Star on GitHub",
+        "hero.badge": "SYSTEM PROTOCOL: ONE-CLICK RUN · MIT LICENSED · DIAL-UP SCALE",
+        "hero.title": "The Ultimate WhatsApp",
+        "hero.titleGradient": "Matrix Gateway",
+        "hero.subtitle": "Connect your terminal to the global WhatsApp grid. MultiWA is the most complete, self-hosted, multi-engine broadcast matrix ever engineered. Zero sub-licensing fees required.",
+        "hero.quickstart": "Initialize Setup",
+        "hero.viewGithub": "View Repository",
+        "hero.stats.stars": "G_Stars",
+        "hero.stats.license": "Sovereign",
+        "hero.stats.sdks": "Dev Kits",
+        "hero.stats.engines": "Engines",
+        "features.title": "System Core Modules",
+        "features.sub": "High-fidelity WhatsApp integration. Robust, sovereign, and MIT-licensed.",
+        "features.session.title": "Multi-Node Matrix",
+        "features.session.desc": "Connect unlimited WhatsApp accounts and synchronise terminals via a single unified API pipe.",
+        "features.engine.title": "Dual-Core Engines",
+        "features.engine.desc_landing": "Toggle between whatsapp-web.js and Baileys backend adapters seamlessly with zero downtime.",
+        "features.broadcast.title": "Cyber Broadcasts",
+        "features.broadcast.desc": "Deploy mass broadcast syndications with dynamic payload variables and live delivery metrics.",
+        "features.automation.title": "Neural Flow Matrix",
+        "features.automation.desc": "Visual drag-and-drop flow builder with native OpenAI and Google AI knowledge base integrations.",
+        "features.analytics.title": "Telemetry Console",
+        "features.analytics.desc": "Inspect real-time dashboards tracking message volume, routing queues, and system telemetry.",
+        "features.sdks.title": "Matrix SDKs",
+        "features.sdks.desc": "Integrate with official TypeScript, Python, and PHP devkits. Real-time webhook events.",
+        "features.docker.title": "One-Click Run",
+        "features.docker.desc": "Instant node deployment using secure container nodes. One-command system orchestration.",
+        "features.security.title": "Terminal Security",
+        "features.security.desc": "JWT handshake encryption, granular rate limiting, and encrypted session databases.",
+        "screenshots.title": "MultiWA System Console",
+        "screenshots.sub": "Orchestrate your nodes, triggers, and pipelines from a high-fidelity control deck.",
+        "screenshots.contacts": "Contacts_Manager.exe",
+        "screenshots.automation": "Automation_Matrix.exe",
+        "screenshots.profiles": "Node_Profiles.exe",
+        "screenshots.settings": "System_Configuration.exe",
+        "comparison.title": "Mainframe System Audit",
+        "comparison.sub": "Inspect how our unified gateway stacks against legacy and commercial pipelines.",
+        "comparison.th.feature": "System Protocol",
+        "comparison.th.multiwa": "MultiWA.EXE",
+        "comparison.th.cloud": "Meta Cloud Hub",
+        "comparison.th.evolution": "Legacy Gateways",
+        "comparison.row.selfhosted": "Sovereignty",
+        "comparison.row.selfhosted.multiwa": "✅ Local Host Node",
+        "comparison.row.selfhosted.cloud": "❌ Remote Server Grid",
+        "comparison.row.selfhosted.evolution": "✅ Local Host",
+        "comparison.row.multiengine": "Engine Modules",
+        "comparison.row.multiengine.multiwa": "✅ Dual-Core (2 Engines)",
+        "comparison.row.multiengine.cloud": "❌ Single Core",
+        "comparison.row.multiengine.evolution": "❌ Hardcoded Core",
+        "comparison.row.admin": "Operator Dashboard",
+        "comparison.row.admin.multiwa": "✅ Desktop System GUI",
+        "comparison.row.admin.cloud": "❌ Headless Terminal Only",
+        "comparison.row.admin.evolution": "⚠️ Basic Console",
+        "comparison.row.visauto": "Neural Automation",
+        "comparison.row.visauto.multiwa": "✅ Flow Matrix Builder",
+        "comparison.row.visauto.cloud": "❌",
+        "comparison.row.visauto.evolution": "❌",
+        "comparison.row.aikb": "AI Knowledge Engine",
+        "comparison.row.aikb.multiwa": "✅ OpenAI + Google AI",
+        "comparison.row.aikb.cloud": "❌ Not Integrated",
+        "comparison.row.aikb.evolution": "❌ External Wrapper Only",
+        "comparison.row.sdk": "Official SDKs",
+        "comparison.row.sdk.multiwa": "✅ TS, Python, PHP",
+        "comparison.row.sdk.cloud": "✅ Multi-Platform",
+        "comparison.row.sdk.evolution": "⚠️ Community Ports",
+        "comparison.row.free": "Maintenance Cost",
+        "comparison.row.free.multiwa": "✅ Free (MIT License)",
+        "comparison.row.free.cloud": "⚠️ Per-Message Tolls",
+        "comparison.row.free.evolution": "✅ Open Source",
+        "quickstart.title": "Bootstrap System Core",
+        "quickstart.sub": "Execute four commands in your console directory to deploy the mainframe.",
+        "quickstart.terminal": "OPERATOR_SHELL.EXE — System Loader",
+        "quickstart.comment.clone": "# 1. Download system archive",
+        "quickstart.comment.config": "# 2. Configure environment manifest",
+        "quickstart.comment.done": "# 🎉 Core Initialised! Access terminal console:",
+        "quickstart.comment.admin": "# Telemetry Desk  → http://localhost:3001",
+        "quickstart.comment.swagger": "# API Swagger Doc  → http://localhost:3333/api/docs",
+        "footer.links.github": "Repository Grid",
+        "footer.links.docs": "Documentation Manual",
+        "footer.links.issues": "Bug Telemetry",
+        "footer.links.license": "MIT License Agreement",
+        "footer.copyright": "Matrix Interface crafted with care for the Y2K Millennium · MultiWA Protocol © 2000-2026"
+      },
+      "fa": {
+        "meta.title": "MultiWA — دروازه متن‌باز WhatsApp Business API",
+        "meta.description": "دروازه پیشرفته و متن‌باز WhatsApp Business API. چندموتوره، با میزبانی شخصی و حاکمیت کامل. ارسال پخش همگانی انبوه و خودکارسازی فرآیندها.",
+        "meta.ogTitle": "MultiWA — دروازه متن‌باز WhatsApp API",
+        "meta.ogDescription": "WhatsApp Business API چندموتوره با میزبانی شخصی. راه‌اندازی تک‌کلیک با داکر.",
+        "app.name": "MultiWA",
+        "nav.features": "ویژگی‌ها",
+        "nav.screenshots": "کنسول",
+        "nav.comparison": "مقایسه",
+        "nav.quickstart": "راه‌اندازی",
+        "nav.docs": "مستندات",
+        "nav.star": "ستاره در گیت‌هاب",
+        "hero.badge": "پروتکل سیستم: اجرای تک‌کلیک · مجوز MIT · مقیاس دایال‌آپ",
+        "hero.title": "نهایت دروازه واتس‌اپ",
+        "hero.titleGradient": "ماتریکس ارتباطات",
+        "hero.subtitle": "ترمینال خود را به شبکه جهانی واتس‌اپ متصل کنید. MultiWA مجهزترین ماتریکس پخش همگانی مستقل و چندموتوره است که تا کنون مهندسی شده. بدون نیاز به پرداخت هزینه‌های لایسنس جانبی.",
+        "hero.quickstart": "راه‌اندازی اولیه",
+        "hero.viewGithub": "مشاهده سورس‌کد",
+        "hero.stats.stars": "ستاره‌ها",
+        "hero.stats.license": "مستقل (سروین)",
+        "hero.stats.sdks": "کیت‌های توسعه",
+        "hero.stats.engines": "موتورها",
+        "features.title": "ماژول‌های هسته سیستم",
+        "features.sub": "یکپارچه‌سازی فوق‌پیشرفته واتس‌اپ. پایدار، مستقل و تحت لایسنس MIT.",
+        "features.session.title": "ماتریکس چندنشستی",
+        "features.session.desc": "اتصال بی‌نهایت حساب کاربری واتس‌اپ و همگام‌سازی ترمینال‌ها از طریق یک لوله API واحد.",
+        "features.engine.title": "موتورهای دوهسته‌ای",
+        "features.engine.desc_landing": "جابجایی روان بین آداپتورهای باطنی whatsapp-web.js و Baileys بدون هیچ‌گونه قطعی سیستم.",
+        "features.broadcast.title": "پخش همگانی سایبری",
+        "features.broadcast.desc": "ارسال انبوه پیام‌های گروهی با متغیرهای پویا و معیارهای زنده وضعیت تحویل.",
+        "features.automation.title": "طراح جریان عصبی",
+        "features.automation.desc": "سازنده جریان بصری کشیدن و رها کردن با ادغام محلی پایگاه دانش هوش مصنوعی OpenAI و گوگل.",
+        "features.analytics.title": "کنسول تله‌متری",
+        "features.analytics.desc": "بررسی زنده داشبوردهای ترافیک پیام، صف‌های روتینگ و تله‌متری سیستم.",
+        "features.sdks.title": "کیت‌های توسعه ماتریکس",
+        "features.sdks.desc": "ادغام آسان با SDKهای رسمی TypeScript، Python و PHP. وب‌هوک‌های آنی.",
+        "features.docker.title": "اجرای تک‌کلیک",
+        "features.docker.desc": "استقرار فوری نودها با استفاده از کانتینرهای ایمن. مدیریت و ارکستراسیون سیستم با یک دستور.",
+        "features.security.title": "امنیت ترمینال",
+        "features.security.desc": "رمزنگاری دست‌دهی با هدرهای JWT، محدودیت نرخ درخواست و پایگاه داده‌های رمزگذاری‌شده نشست‌ها.",
+        "screenshots.title": "کنسول مدیریت MultiWA",
+        "screenshots.sub": "نودها، تریگرها و لوله‌های خود را از روی یک میز فرمان فوق‌پیشرفته مدیریت کنید.",
+        "screenshots.contacts": "Contacts_Manager.exe",
+        "screenshots.automation": "Automation_Matrix.exe",
+        "screenshots.profiles": "Node_Profiles.exe",
+        "screenshots.settings": "System_Configuration.exe",
+        "comparison.title": "آزمون سیستم فریم‌ورک اصلی",
+        "comparison.sub": "مقایسه ماتریکس پیشرفته MultiWA با سیستم‌های قدیمی و تجاری تحت انحصار.",
+        "comparison.th.feature": "پروتکل سیستم",
+        "comparison.th.multiwa": "MultiWA.EXE",
+        "comparison.th.cloud": "Meta Cloud Hub",
+        "comparison.th.evolution": "دروازه‌های قدیمی",
+        "comparison.row.selfhosted": "حق حاکمیت",
+        "comparison.row.selfhosted.multiwa": "✅ نود میزبان محلی",
+        "comparison.row.selfhosted.cloud": "❌ شبکه سرور ابری",
+        "comparison.row.selfhosted.evolution": "✅ میزبان محلی",
+        "comparison.row.multiengine": "ماژول‌های موتور",
+        "comparison.row.multiengine.multiwa": "✅ دوهسته‌ای (۲ موتور)",
+        "comparison.row.multiengine.cloud": "❌ تک‌هسته‌ای",
+        "comparison.row.multiengine.evolution": "❌ موتور هاردکد",
+        "comparison.row.admin": "داشبورد اپراتور",
+        "comparison.row.admin.multiwa": "✅ رابط کاربری دسکتاپ",
+        "comparison.row.admin.cloud": "❌ فقط ترمینال بدون هد",
+        "comparison.row.admin.evolution": "⚠️ کنسول اولیه",
+        "comparison.row.visauto": "اتوماسیون بصری",
+        "comparison.row.visauto.multiwa": "✅ طراح جریان ماتریکس",
+        "comparison.row.visauto.cloud": "❌",
+        "comparison.row.visauto.evolution": "❌",
+        "comparison.row.aikb": "موتور دانش هوش مصنوعی",
+        "comparison.row.aikb.multiwa": "✅ OpenAI + گوگل",
+        "comparison.row.aikb.cloud": "❌ غیرمتصل",
+        "comparison.row.aikb.evolution": "❌ فقط رپر خارجی",
+        "comparison.row.sdk": "کیت‌های توسعه رسمی",
+        "comparison.row.sdk.multiwa": "✅ TS, Python, PHP",
+        "comparison.row.sdk.cloud": "✅ چندسکویی",
+        "comparison.row.sdk.evolution": "⚠️ پورت‌های غیررسمی",
+        "comparison.row.free": "هزینه‌های نگهداری",
+        "comparison.row.free.multiwa": "✅ رایگان (مجوز MIT)",
+        "comparison.row.free.cloud": "⚠️ باج هر پیام",
+        "comparison.row.free.evolution": "✅ متن‌باز",
+        "quickstart.title": "شروع سریع سیستم",
+        "quickstart.sub": "کافیست چهار دستور زیر را در خط فرمان اجرا کنید تا ماتریکس اصلی مستقر شود.",
+        "quickstart.terminal": "OPERATOR_SHELL.EXE — لودر سیستم",
+        "quickstart.comment.clone": "# ۱. دریافت آرشیو سیستم",
+        "quickstart.comment.config": "# ۲. پیکربندی مانیفست محیط",
+        "quickstart.comment.done": "# 🎉 سیستم آغاز به کار کرد! دسترسی به کنسول:",
+        "quickstart.comment.admin": "# کنسول تله‌متری  ← http://localhost:3001",
+        "quickstart.comment.swagger": "# مستندات API سوگر  ← http://localhost:3333/api/docs",
+        "footer.links.github": "شبکه مخزن",
+        "footer.links.docs": "مستندات راهنما",
+        "footer.links.issues": "تله‌متری باگ‌ها",
+        "footer.links.license": "موافقت‌نامه مجوز MIT",
+        "footer.copyright": "رابط کاربری ماتریکس با عشق برای هزاره Y2K طراحی شده است · پروتکل MultiWA © ۲۰۰۰-۲۰۲۶"
+      },
+      "id": {
+        "meta.title": "MultiWA — Gateway API WhatsApp Business Open Source",
+        "meta.description": "Gateway API WhatsApp Business open-source dengan ketelitian tinggi. Multi-engine, mandiri, dan berdaulat. Kirim siaran massal dan otomatisasi alur kerja.",
+        "meta.ogTitle": "MultiWA — Gateway API WhatsApp Open Source",
+        "meta.ogDescription": "Gateway API WhatsApp Business multi-engine, self-hosted. Setup satu klik dengan Docker.",
+        "app.name": "MultiWA",
+        "nav.features": "Fitur",
+        "nav.screenshots": "Konsol",
+        "nav.comparison": "Perbandingan",
+        "nav.quickstart": "Mulai",
+        "nav.docs": "Dokumentasi",
+        "nav.star": "Bintang di GitHub",
+        "hero.badge": "PROTOKOL SISTEM: SETUP SATU KLIK · LISENSI MIT · DIAL-UP SCALE",
+        "hero.title": "Nirwana WhatsApp",
+        "hero.titleGradient": "Matrix Gateway",
+        "hero.subtitle": "Hubungkan terminal Anda ke jaringan WhatsApp global. MultiWA adalah matriks siaran mandiri multi-engine terlengkap yang pernah dirancang. Tanpa biaya lisensi tambahan.",
+        "hero.quickstart": "Mulai Inisialisasi",
+        "hero.viewGithub": "Lihat Repositori",
+        "hero.stats.stars": "G_Stars",
+        "hero.stats.license": "Berdaulat",
+        "hero.stats.sdks": "Dev Kits",
+        "hero.stats.engines": "Engine",
+        "features.title": "Modul Inti Sistem",
+        "features.sub": "Integrasi WhatsApp presisi tinggi. Tangguh, mandiri, dan berlisensi MIT.",
+        "features.session.title": "Matriks Multi-Node",
+        "features.session.desc": "Hubungkan akun WhatsApp tanpa batas dan sinkronkan terminal melalui satu pipa API terpadu.",
+        "features.engine.title": "Engine Dual-Core",
+        "features.engine.desc_landing": "Beralih antara adapter whatsapp-web.js dan Baileys dengan mulus tanpa downtime.",
+        "features.broadcast.title": "Siaran Siber",
+        "features.broadcast.desc": "Kirim siaran massal dengan variabel dinamis dan metrik pengiriman waktu nyata.",
+        "features.automation.title": "Matriks Alur Neural",
+        "features.automation.desc": "Penyusun alur visual seret-dan-lepas dengan integrasi basis pengetahuan OpenAI dan Google AI bawaan.",
+        "features.analytics.title": "Konsol Telemetri",
+        "features.analytics.desc": "Pantau dasbor waktu nyata untuk volume pesan, antrean perutean, dan telemetri sistem.",
+        "features.sdks.title": "SDK Matriks",
+        "features.sdks.desc": "Integrasikan dengan SDK resmi TypeScript, Python, dan PHP. Webhook waktu nyata.",
+        "features.docker.title": "Mulai Satu Klik",
+        "features.docker.desc": "Penyebaran node instan menggunakan kontainer aman. Orkestrasi sistem dengan satu perintah.",
+        "features.security.title": "Keamanan Terminal",
+        "features.security.desc": "Enkripsi jabat tangan JWT, pembatasan akses granular, dan basis data sesi terenkripsi.",
+        "screenshots.title": "Konsol Sistem MultiWA",
+        "screenshots.sub": "Kelola node, pemicu, dan alur kerja Anda dari dek kontrol presisi tinggi.",
+        "screenshots.contacts": "Contacts_Manager.exe",
+        "screenshots.automation": "Automation_Matrix.exe",
+        "screenshots.profiles": "Node_Profiles.exe",
+        "screenshots.settings": "System_Configuration.exe",
+        "comparison.title": "Audit Sistem Mainframe",
+        "comparison.sub": "Bandingkan gateway MultiWA kami yang terintegrasi dengan alternatif komersial.",
+        "comparison.th.feature": "Protokol Sistem",
+        "comparison.th.multiwa": "MultiWA.EXE",
+        "comparison.th.cloud": "Meta Cloud Hub",
+        "comparison.th.evolution": "Gateway Usang",
+        "comparison.row.selfhosted": "Kedaulatan",
+        "comparison.row.selfhosted.multiwa": "✅ Node Host Lokal",
+        "comparison.row.selfhosted.cloud": "❌ Jaringan Server Awan",
+        "comparison.row.selfhosted.evolution": "✅ Host Lokal",
+        "comparison.row.multiengine": "Modul Engine",
+        "comparison.row.multiengine.multiwa": "✅ Dual-Core (2 Engine)",
+        "comparison.row.multiengine.cloud": "❌ Single Core",
+        "comparison.row.multiengine.evolution": "❌ Engine Hardcoded",
+        "comparison.row.admin": "Dasbor Operator",
+        "comparison.row.admin.multiwa": "✅ GUI Sistem Desktop",
+        "comparison.row.admin.cloud": "❌ Hanya Terminal Headless",
+        "comparison.row.admin.evolution": "⚠️ Konsol Dasar",
+        "comparison.row.visauto": "Otomatisasi Visual",
+        "comparison.row.visauto.multiwa": "✅ Pembuat Matriks Alur",
+        "comparison.row.visauto.cloud": "❌",
+        "comparison.row.visauto.evolution": "❌",
+        "comparison.row.aikb": "Engine Pengetahuan AI",
+        "comparison.row.aikb.multiwa": "✅ OpenAI + Google AI",
+        "comparison.row.aikb.cloud": "❌ Tidak Terdaftar",
+        "comparison.row.aikb.evolution": "❌ Hanya Pembungkus Eksternal",
+        "comparison.row.sdk": "SDK Resmi",
+        "comparison.row.sdk.multiwa": "✅ TS, Python, PHP",
+        "comparison.row.sdk.cloud": "✅ Multi-Platform",
+        "comparison.row.sdk.evolution": "⚠️ Port Komunitas",
+        "comparison.row.free": "Biaya Perawatan",
+        "comparison.row.free.multiwa": "✅ Gratis (Lisensi MIT)",
+        "comparison.row.free.cloud": "⚠️ Tarif Per Pesan",
+        "comparison.row.free.evolution": "✅ Open Source",
+        "quickstart.title": "Bootstrap Inti Sistem",
+        "quickstart.sub": "Jalankan empat perintah di direktori konsol Anda untuk menerapkan mainframe.",
+        "quickstart.terminal": "OPERATOR_SHELL.EXE — Pemuat Sistem",
+        "quickstart.comment.clone": "# 1. Unduh arsip sistem",
+        "quickstart.comment.config": "# 2. Konfigurasi manifes lingkungan",
+        "quickstart.comment.done": "# 🎉 Inti Sistem Aktif! Akses konsol terminal:",
+        "quickstart.comment.admin": "# Telemetry Desk  → http://localhost:3001",
+        "quickstart.comment.swagger": "# API Swagger Doc  → http://localhost:3333/api/docs",
+        "footer.links.github": "Kotak Repositori",
+        "footer.links.docs": "Panduan Dokumentasi",
+        "footer.links.issues": "Telemetri Bug",
+        "footer.links.license": "Perjanjian Lisensi MIT",
+        "footer.copyright": "Antarmuka Matriks dibuat dengan penuh perhatian untuk Milenium Y2K · Protokol MultiWA © 2000-2026"
+      }
+    };
+
+    const LANGUAGE_STORAGE_KEY = 'multiwa-admin-language';
+
+    function setLanguage(lang) {
+      if (!translations[lang]) lang = 'en';
+      
+      // Save
+      try {
+        localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+      } catch (e) {}
+
+      // Update html element dir and lang attributes
+      const htmlEl = document.documentElement;
+      htmlEl.setAttribute('lang', lang);
+      if (lang === 'fa') {
+        htmlEl.setAttribute('dir', 'rtl');
+      } else {
+        htmlEl.setAttribute('dir', 'ltr');
+      }
+
+      // Update elements
+      const elements = document.querySelectorAll('[data-i18n]');
+      elements.forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        const translation = translations[lang][key];
+        if (translation) {
+          // If translation contains HTML tags (e.g. <br>), use innerHTML, else textContent
+          if (translation.includes('<br>')) {
+            el.innerHTML = translation;
+          } else {
+            el.textContent = translation;
+          }
+        }
+      });
+
+      // Update document title and metas
+      document.title = translations[lang]['meta.title'];
+      const descMeta = document.querySelector('meta[name="description"]');
+      if (descMeta) descMeta.setAttribute('content', translations[lang]['meta.description']);
+      const ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle) ogTitle.setAttribute('content', translations[lang]['meta.ogTitle']);
+      const ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc) ogDesc.setAttribute('content', translations[lang]['meta.ogDescription']);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      let activeLang = 'en';
+      try {
+        const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+        if (stored === 'en' || stored === 'fa' || stored === 'id') {
+          activeLang = stored;
+        }
+      } catch (e) {}
+
+      const select = document.getElementById('lang-select');
+      if (select) {
+        select.value = activeLang;
+        select.addEventListener('change', (e) => {
+          setLanguage(e.target.value);
+        });
+      }
+
+      setLanguage(activeLang);
+    });
+  </script>
 </body>
 </html>

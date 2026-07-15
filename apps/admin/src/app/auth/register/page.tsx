@@ -8,8 +8,10 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, Loader2, UserPlus } from 'lucide-react';
+import { useI18n } from '@/lib/i18n/provider';
 
 export default function RegisterPage() {
+  const { t } = useI18n();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -37,7 +39,7 @@ export default function RegisterPage() {
       const result = await res.json();
 
       if (!res.ok) {
-        throw new Error(result.message || 'Registration failed');
+        throw new Error(result.message || t('auth.register.error'));
       }
 
       // Store tokens and redirect
@@ -77,10 +79,10 @@ export default function RegisterPage() {
         {/* Card */}
         <div className="bg-card rounded-3xl p-8 shadow-2xl shadow-black/40 border border-border">
           <h1 className="text-2xl font-bold text-foreground mb-2">
-            Create your account
+            {t('auth.register.title')}
           </h1>
           <p className="text-muted-foreground mb-8">
-            Get started with MultiWA
+            {t('auth.register.subtitle')}
           </p>
 
           {error && (
@@ -96,7 +98,7 @@ export default function RegisterPage() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label htmlFor="organizationName" className="block text-sm font-medium text-foreground mb-2">
-                Organization name
+                {t('auth.register.orgName')}
               </label>
               <input
                 id="organizationName"
@@ -111,7 +113,7 @@ export default function RegisterPage() {
 
             <div>
               <label htmlFor="name" className="block text-sm font-medium text-foreground mb-2">
-                Full name
+                {t('auth.register.fullName')}
               </label>
               <input
                 id="name"
@@ -126,7 +128,7 @@ export default function RegisterPage() {
 
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-foreground mb-2">
-                Email address
+                {t('auth.register.email')}
               </label>
               <input
                 id="email"
@@ -141,7 +143,7 @@ export default function RegisterPage() {
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-foreground mb-2">
-                Password
+                {t('auth.register.password')}
               </label>
               <input
                 id="password"
@@ -154,7 +156,7 @@ export default function RegisterPage() {
                 placeholder="••••••••"
               />
               <p className="mt-1.5 text-xs text-muted-foreground">
-                Minimum 8 characters
+                {t('auth.register.passwordHint')}
               </p>
             </div>
 
@@ -166,28 +168,28 @@ export default function RegisterPage() {
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
                   <Loader2 className="w-5 h-5 mw-spin" aria-hidden="true" />
-                  Creating account...
+                  {t('auth.register.creatingAccount')}
                 </span>
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   <UserPlus className="w-5 h-5" aria-hidden="true" />
-                  Create account
+                  {t('auth.register.createAccount')}
                 </span>
               )}
             </button>
 
             <p className="text-xs text-center text-muted-foreground">
-              By creating an account, you agree to our{' '}
-              <a href="#" className="text-primary hover:underline">Terms</a> and{' '}
-              <a href="#" className="text-primary hover:underline">Privacy Policy</a>
+              {t('auth.register.terms')}{' '}
+              <a href="#" className="text-primary hover:underline">{t('auth.register.termsLink')}</a> {t('auth.register.and')}{' '}
+              <a href="#" className="text-primary hover:underline">{t('auth.register.privacyLink')}</a>
             </p>
           </form>
         </div>
 
         <p className="text-center mt-6 text-muted-foreground">
-          Already have an account?{' '}
+          {t('auth.register.haveAccount')}{' '}
           <Link href="/auth/login" className="text-primary hover:text-primary/80 font-medium">
-            Sign in
+            {t('auth.register.signIn')}
           </Link>
         </p>
       </div>

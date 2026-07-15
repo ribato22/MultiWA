@@ -48,7 +48,7 @@ export class WorkerWebhookDispatcherService implements OnModuleInit {
       const messageId: string | undefined = payload?.id ?? payload?.messageId;
 
       await Promise.all(
-        webhooks.map((webhook) =>
+        webhooks.map((webhook: { id: string }) =>
           this.webhookQueue.add(
             'deliver',
             { webhookId: webhook.id, event, payload },

@@ -5,7 +5,6 @@ import {
   Toast,
   ToastClose,
   ToastDescription,
-  ToastProvider,
   ToastTitle,
   ToastViewport,
 } from "@/components/ui/toast"
@@ -13,12 +12,14 @@ import {
 export function Toaster() {
   const { toasts } = useToast()
 
+  if (toasts.length === 0) return null
+
   return (
-    <ToastProvider>
+    <ToastViewport>
       {toasts.map(function ({ id, title, description, action, ...props }) {
         return (
           <Toast key={id} {...props}>
-            <div className="grid gap-1">
+            <div className="grid gap-1" role="status" aria-live="polite" aria-atomic="true">
               {title && <ToastTitle>{title}</ToastTitle>}
               {description && (
                 <ToastDescription>{description}</ToastDescription>
@@ -29,7 +30,6 @@ export function Toaster() {
           </Toast>
         )
       })}
-      <ToastViewport />
-    </ToastProvider>
+    </ToastViewport>
   )
 }

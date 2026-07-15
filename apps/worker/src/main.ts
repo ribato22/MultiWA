@@ -3,7 +3,7 @@ import 'reflect-metadata'; // MUST be first — required for NestJS DI decorator
 import { Worker, Queue } from 'bullmq';
 import Redis from 'ioredis';
 import pino from 'pino';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@multiwa/database';
 import { NestFactory } from '@nestjs/core';
 import type { INestApplicationContext } from '@nestjs/common';
 import { WorkerEngineModule } from './engine/worker-engine.module';
@@ -30,9 +30,6 @@ const logger = pino(
         },
       },
 );
-
-const prisma = new PrismaClient();
-
 // Redis connection
 const connection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
   maxRetriesPerRequest: null,

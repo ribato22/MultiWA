@@ -17,11 +17,13 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
+import { useI18n } from '@/lib/i18n/provider';
 import { api } from '@/lib/api';
 
 type TabKey = 'typebot' | 'chatwoot';
 
 export default function IntegrationsPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<TabKey>('typebot');
   const [loading, setLoading] = useState(true);
@@ -201,10 +203,10 @@ export default function IntegrationsPage() {
           <span className="w-10 h-10 rounded-xl bg-primary/15 text-primary flex items-center justify-center">
             <Plug className="w-5 h-5" aria-hidden="true" />
           </span>
-          Integrations
+          {t('integrations.title')}
         </h1>
         <p className="text-muted-foreground mt-1">
-          Connect third-party services to extend your WhatsApp gateway
+          {t('integrations.subtitle')}
         </p>
       </div>
 

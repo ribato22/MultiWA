@@ -63,6 +63,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useI18n } from '@/lib/i18n/provider';
 
 // Trigger types
 type TriggerDef = { value: string; label: string; Icon: LucideIcon; tone: string; description: string };
@@ -93,6 +94,7 @@ const ACTION_TYPES: ActionDef[] = [
 ];
 
 export default function AutomationPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [automations, setAutomations] = useState<Automation[]>([]);
@@ -324,8 +326,8 @@ export default function AutomationPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Automation</h1>
-          <p className="text-muted-foreground mt-1">Create automated responses and workflows</p>
+          <h1 className="text-2xl font-bold text-foreground">{t('automation.title')}</h1>
+          <p className="text-muted-foreground mt-1">{t('automation.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
           <Link href="/dashboard/automation/builder">

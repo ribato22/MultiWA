@@ -1,8 +1,6 @@
 // apps/worker/src/processors/message.processor.ts
 import { Job } from 'bullmq';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '@multiwa/database';
 
 export interface MessageJob {
   profileId: string;

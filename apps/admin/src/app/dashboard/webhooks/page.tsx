@@ -53,6 +53,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useI18n } from '@/lib/i18n/provider';
 
 // Available webhook events
 type WebhookEvent = { value: string; label: string; Icon: LucideIcon; tone: string };
@@ -67,6 +68,7 @@ const WEBHOOK_EVENTS: WebhookEvent[] = [
 ];
 
 export default function WebhooksPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
@@ -261,9 +263,9 @@ export default function WebhooksPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Webhooks</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t('webhooks.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Receive real-time notifications for events
+            {t('webhooks.subtitle')}
           </p>
         </div>
         <Button

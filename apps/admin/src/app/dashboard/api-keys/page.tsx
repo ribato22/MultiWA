@@ -47,6 +47,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useI18n } from '@/lib/i18n/provider';
 
 // API Key type
 interface ApiKey {
@@ -73,6 +74,7 @@ const PERMISSIONS = [
 ];
 
 export default function ApiKeysPage() {
+  const { t } = useI18n();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -205,9 +207,9 @@ export default function ApiKeysPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">API Keys</h1>
+          <h1 className="text-2xl font-bold text-foreground">{t('apiKeys.title')}</h1>
           <p className="text-muted-foreground mt-1">
-            Manage API keys for external integrations
+            {t('apiKeys.subtitle')}
           </p>
         </div>
         <Button

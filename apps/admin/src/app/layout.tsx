@@ -2,13 +2,17 @@
 // apps/admin/src/app/layout.tsx
 
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
+import { Lalezar } from 'next/font/google';
 import { Toaster } from '@/components/ui/toaster';
+import { I18nProvider } from '@/lib/i18n/provider';
 import './globals.css';
 
-const inter = Inter({ 
-  subsets: ['latin'],
-  variable: '--font-inter',
+// Lalezar supports Latin + Arabic script, covering English, Farsi, and
+// Arabic content across the app (see .kiro/specs/app-redesign-i18n-rtl).
+const lalezar = Lalezar({
+  subsets: ['latin', 'arabic'],
+  weight: '400',
+  variable: '--font-lalezar',
 });
 
 export const metadata: Metadata = {
@@ -35,9 +39,9 @@ export default function RootLayout({
     // (Dark Mode OLED). Tailwind's darkMode: "class" wiring is in
     // tailwind.config.js, so the `.dark` CSS variables in globals.css become
     // active here.
-    <html lang="en" className="dark" suppressHydrationWarning>
-      <body className={`${inter.variable} font-sans antialiased bg-background text-foreground min-h-screen`}>
-        {children}
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${lalezar.variable} font-sans antialiased bg-background text-foreground min-h-screen`}>
+        <I18nProvider>{children}</I18nProvider>
         <Toaster />
       </body>
     </html>

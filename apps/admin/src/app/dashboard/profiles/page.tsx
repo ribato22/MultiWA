@@ -11,8 +11,10 @@ import { ProfileCard, ProfileGrid } from '@/components/ui/profile-card';
 import { Button } from '@/components/ui/button';
 import { EmptyProfiles } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useI18n } from '@/lib/i18n/provider';
 
 export default function ProfilesPage() {
+  const { t } = useI18n();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -88,10 +90,10 @@ export default function ProfilesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">
-            Profiles
+            {t('profiles.title')}
           </h1>
           <p className="text-muted-foreground mt-1">
-            Manage your WhatsApp devices and connections
+            {t('profiles.subtitle')}
           </p>
         </div>
         <div className="flex items-center gap-3">

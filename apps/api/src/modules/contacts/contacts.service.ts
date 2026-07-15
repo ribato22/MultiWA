@@ -30,7 +30,9 @@ export class ContactsService {
         data: {
           name: dto.name || existing.name,
           tags: dto.tags ? [...new Set([...existing.tags, ...dto.tags])] : existing.tags,
-          metadata: dto.metadata ? { ...existing.metadata as any, ...dto.metadata } : existing.metadata,
+          metadata: dto.metadata
+            ? this.mergeContactMetadata(existing.metadata as Record<string, unknown> | null, dto.metadata)
+            : existing.metadata,
         },
       });
     }
@@ -89,11 +91,21 @@ export class ContactsService {
 
   // Update contact
   async update(id: string, dto: UpdateContactDto) {
+    const existingContact = await prisma.contact.findUnique({ where: { id } });
     await this.findOne(id);
     return prisma.contact.update({
       where: { id },
-      data: dto,
+      data: {
+        ...dto,
+        metadata: dto.metadata 
+          ? this.mergeContactMetadata(existingContact?.metadata as Record<string, unknown> | null, dto.metadata)
+          : existingContact?.metadata,
+      },
     });
+  }
+
+  private mergeContactMetadata(existing: Record<string, unknown> | null, updates: Record<string, unknown>) {
+    return { ...(existing || {}), ...updates };
   }
 
   // Delete contact
@@ -183,11 +195,11 @@ export class ContactsService {
   // Bulk import contacts (JSON)
   async bulkImport(dto: ImportContactsDto) {
     const results = { created: 0, updated: 0, failed: 0, errors: [] as string[] };
-    
+
     for (const contact of dto.contacts) {
       try {
         const phone = this.normalizePhone(contact.phone);
-        
+
         const existing = await prisma.contact.findFirst({
           where: { profileId: dto.profileId, phone },
         });
@@ -198,6 +210,10 @@ export class ContactsService {
             data: {
               name: contact.name || existing.name,
               tags: contact.tags ? [...new Set([...existing.tags, ...contact.tags])] : existing.tags,
+              metadata: this.mergeContactMetadata(
+                existing.metadata as Record<string, unknown> | null,
+                contact.metadata,
+              ),
             },
           });
           results.updated++;
@@ -208,45 +224,49 @@ export class ContactsService {
               phone,
               name: contact.name,
               tags: contact.tags || [],
-              metadata: {},
+              metadata: this.mergeContactMetadata(undefined, contact.metadata),
             },
           });
           results.created++;
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         results.failed++;
-        results.errors.push(`${contact.phone}: ${error.message}`);
+        const message = error instanceof Error ? error.message : 'Import failed';
+        results.errors.push(`${contact.phone}: ${message}`);
       }
     }
 
     return results;
   }
 
-  // Import from CSV string
   async importFromCsv(dto: ImportCsvDto) {
     const results = { created: 0, updated: 0, failed: 0, errors: [] as string[] };
-    
-    // Parse CSV
-    const lines = dto.csvData.trim().split('\n');
-    const header = lines[0].toLowerCase().split(',').map(h => h.trim());
-    
-    // Find column indices
-    const phoneIdx = header.findIndex(h => ['phone', 'nomor', 'number', 'whatsapp', 'hp'].includes(h));
-    const nameIdx = header.findIndex(h => ['name', 'nama'].includes(h));
-    const tagsIdx = header.findIndex(h => ['tags', 'tag', 'label'].includes(h));
-    
-    if (phoneIdx === -1) {
-      return { error: 'CSV must have a "phone" column', ...results };
+
+    const lines = dto.csvData.trim().split(/\r?\n/).filter(line => line.trim());
+    if (!lines.length) {
+      return { error: 'CSV data is empty', ...results };
     }
 
-    // Process rows
+    const delimiter = this.detectImportDelimiter(lines[0]);
+    const header = lines[0].toLowerCase().split(delimiter).map(h => h.trim().replace(/^"|"$/g, ''));
+
+    const phoneIdx = header.findIndex(h => ['phone', 'nomor', 'number', 'whatsapp', 'hp', 'tel', 'mobile'].includes(h));
+    const nameIdx = header.findIndex(h => ['name', 'nama', 'contact'].includes(h));
+    const tagsIdx = header.findIndex(h => ['tags', 'tag', 'label', 'labels'].includes(h));
+    const metadataIdx = header.findIndex(h => ['metadata', 'meta', 'json'].includes(h));
+    const primaryTagIdx = header.findIndex(h => ['primarytag', 'primary_tag', 'primary tag'].includes(h));
+
+    if (phoneIdx === -1) {
+      return { error: 'Import must have a "phone" column', ...results };
+    }
+
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      
-      const cols = this.parseCsvLine(line);
+
+      const cols = this.parseDelimitedLine(line, delimiter);
       const phone = cols[phoneIdx];
-      
+
       if (!phone) {
         results.failed++;
         results.errors.push(`Row ${i + 1}: Empty phone number`);
@@ -256,9 +276,15 @@ export class ContactsService {
       try {
         const normalized = this.normalizePhone(phone);
         const name = nameIdx >= 0 ? cols[nameIdx] : undefined;
-        const tags = tagsIdx >= 0 && cols[tagsIdx] 
-          ? cols[tagsIdx].split(';').map(t => t.trim()).filter(Boolean)
-          : [];
+        const tags =
+          tagsIdx >= 0 && cols[tagsIdx]
+            ? cols[tagsIdx].split(/[;,]/).map(t => t.trim()).filter(Boolean)
+            : [];
+        let rowMetadata =
+          this.parseImportMetadataField(metadataIdx >= 0 ? cols[metadataIdx] : undefined) ?? {};
+        if (primaryTagIdx >= 0 && cols[primaryTagIdx]?.trim()) {
+          rowMetadata = { ...rowMetadata, primaryTag: cols[primaryTagIdx].trim() };
+        }
 
         const existing = await prisma.contact.findFirst({
           where: { profileId: dto.profileId, phone: normalized },
@@ -270,6 +296,10 @@ export class ContactsService {
             data: {
               name: name || existing.name,
               tags: [...new Set([...existing.tags, ...tags])],
+              metadata: this.mergeContactMetadata(
+                existing.metadata as Record<string, unknown> | null,
+                rowMetadata,
+              ),
             },
           });
           results.updated++;
@@ -280,14 +310,15 @@ export class ContactsService {
               phone: normalized,
               name,
               tags,
-              metadata: {},
+              metadata: this.mergeContactMetadata(undefined, rowMetadata),
             },
           });
           results.created++;
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         results.failed++;
-        results.errors.push(`Row ${i + 1}: ${error.message}`);
+        const message = error instanceof Error ? error.message : 'Import failed';
+        results.errors.push(`Row ${i + 1}: ${message}`);
       }
     }
 
@@ -383,6 +414,79 @@ export class ContactsService {
     };
   }
 
+  private mergeContactMetadata(
+    existing: Record<string, unknown> | null | undefined,
+    incoming?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const base =
+      existing && typeof existing === 'object' && !Array.isArray(existing)
+        ? { ...existing }
+        : {};
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+      return base;
+    }
+
+    const merged: Record<string, unknown> = { ...base, ...incoming };
+    const existingColors =
+      base.tagColors && typeof base.tagColors === 'object' && !Array.isArray(base.tagColors)
+        ? (base.tagColors as Record<string, string>)
+        : {};
+    const incomingColors =
+      incoming.tagColors && typeof incoming.tagColors === 'object' && !Array.isArray(incoming.tagColors)
+        ? (incoming.tagColors as Record<string, string>)
+        : {};
+    if (Object.keys(existingColors).length || Object.keys(incomingColors).length) {
+      merged.tagColors = { ...existingColors, ...incomingColors };
+    }
+    const primary = incoming.primaryTag;
+    if (primary !== undefined && primary !== null && String(primary).trim()) {
+      merged.primaryTag = String(primary).trim();
+    }
+    return merged;
+  }
+  private parseImportMetadataField(raw?: string): Record<string, unknown> | undefined {
+    if (!raw?.trim()) return undefined;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  private detectImportDelimiter(headerLine: string): ',' | '\t' | ';' {
+    const counts: Record<',' | '\t' | ';', number> = {
+      ',': (headerLine.match(/,/g) || []).length,
+      '\t': (headerLine.match(/\t/g) || []).length,
+      ';': (headerLine.match(/;/g) || []).length,
+    };
+    if (counts['\t'] >= counts[','] && counts['\t'] >= counts[';'] && counts['\t'] > 0) return '\t';
+    if (counts[';'] > counts[',']) return ';';
+    return ',';
+  }
+
+  private parseDelimitedLine(line: string, delimiter: ',' | '\t' | ';'): string[] {
+    if (delimiter === ',') {
+      return this.parseCsvLine(line);
+    }
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === delimiter && !inQuotes) {
+        result.push(current.trim().replace(/^"|"$/g, ''));
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim().replace(/^"|"$/g, ''));
+    return result;
+  }
   // Save a number into the WhatsApp ACCOUNT's addressbook (whatsapp-web.js only).
   // Unlike create()/import (MultiWA DB only), this writes to WhatsApp itself, so an
   // "unknown" number becomes a known contact — which WhatsApp treats more leniently.

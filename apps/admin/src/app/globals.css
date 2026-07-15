@@ -92,6 +92,23 @@
     --chart-4: 280 70% 65%;
     --chart-5: 340 80% 62%;
   }
+
+  :root {
+    /* Astryx spacing scale — design-system/multiwa-admin/MASTER.md */
+    --space-xs: 0.25rem;   /* 4px */
+    --space-sm: 0.5rem;    /* 8px */
+    --space-md: 1rem;      /* 16px */
+    --space-lg: 1.5rem;    /* 24px */
+    --space-xl: 2rem;      /* 32px */
+    --space-2xl: 3rem;     /* 48px */
+    --space-3xl: 4rem;     /* 64px */
+
+    /* Astryx shadow depths (dark-mode tuned) */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.32);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.36);
+    --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.4);
+  }
 }
 
 @layer base {
@@ -169,6 +186,15 @@
   to { transform: translateX(0); opacity: 1; }
 }
 
+[dir='rtl'] .animate-slide-in-right {
+  animation-name: slide-in-left;
+}
+
+@keyframes slide-in-left {
+  from { transform: translateX(-20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
 .animate-slide-in-right {
   animation: slide-in-right 0.3s ease-out;
 }
@@ -237,13 +263,28 @@
   box-shadow: 0 10px 40px -10px hsl(var(--primary) / 0.15);
 }
 
-/* Message Bubbles */
+/* Message Bubbles — sent bubbles tuck their tail toward the inline-end
+ * corner (right in LTR, left in RTL); received toward inline-start. Tailwind
+ * doesn't expose logical rounded-corner utilities, so we set the physical
+ * corner radius directly and flip it under [dir=rtl]. */
 .message-sent {
-  @apply bg-primary text-primary-foreground rounded-2xl rounded-br-sm;
+  @apply bg-primary text-primary-foreground rounded-2xl;
+  border-bottom-right-radius: 0.25rem;
+}
+
+[dir='rtl'] .message-sent {
+  border-bottom-right-radius: 1rem;
+  border-bottom-left-radius: 0.25rem;
 }
 
 .message-received {
-  @apply bg-secondary text-secondary-foreground rounded-2xl rounded-bl-sm;
+  @apply bg-secondary text-secondary-foreground rounded-2xl;
+  border-bottom-left-radius: 0.25rem;
+}
+
+[dir='rtl'] .message-received {
+  border-bottom-left-radius: 1rem;
+  border-bottom-right-radius: 0.25rem;
 }
 
 /* Scrollbar Styling */
@@ -283,12 +324,17 @@
   min-width: 36px;
 }
 
-/* Mobile Sidebar Toggle */
+/* Mobile Sidebar Toggle — slides off along the inline-start edge so it
+ * mirrors correctly under dir="rtl" (off to the right instead of the left). */
 @media (max-width: 768px) {
   .sidebar-mobile-hidden {
     transform: translateX(-100%);
   }
-  
+
+  [dir='rtl'] .sidebar-mobile-hidden {
+    transform: translateX(100%);
+  }
+
   .sidebar-mobile-visible {
     transform: translateX(0);
   }
@@ -299,8 +345,7 @@
   .bottom-sheet {
     position: fixed;
     bottom: 0;
-    left: 0;
-    right: 0;
+    inset-inline: 0;
     border-radius: 24px 24px 0 0;
     animation: slide-up-sheet 0.3s ease-out;
   }
@@ -406,25 +451,37 @@
    WHATSAPP CHAT ENHANCEMENTS
    ============================================ */
 
-/* Chat bubble tail */
+/* Chat bubble tail — anchored to the inline-end edge for sent bubbles and
+ * inline-start for received. The border-color pair is swapped under
+ * [dir=rtl] so the tail still points the correct direction when mirrored. */
 .bubble-tail-sent::after {
   content: '';
   position: absolute;
-  right: -8px;
+  inset-inline-end: -8px;
   bottom: 0;
   border: 8px solid transparent;
   border-left-color: hsl(var(--primary));
   border-bottom-color: hsl(var(--primary));
 }
 
+[dir='rtl'] .bubble-tail-sent::after {
+  border-left-color: transparent;
+  border-right-color: hsl(var(--primary));
+}
+
 .bubble-tail-received::after {
   content: '';
   position: absolute;
-  left: -8px;
+  inset-inline-start: -8px;
   bottom: 0;
   border: 8px solid transparent;
   border-right-color: hsl(var(--secondary));
   border-bottom-color: hsl(var(--secondary));
+}
+
+[dir='rtl'] .bubble-tail-received::after {
+  border-right-color: transparent;
+  border-left-color: hsl(var(--secondary));
 }
 
 /* Message status colors */

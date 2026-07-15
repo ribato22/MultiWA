@@ -1,0 +1,372 @@
+{
+  "pbtResults": {
+    "1. Write bug condition exploration test": {
+      "status": "unexpected_pass",
+      "failingExample": "The bug condition exploration test passed unexpectedly (all 16 tests pass). This indicates the code has already been fixed for all seven bug conditions:\n\nC1.1: Translation catalog has full fa/ar coverage - dashboard.welcome translates correctly\nC1.2: languageToDir('fa') returns 'rtl' correctly \nC1.3: Tailwind config references 'var(--font-lalezar)' as primary font\nC1.4: TagInput component renders with data-testid=\"tag-input\"\nC1.5: ColorPicker renders with data-testid=\"color-picker\", ColorFilter with data-testid=\"color-filter\"\nC1.6: No @radix-ui references found in UI button component\nC1.7: Arabic ('ar') is in LANGUAGE_OPTIONS, isLanguage('ar')===true, isLanguage('id')===false\n\nThe test was expected to FAIL on unfixed code to confirm the bugs exist, but since all seven deficiencies appear to have already been resolved in the codebase, the test passes.",
+      "lastRunTimestamp": 1783958332202
+    },
+    "2. Write preservation property tests (BEFORE implementing fix)": {
+      "status": "passed",
+      "lastRunTimestamp": 1783958649825
+    }
+  },
+  "executionHistory": {
+    "1. Write bug condition exploration test": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133657
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998241
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783958010996
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783958422294
+      }
+    ],
+    "2. Write preservation property tests (BEFORE implementing fix)": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133707
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998284
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783958432861
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783958670715
+      }
+    ],
+    "3.1 Expand translation catalogs from ~35 keys to full coverage (~300+ keys)": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133743
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998330
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783958680510
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783962635419
+      }
+    ],
+    "3.2 Replace Indonesian with Arabic language support": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133790
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998366
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783962652363
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783962783390
+      }
+    ],
+    "3.3 Replace all hardcoded English strings in component JSX with `t()` calls": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133840
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998400
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783962803339
+      }
+    ],
+    "4.1 Replace physical CSS properties with logical equivalents": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133876
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998440
+      }
+    ],
+    "4.2 Fix sidebar and navigation RTL behavior": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133926
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998490
+      }
+    ],
+    "4.3 Fix chat bubbles and directional components": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606133963
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998528
+      }
+    ],
+    "4.4 Add RTL-aware animation keyframes": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134001
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998563
+      }
+    ],
+    "5.1 Replace Inter font with Lalezar": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134040
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998600
+      }
+    ],
+    "6.1 Create TagInput component with autocomplete": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134071
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998635
+      }
+    ],
+    "6.2 Create TagChip component with edit/remove": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134104
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998688
+      }
+    ],
+    "6.3 Create ColorPicker component for contact color assignment": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134139
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998725
+      }
+    ],
+    "6.4 Create ColorFilter component for contact list filtering": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134211
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998762
+      }
+    ],
+    "6.5 Integrate tag and color components into Contacts page": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134248
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998796
+      }
+    ],
+    "7.1 Create Astryx base components (Button, Input, Card)": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134285
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998835
+      }
+    ],
+    "7.2 Create Astryx interactive components (Dialog, Select, DropdownMenu, Tabs)": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134321
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998870
+      }
+    ],
+    "7.3 Create Astryx form and feedback components (Checkbox, Switch, Toast, Badge, Avatar)": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134354
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998900
+      }
+    ],
+    "7.4 Create Astryx data components (Table, AlertDialog, Skeleton)": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134390
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998932
+      }
+    ],
+    "7.5 Remove Radix UI dependencies": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134424
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957998971
+      }
+    ],
+    "7.6 Apply Astryx design consistently across all pages": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134471
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957999002
+      }
+    ],
+    "8.1 Update CSS variables and color palette": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134504
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957999032
+      }
+    ],
+    "8.2 Update Tailwind config for new design tokens": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134543
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957999064
+      }
+    ],
+    "9.1 Verify bug condition exploration test now passes": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134600
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957999110
+      }
+    ],
+    "9.2 Verify preservation tests still pass": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134631
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957999140
+      }
+    ],
+    "10. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "fd45253f-0079-4f9c-b96e-90dfc87f8206",
+        "chatSessionId": "sess_08d0399c-a961-4b36-8757-56f108cc48de",
+        "timestamp": 1783606134664
+      },
+      {
+        "executionId": "9dd9520c-94bb-45f4-ac56-4c38be404426",
+        "chatSessionId": "sess_71ceb70b-0fcf-4792-9f23-59eca36694b8",
+        "timestamp": 1783957999170
+      }
+    ]
+  }
+}

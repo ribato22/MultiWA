@@ -3,7 +3,11 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { UnauthorizedException, ConflictException, BadRequestException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import { AuthService } from './auth.service';
+import { TwoFactorService } from './two-factor.service';
+import { SessionsService } from './sessions.service';
 
 // Mock Prisma — factory creates fresh mock functions
 vi.mock('@multiwa/database', () => ({
@@ -28,7 +32,46 @@ vi.mock('@multiwa/database', () => ({
 }));
 
 import { prisma } from '@multiwa/database';
-import { AuthService } from './auth.service';
+
+/** User fields used by AuthService mocks — no @prisma/client dependency. */
+interface TestUser {
+  id: string;
+  organizationId: string;
+  email: string;
+  passwordHash: string;
+  name: string;
+  role: string;
+  isActive: boolean;
+  preferences: Record<string, unknown>;
+  lastLoginAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  twoFactorSecret: string | null;
+  twoFactorEnabled: boolean;
+  backupCodes: string[];
+}
+
+
+type UserWithOrg = TestUser & { organization?: { id: string; name?: string } };
+
+function userStub(partial: Partial<UserWithOrg> & Pick<TestUser, 'id'>): UserWithOrg {
+  return {
+    organizationId: 'org-1',
+    email: 'test@example.com',
+    passwordHash: '',
+    name: 'Test',
+    role: 'member',
+    isActive: true,
+    preferences: {},
+    lastLoginAt: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    twoFactorSecret: null,
+    twoFactorEnabled: false,
+    backupCodes: [],
+    ...partial,
+  };
+}
 
 describe('AuthService', () => {
   let authService: AuthService;
@@ -45,7 +88,6 @@ describe('AuthService', () => {
   };
 
   beforeEach(() => {
-    // Reset all mocks — clears call history AND resets implementations
     vi.mocked(prisma.user.findUnique).mockReset();
     vi.mocked(prisma.user.create).mockReset();
     vi.mocked(prisma.user.update).mockReset();
@@ -61,21 +103,22 @@ describe('AuthService', () => {
     mockSessionsService.removeSessionByToken.mockReset();
     mockTwoFactorService.verifyTwoFactor.mockReset();
 
+    // Test doubles for Nest providers — partial mocks, cast at DI boundary only.
     authService = new AuthService(
-      mockJwtService as any,
-      mockTwoFactorService as any,
-      mockSessionsService as any,
+      mockJwtService as unknown as JwtService,
+      mockTwoFactorService as unknown as TwoFactorService,
+      mockSessionsService as unknown as SessionsService,
     );
   });
 
   // ──────────── register ────────────
   describe('register', () => {
     it('should throw ConflictException if email already exists', async () => {
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ id: 'existing' } as any);
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(userStub({ id: 'existing' }));
 
       await expect(
         authService.register({
-          email: 'test@test.com',
+          email: 'test@example.com',
           password: 'password123',
           name: 'Test',
           organizationName: 'TestOrg',
@@ -85,22 +128,43 @@ describe('AuthService', () => {
 
     it('should create organization, workspace, and user on successful registration', async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
-      vi.mocked(prisma.organization.create).mockResolvedValueOnce({ id: 'org-1' } as any);
-      vi.mocked(prisma.workspace.create).mockResolvedValueOnce({ id: 'ws-1' } as any);
-      vi.mocked(prisma.user.create).mockResolvedValueOnce({
-        id: 'user-1',
-        email: 'test@test.com',
-        name: 'Test',
-        role: 'owner',
-        organizationId: 'org-1',
-      } as any);
-
-      const result = await authService.register({
-        email: 'test@test.com',
-        password: 'password123',
-        name: 'Test',
-        organizationName: 'TestOrg',
+      vi.mocked(prisma.organization.create).mockResolvedValueOnce({
+        id: 'org-1',
+        name: 'TestOrg',
+        slug: 'testorg',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
       });
+      vi.mocked(prisma.workspace.create).mockResolvedValueOnce({
+        id: 'ws-1',
+        organizationId: 'org-1',
+        name: 'Default',
+        slug: 'default',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.user.create).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: 'test@example.com',
+          name: 'Test',
+          role: 'owner',
+          organizationId: 'org-1',
+        }),
+      );
+
+      const result = await authService.register(
+        {
+          email: 'test@example.com',
+          password: 'password123',
+          name: 'Test',
+          organizationName: 'TestOrg',
+        },
+        '203.0.113.10',
+        'TestBrowser/1.0',
+      );
 
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
@@ -108,6 +172,195 @@ describe('AuthService', () => {
       expect(prisma.organization.create).toHaveBeenCalledOnce();
       expect(prisma.workspace.create).toHaveBeenCalledOnce();
       expect(prisma.user.create).toHaveBeenCalledOnce();
+      expect(mockSessionsService.createSession).toHaveBeenCalledWith(
+        'user-1',
+        'mock-token',
+        '203.0.113.10',
+        'TestBrowser/1.0',
+      );
+    });
+
+    it('should sign access and refresh JWTs with distinct jti values for the same user', async () => {
+      const signCalls: Array<{ payload: Record<string, unknown>; options?: unknown }> = [];
+      mockJwtService.sign.mockImplementation((payload: Record<string, unknown>, options?: unknown) => {
+        signCalls.push({ payload, options });
+        return `mock-${signCalls.length}`;
+      });
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.organization.create).mockResolvedValueOnce({
+        id: 'org-1',
+        name: 'TestOrg',
+        slug: 'testorg',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.workspace.create).mockResolvedValueOnce({
+        id: 'ws-1',
+        organizationId: 'org-1',
+        name: 'Default',
+        slug: 'default',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.user.create).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: '[邮箱]',
+          name: 'Test',
+          role: 'owner',
+          organizationId: 'org-1',
+        }),
+      );
+
+      await authService.register({
+        email: '[邮箱]',
+        password: 'password123',
+        name: 'Test',
+        organizationName: 'TestOrg',
+      });
+
+      expect(signCalls).toHaveLength(2);
+      const accessJti = signCalls[0].payload.jti;
+      const refreshJti = signCalls[1].payload.jti;
+      expect(typeof accessJti).toBe('string');
+      expect(typeof refreshJti).toBe('string');
+      expect(accessJti).not.toEqual(refreshJti);
+      expect(signCalls[0].payload).toMatchObject({
+        sub: 'user-1',
+        email: '[邮箱]',
+        organizationId: 'org-1',
+        role: 'owner',
+      });
+      expect(signCalls[1].payload).toMatchObject({
+        sub: 'user-1',
+        email: '[邮箱]',
+        organizationId: 'org-1',
+        role: 'owner',
+      });
+      expect(signCalls[0].options).toEqual({ expiresIn: '7d' });
+    });
+
+    it('should produce distinct sign payloads on two immediate token generations for the same user', async () => {
+      const payloads: Record<string, unknown>[] = [];
+      mockJwtService.sign.mockImplementation((payload: Record<string, unknown>) => {
+        payloads.push({ ...payload });
+        return `signed-${payloads.length}`;
+      });
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.organization.create).mockResolvedValueOnce({
+        id: 'org-1',
+        name: 'TestOrg',
+        slug: 'testorg',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.workspace.create).mockResolvedValueOnce({
+        id: 'ws-1',
+        organizationId: 'org-1',
+        name: 'Default',
+        slug: 'default',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        settings: {},
+      });
+      vi.mocked(prisma.user.create).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: '[邮箱]',
+          name: 'Test',
+          role: 'owner',
+          organizationId: 'org-1',
+        }),
+      );
+
+      await authService.register({
+        email: '[邮箱]',
+        password: 'password123',
+        name: 'Test',
+        organizationName: 'TestOrg',
+      });
+
+      const registerTokens = payloads.map((p) => p.jti);
+      payloads.length = 0;
+
+      mockJwtService.verify.mockReturnValueOnce({ sub: 'user-1' });
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', isActive: true }),
+      );
+
+      await authService.refreshToken('valid-refresh');
+
+      const refreshTokens = payloads.map((p) => p.jti);
+      const allJtis = [...registerTokens, ...refreshTokens];
+      expect(allJtis).toHaveLength(4);
+      expect(new Set(allJtis).size).toBe(4);
+      expect(mockSessionsService.createSession).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // ──────────── refreshToken ────────────
+  describe('refreshToken', () => {
+    it('should verify refresh tokens with JWT_REFRESH_SECRET fallback to JWT_SECRET', async () => {
+      const prevRefresh = process.env.JWT_REFRESH_SECRET;
+      const prevSecret = process.env.JWT_SECRET;
+      process.env.JWT_REFRESH_SECRET = 'refresh-only-secret';
+      process.env.JWT_SECRET = 'access-secret';
+
+      mockJwtService.verify.mockReturnValueOnce({ sub: 'user-1' });
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', isActive: true }),
+      );
+
+      await authService.refreshToken('incoming-refresh-token');
+
+      expect(mockJwtService.verify).toHaveBeenCalledWith('incoming-refresh-token', {
+        secret: 'refresh-only-secret',
+      });
+
+      process.env.JWT_REFRESH_SECRET = prevRefresh;
+      process.env.JWT_SECRET = prevSecret;
+    });
+
+    it('should return new tokens and create a session on valid refresh', async () => {
+      mockJwtService.verify.mockReturnValueOnce({ sub: 'user-1' });
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', isActive: true }),
+      );
+
+      const result = await authService.refreshToken('valid-refresh', '10.0.0.1', 'Agent/2');
+
+      expect(result).toHaveProperty('accessToken');
+      expect(result).toHaveProperty('refreshToken');
+      expect(mockSessionsService.createSession).toHaveBeenCalledWith(
+        'user-1',
+        'mock-token',
+        '10.0.0.1',
+        'Agent/2',
+      );
+    });
+
+    it('should not mask session persistence failures as invalid refresh token', async () => {
+      mockJwtService.verify.mockReturnValueOnce({ sub: 'user-1' });
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', isActive: true }),
+      );
+      const dbError = new Error('Unique constraint failed on the fields: (`token_hash`)');
+      mockSessionsService.createSession.mockRejectedValueOnce(dbError);
+
+      await expect(authService.refreshToken('valid-refresh')).rejects.toThrow(dbError);
+    });
+
+    it('should throw UnauthorizedException when verify fails', async () => {
+      mockJwtService.verify.mockImplementationOnce(() => {
+        throw new Error('invalid signature');
+      });
+
+      await expect(authService.refreshToken('bad-token')).rejects.toThrow(UnauthorizedException);
     });
   });
 
@@ -117,55 +370,61 @@ describe('AuthService', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
 
       await expect(
-        authService.login({ email: 'wrong@test.com', password: 'password123' }),
+        authService.login({ email: 'test@example.com', password: 'password123' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
     it('should throw UnauthorizedException for wrong password', async () => {
       const hash = await bcrypt.hash('password123', 10);
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        id: 'user-1',
-        email: 'test@test.com',
-        passwordHash: hash,
-        twoFactorEnabled: false,
-        organization: { id: 'org-1' },
-      } as any);
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: 'test@example.com',
+          passwordHash: hash,
+          twoFactorEnabled: false,
+          organization: { id: 'org-1' },
+        }),
+      );
 
       await expect(
-        authService.login({ email: 'test@test.com', password: 'wrongpassword' }),
+        authService.login({ email: 'test@example.com', password: 'wrongpassword' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
     it('should return requires2FA when 2FA is enabled', async () => {
       const hash = await bcrypt.hash('password123', 10);
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        id: 'user-1',
-        email: 'test@test.com',
-        passwordHash: hash,
-        twoFactorEnabled: true,
-        organization: { id: 'org-1' },
-      } as any);
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: 'test@example.com',
+          passwordHash: hash,
+          twoFactorEnabled: true,
+          organization: { id: 'org-1' },
+        }),
+      );
 
-      const result = await authService.login({ email: 'test@test.com', password: 'password123' });
+      const result = await authService.login({ email: 'test@example.com', password: 'password123' });
 
       expect(result).toEqual({ requires2FA: true, userId: 'user-1' });
     });
 
     it('should return tokens on successful login', async () => {
       const hash = await bcrypt.hash('password123', 10);
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        id: 'user-1',
-        email: 'test@test.com',
-        name: 'Test',
-        role: 'owner',
-        organizationId: 'org-1',
-        passwordHash: hash,
-        twoFactorEnabled: false,
-        organization: { id: 'org-1', name: 'TestOrg' },
-      } as any);
-      vi.mocked(prisma.user.update).mockResolvedValueOnce({} as any);
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({
+          id: 'user-1',
+          email: 'test@example.com',
+          name: 'Test',
+          role: 'owner',
+          organizationId: 'org-1',
+          passwordHash: hash,
+          twoFactorEnabled: false,
+          organization: { id: 'org-1', name: 'TestOrg' },
+        }),
+      );
+      vi.mocked(prisma.user.update).mockResolvedValueOnce(userStub({ id: 'user-1' }));
 
-      const result = await authService.login({ email: 'test@test.com', password: 'password123' });
+      const result = await authService.login({ email: 'test@example.com', password: 'password123' });
 
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
@@ -177,10 +436,9 @@ describe('AuthService', () => {
   describe('changePassword', () => {
     it('should throw BadRequestException for wrong current password', async () => {
       const hash = await bcrypt.hash('oldpassword', 10);
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        id: 'user-1',
-        passwordHash: hash,
-      } as any);
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', passwordHash: hash }),
+      );
 
       await expect(
         authService.changePassword('user-1', 'wrongpassword', 'newpassword123'),
@@ -189,10 +447,9 @@ describe('AuthService', () => {
 
     it('should throw BadRequestException for short new password', async () => {
       const hash = await bcrypt.hash('oldpassword', 10);
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        id: 'user-1',
-        passwordHash: hash,
-      } as any);
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', passwordHash: hash }),
+      );
 
       await expect(
         authService.changePassword('user-1', 'oldpassword', 'short'),
@@ -201,11 +458,10 @@ describe('AuthService', () => {
 
     it('should successfully change password', async () => {
       const hash = await bcrypt.hash('oldpassword', 10);
-      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        id: 'user-1',
-        passwordHash: hash,
-      } as any);
-      vi.mocked(prisma.user.update).mockResolvedValueOnce({} as any);
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(
+        userStub({ id: 'user-1', passwordHash: hash }),
+      );
+      vi.mocked(prisma.user.update).mockResolvedValueOnce(userStub({ id: 'user-1' }));
 
       const result = await authService.changePassword('user-1', 'oldpassword', 'newpassword123');
 
@@ -229,21 +485,23 @@ describe('AuthService', () => {
 
     it('should return profile without sensitive fields', async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
-        id: 'user-1',
-        email: 'test@test.com',
-        name: 'Test',
-        passwordHash: 'secret',
-        twoFactorSecret: 'secret',
-        twoFactorEnabled: false,
-        backupCodes: [],
-        organization: { id: 'org-1' },
-      } as any);
+        ...userStub({
+          id: 'user-1',
+          email: 'test@example.com',
+          name: 'Test',
+          passwordHash: 'secret',
+          twoFactorSecret: 'secret',
+          twoFactorEnabled: false,
+          backupCodes: [],
+        }),
+        organization: { id: 'org-1', name: 'Org', slug: 'org', createdAt: new Date(), updatedAt: new Date(), settings: {} },
+      });
 
       const profile = await authService.getProfile('user-1');
 
       expect(profile).not.toHaveProperty('passwordHash');
       expect(profile).not.toHaveProperty('twoFactorSecret');
-      expect(profile).toHaveProperty('email', 'test@test.com');
+      expect(profile).toHaveProperty('email', 'test@example.com');
     });
   });
 });

@@ -218,9 +218,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           data: { status: 'disconnected' },
         });
 
-        staleProfiles.forEach(p => {
-          this.logger.log(`Reset profile to disconnected: ${p.displayName || p.id}`);
-        });
+        for (const profile of staleProfiles) {
+          this.logger.log(`Reset profile to disconnected: ${profile.displayName || profile.id}`);
+        }
       }
 
       // Step 2: Auto-reconnect profiles that have valid session data
