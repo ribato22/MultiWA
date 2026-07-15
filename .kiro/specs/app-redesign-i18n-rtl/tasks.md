@@ -44,7 +44,7 @@
 
 - [ ] 3. Implement i18n Catalog Expansion & Arabic Addition
 
-  - [~] 3.1 Expand translation catalogs toward full coverage (~300+ keys)
+  - [ ] 3.1 Expand translation catalogs toward full coverage (~300+ keys)
     - Add translation keys for all pages: dashboard stats, form labels, buttons, placeholders, error messages, table headers, tooltips, empty states, widget titles
     - Cover pages: dashboard, contacts, profiles, chat, broadcast, automation, templates, webhooks, settings, analytics, audit, api-keys, integrations, knowledge
     - Add keys for common UI patterns: confirmation dialogs, loading states, success/error toasts, pagination, search
@@ -67,7 +67,7 @@
     - _Preservation: English and Farsi language mechanics unchanged_
     - _Requirements: 1.7, 2.7_
 
-  - [-] 3.3 Replace all hardcoded English strings in component JSX with `t()` calls
+  - [ ] 3.3 Replace all hardcoded English strings in component JSX with `t()` calls
     - Scan all component files for hardcoded English text in JSX
     - Replace with appropriate `t('namespace.key')` calls
     - Verify no English text leaks when language is set to Farsi or Arabic
@@ -77,7 +77,7 @@
 
 - [ ] 4. Implement RTL Layout with Logical CSS Properties
 
-  - [~] 4.1 Replace physical CSS properties with logical equivalents
+  - [ ] 4.1 Replace physical CSS properties with logical equivalents
     - Replace `left`/`right` with `inset-inline-start`/`inset-inline-end` across all components
     - Replace `margin-left`/`margin-right` with `margin-inline-start`/`margin-inline-end`
     - Replace `padding-left`/`padding-right` with `padding-inline-start`/`padding-inline-end`
@@ -88,7 +88,7 @@
     - _Preservation: English LTR layout unaffected (logical properties work correctly for both directions)_
     - _Requirements: 1.2, 2.2, 3.1_
 
-  - [~] 4.2 Fix sidebar and navigation RTL behavior
+  - [ ] 4.2 Fix sidebar and navigation RTL behavior
     - Update sidebar to use `inset-inline-start` positioning instead of `left: 0`
     - Replace `translateX(-100%)` mobile hide with `inset-inline-start`-based positioning
     - Add Tailwind `rtl:` variant utilities for directional icons (chevrons, arrows)
@@ -97,7 +97,7 @@
     - _Expected_Behavior: sidebarPosition(result) == 'inline-end' in RTL_
     - _Requirements: 1.2, 2.2_
 
-  - [~] 4.3 Fix chat bubbles and directional components
+  - [ ] 4.3 Fix chat bubbles and directional components
     - Update chat bubble tails to flip based on `dir` attribute
     - Fix sent-by-user bubbles to appear on inline-end side in RTL
     - Fix received bubbles to appear on inline-start side in RTL
@@ -106,7 +106,7 @@
     - _Expected_Behavior: chat bubbles position on correct side per direction_
     - _Requirements: 1.2, 2.2_
 
-  - [~] 4.4 Add RTL-aware animation keyframes
+  - [ ] 4.4 Add RTL-aware animation keyframes
     - Update slide animations to flip direction based on `dir` attribute
     - Ensure Framer Motion animations respect RTL layout
     - Add `rtl:` variant for transition origins
@@ -115,7 +115,7 @@
 
 - [ ] 5. Implement Font Migration to Lalezar
 
-  - [~] 5.1 Replace Inter font with Lalezar
+  - [ ] 5.1 Replace Inter font with Lalezar
     - Replace `Inter` import with `Lalezar` from `next/font/google` in `layout.tsx`
     - Configure subsets: `['latin', 'arabic']` to support English, Farsi, and Arabic
     - Update CSS variable from `--font-inter` to `--font-lalezar`
@@ -128,7 +128,7 @@
 
 - [ ] 6. Implement Contact Tag Management UI
 
-  - [~] 6.1 Create TagInput component with autocomplete
+  - [ ] 6.1 Create TagInput component with autocomplete
     - Create `src/components/contacts/TagInput.tsx`
     - Implement inline tag input consuming existing `parseTagInput()` utility
     - Add autocomplete from existing tags across all contacts
@@ -138,7 +138,7 @@
     - _Expected_Behavior: tagInputExists(result) AND autocomplete works_
     - _Requirements: 1.4, 2.4_
 
-  - [~] 6.2 Create TagChip component with edit/remove
+  - [ ] 6.2 Create TagChip component with edit/remove
     - Create `src/components/contacts/TagChip.tsx`
     - Implement colored tag badge using existing `getTagBadgeStyle()` utility
     - Add remove button (×) on each chip
@@ -146,7 +146,7 @@
     - _Expected_Behavior: tagChipsRendered(result) with edit/remove capability_
     - _Requirements: 2.4_
 
-  - [~] 6.3 Create ColorPicker component for contact color assignment
+  - [ ] 6.3 Create ColorPicker component for contact color assignment
     - Create `src/components/contacts/ColorPicker.tsx`
     - Implement preset color palette picker (8-12 colors)
     - Allow assigning a single color to each contact
@@ -155,7 +155,7 @@
     - _Expected_Behavior: colorPickerExists(result) AND assignment persists_
     - _Requirements: 1.5, 2.5_
 
-  - [~] 6.4 Create ColorFilter component for contact list filtering
+  - [ ] 6.4 Create ColorFilter component for contact list filtering
     - Create `src/components/contacts/ColorFilter.tsx`
     - Implement filter dropdown using existing `collectTagColorFilters()` utility
     - Support filtering and grouping contacts by assigned color
@@ -164,7 +164,7 @@
     - _Expected_Behavior: colorFilterExists(result) AND filtering works_
     - _Requirements: 1.5, 2.5_
 
-  - [~] 6.5 Integrate tag and color components into Contacts page
+  - [ ] 6.5 Integrate tag and color components into Contacts page
     - Update contacts list page to show tag chips and color dots per contact
     - Update contacts detail/edit view to include TagInput and ColorPicker
     - Wire mutations to API for tag/color CRUD operations
@@ -174,7 +174,7 @@
 
 - [ ] 7. Complete interactive UI contracts
 
-  - [~] 7.1 Complete Button, Input, and Card behavior
+  - [ ] 7.1 Complete Button, Input, and Card behavior
     - Use current local components and Tailwind tokens for visual consistency
     - Implement enabled Button single activation, disabled Button zero activation, and visible keyboard focus
     - Implement accessible Input naming, clear focus state, and RTL support
@@ -183,34 +183,34 @@
     - _Expected_Behavior: Button disabled/activation/focus contract is satisfied_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.2 Complete Select, Menu, and Tabs interaction
+  - [ ] 7.2 Complete Select, Menu, and Tabs interaction
     - Implement Select and Menu open/selected state with Arrow, Enter, Space, and Escape handling
     - Implement Tabs selected tab/active panel state with Arrow, Home, End, Enter, and Space handling
     - Implement logical inline popup positioning in RTL and LTR
     - _Expected_Behavior: interactive state and keyboard contracts are satisfied_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.3 Complete feedback and form interaction
+  - [ ] 7.3 Complete feedback and form interaction
     - Implement correct checked state and keyboard behavior for Checkbox and Switch
     - Implement Toast status announcement and user dismissal
     - Preserve semantic names for Badge and Avatar where needed
     - _Expected_Behavior: feedback is announced and controls communicate state_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.4 Complete Dialog, AlertDialog, and data components
+  - [ ] 7.4 Complete Dialog, AlertDialog, and data components
     - Implement accessible names and descriptions for Dialog and AlertDialog
     - Implement modal focus containment while open, trigger focus restoration after close, and Escape close when dismissal is allowed
     - Keep Table and Skeleton readable with RTL-aware alignment
     - _Expected_Behavior: modal and data-component accessibility contracts are satisfied_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.5 Complete shared UI behavior without package-identity criteria
+  - [ ] 7.5 Complete shared UI behavior without package-identity criteria
     - Use existing local components through public UI behavior
     - Do not use import paths, package presence, or UI-library identity as pass/fail evidence
     - _Expected_Behavior: every checked control satisfies its observable interaction contract_
     - _Requirements: 1.6, 2.6_
 
-  - [~] 7.6 Apply consistent UI behavior across pages
+  - [ ] 7.6 Apply consistent UI behavior across pages
     - Apply completed interaction contracts to landing, auth, and dashboard flows
     - Use logical RTL popup alignment and preserve user flows at desktop and mobile widths
     - _Expected_Behavior: consistent modern design from landing through dashboard_
@@ -219,7 +219,7 @@
 
 - [ ] 8. Implement Design Token Overhaul
 
-  - [~] 8.1 Update CSS variables and color palette
+  - [ ] 8.1 Update CSS variables and color palette
     - Align CSS variables with dark-mode OLED palette: background `#0F172A`, card `#1E293B`, border `#334155`, text `#F8FAFC`, CTA `#22C55E`
     - Add spacing tokens as CSS variables (`--space-xs` 4px through `--space-3xl` 64px)
     - Add shadow depth tokens (`--shadow-sm` through `--shadow-xl`)
@@ -227,7 +227,7 @@
     - _Preservation: Theme works correctly for all three languages_
     - _Requirements: 2.6_
 
-  - [~] 8.2 Update Tailwind config for new design tokens
+  - [ ] 8.2 Update Tailwind config for new design tokens
     - Map new CSS variables to Tailwind theme extensions
     - Add RTL-aware animation keyframes (slide directions flip with `dir`)
     - Ensure current local UI components consume new tokens
@@ -235,7 +235,7 @@
 
 - [ ] 9. Fix verification
 
-  - [~] 9.1 Verify bug condition and interactive UI contract checks
+  - [ ] 9.1 Verify bug condition and interactive UI contract checks
     - **Property 1: Expected Behavior** - i18n/RTL/Font/UI Deficiency Resolution
     - Re-run task-1 exploration checks for their recorded historical scope.
     - Add focused C1.6 checks for:
@@ -248,7 +248,7 @@
     - Record pass/fail per requirement; 9.1 cannot be completed until rendered i18n acceptance tracked by partial task 3.1 passes. Task 3.3 remains separate unfinished work.
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
 
-  - [~] 9.2 Verify preservation tests still pass
+  - [ ] 9.2 Verify preservation tests still pass
     - **Property 2: Preservation** - English LTR Layout & Feature Stability
     - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
     - Run preservation property tests from step 2
@@ -261,7 +261,7 @@
       - Existing contact tag/color data displays (Req 3.5)
       - Auth flow unchanged (Req 3.6)
 
-- [~] 10. Checkpoint - Complete behavior and browser verification
+- [ ] 10. Checkpoint - Complete behavior and browser verification
   - Run focused behavior checks for UI contracts and preservation flows
   - Verify bug condition checks cover all seven deficiencies through observable behavior, recording pass/fail for incomplete work
   - Verify preservation: English LTR layout, WhatsApp profile operations, broadcast/automation/templates/webhooks, mobile responsiveness, stored contact metadata, and authentication flows

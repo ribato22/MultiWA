@@ -10,18 +10,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "astryx": "node node_modules/@astryxdesign/cli/bin/astryx.mjs"
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@astryxdesign/core": "^0.1.4",
-    "@astryxdesign/theme-butter": "^0.1.4",
-    "@astryxdesign/theme-chocolate": "^0.1.4",
-    "@astryxdesign/theme-gothic": "^0.1.4",
-    "@astryxdesign/theme-matcha": "^0.1.4",
-    "@astryxdesign/theme-neutral": "^0.1.4",
-    "@astryxdesign/theme-stone": "^0.1.4",
-    "@astryxdesign/theme-y2k": "^0.1.4",
     "@tanstack/react-query": "^5.60.0",
     "axios": "^1.7.0",
     "class-variance-authority": "^0.7.1",
@@ -40,7 +31,6 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@astryxdesign/cli": "^0.1.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
