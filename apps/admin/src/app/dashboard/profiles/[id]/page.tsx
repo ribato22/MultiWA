@@ -844,7 +844,7 @@ export default function ProfileDetailPage() {
           rate-locks (error 463). The send gate applies these per message; a recently
           rate-locked number should stay conservative.
         </p>
-        <div className="grid gap-4 sm:grid-cols-2 max-w-2xl">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="delay" className="text-xs text-slate-300">
               Inter-message delay
@@ -869,31 +869,31 @@ export default function ProfileDetailPage() {
               </SelectContent>
             </Select>
             <p className="text-[11px] text-slate-500">Minimum gap enforced between two sends.</p>
-            <div className="pt-2 space-y-1.5">
-              <Label htmlFor="jitter" className="text-xs text-slate-300">
-                Delay jitter
-              </Label>
-              <Select value={String(jitterMs)} onValueChange={(v) => setJitterMs(Number(v))}>
-                <SelectTrigger
-                  id="jitter"
-                  className="bg-slate-950/40 border-slate-800 text-slate-100"
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {!JITTER_PRESETS.includes(jitterMs) && (
-                    <SelectItem value={String(jitterMs)}>
-                      Custom (up to +{(jitterMs / 1000).toFixed(1)}s)
-                    </SelectItem>
-                  )}
-                  <SelectItem value="0">Off (fixed spacing)</SelectItem>
-                  <SelectItem value="1500">up to +1.5s</SelectItem>
-                  <SelectItem value="3000">up to +3s</SelectItem>
-                  <SelectItem value="6000">up to +6s</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-slate-500">Random extra delay per send so timing looks less robotic.</p>
-            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="jitter" className="text-xs text-slate-300">
+              Delay jitter
+            </Label>
+            <Select value={String(jitterMs)} onValueChange={(v) => setJitterMs(Number(v))}>
+              <SelectTrigger
+                id="jitter"
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {!JITTER_PRESETS.includes(jitterMs) && (
+                  <SelectItem value={String(jitterMs)}>
+                    Custom (up to +{(jitterMs / 1000).toFixed(1)}s)
+                  </SelectItem>
+                )}
+                <SelectItem value="0">Off (fixed spacing)</SelectItem>
+                <SelectItem value="1500">up to +1.5s</SelectItem>
+                <SelectItem value="3000">up to +3s</SelectItem>
+                <SelectItem value="6000">up to +6s</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-slate-500">Random extra delay per send so timing looks less robotic.</p>
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="limit" className="text-xs text-slate-300">
@@ -926,7 +926,7 @@ export default function ProfileDetailPage() {
         </div>
 
         {/* Cold-traffic (business-initiated) limits */}
-        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3 max-w-2xl">
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3">
           <div>
             <div className="flex items-center gap-2">
               <Label className="text-xs font-medium text-slate-200">Cold-traffic limits</Label>
@@ -983,7 +983,7 @@ export default function ProfileDetailPage() {
         </div>
 
         {/* Warm-up ramp */}
-        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3 max-w-2xl">
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <Label htmlFor="warmup" className="text-xs font-medium text-slate-200 cursor-pointer">
