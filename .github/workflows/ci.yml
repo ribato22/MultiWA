@@ -63,6 +63,11 @@ jobs:
       - name: Typecheck Admin
         run: pnpm --filter admin typecheck
 
+      # Lint gate (ESLint 9 flat config). Backend TS only (admin uses Next's own
+      # eslint). Errors fail the build; stylistic/any rules are warnings for now.
+      - name: Lint (ESLint)
+        run: pnpm run lint
+
   docker-build:
     name: Docker Build Test
     runs-on: ubuntu-latest
