@@ -134,11 +134,11 @@ jobs:
       - name: Generate Prisma Client
         run: pnpm --filter database exec prisma generate
 
-      - name: Build Database package
-        run: pnpm --filter database build
-
-      - name: Build Engines package
-        run: pnpm --filter engines build
+      # Build all of the api's workspace dependencies (core, database, engines,
+      # engine-runtime) — the e2e suite imports the full AppModule, which resolves
+      # these packages by their built dist entry, not just database + engines.
+      - name: Build API workspace dependencies
+        run: pnpm --filter "api^..." build
 
       # Coverage gate. Excludes the tenant route-coverage meta-test: it imports
       # every controller to reflect route metadata, which would pull untested
