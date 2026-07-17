@@ -63,9 +63,11 @@ export default function MessageChart({ profileId, className }: MessageChartProps
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 6);
 
-        const res = await api.request<Array<{ period: string; incoming: number; outgoing: number }>>(
-          `/statistics/messages/trend?profileId=${targetProfileId}&granularity=day&startDate=${startDate.toISOString()}&endDate=${endDate.toISOString()}`
-        );
+        const res = await api.getMessageTrend(targetProfileId, {
+          granularity: 'day',
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        });
 
         if (res.data && res.data.length > 0) {
           const mapped = res.data.map((item) => {
