@@ -101,6 +101,12 @@ async function bootstrap() {
     console.log('🔧 [6/7] Setting up validation & Swagger...');
     app.useGlobalPipes(
       new ValidationPipe({
+        // Strip any request-body property that isn't a validated DTO field. This is an
+        // API-wide mass-assignment defense: without it, a body like {"status":"draft"}
+        // or {"cursor":0} flows through `dto as any` writes into columns the client
+        // should never control. `forbidNonWhitelisted` is left OFF (strip, don't reject)
+        // so existing clients that send extra fields keep working.
+        whitelist: true,
         transform: true,
         transformOptions: {
           enableImplicitConversion: true,
