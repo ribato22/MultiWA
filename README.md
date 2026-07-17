@@ -379,8 +379,8 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 ## 🔗 Links
 
 - 📖 [Documentation](https://ribato22.github.io/MultiWA/docs/) · [Source](docs/)
-- 🐛 [Report a Bug](https://github.com/ribato22/MultiWA/issues/new?template=bug_report.yml)
-- 💡 [Request a Feature](https://github.com/ribato22/MultiWA/issues/new?template=feature_request.yml)
+- 🐛 [Report a Bug](https://github.com/ribato22/MultiWA/issues/new?template=bug_report.md)
+- 💡 [Request a Feature](https://github.com/ribato22/MultiWA/issues/new?template=feature_request.md)
 - 🔒 [Security Policy](SECURITY.md)
 - 📝 [Changelog](CHANGELOG.md)
 - 🕵️ [Privacy Policy](PRIVACY.md)

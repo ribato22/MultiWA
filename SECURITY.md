@@ -14,7 +14,7 @@ We take security seriously. If you discover a security vulnerability, please rep
 ### How to Report
 
 1. **DO NOT** open a public issue
-2. Email us at **security@multiwa.dev** or open a private security advisory on GitHub
+2. **Open a private security advisory** on GitHub (preferred — keeps the report private and lets us collaborate on a fix): <https://github.com/ribato22/MultiWA/security/advisories/new>
 3. Include:
    - Description of the vulnerability
    - Steps to reproduce
