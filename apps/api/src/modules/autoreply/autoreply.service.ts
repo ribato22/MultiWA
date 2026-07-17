@@ -3,6 +3,7 @@
 
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { assertWebhookUrlSafe } from '@multiwa/engine-runtime';
 import { CreateAutoreplyDto, UpdateAutoreplyDto, QuickReplyDto } from './dto';
 
 // In-memory storage for quick replies and configs (would be database in production)
@@ -192,7 +193,8 @@ export class AutoreplyService {
     if (!config.enabled || !config.webhookUrl) return null;
 
     try {
-      const response = await fetch(config.webhookUrl, {
+      const safeUrl = await assertWebhookUrlSafe(config.webhookUrl);
+      const response = await fetch(safeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -200,6 +202,8 @@ export class AutoreplyService {
           profileId,
           message,
         }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!response.ok) return null;
@@ -293,13 +297,16 @@ export class AutoreplyService {
   // Custom AI endpoint
   private async callCustomAI(cfg: any, message: string, context?: any): Promise<string | null> {
     try {
-      const response = await fetch(cfg.endpoint, {
+      const safeEndpoint = await assertWebhookUrlSafe(cfg.endpoint);
+      const response = await fetch(safeEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(cfg.headers || {}),
         },
         body: JSON.stringify({ message, context, ...cfg.body }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(30000),
       });
 
       const data = await response.json();

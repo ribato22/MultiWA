@@ -4,6 +4,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { createHmac, randomBytes } from 'crypto';
+import { assertWebhookUrlSafe } from '@multiwa/engine-runtime';
 import { CreateWebhookDto, UpdateWebhookDto } from './dto';
 
 @Injectable()
@@ -96,19 +97,18 @@ export class WebhooksService {
       ...((webhook.headers as Record<string, string>) || {}),
     };
 
-    // Rewrite localhost URLs to host.docker.internal for Docker compatibility
-    // Always rewrite since the API runs inside Docker where localhost != host machine
-    let targetUrl = webhook.url;
-    targetUrl = targetUrl
-      .replace('://localhost:', '://host.docker.internal:')
-      .replace('://localhost/', '://host.docker.internal/')
-      .replace('://127.0.0.1:', '://host.docker.internal:')
-      .replace('://127.0.0.1/', '://host.docker.internal/');
+    // SSRF guard: reject targets that resolve to internal/metadata addresses
+    // (see assertWebhookUrlSafe). Set WEBHOOK_ALLOW_PRIVATE_TARGETS=true for
+    // self-hosted delivery to internal services. `redirect: 'error'` prevents a
+    // 3xx from bouncing us to an internal host.
+    const targetUrl = await assertWebhookUrlSafe(webhook.url);
 
     const response = await fetch(targetUrl, {
       method: 'POST',
       headers,
       body,
+      redirect: 'error',
+      signal: AbortSignal.timeout(30000),
     });
 
     // Log delivery attempt
