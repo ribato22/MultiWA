@@ -316,6 +316,12 @@ model Broadcast {
   completedAt DateTime?
   settings    Json     @default("{}") // delay, batch_size, etc
   stats       Json     @default("{}") // sent, delivered, failed, etc
+  // Durable execution: resolved phone list is snapshotted once at start; cursor is
+  // the next index to send. Cursor advances BEFORE each send (at-most-once), so a
+  // crash mid-broadcast is recovered by re-running from the cursor without re-sending
+  // an already-attempted recipient (prefers a missed send over a duplicate → anti-ban safe).
+  resolvedRecipients Json?   // string[] snapshot of resolved phone numbers, set at start
+  cursor      Int      @default(0) // next recipient index to send
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
