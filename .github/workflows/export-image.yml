@@ -1,0 +1,49 @@
+name: Export image tarball (air-gapped deploy)
+
+# Builds a service image on a native amd64 runner and uploads it as a downloadable
+# .tar.gz artifact, so it can be transferred to an air-gapped host (docker load).
+# Used for the wagw deploy path: build here -> download -> scp -> /opt/multiwa/images/.
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Which image to build + export
+        type: choice
+        options: [api, worker, admin]
+        default: api
+      tag:
+        description: Image tag (multiwa-<service>:<tag>)
+        default: wagw
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (amd64)
+        env:
+          SERVICE: ${{ inputs.service }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          ARGS=""
+          if [ "$SERVICE" = "admin" ]; then
+            ARGS="--build-arg NEXT_PUBLIC_API_URL=https://wagw.plnbatam.com"
+          fi
+          docker build -f "docker/Dockerfile.$SERVICE" $ARGS -t "multiwa-$SERVICE:$TAG" .
+
+      - name: Save + gzip
+        env:
+          SERVICE: ${{ inputs.service }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          docker save "multiwa-$SERVICE:$TAG" | gzip > "multiwa-$SERVICE-$TAG.tar.gz"
+          ls -lh "multiwa-$SERVICE-$TAG.tar.gz"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: multiwa-image-${{ inputs.service }}-${{ inputs.tag }}
+          path: multiwa-*.tar.gz
+          retention-days: 5
