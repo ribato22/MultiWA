@@ -143,3 +143,8 @@ jobs:
           JWT_SECRET: test-jwt-secret
           JWT_REFRESH_SECRET: test-jwt-refresh-secret
           ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+      # SDK unit tests (pure — no DB/Redis). Includes the webhook-signature
+      # contract test that locks the SDK verifier to the server's HMAC scheme.
+      - name: Run SDK tests
+        run: pnpm --filter @multiwa/sdk test
