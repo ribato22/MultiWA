@@ -275,6 +275,9 @@ export default function NewProfilePage() {
                       <p className="font-semibold text-foreground">Baileys</p>
                     </div>
                     <div className="flex flex-wrap gap-1.5 mb-2">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-orange-500/15 text-orange-400">
+                        Experimental
+                      </span>
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-400">
                         <Zap className="w-3 h-3" aria-hidden="true" /> Fast
                       </span>
@@ -285,7 +288,7 @@ export default function NewProfilePage() {
                     <ul className="text-[11px] text-muted-foreground space-y-0.5">
                       <li>• No browser needed (~50MB RAM)</li>
                       <li>• Direct WA protocol, faster</li>
-                      <li>• Actively developed by community</li>
+                      <li>• Experimental — reactions/contacts limited</li>
                     </ul>
                   </button>
                 </div>

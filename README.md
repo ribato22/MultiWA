@@ -113,7 +113,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 
 ### Core
 - 📱 **Multi-Session Management** — Connect unlimited WhatsApp accounts
-- 🔌 **Pluggable Engine Adapters** — Clean engine interface; whatsapp-web.js by default, a Baileys adapter is included (per-profile engine selection is being wired)
+- 🔌 **Pluggable Engine Adapters** — Clean engine interface with per-profile engine selection: whatsapp-web.js (default, production) or a Baileys adapter (experimental)
 - 📨 **Unified Messaging API** — Send text, media, documents, contacts, locations
 - 📡 **Real-time WebSocket** — Live session status, QR codes, and events via Socket.IO
 - 🔐 **JWT Authentication** — Secure API access with refresh tokens

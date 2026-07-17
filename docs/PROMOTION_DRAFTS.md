@@ -20,7 +20,7 @@ docker compose up -d
 
 ### Key features:
 - 📱 **Multi-Session** — Connect unlimited WhatsApp numbers via single API
-- 🔌 **Multi-Engine** — Switch between whatsapp-web.js and Baileys
+- 🔌 **Pluggable engines** — pick whatsapp-web.js (production) or Baileys (experimental) per profile
 - 🤖 **AI Auto-Reply** — Knowledge base powered by OpenAI or Google AI
 - ⚡ **Visual Flow Builder** — Drag & drop automation (no code needed)
 - 📢 **Broadcast** — Bulk messaging with templates, variables, tracking
@@ -54,7 +54,7 @@ Would love to hear your feedback! What features would you want to see next?
 I'm sharing my open-source project **MultiWA** — a self-hosted WhatsApp Business API gateway.
 
 **What makes it different from other WhatsApp tools:**
-- Multi-engine: supports both whatsapp-web.js AND Baileys (switch anytime)
+- Pluggable engines: whatsapp-web.js (production) or Baileys (experimental), selectable per profile
 - Visual automation builder: drag & drop, no coding required
 - AI-powered knowledge base: plug in OpenAI or Google AI for smart auto-replies
 - Full admin dashboard with real-time chat, analytics, broadcast
