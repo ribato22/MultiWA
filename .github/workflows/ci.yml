@@ -50,6 +50,19 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:3000
 
+      # Typecheck gate: `next build` suppresses type errors (ignoreBuildErrors),
+      # and nest/tsc builds only typecheck incidentally. Enforce a real
+      # `tsc --noEmit` on every app so type regressions fail the PR. Admin runs
+      # after its build so the generated .next/types are present.
+      - name: Typecheck API
+        run: pnpm --filter api typecheck
+
+      - name: Typecheck Worker
+        run: pnpm --filter worker typecheck
+
+      - name: Typecheck Admin
+        run: pnpm --filter admin typecheck
+
   docker-build:
     name: Docker Build Test
     runs-on: ubuntu-latest

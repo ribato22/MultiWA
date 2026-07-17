@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { api } from '@/lib/api';
+import { api, type PushTestResult } from '@/lib/api';
 
 interface PushNotificationState {
   isSupported: boolean;
@@ -213,10 +213,10 @@ export function usePushNotifications() {
     }
   }, []);
 
-  const testPush = useCallback(async () => {
+  const testPush = useCallback(async (): Promise<PushTestResult> => {
     try {
       const { data } = await api.testPush();
-      return data;
+      return data ?? { success: false, message: 'No response from server' };
     } catch (err: any) {
       return { success: false, message: err.message };
     }
