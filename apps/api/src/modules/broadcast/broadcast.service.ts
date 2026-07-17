@@ -1,19 +1,60 @@
 // MultiWA Gateway - Broadcast Service
 // apps/api/src/modules/broadcast/broadcast.service.ts
 
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger, OnModuleInit } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { CreateBroadcastDto, UpdateBroadcastDto, ScheduleBroadcastDto } from './dto';
 import { MessagesService } from '../messages/messages.service';
 
 @Injectable()
-export class BroadcastService {
+export class BroadcastService implements OnModuleInit {
   private readonly logger = new Logger(BroadcastService.name);
 
   constructor(
     @Inject(forwardRef(() => MessagesService))
     private readonly messagesService: MessagesService,
   ) {}
+
+  /**
+   * Crash recovery. On boot, any broadcast left in `running` status is orphaned —
+   * its in-process execution loop died with the previous process. Re-launch each
+   * from its persisted cursor. Because the cursor advances BEFORE every send
+   * (at-most-once), recovery never re-sends an already-attempted recipient.
+   *
+   * Runs only in the API process (BroadcastModule is API-only). Assumes a single
+   * API instance; with multiple replicas each would recover, so guard with a lock
+   * before scaling out (tracked as a follow-up — PLN is single-instance today).
+   */
+  async onModuleInit() {
+    try {
+      const orphaned = await prisma.broadcast.findMany({
+        where: { status: 'running' },
+        select: { id: true, profileId: true, cursor: true },
+      });
+      if (orphaned.length === 0) return;
+
+      this.logger.warn(
+        `Recovering ${orphaned.length} orphaned broadcast(s) left running after restart: ` +
+          orphaned.map((b) => `${b.id}@${b.cursor}`).join(', '),
+      );
+      for (const b of orphaned) {
+        this.launchExecution(b.id);
+      }
+    } catch (err: any) {
+      // Never let recovery crash boot; a stuck broadcast can still be resumed manually.
+      this.logger.error(`Broadcast recovery failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Fire the (resumable) execution loop without blocking the caller, logging any
+   * unhandled error. Used by start(), resume(), and boot recovery.
+   */
+  private launchExecution(broadcastId: string) {
+    this.runExecution(broadcastId).catch((err) =>
+      this.logger.error(`Broadcast ${broadcastId} execution error: ${err.message}`),
+    );
+  }
 
   // Create broadcast
   async create(dto: CreateBroadcastDto) {
@@ -121,14 +162,16 @@ export class BroadcastService {
   // Start broadcast immediately
   async start(id: string) {
     const broadcast = await this.findOne(id);
-    
+
     if (!['draft', 'scheduled', 'paused'].includes(broadcast.status)) {
       throw new BadRequestException('Cannot start broadcast in current status');
     }
 
-    // Resolve actual recipient phone numbers
+    // Resolve actual recipient phone numbers once and snapshot them, so execution
+    // (and any later crash recovery) always walks the exact same list by index.
+    // Re-resolving on resume would be non-deterministic if contacts/tags changed.
     const recipientPhones = await this.resolveRecipients(broadcast);
-    
+
     if (recipientPhones.length === 0) {
       throw new BadRequestException('No recipients found for this broadcast');
     }
@@ -138,6 +181,8 @@ export class BroadcastService {
       data: {
         status: 'running',
         startedAt: broadcast.startedAt || new Date(),
+        resolvedRecipients: recipientPhones,
+        cursor: 0,
         stats: {
           total: recipientPhones.length,
           pending: recipientPhones.length,
@@ -149,9 +194,8 @@ export class BroadcastService {
       },
     });
 
-    // Execute broadcast asynchronously (don't await)
-    this.executeBroadcast(id, broadcast.profileId, recipientPhones, broadcast.message, broadcast.settings as any)
-      .catch((err) => this.logger.error(`Broadcast ${id} execution error: ${err.message}`));
+    // Execute broadcast asynchronously (don't await). Survives restart via onModuleInit.
+    this.launchExecution(id);
 
     return { success: true, message: 'Broadcast started', recipientCount: recipientPhones.length };
   }
@@ -198,32 +242,57 @@ export class BroadcastService {
     }
   }
 
-  // Execute broadcast - sends messages with delay
-  private async executeBroadcast(
-    broadcastId: string,
-    profileId: string,
-    phones: string[],
-    message: any,
-    settings: any,
-  ) {
+  // Execute a broadcast from its persisted cursor. Resumable and crash-safe: all
+  // execution state (recipient snapshot, cursor, running counters) lives in the DB,
+  // so a fresh call after start(), resume(), or restart continues from where it left
+  // off. Pacing (per-message randomized delay + batch pause) and the send path
+  // (messagesService → send-gate) are unchanged, preserving anti-ban governance.
+  private async runExecution(broadcastId: string) {
+    const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
+    if (!broadcast || broadcast.status !== 'running') {
+      this.logger.log(`Broadcast ${broadcastId}: Nothing to execute (status: ${broadcast?.status})`);
+      return;
+    }
+
+    const profileId = broadcast.profileId;
+    const message = broadcast.message as any;
+    const settings = (broadcast.settings as any) || {};
+    const phones: string[] = Array.isArray(broadcast.resolvedRecipients)
+      ? (broadcast.resolvedRecipients as string[])
+      : [];
+
     const delayMin = settings?.delayMin || 3000;
     const delayMax = settings?.delayMax || 10000;
     const batchSize = settings?.batchSize || 50;
     const retryFailed = settings?.retryFailed ?? true;
     const retryAttempts = settings?.retryAttempts || 3;
 
-    this.logger.log(`Broadcast ${broadcastId}: Starting execution for ${phones.length} recipients`);
+    // Resume from persisted cursor; seed counters from persisted stats so a resumed
+    // or recovered run keeps counting rather than resetting to zero.
+    let cursor = broadcast.cursor || 0;
+    const persistedStats = (broadcast.stats as any) || {};
+    let sentCount = persistedStats.sent || 0;
+    let failedCount = persistedStats.failed || 0;
 
-    let sentCount = 0;
-    let failedCount = 0;
+    this.logger.log(
+      `Broadcast ${broadcastId}: Executing from index ${cursor}/${phones.length} recipients`,
+    );
 
-    for (let i = 0; i < phones.length; i++) {
-      // Check if broadcast was paused or cancelled
-      const current = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
+    for (let i = cursor; i < phones.length; i++) {
+      // Check if broadcast was paused or cancelled between messages.
+      const current = await prisma.broadcast.findUnique({
+        where: { id: broadcastId },
+        select: { status: true },
+      });
       if (!current || current.status !== 'running') {
         this.logger.log(`Broadcast ${broadcastId}: Stopped (status: ${current?.status})`);
         return;
       }
+
+      // Advance the cursor BEFORE sending. If we crash during the send, recovery
+      // resumes at i+1 and this recipient is skipped rather than re-sent — we
+      // prefer a missed message over a duplicate (spam/ban risk).
+      await prisma.broadcast.update({ where: { id: broadcastId }, data: { cursor: i + 1 } });
 
       const phone = phones[i];
       let success = false;
@@ -234,7 +303,7 @@ export class BroadcastService {
         try {
           // Resolve message content with template variables
           const messageText = this.resolveTemplate(message, phone);
-          
+
           // Send based on message type
           switch (message.type) {
             case 'image':
@@ -281,7 +350,7 @@ export class BroadcastService {
                 text: messageText,
               });
           }
-          
+
           sentCount++;
           success = true;
           this.logger.debug(`Broadcast ${broadcastId}: Sent ${sentCount}/${phones.length} to ${phone}`);
@@ -374,25 +443,26 @@ export class BroadcastService {
   // Resume broadcast
   async resume(id: string) {
     const broadcast = await this.findOne(id);
-    
+
     if (broadcast.status !== 'paused') {
       throw new BadRequestException('Can only resume paused broadcasts');
     }
 
-    // Re-resolve recipients and continue
-    const recipientPhones = await this.resolveRecipients(broadcast);
-    const stats = broadcast.stats as any;
-    const alreadySent = stats?.sent || 0;
-    const remaining = recipientPhones.slice(alreadySent);
+    // A paused broadcast retains its recipient snapshot and cursor, so we simply flip
+    // it back to running and re-launch — execution continues from the exact recipient
+    // it stopped on. (The old code re-resolved recipients and sliced by stats.sent,
+    // which mis-aligned whenever a send had failed or the underlying contacts changed.)
+    if (!Array.isArray(broadcast.resolvedRecipients)) {
+      // Legacy broadcast started before durable execution existed — restart cleanly.
+      return this.start(id);
+    }
 
     await prisma.broadcast.update({
       where: { id },
       data: { status: 'running' },
     });
 
-    // Continue execution
-    this.executeBroadcast(id, broadcast.profileId, remaining, broadcast.message, broadcast.settings as any)
-      .catch((err) => this.logger.error(`Broadcast ${id} resume error: ${err.message}`));
+    this.launchExecution(id);
 
     return { success: true, message: 'Broadcast resumed' };
   }
