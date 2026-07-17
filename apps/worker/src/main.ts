@@ -3,6 +3,7 @@ import 'reflect-metadata'; // MUST be first — required for NestJS DI decorator
 import { Worker, Queue } from 'bullmq';
 import Redis from 'ioredis';
 import http from 'node:http';
+import { collectDefaultMetrics, Gauge, Registry } from 'prom-client';
 import pino from 'pino';
 import { PrismaClient } from '@prisma/client';
 import { NestFactory } from '@nestjs/core';
@@ -73,14 +74,55 @@ const scheduledWorker = new Worker(
   { connection, concurrency: 1 }
 );
 
-// Liveness/readiness probe. The worker has no HTTP surface otherwise, so Docker
-// (and any orchestrator) had no way to detect a hung/disconnected worker and
-// restart it. Reports 200 only while the Redis connection — the worker's whole
-// reason to exist — is ready. Returns a minimal body (no queue internals).
+// Prometheus metrics: default Node/process metrics + BullMQ queue-depth gauges.
+const metricsRegistry = new Registry();
+metricsRegistry.setDefaultLabels({ app: 'multiwa-worker' });
+collectDefaultMetrics({ register: metricsRegistry });
+
+// Lightweight Queue handles used only to read job counts on scrape (share the
+// worker's Redis connection; getJobCounts is read-only).
+const metricsQueues: Record<string, Queue> = {
+  messages: new Queue('messages', { connection }),
+  automation: new Queue('automation', { connection }),
+  webhooks: new Queue('webhooks', { connection }),
+  scheduled: scheduledQueue,
+};
+new Gauge({
+  name: 'multiwa_bullmq_jobs',
+  help: 'BullMQ job counts by queue and state',
+  labelNames: ['queue', 'state'],
+  registers: [metricsRegistry],
+  async collect() {
+    for (const [name, q] of Object.entries(metricsQueues)) {
+      try {
+        const counts = await q.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed');
+        for (const [state, value] of Object.entries(counts)) {
+          this.set({ queue: name, state }, value as number);
+        }
+      } catch {
+        // Redis unavailable — skip this scrape rather than fail the endpoint.
+      }
+    }
+  },
+});
+
+// Liveness probe (GET / — used by the Docker HEALTHCHECK; 200 only while Redis
+// is ready) + Prometheus GET /metrics. The worker has no other HTTP surface.
+// WORKER_HEALTH_PORT is internal (not published in compose) — scrape it from a
+// Prometheus on the same network.
 const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT) || 3002;
-const healthServer = http.createServer((req, res) => {
+const healthServer = http.createServer(async (req, res) => {
   if (req.method !== 'GET') {
     res.writeHead(405).end();
+    return;
+  }
+  if ((req.url || '').startsWith('/metrics')) {
+    try {
+      res.writeHead(200, { 'Content-Type': metricsRegistry.contentType });
+      res.end(await metricsRegistry.metrics());
+    } catch {
+      res.writeHead(500).end();
+    }
     return;
   }
   const redisReady = connection.status === 'ready';
@@ -88,7 +130,7 @@ const healthServer = http.createServer((req, res) => {
   res.end(JSON.stringify({ status: redisReady ? 'ok' : 'degraded', redis: connection.status }));
 });
 healthServer.on('error', (err) => logger.error({ error: err.message }, 'Health server error'));
-healthServer.listen(HEALTH_PORT, () => logger.info(`❤️  Worker health probe listening on :${HEALTH_PORT}`));
+healthServer.listen(HEALTH_PORT, () => logger.info(`❤️  Worker health + metrics on :${HEALTH_PORT} (/, /metrics)`));
 
 // Event handlers
 messageWorker.on('completed', (job) => {
@@ -160,6 +202,10 @@ const shutdown = async () => {
     webhookWorker.close(),
     scheduledWorker.close(),
     scheduledQueue.close(),
+    // Metrics-only queue handles (scheduledQueue is closed above).
+    metricsQueues.messages.close(),
+    metricsQueues.automation.close(),
+    metricsQueues.webhooks.close(),
   ]);
   if (engineCommandWorker) await engineCommandWorker.close();
   if (outboundSendWorker) await outboundSendWorker.close();
