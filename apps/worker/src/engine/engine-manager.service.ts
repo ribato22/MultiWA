@@ -40,6 +40,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   // Profiles whose one-off group-name reconciliation already ran this process.
   private reconciledGroups = new Set<string>();
 
+  // Ready-timeout watchdog: whatsapp-web.js can fire 'authenticated' but never
+  // 'ready' (upstream hang). Without this a profile sits at 'connecting' forever
+  // with no disconnect event to trigger the inline retry. If a profile doesn't
+  // reach 'connected' within the timeout, force a bounded reconnect so it
+  // self-heals. Mirrors the API EngineManagerService.
+  private readyTimers = new Map<string, NodeJS.Timeout>();
+  private readyTimeoutRetries = new Map<string, number>();
+  private readonly READY_TIMEOUT_MS = Number(process.env.READY_TIMEOUT_MS) || 120000;
+  private readonly READY_TIMEOUT_MAX_RETRIES = Number(process.env.READY_TIMEOUT_MAX_RETRIES) || 3;
+
+  // Periodic reconnect sweep: safety net that reconnects profiles stuck
+  // 'disconnected' but still holding a valid session (an outage that outlasted
+  // the inline retries). RECONNECT_SWEEP_INTERVAL_MS=0 disables it.
+  private reconnectSweepTimer: NodeJS.Timeout | null = null;
+  private sweeping = false;
+  private readonly RECONNECT_SWEEP_INTERVAL_MS = Number(process.env.RECONNECT_SWEEP_INTERVAL_MS) || 180000;
+  // Profiles the operator disconnected on purpose — the watchdog/sweep must NOT
+  // bring these back. Added on manual disconnect, cleared on manual (re)connect.
+  private manuallyDisconnected = new Set<string>();
+
   constructor(
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
     private readonly eventEmitter: EventEmitter2,
@@ -182,10 +202,97 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
+  private clearReadyTimer(profileId: string): void {
+    const t = this.readyTimers.get(profileId);
+    if (t) { clearTimeout(t); this.readyTimers.delete(profileId); }
+  }
+
+  // Fired when a profile authenticated but never reached 'connected' in time.
+  private async onReadyTimeout(profileId: string): Promise<void> {
+    this.readyTimers.delete(profileId);
+    const inst = this.engines.get(profileId);
+    if (!inst || inst.status === 'connected') return; // reached ready in time — nothing to do
+    const retries = (this.readyTimeoutRetries.get(profileId) || 0) + 1;
+    const max = this.READY_TIMEOUT_MAX_RETRIES;
+    this.logger.warn(
+      `Profile ${profileId} authenticated but not online within ${this.READY_TIMEOUT_MS / 1000}s ` +
+      `(whatsapp-web.js ready-hang). Auto-recovery ${retries}/${max}.`,
+    );
+    try { await inst.engine?.destroy?.(); } catch (e) { this.logger.warn(`destroy failed: ${(e as Error).message}`); }
+    this.engines.delete(profileId);
+    if (retries > max) {
+      this.logger.error(`Ready-timeout recovery exhausted for ${profileId}; leaving disconnected (manual reconnect needed).`);
+      this.readyTimeoutRetries.delete(profileId);
+      const updated = await prisma.profile
+        .update({ where: { id: profileId }, data: { status: 'disconnected' }, select: { displayName: true } })
+        .catch((): null => null);
+      this.realtime.emitConnectionStatus(profileId, 'disconnected');
+      this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'ready-timeout: recovery exhausted' });
+      this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
+        '⚠️ Profile Disconnected',
+        `${updated?.displayName || profileId} could not come online (WhatsApp Web ready-hang) and auto-recovery was exhausted. Re-link the profile.`,
+        { profileId, reason: 'ready-timeout-exhausted' },
+      ).catch(err => this.logger.warn(`Notification error (ready-timeout): ${err.message}`));
+      return;
+    }
+    this.readyTimeoutRetries.set(profileId, retries);
+    await prisma.profile.update({ where: { id: profileId }, data: { status: 'connecting' } }).catch(() => {});
+    this.realtime.emitConnectionStatus(profileId, `reconnecting (${retries}/${max})`);
+    this.connectProfile(profileId).catch(err =>
+      this.logger.warn(`Ready-timeout reconnect failed for ${profileId}: ${(err as Error).message}`));
+  }
+
+  /**
+   * True if the profile has on-disk session credentials — a whatsapp-web.js
+   * LocalAuth dir (`session-<id>/`) or a Baileys `creds.json` — i.e. it can
+   * reconnect without a fresh QR scan. A logged-out profile has neither.
+   */
+  private async hasValidSession(profileId: string): Promise<boolean> {
+    const fs = await import('fs/promises');
+    const sessionsDir = process.env.SESSIONS_DIR || './sessions';
+    const sessionDir = path.join(sessionsDir, profileId);
+    try { await fs.access(path.join(sessionDir, `session-${profileId}`)); return true; } catch { /* not wwebjs */ }
+    try { await fs.access(path.join(sessionDir, 'creds.json')); return true; } catch { /* not baileys */ }
+    return false;
+  }
+
+  /**
+   * Periodic safety net: reconnect profiles stuck 'disconnected' that still hold
+   * a valid session. Skips profiles the operator disconnected on purpose, those
+   * already (re)connecting, and logged-out sessions (which need a fresh QR).
+   */
+  private async reconnectSweep(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      const profiles = await prisma.profile.findMany({
+        where: { status: 'disconnected' },
+        select: { id: true, displayName: true },
+      });
+      let attempted = 0;
+      for (const profile of profiles) {
+        if (this.manuallyDisconnected.has(profile.id)) continue; // intentional disconnect
+        if (this.engines.has(profile.id)) continue;              // already (re)connecting
+        if (!(await this.hasValidSession(profile.id))) continue;  // logged out — needs QR
+        this.logger.log(`Reconnect sweep: attempting ${profile.displayName || profile.id}`);
+        this.connectProfile(profile.id).catch(err =>
+          this.logger.warn(`Reconnect sweep failed for ${profile.displayName || profile.id}: ${(err as Error).message}`));
+        attempted++;
+        await new Promise(r => setTimeout(r, 2000)); // pace, don't overwhelm WhatsApp
+      }
+      if (attempted > 0) this.logger.log(`Reconnect sweep attempted ${attempted} profile(s)`);
+    } catch (err) {
+      this.logger.warn(`Reconnect sweep error: ${(err as Error).message}`);
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
   /**
    * On module init:
    * 1. Reset stale 'connected' profiles to 'disconnected'
    * 2. Auto-reconnect profiles that have valid session data
+   * 3. Start the periodic reconnect sweep
    */
   async onModuleInit() {
     // The worker owns engine sessions only when ENGINE_HOST=worker. (The Nest
@@ -225,7 +332,17 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
       // Step 2: Auto-reconnect profiles that have valid session data
       await this.autoReconnectProfiles();
-      
+
+      // Step 3: Start the periodic reconnect sweep (safety net for outages that
+      // outlast the inline retries and for ready-hangs whose recovery exhausted).
+      if (this.RECONNECT_SWEEP_INTERVAL_MS > 0) {
+        this.reconnectSweepTimer = setInterval(() => {
+          this.reconnectSweep().catch(err =>
+            this.logger.warn(`Reconnect sweep tick error: ${(err as Error).message}`));
+        }, this.RECONNECT_SWEEP_INTERVAL_MS);
+        this.logger.log(`Reconnect sweep enabled (every ${Math.round(this.RECONNECT_SWEEP_INTERVAL_MS / 1000)}s)`);
+      }
+
     } catch (error) {
       this.logger.error('Error in onModuleInit:', error);
     }
@@ -366,6 +483,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   }
 
   async onModuleDestroy() {
+    // Stop the sweep and any pending ready-timeout watchdogs.
+    if (this.reconnectSweepTimer) { clearInterval(this.reconnectSweepTimer); this.reconnectSweepTimer = null; }
+    for (const profileId of Array.from(this.readyTimers.keys())) this.clearReadyTimer(profileId);
+
     // Cleanup all engines on shutdown
     for (const [profileId, instance] of this.engines) {
       try {
@@ -418,6 +539,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async connectProfile(profileId: string): Promise<{ status: string; message: string }> {
     this.logger.log(`Connecting profile: ${profileId}`);
+
+    // A (re)connect intent clears any manual-disconnect flag so the watchdog and
+    // sweep may manage this profile again.
+    this.manuallyDisconnected.delete(profileId);
 
     // Check if already connected
     const existing = this.engines.get(profileId);
@@ -526,6 +651,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           instance.status = 'connected';
         }
 
+        // Reached 'ready' — cancel the watchdog and reset its retry counter.
+        this.clearReadyTimer(profileId);
+        this.readyTimeoutRetries.delete(profileId);
+
         // Update database
         await prisma.profile.update({
           where: { id: profileId },
@@ -554,7 +683,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       },
       onDisconnected: async (reason: string) => {
         this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
-        
+
+        // A disconnect event resolves the pending-ready state — cancel the
+        // watchdog so it doesn't also fire a competing reconnect.
+        this.clearReadyTimer(profileId);
+
         // Update engine instance status
         const instance = this.engines.get(profileId);
         if (instance) {
@@ -1049,6 +1182,15 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         this.realtime.emitConnectionStatus(profileId, 'error');
       });
 
+      // Arm the ready-timeout watchdog. Cleared on 'ready' (onReady) or on a
+      // disconnect event (onDisconnected); fires only on a silent ready-hang
+      // where neither event ever arrives.
+      this.clearReadyTimer(profileId);
+      this.readyTimers.set(profileId, setTimeout(() => {
+        this.onReadyTimeout(profileId).catch(err =>
+          this.logger.warn(`onReadyTimeout error for ${profileId}: ${(err as Error).message}`));
+      }, this.READY_TIMEOUT_MS));
+
       return { status: 'connecting', message: 'Scan QR code to connect' };
     } catch (error: any) {
       this.logger.error(`Failed to initialize engine for ${profileId}:`, error);
@@ -1067,6 +1209,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   async disconnectProfile(profileId: string): Promise<{ status: string }> {
     this.logger.log(`Disconnecting profile: ${profileId}`);
+
+    // Operator intent: stop the watchdog and mark it so neither the watchdog nor
+    // the sweep resurrects this profile.
+    this.clearReadyTimer(profileId);
+    this.readyTimeoutRetries.delete(profileId);
+    this.manuallyDisconnected.add(profileId);
 
     const instance = this.engines.get(profileId);
     
