@@ -2,7 +2,7 @@
 // apps/api/src/modules/messages/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsBoolean, ValidateNested, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsBoolean, ValidateNested, IsArray, Allow } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
 
@@ -381,6 +381,7 @@ export class ScheduleMessageDto extends BaseMessageDto {
   type: string;
 
   @ApiProperty({ description: 'Message content (text, media options, etc.)' })
+  @Allow() // free-form Json payload — kept as-is under whitelist, not stripped
   content: any;
 
   @ApiProperty({ example: '2026-03-01T10:00:00Z', description: 'ISO 8601 datetime to send' })
