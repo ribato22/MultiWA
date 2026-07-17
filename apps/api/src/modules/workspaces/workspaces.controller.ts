@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
+import { CreateWorkspaceDto, UpdateWorkspaceDto } from './dto';
 
 @ApiTags('Workspaces')
 @Controller('workspaces')
@@ -25,7 +26,7 @@ export class WorkspacesController {
   @Post()
   @ApiOperation({ summary: 'Create workspace' })
   @ApiValidationError()
-  async create(@Request() req: any, @Body() dto: any) {
+  async create(@Request() req: any, @Body() dto: CreateWorkspaceDto) {
     return this.service.create(req.user.organizationId, dto);
   }
 
@@ -42,7 +43,7 @@ export class WorkspacesController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'workspace' })
   @ApiValidationError()
   @ApiNotFound('Workspace')
-  async update(@Param('id') id: string, @Body() dto: any) {
+  async update(@Param('id') id: string, @Body() dto: UpdateWorkspaceDto) {
     return this.service.update(id, dto);
   }
 

@@ -8,6 +8,7 @@ import { AccountsService } from './accounts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
+import { CreateAccountDto, UpdateAccountDto, CreateProfileDto } from './dto';
 
 @ApiTags('Accounts')
 @Controller('accounts')
@@ -36,7 +37,7 @@ export class AccountsController {
   @Post()
   @ApiOperation({ summary: 'Create new account' })
   @ApiValidationError()
-  async create(@Body() dto: any, @Req() req: any) {
+  async create(@Body() dto: CreateAccountDto, @Req() req: any) {
     const userId = req.user?.sub || req.user?.id;
     return this.accountsService.create(dto, userId);
   }
@@ -46,7 +47,7 @@ export class AccountsController {
   @ApiOperation({ summary: 'Update account' })
   @ApiValidationError()
   @ApiNotFound('Account')
-  async update(@Param('id') id: string, @Body() dto: any) {
+  async update(@Param('id') id: string, @Body() dto: UpdateAccountDto) {
     return this.accountsService.update(id, dto);
   }
 
@@ -75,7 +76,7 @@ export class AccountsController {
   @ApiNotFound('Account')
   async createProfile(
     @Param('accountId') accountId: string,
-    @Body() dto: any,
+    @Body() dto: CreateProfileDto,
   ) {
     return this.accountsService.createProfile(accountId, dto);
   }

@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
+import { UpdateOrganizationDto, AddMemberDto, UpdateMemberRoleDto } from './dto';
 
 @ApiTags('Organizations')
 @Controller('organizations')
@@ -27,7 +28,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: 'Update current organization' })
   @ApiForbiddenResponse({ description: 'Requires owner or admin role' })
   @ApiValidationError()
-  async update(@Request() req: any, @Body() dto: any) {
+  async update(@Request() req: any, @Body() dto: UpdateOrganizationDto) {
     return this.service.update(req.user.organizationId, dto);
   }
 
@@ -44,7 +45,7 @@ export class OrganizationsController {
   @ApiOperation({ summary: 'Invite/create a new member' })
   @ApiForbiddenResponse({ description: 'Requires owner or admin role' })
   @ApiValidationError()
-  async addMember(@Request() req: any, @Body() dto: { email: string; name: string; role?: string }) {
+  async addMember(@Request() req: any, @Body() dto: AddMemberDto) {
     return this.service.addMember(req.user.organizationId, dto);
   }
 
@@ -57,7 +58,7 @@ export class OrganizationsController {
   async updateMemberRole(
     @Request() req: any,
     @Param('id') memberId: string,
-    @Body() dto: { role: string },
+    @Body() dto: UpdateMemberRoleDto,
   ) {
     return this.service.updateMemberRole(req.user.organizationId, memberId, dto.role);
   }

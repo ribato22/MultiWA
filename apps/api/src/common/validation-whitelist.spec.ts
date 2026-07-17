@@ -7,6 +7,8 @@ import { describe, it, expect } from 'vitest';
 import { ValidationPipe, ArgumentMetadata } from '@nestjs/common';
 import { CreateAutoreplyDto } from '../modules/autoreply/dto';
 import { AssignRoleDto } from '../modules/rbac/dto';
+import { CreateAccountDto } from '../modules/accounts/dto';
+import { AddMemberDto } from '../modules/organizations/dto';
 
 const pipe = new ValidationPipe({
   whitelist: true,
@@ -57,5 +59,28 @@ describe('ValidationPipe whitelist', () => {
     expect(out.roleId).toBe('r1');
     expect('organizationId' in out).toBe(false); // not a field on AssignRoleDto → stripped
     expect('extra' in out).toBe(false);
+  });
+
+  // DTOs that replaced `@Body() dto: any` (accounts/workspaces/organizations).
+  it('keeps CreateAccountDto fields, keeps settings object, strips unknowns', async () => {
+    const out: any = await pipe.transform(
+      {
+        name: 'Sales',
+        description: 'd',
+        settings: { theme: 'dark' },
+        // must be dropped — the service derives workspaceId itself:
+        workspaceId: 'forged',
+        id: 'forged',
+      },
+      bodyMeta(CreateAccountDto),
+    );
+    expect(out.name).toBe('Sales');
+    expect(out.settings).toEqual({ theme: 'dark' });
+    expect('workspaceId' in out).toBe(false);
+    expect('id' in out).toBe(false);
+  });
+
+  it('rejects an AddMemberDto missing required email/name', async () => {
+    await expect(pipe.transform({ role: 'agent' }, bodyMeta(AddMemberDto))).rejects.toBeTruthy();
   });
 });
