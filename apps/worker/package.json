@@ -25,6 +25,7 @@
     "ioredis": "^5.4.0",
     "nodemailer": "^8.0.1",
     "pino": "^9.0.0",
+    "prom-client": "^15",
     "qrcode": "^1.5.3",
     "reflect-metadata": "^0.2.0",
     "web-push": "^3.6.7"

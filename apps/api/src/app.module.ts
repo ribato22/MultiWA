@@ -45,12 +45,15 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 // Competitive parity modules
 import { GroupsModule } from './modules/groups/groups.module';
 import { BulkModule } from './modules/bulk/bulk.module';
+import { MetricsModule } from './metrics/metrics.module';
 // WebSocketModule (RealtimeGateway) intentionally not imported: it was a second,
 // unauthenticated gateway on the same /ws namespace as the (now authenticated)
 // EventsGateway and is unused by any service. Consolidated to one gateway.
 
 @Module({
   imports: [
+    // Prometheus metrics at GET /metrics (default runtime metrics)
+    MetricsModule,
     // Rate limiting — global default; tighten per-route with @Throttle()
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 120 }]),
     // Cross-tenant ownership guard (opt-in per route via @RequireTenant)

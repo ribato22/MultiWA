@@ -140,6 +140,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 ### Enterprise
 - 🛡️ **Security** — Helmet, CSP, rate limiting, encryption at rest
 - 🐳 **Docker** — Production-ready containers with health checks
+- 📈 **Metrics** — Prometheus `/metrics` (API, root path) + `/metrics` on the worker health port: default Node/process metrics plus BullMQ queue depth. Public like `/health` — restrict at your proxy/firewall
 - ⚙️ **Background Worker** — BullMQ worker scaffolding (a durable async send queue is on the roadmap; today message sending and scheduling run in the API process)
 - 🔒 **GDPR** — Data export and deletion endpoints
 - 🔌 **Plugin System** — Extend with custom plugins
