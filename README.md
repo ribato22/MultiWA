@@ -94,9 +94,9 @@ pnpm install
 
 cp .env.example .env
 
-# Setup database
+# Setup database (no migrations dir — db push syncs the schema)
 pnpm --filter database exec prisma generate
-pnpm --filter database exec prisma migrate deploy
+pnpm --filter database exec prisma db push
 
 # Build workspace packages
 pnpm --filter database build
@@ -113,7 +113,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 
 ### Core
 - 📱 **Multi-Session Management** — Connect unlimited WhatsApp accounts
-- 🔌 **Pluggable Engine Adapters** — Clean engine interface; whatsapp-web.js by default, a Baileys adapter is included (per-profile engine selection is being wired)
+- 🔌 **Pluggable Engine Adapters** — Clean engine interface with per-profile engine selection: whatsapp-web.js (default, production) or a Baileys adapter (experimental)
 - 📨 **Unified Messaging API** — Send text, media, documents, contacts, locations
 - 📡 **Real-time WebSocket** — Live session status, QR codes, and events via Socket.IO
 - 🔐 **JWT Authentication** — Secure API access with refresh tokens
@@ -300,8 +300,9 @@ cp .env.production.example .env
 # 2. Build and start (with all optional services)
 docker compose --profile full up -d --build
 
-# 3. Run database migrations
-docker exec multiwa-api npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+# 3. Sync the database schema (the API container also does this automatically
+#    on startup; run manually only if you need to force it)
+docker exec multiwa-api npx prisma db push --schema=packages/database/prisma/schema.prisma
 
 # 4. Access
 # API:    http://your-server:3333/api/docs
@@ -379,8 +380,8 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 ## 🔗 Links
 
 - 📖 [Documentation](https://ribato22.github.io/MultiWA/docs/) · [Source](docs/)
-- 🐛 [Report a Bug](https://github.com/ribato22/MultiWA/issues/new?template=bug_report.yml)
-- 💡 [Request a Feature](https://github.com/ribato22/MultiWA/issues/new?template=feature_request.yml)
+- 🐛 [Report a Bug](https://github.com/ribato22/MultiWA/issues/new?template=bug_report.md)
+- 💡 [Request a Feature](https://github.com/ribato22/MultiWA/issues/new?template=feature_request.md)
 - 🔒 [Security Policy](SECURITY.md)
 - 📝 [Changelog](CHANGELOG.md)
 - 🕵️ [Privacy Policy](PRIVACY.md)

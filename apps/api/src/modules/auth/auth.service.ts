@@ -90,17 +90,7 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    const tokens = await this.generateTokens(user);
-
-    // Create session
-    await this.sessionsService.createSession(
-      user.id,
-      tokens.accessToken,
-      ipAddress,
-      userAgent,
-    );
-
-    return tokens;
+    return this.generateTokens(user, { ipAddress, userAgent });
   }
 
   /**
@@ -130,17 +120,7 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    const tokens = await this.generateTokens(user);
-
-    // Create session
-    await this.sessionsService.createSession(
-      user.id,
-      tokens.accessToken,
-      ipAddress,
-      userAgent,
-    );
-
-    return tokens;
+    return this.generateTokens(user, { ipAddress, userAgent });
   }
 
   async refreshToken(refreshToken: string): Promise<TokenResponseDto> {
@@ -242,7 +222,10 @@ export class AuthService {
     return { success: true };
   }
 
-  private async generateTokens(user: any): Promise<TokenResponseDto> {
+  private async generateTokens(
+    user: any,
+    sessionContext?: { ipAddress?: string; userAgent?: string },
+  ): Promise<TokenResponseDto> {
     const payload = {
       sub: user.id,
       email: user.email,
@@ -252,6 +235,16 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
+
+    // Every issued access token is bound to a server-side session so logout and
+    // session revocation actually invalidate it (JwtStrategy checks the session
+    // on each request). Centralized here so no issuance path can forget it.
+    await this.sessionsService.createSession(
+      user.id,
+      accessToken,
+      sessionContext?.ipAddress,
+      sessionContext?.userAgent,
+    );
 
     return {
       accessToken,

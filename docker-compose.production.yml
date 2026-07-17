@@ -88,14 +88,58 @@ services:
       S3_REGION: ${S3_REGION:-us-east-1}
       WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-whatsapp-web.js}
       CHROMIUM_PATH: /usr/bin/chromium
+      # WhatsApp sessions are written under SESSIONS_DIR (see engine-manager +
+      # whatsapp-web.js LocalAuth dataPath). Must match the volume mount below,
+      # or logins are lost on every container recreate.
+      SESSIONS_DIR: /data/sessions
     volumes:
-      - wa_sessions:/app/.wwebjs_auth
+      - wa_sessions:/data/sessions
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      - internal
+
+  # ─── Background Worker (BullMQ) ─────────────────
+  # Drains durable webhook delivery + background jobs. Without this the queues
+  # fill and webhooks are never delivered. Shares the API's sessions volume so a
+  # future ENGINE_HOST=worker cut-over can host the engine here; with the default
+  # ENGINE_HOST=api it only processes queues.
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-multiwa}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-multiwa}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      ENGINE_HOST: ${ENGINE_HOST:-api}
+      WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-whatsapp-web.js}
+      DEFAULT_ENGINE: ${WHATSAPP_ENGINE:-whatsapp-web.js}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+      SESSIONS_DIR: /data/sessions
+      S3_ENDPOINT: http://minio:9000
+      S3_PORT: 9000
+      S3_USE_SSL: "false"
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-multiwa}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      WEBHOOK_LOG_PAYLOAD_MAX_BYTES: ${WEBHOOK_LOG_PAYLOAD_MAX_BYTES:-512}
+    volumes:
+      - wa_sessions:/data/sessions
     networks:
       - internal
 

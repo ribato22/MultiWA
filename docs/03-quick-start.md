@@ -54,9 +54,9 @@ pnpm install
 cp .env.example .env
 # Edit .env: at minimum set DATABASE_URL, REDIS_URL, and JWT_SECRET
 
-# 4. Generate the Prisma client and run migrations
+# 4. Generate the Prisma client and sync the schema (no migrations dir → db push)
 pnpm --filter database exec prisma generate
-pnpm --filter database exec prisma migrate deploy
+pnpm --filter database exec prisma db push
 
 # 5. Build workspace packages used by the API
 pnpm --filter database build

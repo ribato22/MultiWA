@@ -154,6 +154,15 @@ export class AccountsService {
       throw new NotFoundException('Account not found');
     }
 
+    // Honor the engine chosen in the create UI. The admin sends it as
+    // settings.engine; older callers may send `engine`. Persist to the
+    // authoritative `engine` column (what EngineManager.resolveEngineType reads),
+    // falling back to the production default for a missing/unknown value — so
+    // the Baileys option in the UI is no longer silently dropped.
+    const VALID_ENGINES = ['whatsapp-web-js', 'baileys', 'mock'];
+    const requestedEngine = dto.settings?.engine ?? dto.engine;
+    const engine = VALID_ENGINES.includes(requestedEngine) ? requestedEngine : 'whatsapp-web-js';
+
     return prisma.profile.create({
       data: {
         accountId: accountId,
@@ -161,6 +170,7 @@ export class AccountsService {
         displayName: dto.name || dto.displayName,
         phoneNumber: dto.phoneNumber || dto.phone,
         status: 'DISCONNECTED',
+        engine,
         settings: {},
       },
     });

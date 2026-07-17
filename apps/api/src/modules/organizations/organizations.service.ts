@@ -3,8 +3,22 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
 
+// Roles that may be assigned through member-management endpoints. `owner` is
+// deliberately excluded: ownership is set when the org is created and is not
+// mintable here, so an admin can never escalate a member (or themselves) to
+// owner via addMember/updateMemberRole.
+const ASSIGNABLE_ROLES = ['admin', 'member', 'viewer'];
+
 @Injectable()
 export class OrganizationsService {
+  private assertAssignableRole(role: string | undefined) {
+    if (role !== undefined && !ASSIGNABLE_ROLES.includes(role)) {
+      throw new BadRequestException(
+        `Invalid role "${role}". Allowed: ${ASSIGNABLE_ROLES.join(', ')}`,
+      );
+    }
+  }
+
   async findById(id: string) {
     const org = await prisma.organization.findUnique({
       where: { id },
@@ -40,6 +54,8 @@ export class OrganizationsService {
   }
 
   async addMember(organizationId: string, dto: { email: string; name: string; role?: string }) {
+    this.assertAssignableRole(dto.role);
+
     // Check if email already used
     const existing = await prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) {
@@ -72,6 +88,8 @@ export class OrganizationsService {
   }
 
   async updateMemberRole(organizationId: string, memberId: string, role: string) {
+    this.assertAssignableRole(role);
+
     const member = await prisma.user.findFirst({
       where: { id: memberId, organizationId },
     });

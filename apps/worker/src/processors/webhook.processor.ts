@@ -2,6 +2,7 @@
 import { Job } from 'bullmq';
 import { PrismaClient } from '@prisma/client';
 import * as crypto from 'crypto';
+import { assertWebhookUrlSafe } from '@multiwa/engine-runtime';
 
 const prisma = new PrismaClient();
 
@@ -16,18 +17,6 @@ export interface WebhookJob {
  */
 function generateHmacSignature(body: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(body).digest('hex');
-}
-
-/**
- * Rewrite localhost URLs to host.docker.internal so the dockerized worker can
- * reach an endpoint running on the host (matches webhooks.service.ts).
- */
-function rewriteLocalhost(url: string): string {
-  return url
-    .replace('://localhost:', '://host.docker.internal:')
-    .replace('://localhost/', '://host.docker.internal/')
-    .replace('://127.0.0.1:', '://host.docker.internal:')
-    .replace('://127.0.0.1/', '://host.docker.internal/');
 }
 
 /**
@@ -82,7 +71,12 @@ export class WebhookProcessor {
       const signature = generateHmacSignature(body, webhook.secret);
       const customHeaders = (webhook.headers as Record<string, string>) || {};
 
-      const response = await fetch(rewriteLocalhost(webhook.url), {
+      // SSRF guard: block internal/metadata targets (opt out per-deploy with
+      // WEBHOOK_ALLOW_PRIVATE_TARGETS=true). `redirect: 'error'` stops a 3xx
+      // from bouncing the request to an internal host.
+      const safeUrl = await assertWebhookUrlSafe(webhook.url);
+
+      const response = await fetch(safeUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -91,6 +85,7 @@ export class WebhookProcessor {
           ...customHeaders,
         },
         body,
+        redirect: 'error',
         signal: AbortSignal.timeout(30000), // 30s timeout
       });
 

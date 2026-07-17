@@ -134,11 +134,13 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 EXPOSE 3333
 
 WORKDIR /app/apps/api
-# On startup, sync the database schema before booting the API. There is no
-# migrations directory, so use `prisma db push` (idempotent: creates tables on a
-# fresh DB, no-op when the schema already matches). The schema lives at
-# /app/packages/database/prisma/schema.prisma and DATABASE_URL comes from env.
-CMD ["sh", "-c", "cd /app/packages/database && prisma db push --skip-generate || echo 'prisma db push failed; starting API anyway'; cd /app/apps/api && exec node dist/main.js"]
+
+# Entrypoint bootstraps strong secrets on first boot (so the default compose
+# stack boots securely with no committed secret), then runs `prisma db push`
+# (no migrations dir) and hands off to the API.
+COPY docker/entrypoint-api.sh /usr/local/bin/entrypoint-api.sh
+RUN chmod +x /usr/local/bin/entrypoint-api.sh
+CMD ["/usr/local/bin/entrypoint-api.sh"]
 
 
 # ── Stage 3: Admin Dashboard Runtime ─────────

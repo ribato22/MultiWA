@@ -133,6 +133,16 @@ export interface Conversation {
   lastMessageAt: string;
 }
 
+// Result of POST /notifications/push/test — the endpoint returns per-endpoint
+// diagnostics (results[].error) alongside the summary, so these are optional.
+export interface PushTestResult {
+  success: boolean;
+  sent?: number;
+  message: string;
+  error?: string;
+  results?: Array<{ success?: boolean; error?: string; statusCode?: number }>;
+}
+
 // API Client Class
 class ApiClient {
   private baseUrl: string;
@@ -725,7 +735,7 @@ class ApiClient {
   }
 
   async testPush() {
-    return this.request<{ success: boolean; sent: number; message: string }>('/notifications/push/test', {
+    return this.request<PushTestResult>('/notifications/push/test', {
       method: 'POST',
       body: JSON.stringify({}),
     });

@@ -7,7 +7,8 @@ vi.mock('@multiwa/database', () => ({
   prisma: {
     user: { findUnique: vi.fn() },
     workspace: { create: vi.fn() },
-    account: { findMany: vi.fn(), create: vi.fn() },
+    account: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
+    profile: { create: vi.fn() },
   },
 }));
 
@@ -79,6 +80,35 @@ describe('AccountsService', () => {
       expect(prisma.workspace.create).not.toHaveBeenCalled();
       expect(prisma.account.create).not.toHaveBeenCalled();
       expect(result).toEqual([{ id: 'acc-1' }]);
+    });
+  });
+
+  describe('createProfile — engine selection', () => {
+    const createdEngine = () => (vi.mocked(prisma.profile.create).mock.calls[0][0] as any).data.engine;
+
+    beforeEach(() => {
+      vi.mocked(prisma.account.findUnique).mockReset().mockResolvedValue({ id: 'a1', workspaceId: 'w1' } as any);
+      vi.mocked(prisma.profile.create).mockReset().mockResolvedValue({} as any);
+    });
+
+    it('persists a valid engine from settings.engine (baileys)', async () => {
+      await service.createProfile('a1', { displayName: 'x', settings: { engine: 'baileys' } });
+      expect(createdEngine()).toBe('baileys');
+    });
+
+    it('honors dto.engine when settings.engine is absent (mock)', async () => {
+      await service.createProfile('a1', { displayName: 'x', engine: 'mock' });
+      expect(createdEngine()).toBe('mock');
+    });
+
+    it('falls back to whatsapp-web-js for an unknown engine', async () => {
+      await service.createProfile('a1', { displayName: 'x', settings: { engine: 'evil-engine' } });
+      expect(createdEngine()).toBe('whatsapp-web-js');
+    });
+
+    it('defaults to whatsapp-web-js when no engine is provided', async () => {
+      await service.createProfile('a1', { displayName: 'x' });
+      expect(createdEngine()).toBe('whatsapp-web-js');
     });
   });
 });
