@@ -51,8 +51,8 @@ pnpm install
 cp .env.example .env
 # Edit .env with your PostgreSQL connection
 
-# 4. Run database migrations
-pnpm prisma migrate dev
+# 4. Sync the database schema (no migrations dir → db push)
+pnpm prisma db push
 
 # 5. Start development servers
 pnpm dev

@@ -16,7 +16,7 @@ DATABASE_URL="file:./data/multiwa.db"
 
 > **Note:** After changing `DATABASE_URL`, you must re-initialize the database:
 > ```bash
-> npx prisma migrate dev
+> npx prisma db push
 > ```
 
 ## Schema Compatibility
@@ -58,7 +58,7 @@ datasource db {
 
 1. Export data from current database
 2. Change `DATABASE_URL` in `.env`
-3. Run `npx prisma migrate dev --name switch-provider`
+3. Run `npx prisma db push` to sync the schema to the new database
 4. Import data to new database
 
 For automated migration scripts, see the Prisma docs on [database seeding](https://www.prisma.io/docs/guides/migrate/seed-database).

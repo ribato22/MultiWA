@@ -94,9 +94,9 @@ pnpm install
 
 cp .env.example .env
 
-# Setup database
+# Setup database (no migrations dir — db push syncs the schema)
 pnpm --filter database exec prisma generate
-pnpm --filter database exec prisma migrate deploy
+pnpm --filter database exec prisma db push
 
 # Build workspace packages
 pnpm --filter database build
@@ -300,8 +300,9 @@ cp .env.production.example .env
 # 2. Build and start (with all optional services)
 docker compose --profile full up -d --build
 
-# 3. Run database migrations
-docker exec multiwa-api npx prisma migrate deploy --schema=packages/database/prisma/schema.prisma
+# 3. Sync the database schema (the API container also does this automatically
+#    on startup; run manually only if you need to force it)
+docker exec multiwa-api npx prisma db push --schema=packages/database/prisma/schema.prisma
 
 # 4. Access
 # API:    http://your-server:3333/api/docs

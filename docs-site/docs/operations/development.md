@@ -19,10 +19,10 @@ pnpm install
 cp .env.example .env
 
 # Start PostgreSQL and Redis
-docker compose up -d db redis
+docker compose up -d postgres redis
 
-# Run migrations
-pnpm prisma migrate dev
+# Sync the database schema (no migrations dir → db push)
+pnpm prisma db push
 
 # Start development servers
 pnpm dev
@@ -129,7 +129,7 @@ pnpm format
 | `pnpm dev` | Start dev servers |
 | `pnpm build` | Build production |
 | `pnpm prisma studio` | Open Prisma Studio |
-| `pnpm prisma migrate dev` | Run migrations |
+| `pnpm prisma db push` | Sync database schema |
 | `pnpm test` | Run tests |
 
 ---
