@@ -7,3 +7,5 @@
 // architecture/engine-worker-migration-sop.md.
 
 export * from './send-gate.service';
+export * from './email.service';
+export * from './push.service';

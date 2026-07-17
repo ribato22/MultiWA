@@ -7,8 +7,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
-import { EmailService } from './email.service';
-import { PushService } from './push.service';
+import { EmailService, PushService } from '@multiwa/engine-runtime';
 
 export enum NotificationType {
   MESSAGE = 'message',

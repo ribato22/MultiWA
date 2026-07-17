@@ -14,9 +14,13 @@
   "dependencies": {
     "@multiwa/database": "workspace:*",
     "@multiwa/engines": "workspace:*",
-    "@nestjs/common": "^10.4.0"
+    "@nestjs/common": "^10.4.0",
+    "nodemailer": "^8.0.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@types/nodemailer": "^7.0.9",
+    "@types/web-push": "^3.6.4",
     "typescript": "^5.7.0"
   }
 }

@@ -28,7 +28,7 @@ vi.mock('@multiwa/database', () => ({
 }));
 
 import { prisma } from '@multiwa/database';
-import { PushService } from './push.service';
+import { PushService } from '@multiwa/engine-runtime';
 
 describe('PushService', () => {
   let pushService: PushService;

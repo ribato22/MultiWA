@@ -4,8 +4,7 @@
 import { Global, Module } from '@nestjs/common';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
-import { EmailService } from './email.service';
-import { PushService } from './push.service';
+import { EmailService, PushService } from '@multiwa/engine-runtime';
 import { SettingsModule } from '../settings/settings.module';
 import { SettingsService } from '../settings/settings.service';
 

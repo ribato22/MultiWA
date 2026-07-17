@@ -20,8 +20,7 @@ import { WorkerAutomationService } from './automation.service';
 import { AIService } from './ai.service';
 import { WorkerRuleEngineService } from './rule-engine.service';
 import { WorkerNotificationsService } from './notifications.service';
-import { EmailService } from './email.service';
-import { PushService } from './push.service';
+import { EmailService, PushService } from '@multiwa/engine-runtime';
 import { WorkerWebhookDispatcherService, WORKER_WEBHOOK_QUEUE } from './webhook-dispatcher.service';
 
 @Module({
