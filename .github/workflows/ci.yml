@@ -168,6 +168,13 @@ jobs:
       - name: Run SDK tests
         run: pnpm --filter @multiwa/sdk test
 
+      # Create the schema in the test DB (no migrations dir → db push), same mechanism
+      # as the Prisma generate step above. Kept out of vitest so it runs in a full shell.
+      - name: Prepare e2e database
+        run: pnpm --filter database exec prisma db push --skip-generate --accept-data-loss
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test
+
       # Integration (e2e) suite: boots the real NestJS app against the postgres/redis
       # services above and drives HTTP requests through the full pipe/guard/service/
       # Prisma/bcrypt stack — the coverage unit tests mock Prisma and never run the pipe.

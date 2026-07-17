@@ -14,6 +14,7 @@ export default defineConfig({
     // reduces dangling-handle flakiness.
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },
-    globalSetup: ['./test/global-setup.ts'],
+    // The schema is created by a dedicated CI step (`prisma db push`) before this runs,
+    // so no vitest globalSetup is needed.
   },
 });
