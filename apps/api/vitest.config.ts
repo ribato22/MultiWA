@@ -16,14 +16,15 @@ export default defineConfig({
       all: true,
       include: ['modules/**/*.ts'],
       exclude: ['**/*.dto.ts', '**/*.module.ts', '**/*.guard.ts', '**/*.spec.ts', '**/dto/**'],
-      // Ratchet floor set just below the current measured coverage so the gate
-      // passes today and only fails on a REGRESSION (deleting tests, or adding a
-      // large untested module). Raise these as coverage grows — the unmerged
-      // P0/P1 branches already add several specs.
+      // Ratchet floor set just below the current coverage measured on main
+      // (stmts/lines 5.93, funcs 14.81, branches 52.27) so the gate passes today
+      // and only fails on a REGRESSION. Recalibrated after the email/push
+      // extraction (#33) moved those services out of the api. Raise as coverage
+      // grows.
       thresholds: {
         lines: 5,
         statements: 5,
-        functions: 15,
+        functions: 14,
         branches: 40,
       },
     },
