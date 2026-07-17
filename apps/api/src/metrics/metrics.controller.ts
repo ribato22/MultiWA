@@ -16,8 +16,10 @@ import { MetricsService } from './metrics.service';
 export class MetricsController {
   constructor(private readonly metricsService: MetricsService) {}
 
-  @Get('metrics')
+  // @ApiExcludeEndpoint must precede @Get so the API-contract drift check (which
+  // scans decorators above the route) also skips this ops-only endpoint.
   @ApiExcludeEndpoint()
+  @Get('metrics')
   async getMetrics(@Res() reply: FastifyReply) {
     reply.header('Content-Type', this.metricsService.registry.contentType);
     reply.send(await this.metricsService.metrics());
