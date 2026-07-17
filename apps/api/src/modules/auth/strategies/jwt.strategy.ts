@@ -6,6 +6,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { prisma } from '@multiwa/database';
+import { SessionsService } from '../sessions.service';
 
 export interface JwtPayload {
   sub: string;
@@ -14,17 +15,23 @@ export interface JwtPayload {
   role: string;
 }
 
+const extractToken = ExtractJwt.fromAuthHeaderAsBearerToken();
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
-  constructor(private readonly config: ConfigService) {
+  constructor(
+    private readonly config: ConfigService,
+    private readonly sessions: SessionsService,
+  ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: config.get('JWT_SECRET'),
+      passReqToCallback: true,
     });
   }
 
-  async validate(payload: JwtPayload) {
+  async validate(req: any, payload: JwtPayload) {
     const user = await prisma.user.findUnique({
       where: { id: payload.sub },
       include: { organization: true },
@@ -32,6 +39,14 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
     if (!user || !user.isActive) {
       throw new UnauthorizedException();
+    }
+
+    // Enforce revocation: the access token must still map to a live session, so
+    // logout / revoke-session / revoke-all actually invalidate the JWT rather
+    // than leaving it valid until its natural expiry.
+    const token = extractToken(req);
+    if (!token || !(await this.sessions.validateAndTouch(token))) {
+      throw new UnauthorizedException('Session expired or revoked');
     }
 
     return {
