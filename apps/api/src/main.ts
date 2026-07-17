@@ -3,10 +3,9 @@
 
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { IoAdapter } from '@nestjs/platform-socket.io';
 import { AppModule } from './app.module';
+import { configureApp } from './app.factory';
 
 // Fail fast on missing/weak security secrets so a production deploy can never
 // silently run with a forgeable JWT secret or an ephemeral encryption key.
@@ -52,67 +51,12 @@ async function bootstrap() {
     );
     console.log('✅ [1/7] NestJS application created');
 
-    // Register multipart for file uploads
-    console.log('🔧 [2/7] Registering @fastify/multipart...');
-    await app.register(require('@fastify/multipart'), {
-      limits: {
-        fileSize: 20 * 1024 * 1024, // 20MB max
-      },
-    });
-    console.log('✅ [2/7] @fastify/multipart registered');
-
-    // Security headers via Helmet
-    console.log('🔧 [2.5/7] Registering @fastify/helmet...');
-    await app.register(require('@fastify/helmet'), {
-      contentSecurityPolicy: false, // CSP handled by Next.js admin
-      crossOriginEmbedderPolicy: false, // Allow embedding for chat widget
-      hsts: {
-        maxAge: 31536000, // 1 year
-        includeSubDomains: true,
-      },
-    });
-    console.log('✅ [2.5/7] @fastify/helmet registered');
-
-    // Global prefix for REST API
-    console.log('🔧 [3/7] Setting global prefix...');
-    app.setGlobalPrefix('api/v1', {
-      exclude: [
-        { path: '/', method: RequestMethod.GET },
-        // Prometheus scrapes the conventional root /metrics path.
-        { path: 'metrics', method: RequestMethod.GET },
-      ],
-    });
-    console.log('✅ [3/7] Global prefix set');
-
-    // CORS
-    console.log('🔧 [4/7] Enabling CORS...');
-    app.enableCors({
-      origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3001'],
-      credentials: true,
-    });
-    console.log('✅ [4/7] CORS enabled');
-
-    // WebSocket adapter (socket.io)
-    console.log('🔧 [5/7] Setting WebSocket adapter...');
-    app.useWebSocketAdapter(new IoAdapter(app));
-    console.log('✅ [5/7] WebSocket adapter set');
-
-    // Validation
-    console.log('🔧 [6/7] Setting up validation & Swagger...');
-    app.useGlobalPipes(
-      new ValidationPipe({
-        // Strip any request-body property that isn't a validated DTO field. This is an
-        // API-wide mass-assignment defense: without it, a body like {"status":"draft"}
-        // or {"cursor":0} flows through `dto as any` writes into columns the client
-        // should never control. `forbidNonWhitelisted` is left OFF (strip, don't reject)
-        // so existing clients that send extra fields keep working.
-        whitelist: true,
-        transform: true,
-        transformOptions: {
-          enableImplicitConversion: true,
-        },
-      }),
-    );
+    // Apply the shared production config: multipart, helmet, global prefix, CORS,
+    // WebSocket adapter, and the API-wide ValidationPipe (whitelist). Kept in
+    // app.factory so the e2e harness boots with the identical middleware/pipe stack.
+    console.log('🔧 [2-6/7] Applying app configuration...');
+    await configureApp(app);
+    console.log('✅ [2-6/7] App configuration applied');
 
     // Swagger / OpenAPI
     const apiDescription = [

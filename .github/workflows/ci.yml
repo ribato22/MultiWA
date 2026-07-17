@@ -167,3 +167,17 @@ jobs:
       # contract test that locks the SDK verifier to the server's HMAC scheme.
       - name: Run SDK tests
         run: pnpm --filter @multiwa/sdk test
+
+      # Integration (e2e) suite: boots the real NestJS app against the postgres/redis
+      # services above and drives HTTP requests through the full pipe/guard/service/
+      # Prisma/bcrypt stack — the coverage unit tests mock Prisma and never run the pipe.
+      - name: Run API e2e tests
+        run: pnpm --filter api run test:e2e
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-jwt-secret
+          JWT_REFRESH_SECRET: test-jwt-refresh-secret
+          ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          NODE_ENV: test
+          ENGINE_HOST: worker
