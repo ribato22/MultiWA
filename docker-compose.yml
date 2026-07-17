@@ -67,8 +67,10 @@ services:
       REDIS_URL: redis://redis:6379
       API_PORT: 3333
       API_HOST: 0.0.0.0
-      JWT_SECRET: ${JWT_SECRET:-change-this-to-a-random-secret}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-refresh-secret}
+      # Leave unset to auto-generate strong, persistent secrets on first boot
+      # (see docker/entrypoint-api.sh). Set them in .env to bring your own.
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://localhost:3333}
       WHATSAPP_ENGINE: ${DEFAULT_ENGINE:-whatsapp-web-js}
