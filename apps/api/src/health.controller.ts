@@ -39,13 +39,27 @@ export class HealthController {
       allHealthy = false;
     }
 
-    // Check Redis connectivity (via environment)
-    try {
-      const redisUrl = process.env.REDIS_URL;
-      checks.redis = redisUrl ? 'configured' : 'not_configured';
-    } catch {
-      checks.redis = 'error';
-      allHealthy = false;
+    // Check Redis connectivity with an actual PING (not just env presence).
+    // Short-lived client, bounded connect timeout, disconnected in finally so a
+    // probe every ~30s never leaks sockets or hangs the endpoint.
+    {
+      const IORedis = (await import('ioredis')).default;
+      const redis = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
+        maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+        lazyConnect: true,
+        connectTimeout: 1500,
+      });
+      redis.on('error', () => {}); // swallow background errors; the ping result decides
+      try {
+        await redis.connect();
+        checks.redis = (await redis.ping()) === 'PONG' ? 'ok' : 'error';
+      } catch {
+        checks.redis = 'error';
+      } finally {
+        redis.disconnect();
+      }
+      if (checks.redis !== 'ok') allHealthy = false;
     }
 
     const statusCode = allHealthy ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE;
