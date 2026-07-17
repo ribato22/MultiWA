@@ -88,7 +88,7 @@ describe('AccountsService', () => {
 
     beforeEach(() => {
       vi.mocked(prisma.account.findUnique).mockReset().mockResolvedValue({ id: 'a1', workspaceId: 'w1' } as any);
-      vi.mocked(prisma.profile.create).mockReset().mockImplementation(async (args: any) => args.data);
+      vi.mocked(prisma.profile.create).mockReset().mockResolvedValue({} as any);
     });
 
     it('persists a valid engine from settings.engine (baileys)', async () => {
