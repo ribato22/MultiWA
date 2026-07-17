@@ -5,7 +5,6 @@
     "rootDir": ".",
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "strictNullChecks": false,
     "skipLibCheck": true,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true

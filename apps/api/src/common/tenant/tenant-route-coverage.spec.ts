@@ -100,7 +100,7 @@ describe('tenant route coverage (IDOR regression guard)', () => {
   it('every route on a tenant-guarded controller has @RequireTenant or is allowlisted', () => {
     const violations: string[] = [];
     for (const Ctrl of TENANT_CONTROLLERS) {
-      const proto = Ctrl.prototype;
+      const proto: any = Ctrl.prototype;
       for (const name of Object.getOwnPropertyNames(proto)) {
         if (name === 'constructor') continue;
         const handler = proto[name];
