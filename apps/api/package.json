@@ -12,6 +12,7 @@
     "test": "vitest",
     "test:cov": "vitest run --coverage --exclude '**/tenant-route-coverage.spec.ts'",
     "test:meta": "vitest run src/common/tenant/tenant-route-coverage.spec.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -69,6 +70,7 @@
     "@types/web-push": "^3.6.4",
     "@vitest/coverage-v8": "^2",
     "typescript": "^5.7.0",
+    "unplugin-swc": "^1.5.1",
     "vitest": "^2.0.0"
   }
 }
