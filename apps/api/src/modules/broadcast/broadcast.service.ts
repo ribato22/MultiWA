@@ -10,6 +10,13 @@ import { MessagesService } from '../messages/messages.service';
 export class BroadcastService implements OnModuleInit {
   private readonly logger = new Logger(BroadcastService.name);
 
+  // In-process supersession guard. Each launched execution loop gets a monotonic run
+  // token; the map holds the CURRENT token per broadcast. A loop exits as soon as its
+  // token is no longer current, so a pause→resume that spawns a fresh loop while the
+  // old one is parked in a delay() can never leave two loops sending the same tail.
+  private readonly activeRun = new Map<string, number>();
+  private runSeq = 0;
+
   constructor(
     @Inject(forwardRef(() => MessagesService))
     private readonly messagesService: MessagesService,
@@ -51,7 +58,11 @@ export class BroadcastService implements OnModuleInit {
    * unhandled error. Used by start(), resume(), and boot recovery.
    */
   private launchExecution(broadcastId: string) {
-    this.runExecution(broadcastId).catch((err) =>
+    // Claim the run token synchronously (before yielding to the event loop) so a loop
+    // parked in delay() observes the supersession the instant a new loop is launched.
+    const run = ++this.runSeq;
+    this.activeRun.set(broadcastId, run);
+    this.runExecution(broadcastId, run).catch((err) =>
       this.logger.error(`Broadcast ${broadcastId} execution error: ${err.message}`),
     );
   }
@@ -105,16 +116,24 @@ export class BroadcastService implements OnModuleInit {
   // Update broadcast
   async update(id: string, dto: UpdateBroadcastDto) {
     const broadcast = await this.findOne(id);
-    
-    // Only restrict editing name/message/recipients on non-drafts
-    if (broadcast.status !== 'draft' && (dto as any).name) {
-      throw new BadRequestException('Can only update name/message on broadcasts in draft status');
+
+    // Whitelist the editable fields explicitly. The global ValidationPipe does not strip
+    // unknown properties, so forwarding the raw body would let a request write
+    // execution-state columns (status, cursor, resolvedRecipients, stats, timestamps) —
+    // e.g. flipping a completed broadcast back to 'draft' or zeroing a paused broadcast's
+    // cursor, either of which would re-send the whole list. Only these four are editable.
+    const data: any = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.message !== undefined) data.message = dto.message;
+    if (dto.recipients !== undefined) data.recipients = dto.recipients;
+    if (dto.settings !== undefined) data.settings = dto.settings;
+
+    // Content/structure may only change while the broadcast is still a draft.
+    if (broadcast.status !== 'draft' && Object.keys(data).length > 0) {
+      throw new BadRequestException('Can only edit a broadcast while it is in draft status');
     }
 
-    return prisma.broadcast.update({
-      where: { id },
-      data: dto as any,
-    });
+    return prisma.broadcast.update({ where: { id }, data });
   }
 
   // Delete broadcast
@@ -132,9 +151,15 @@ export class BroadcastService implements OnModuleInit {
   // Schedule broadcast
   async schedule(id: string, dto: ScheduleBroadcastDto) {
     const broadcast = await this.findOne(id);
-    
-    if (!['draft', 'paused'].includes(broadcast.status)) {
-      throw new BadRequestException('Can only schedule draft or paused broadcasts');
+
+    // Only a not-yet-started (draft) broadcast may be scheduled. Allowing a paused
+    // (partially-sent) broadcast to be scheduled would let the cron re-launch it from
+    // cursor 0 and re-send everyone already contacted — resume() is the way to continue
+    // a paused broadcast.
+    if (broadcast.status !== 'draft') {
+      throw new BadRequestException(
+        'Only draft broadcasts can be scheduled; resume a paused broadcast to continue it',
+      );
     }
 
     const scheduledAt = new Date(dto.scheduledAt);
@@ -159,7 +184,7 @@ export class BroadcastService implements OnModuleInit {
     });
   }
 
-  // Start broadcast immediately
+  // Start broadcast immediately (manual trigger).
   async start(id: string) {
     const broadcast = await this.findOne(id);
 
@@ -167,19 +192,88 @@ export class BroadcastService implements OnModuleInit {
       throw new BadRequestException('Cannot start broadcast in current status');
     }
 
-    // Resolve actual recipient phone numbers once and snapshot them, so execution
-    // (and any later crash recovery) always walks the exact same list by index.
-    // Re-resolving on resume would be non-deterministic if contacts/tags changed.
-    const recipientPhones = await this.resolveRecipients(broadcast);
+    // A paused broadcast may be partially sent. Starting it must NEVER restart from
+    // scratch (that re-sends everyone already contacted) — continue it exactly like
+    // resume(), which preserves the durable cursor/snapshot.
+    if (broadcast.status === 'paused') {
+      return this.resume(id);
+    }
 
-    if (recipientPhones.length === 0) {
+    // draft / scheduled: nothing has been sent yet. Atomically claim the transition to
+    // 'running' — two concurrent starts, or a manual start racing the scheduler cron,
+    // must never both launch execution and double-send the whole list (spam/ban risk).
+    const claimed = await this.claimForRunning(id, broadcast.status);
+    if (!claimed) {
+      throw new BadRequestException('Broadcast state changed; please retry');
+    }
+
+    const recipientCount = await this.prepareAndLaunchOrRevert(id, broadcast, broadcast.status);
+    if (recipientCount === null) {
+      // Nothing to send: undo the claim so the broadcast returns to its prior status.
+      await prisma.broadcast.update({ where: { id }, data: { status: broadcast.status } });
       throw new BadRequestException('No recipients found for this broadcast');
     }
+
+    return { success: true, message: 'Broadcast started', recipientCount };
+  }
+
+  /**
+   * Start a scheduled broadcast whose time has come. Invoked by the scheduler cron.
+   * The claim is a single atomic compare-and-set on (status='scheduled', due) → running,
+   * so overlapping cron ticks and manual starts elect exactly one winner. Never throws
+   * (the cron logs failures per-broadcast).
+   */
+  async startScheduled(id: string): Promise<void> {
+    const claim = await prisma.broadcast.updateMany({
+      where: { id, status: 'scheduled', scheduledAt: { lte: new Date() } },
+      data: { status: 'running' },
+    });
+    if (claim.count !== 1) return; // not due, not scheduled, or another tick won the race
+
+    const broadcast = await prisma.broadcast.findUnique({ where: { id } });
+    if (!broadcast) return;
+
+    // On a transient error after the claim, revert to 'scheduled' so the next cron tick retries.
+    const recipientCount = await this.prepareAndLaunchOrRevert(id, broadcast, 'scheduled');
+    if (recipientCount === null) {
+      // Claimed but empty — fail it rather than reverting to 'scheduled', which would
+      // make the cron re-pick it on every tick forever.
+      await prisma.broadcast.update({
+        where: { id },
+        data: { status: 'failed', completedAt: new Date() },
+      });
+      this.logger.warn(`Scheduled broadcast ${id} has no recipients; marked failed`);
+    } else {
+      this.logger.log(`Scheduled broadcast ${id} started (${recipientCount} recipients)`);
+    }
+  }
+
+  /**
+   * Atomic single-winner transition <fromStatus> → running. Returns true iff this
+   * caller performed the transition (exactly one concurrent caller can).
+   */
+  private async claimForRunning(id: string, fromStatus: string): Promise<boolean> {
+    const res = await prisma.broadcast.updateMany({
+      where: { id, status: fromStatus },
+      data: { status: 'running' },
+    });
+    return res.count === 1;
+  }
+
+  /**
+   * With the broadcast already claimed as 'running', resolve + snapshot recipients,
+   * persist the execution snapshot, and launch. Recipients are resolved once here so
+   * execution (and any later crash recovery) always walks the exact same list by index
+   * — re-resolving would be non-deterministic if contacts/tags changed. Returns the
+   * recipient count, or null if none resolved (caller resolves the empty claim).
+   */
+  private async prepareAndLaunch(id: string, broadcast: any): Promise<number | null> {
+    const recipientPhones = await this.resolveRecipients(broadcast);
+    if (recipientPhones.length === 0) return null;
 
     await prisma.broadcast.update({
       where: { id },
       data: {
-        status: 'running',
         startedAt: broadcast.startedAt || new Date(),
         resolvedRecipients: recipientPhones,
         cursor: 0,
@@ -196,8 +290,27 @@ export class BroadcastService implements OnModuleInit {
 
     // Execute broadcast asynchronously (don't await). Survives restart via onModuleInit.
     this.launchExecution(id);
+    return recipientPhones.length;
+  }
 
-    return { success: true, message: 'Broadcast started', recipientCount: recipientPhones.length };
+  /**
+   * prepareAndLaunch, but if it throws (e.g. a transient DB error after the atomic claim
+   * already set status='running'), roll the status back to `revertStatus` so a broadcast
+   * is never stranded 'running' with no live loop while the process stays up. Re-throws.
+   */
+  private async prepareAndLaunchOrRevert(
+    id: string,
+    broadcast: any,
+    revertStatus: string,
+  ): Promise<number | null> {
+    try {
+      return await this.prepareAndLaunch(id, broadcast);
+    } catch (err) {
+      await prisma.broadcast
+        .update({ where: { id }, data: { status: revertStatus } })
+        .catch(() => undefined);
+      throw err;
+    }
   }
 
   // Resolve recipients to phone numbers
@@ -247,7 +360,7 @@ export class BroadcastService implements OnModuleInit {
   // so a fresh call after start(), resume(), or restart continues from where it left
   // off. Pacing (per-message randomized delay + batch pause) and the send path
   // (messagesService → send-gate) are unchanged, preserving anti-ban governance.
-  private async runExecution(broadcastId: string) {
+  private async runExecution(broadcastId: string, run?: number) {
     const broadcast = await prisma.broadcast.findUnique({ where: { id: broadcastId } });
     if (!broadcast || broadcast.status !== 'running') {
       this.logger.log(`Broadcast ${broadcastId}: Nothing to execute (status: ${broadcast?.status})`);
@@ -257,9 +370,46 @@ export class BroadcastService implements OnModuleInit {
     const profileId = broadcast.profileId;
     const message = broadcast.message as any;
     const settings = (broadcast.settings as any) || {};
-    const phones: string[] = Array.isArray(broadcast.resolvedRecipients)
-      ? (broadcast.resolvedRecipients as string[])
-      : [];
+
+    // Normally prepareAndLaunch writes the recipient snapshot before launching. A
+    // 'running' broadcast with no snapshot was either claimed but killed before the
+    // snapshot write (the crash window between the atomic claim and prepareAndLaunch)
+    // or is a legacy pre-durable broadcast. Recover it safely instead of silently
+    // completing it with zero sends.
+    let phones: string[];
+    if (Array.isArray(broadcast.resolvedRecipients)) {
+      phones = broadcast.resolvedRecipients as string[];
+    } else {
+      const alreadySent = ((broadcast.stats as any)?.sent as number) || 0;
+      if (alreadySent > 0) {
+        // Some recipients were already contacted but there is no snapshot to resume
+        // from. Re-sending from scratch would duplicate them, so fail for manual review
+        // rather than risk a ban.
+        this.logger.error(
+          `Broadcast ${broadcastId}: 'running' with no recipient snapshot but ${alreadySent} already sent — marking failed (manual review) to avoid double-send`,
+        );
+        await prisma.broadcast.update({
+          where: { id: broadcastId },
+          data: { status: 'failed', completedAt: new Date() },
+        });
+        return;
+      }
+      // Nothing sent yet — safe to resolve fresh, snapshot, and run from the start.
+      const resolved = await this.resolveRecipients(broadcast);
+      if (resolved.length === 0) {
+        await prisma.broadcast.update({
+          where: { id: broadcastId },
+          data: { status: 'failed', completedAt: new Date() },
+        });
+        this.logger.warn(`Broadcast ${broadcastId}: recovered with no recipients — marked failed`);
+        return;
+      }
+      await prisma.broadcast.update({
+        where: { id: broadcastId },
+        data: { resolvedRecipients: resolved, cursor: 0 },
+      });
+      phones = resolved;
+    }
 
     const delayMin = settings?.delayMin || 3000;
     const delayMax = settings?.delayMax || 10000;
@@ -279,6 +429,14 @@ export class BroadcastService implements OnModuleInit {
     );
 
     for (let i = cursor; i < phones.length; i++) {
+      // Exit immediately if a newer run has superseded this loop (e.g. pause→resume
+      // spawned a fresh loop while this one was parked in delay()). Prevents two live
+      // loops from both sending the remaining tail.
+      if (this.activeRun.get(broadcastId) !== run) {
+        this.logger.log(`Broadcast ${broadcastId}: superseded by a newer run — stopping stale loop`);
+        return;
+      }
+
       // Check if broadcast was paused or cancelled between messages.
       const current = await prisma.broadcast.findUnique({
         where: { id: broadcastId },
@@ -411,6 +569,7 @@ export class BroadcastService implements OnModuleInit {
       },
     });
 
+    if (this.activeRun.get(broadcastId) === run) this.activeRun.delete(broadcastId);
     this.logger.log(`Broadcast ${broadcastId}: Completed. Sent: ${sentCount}, Failed: ${failedCount}`);
   }
 
@@ -448,23 +607,42 @@ export class BroadcastService implements OnModuleInit {
       throw new BadRequestException('Can only resume paused broadcasts');
     }
 
-    // A paused broadcast retains its recipient snapshot and cursor, so we simply flip
-    // it back to running and re-launch — execution continues from the exact recipient
-    // it stopped on. (The old code re-resolved recipients and sliced by stats.sent,
-    // which mis-aligned whenever a send had failed or the underlying contacts changed.)
-    if (!Array.isArray(broadcast.resolvedRecipients)) {
-      // Legacy broadcast started before durable execution existed — restart cleanly.
-      return this.start(id);
+    const hasSnapshot = Array.isArray(broadcast.resolvedRecipients);
+    if (!hasSnapshot && ((broadcast.stats as any)?.sent || 0) > 0) {
+      // Legacy broadcast interrupted mid-send with no durable snapshot: we can't tell
+      // which recipients were already contacted, so resuming would risk re-sending them.
+      // Refuse rather than risk a ban — a new broadcast is the safe path.
+      throw new BadRequestException(
+        'This broadcast was interrupted before durable tracking and cannot be safely resumed; create a new broadcast for the remaining recipients',
+      );
     }
 
-    await prisma.broadcast.update({
-      where: { id },
-      data: { status: 'running' },
-    });
+    // Atomically claim paused → running so two concurrent resume requests (double-click,
+    // client retry, or a manual start() delegating here) can't both launch a loop from
+    // the same cursor and double-send the remaining recipients.
+    const claimed = await this.claimForRunning(id, 'paused');
+    if (!claimed) {
+      throw new BadRequestException('Broadcast state changed; please retry');
+    }
 
-    this.launchExecution(id);
+    if (hasSnapshot) {
+      // Durable snapshot retained → execution continues from the exact recipient it
+      // stopped on (no fragile slice, no cursor reset).
+      this.launchExecution(id);
+      return { success: true, message: 'Broadcast resumed' };
+    }
 
-    return { success: true, message: 'Broadcast resumed' };
+    // Legacy paused broadcast that never sent anything → safe to resolve fresh, snapshot,
+    // and run from the start.
+    const recipientCount = await this.prepareAndLaunchOrRevert(id, broadcast, 'paused');
+    if (recipientCount === null) {
+      await prisma.broadcast.update({
+        where: { id },
+        data: { status: 'failed', completedAt: new Date() },
+      });
+      throw new BadRequestException('No recipients found for this broadcast');
+    }
+    return { success: true, message: 'Broadcast started', recipientCount };
   }
 
   // Cancel broadcast
