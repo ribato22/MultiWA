@@ -3,7 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiQuer
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SettingsService, StorageConfig, SmtpConfig } from './settings.service';
-import { EmailService } from '../notifications/email.service';
+import { EmailService } from '@multiwa/engine-runtime';
 
 @ApiTags('Settings')
 @Controller('settings')

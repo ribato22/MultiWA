@@ -6,7 +6,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiSecurit
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { NotificationsService } from './notifications.service';
-import { PushService, PushSubscriptionPayload } from './push.service';
+import { PushService, PushSubscriptionPayload } from '@multiwa/engine-runtime';
 
 @ApiTags('Notifications')
 @Controller('notifications')

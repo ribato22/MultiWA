@@ -1,5 +1,7 @@
 // MultiWA Gateway API - Email Service
-// apps/worker/src/engine/email.service.ts (worker-local copy; keep in sync)
+// packages/engine-runtime/src/email.service.ts
+// Shared by apps/api (notifications) and apps/worker (engine). SettingsService is
+// injected optionally via the 'SETTINGS_SERVICE' token where a module provides it.
 
 import { Injectable, Logger, OnModuleInit, Inject, Optional } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';

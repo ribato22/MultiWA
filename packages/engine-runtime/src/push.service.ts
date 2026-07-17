@@ -1,5 +1,7 @@
 // MultiWA Gateway API - Push Notification Service
-// apps/worker/src/engine/push.service.ts (worker-local copy; keep in sync)
+// packages/engine-runtime/src/push.service.ts
+// Shared by apps/api (notifications) and apps/worker (engine). SettingsService is
+// injected optionally via the 'SETTINGS_SERVICE' token where a module provides it.
 
 import { Injectable, Logger, OnModuleInit, Inject, Optional } from '@nestjs/common';
 import { prisma } from '@multiwa/database';

@@ -422,7 +422,19 @@ importers:
       '@nestjs/common':
         specifier: ^10.4.0
         version: 10.4.22(class-transformer@0.5.1)(class-validator@0.14.3)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      nodemailer:
+        specifier: ^8.0.1
+        version: 8.0.1
+      web-push:
+        specifier: ^3.6.7
+        version: 3.6.7
     devDependencies:
+      '@types/nodemailer':
+        specifier: ^7.0.9
+        version: 7.0.9
+      '@types/web-push':
+        specifier: ^3.6.4
+        version: 3.6.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -10779,7 +10791,7 @@ snapshots:
       '@typescript-eslint/visitor-keys': 8.54.0
       debug: 4.4.3
       minimatch: 9.0.5
-      semver: 7.7.3
+      semver: 7.8.4
       tinyglobby: 0.2.15
       ts-api-utils: 2.4.0(typescript@5.9.3)
       typescript: 5.9.3
@@ -11512,7 +11524,7 @@ snapshots:
       ioredis: 5.9.2
       lodash: 4.17.23
       msgpackr: 1.11.8
-      semver: 7.7.3
+      semver: 7.8.4
       uuid: 8.3.2
     transitivePeerDependencies:
       - supports-color
