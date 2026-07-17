@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean --tsconfig tsconfig.build.json",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch --tsconfig tsconfig.build.json",
-    "lint": "eslint src --ext .ts",
+    "lint": "eslint src",
     "test": "vitest run",
     "prepublishOnly": "pnpm build"
   },
