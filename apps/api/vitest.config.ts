@@ -10,8 +10,22 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      include: ['src/modules/**/*.ts'],
-      exclude: ['**/*.dto.ts', '**/*.module.ts', '**/*.guard.ts'],
+      // Globs are relative to `root` (./src), so no leading `src/`. `all: true`
+      // counts untested modules too, so the % reflects real breadth (and can
+      // only be improved by adding tests, not by importing more files).
+      all: true,
+      include: ['modules/**/*.ts'],
+      exclude: ['**/*.dto.ts', '**/*.module.ts', '**/*.guard.ts', '**/*.spec.ts', '**/dto/**'],
+      // Ratchet floor set just below the current measured coverage so the gate
+      // passes today and only fails on a REGRESSION (deleting tests, or adding a
+      // large untested module). Raise these as coverage grows — the unmerged
+      // P0/P1 branches already add several specs.
+      thresholds: {
+        lines: 5,
+        statements: 5,
+        functions: 15,
+        branches: 40,
+      },
     },
   },
   resolve: {

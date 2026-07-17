@@ -135,8 +135,8 @@ jobs:
       - name: Build Engines package
         run: pnpm --filter engines build
 
-      - name: Run API tests
-        run: pnpm --filter api test -- --run
+      - name: Run API tests (with coverage gate)
+        run: pnpm --filter api test -- --run --coverage
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test
           REDIS_URL: redis://localhost:6379
