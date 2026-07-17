@@ -2,6 +2,7 @@
 import 'reflect-metadata'; // MUST be first — required for NestJS DI decorator metadata
 import { Worker, Queue } from 'bullmq';
 import Redis from 'ioredis';
+import http from 'node:http';
 import pino from 'pino';
 import { PrismaClient } from '@prisma/client';
 import { NestFactory } from '@nestjs/core';
@@ -72,6 +73,23 @@ const scheduledWorker = new Worker(
   { connection, concurrency: 1 }
 );
 
+// Liveness/readiness probe. The worker has no HTTP surface otherwise, so Docker
+// (and any orchestrator) had no way to detect a hung/disconnected worker and
+// restart it. Reports 200 only while the Redis connection — the worker's whole
+// reason to exist — is ready. Returns a minimal body (no queue internals).
+const HEALTH_PORT = Number(process.env.WORKER_HEALTH_PORT) || 3002;
+const healthServer = http.createServer((req, res) => {
+  if (req.method !== 'GET') {
+    res.writeHead(405).end();
+    return;
+  }
+  const redisReady = connection.status === 'ready';
+  res.writeHead(redisReady ? 200 : 503, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: redisReady ? 'ok' : 'degraded', redis: connection.status }));
+});
+healthServer.on('error', (err) => logger.error({ error: err.message }, 'Health server error'));
+healthServer.listen(HEALTH_PORT, () => logger.info(`❤️  Worker health probe listening on :${HEALTH_PORT}`));
+
 // Event handlers
 messageWorker.on('completed', (job) => {
   logger.info({ jobId: job.id, queue: 'messages' }, 'Job completed');
@@ -135,6 +153,7 @@ const setupScheduledJobs = async () => {
 // Graceful shutdown
 const shutdown = async () => {
   logger.info('Shutting down workers...');
+  healthServer.close();
   await Promise.all([
     messageWorker.close(),
     automationWorker.close(),

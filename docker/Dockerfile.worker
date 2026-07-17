@@ -88,8 +88,15 @@ ENV SESSIONS_PATH=/data/sessions
 ENV SESSIONS_DIR=/data/sessions
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV WORKER_HEALTH_PORT=3002
 
 WORKDIR /app/apps/worker
+
+# Liveness probe served by apps/worker/src/main.ts (200 while Redis is ready).
+# Lets Docker/orchestrators detect and restart a hung or disconnected worker.
+EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=40s \
+  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.WORKER_HEALTH_PORT||3002), r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"
 
 CMD ["node", "dist/main.js"]
 
