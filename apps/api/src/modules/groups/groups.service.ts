@@ -100,8 +100,8 @@ export class GroupsService {
         id: group.id,
         name: group.name,
         description: group.description || '',
-        owner: group.owner,
-        createdAt: group.createdAt,
+        owner: group.owner || '',
+        createdAt: group.createdAt || new Date(),
         participantsCount: group.participants?.length || 0,
         participants: group.participants?.map(p => ({
           id: p.id,

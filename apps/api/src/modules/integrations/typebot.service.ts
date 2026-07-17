@@ -111,7 +111,7 @@ export class TypeBotService {
    */
   private parseMessages(messages: any[]): TypeBotMessage[] {
     return messages
-      .map((msg: any) => {
+      .map((msg: any): TypeBotMessage | null => {
         if (msg.type === 'text') {
           return {
             type: 'text' as const,

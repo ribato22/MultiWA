@@ -14,9 +14,11 @@
     "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
-    "strictNullChecks": false,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    // Kept off: NestJS DI populates injected props, so enabling this would flag
+    // ~100 constructor-injected fields. strictNullChecks + noImplicitAny are on.
     "strictPropertyInitialization": false,
-    "noImplicitAny": false,
     "strictBindCallApply": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true
