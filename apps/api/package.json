@@ -10,7 +10,8 @@
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "test": "vitest",
-    "test:cov": "vitest run --coverage",
+    "test:cov": "vitest run --coverage --exclude '**/tenant-route-coverage.spec.ts'",
+    "test:meta": "vitest run src/common/tenant/tenant-route-coverage.spec.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

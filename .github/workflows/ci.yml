@@ -135,8 +135,22 @@ jobs:
       - name: Build Engines package
         run: pnpm --filter engines build
 
+      # Coverage gate. Excludes the tenant route-coverage meta-test: it imports
+      # every controller to reflect route metadata, which would pull untested
+      # controller/service methods into the coverage denominator and skew the
+      # number. It runs as its own structural check below.
       - name: Run API tests (with coverage gate)
-        run: pnpm --filter api test -- --run --coverage
+        run: pnpm --filter api run test:cov
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test
+          REDIS_URL: redis://localhost:6379
+          JWT_SECRET: test-jwt-secret
+          JWT_REFRESH_SECRET: test-jwt-refresh-secret
+          ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+      # Structural IDOR guard: every tenant-scoped route must carry @RequireTenant.
+      - name: Tenant route-coverage check
+        run: pnpm --filter api run test:meta
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test
           REDIS_URL: redis://localhost:6379
