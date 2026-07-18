@@ -231,4 +231,84 @@ describe('API (e2e)', () => {
       expect(bogus.statusCode).toBe(401);
     });
   });
+
+  // Session revocation: logout must invalidate the access token server-side (a stolen
+  // or logged-out JWT can't keep working until it expires).
+  describe('session revocation', () => {
+    it('logout invalidates the access token', async () => {
+      const token = await register(app, `logout_${Date.now()}@test.local`);
+
+      const before = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(before.statusCode).toBe(200);
+
+      const logout = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/logout',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect([200, 201]).toContain(logout.statusCode);
+
+      // The same token is now rejected (its session was removed).
+      const after = await app.inject({
+        method: 'GET',
+        url: '/api/v1/auth/me',
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(after.statusCode).toBe(401);
+    });
+  });
+
+  // Webhooks are profile-scoped; the profile is org-scoped, so webhook access is
+  // isolated across orgs. (This is the surface behind the recent bot integration.)
+  describe('webhooks (profile-scoped, cross-org isolation)', () => {
+    it('creates a webhook for own profile and blocks another org', async () => {
+      const stamp = Date.now();
+      const tokenA = await register(app, `wh_a_${stamp}@test.local`);
+      const tokenB = await register(app, `wh_b_${stamp}@test.local`);
+
+      const accountIdA: string = (await authGet(app, '/api/v1/accounts', tokenA)).json()[0].id;
+
+      // A creates a profile (mock engine — no real WhatsApp session).
+      const profileRes = await app.inject({
+        method: 'POST',
+        url: `/api/v1/accounts/${accountIdA}/profiles`,
+        headers: { authorization: `Bearer ${tokenA}` },
+        payload: { displayName: 'e2e-profile', engine: 'mock' },
+      });
+      expect([200, 201]).toContain(profileRes.statusCode);
+      const profileIdA: string = profileRes.json().id;
+      expect(profileIdA).toBeTruthy();
+
+      // A creates a webhook for that profile.
+      const whCreate = await app.inject({
+        method: 'POST',
+        url: '/api/v1/webhooks',
+        headers: { authorization: `Bearer ${tokenA}` },
+        payload: { profileId: profileIdA, url: 'https://bot.example.com/hook', events: ['message.received'] },
+      });
+      expect([200, 201]).toContain(whCreate.statusCode);
+
+      // A can list its own profile's webhooks.
+      const listA = await authGet(app, `/api/v1/webhooks?profileId=${profileIdA}`, tokenA);
+      expect(listA.statusCode).toBe(200);
+      expect((listA.json() as any[]).length).toBeGreaterThan(0);
+
+      // B cannot create a webhook on A's profile (TenantGuard on body.profileId).
+      const bCreate = await app.inject({
+        method: 'POST',
+        url: '/api/v1/webhooks',
+        headers: { authorization: `Bearer ${tokenB}` },
+        payload: { profileId: profileIdA, url: 'https://evil.example.com/hook', events: ['message.received'] },
+      });
+      expect([403, 404]).toContain(bCreate.statusCode);
+
+      // B cannot list A's profile's webhooks either.
+      const bList = await authGet(app, `/api/v1/webhooks?profileId=${profileIdA}`, tokenB);
+      expect([403, 404]).toContain(bList.statusCode);
+    });
+  });
 });
