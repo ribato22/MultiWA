@@ -150,4 +150,39 @@ describe('API (e2e)', () => {
       expect((listB.json() as any[]).map((a) => a.id)).not.toContain(accountIdA);
     });
   });
+
+  // API-key auth is how bots/integrations authenticate (not JWT). Exercises the
+  // JwtOrApiKeyGuard + api-key passport strategy end-to-end.
+  describe('API-key authentication', () => {
+    it('creates a key and authenticates a request with x-api-key', async () => {
+      const token = await register(app, `apikey_${Date.now()}@test.local`);
+
+      // Create an API key (JWT-authed).
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/api-keys',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'e2e-integration' },
+      });
+      expect([200, 201]).toContain(created.statusCode);
+      const apiKey: string = created.json().key;
+      expect(apiKey).toMatch(/^mwa_/); // raw key returned only on creation
+
+      // The key authenticates a JwtOrApiKey-guarded endpoint.
+      const withKey = await app.inject({
+        method: 'GET',
+        url: '/api/v1/accounts',
+        headers: { 'x-api-key': apiKey },
+      });
+      expect(withKey.statusCode).toBe(200);
+
+      // A bogus key is rejected.
+      const bogus = await app.inject({
+        method: 'GET',
+        url: '/api/v1/accounts',
+        headers: { 'x-api-key': 'mwa_not_a_real_key' },
+      });
+      expect(bogus.statusCode).toBe(401);
+    });
+  });
 });
