@@ -9,7 +9,6 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
-import { ThrottlerGuard } from '@nestjs/throttler';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.factory';
 import { EngineManagerService } from '../src/modules/profiles/engine-manager.service';
@@ -22,10 +21,16 @@ const engineStub = {
 };
 
 // register() creates a fresh org + default workspace + "Default Account" + owner user.
+let clientSeq = 0;
 async function register(app: NestFastifyApplication, email: string): Promise<string> {
+  clientSeq += 1;
   const res = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/register',
+    // Unique client IP per call: /auth/register carries @Throttle(5/min), which is
+    // per-IP — a growing e2e suite from one IP would rate-limit itself (429). Each
+    // registration is treated as a distinct client. (req.ip = socket addr; no trustProxy.)
+    remoteAddress: `10.9.${Math.floor(clientSeq / 254) % 254}.${(clientSeq % 254) + 1}`,
     payload: { email, password: 'password123', name: 'U', organizationName: `Org-${email}` },
   });
   const token = res.json()?.accessToken;
@@ -45,10 +50,6 @@ describe('API (e2e)', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(EngineManagerService)
       .useValue(engineStub)
-      // e2e drives many auth requests; the per-route @Throttle (register/login 5/min)
-      // would rate-limit the suite itself, so disable rate limiting for tests.
-      .overrideGuard(ThrottlerGuard)
-      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
