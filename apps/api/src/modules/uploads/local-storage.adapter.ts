@@ -24,7 +24,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
     this.logger.log(`Local storage initialized: ${this.basePath}`);
   }
 
-  async upload(buffer: Buffer, key: string, mimeType: string): Promise<UploadResult> {
+  async upload(buffer: Buffer, key: string, _mimeType: string): Promise<UploadResult> {
     const filePath = join(this.basePath, key);
     const fileDir = dirname(filePath);
 

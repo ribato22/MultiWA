@@ -263,7 +263,7 @@ export class AutoreplyService {
   }
 
   // OpenAI integration
-  private async callOpenAI(cfg: any, message: string, context?: any): Promise<string | null> {
+  private async callOpenAI(cfg: any, message: string, _context?: any): Promise<string | null> {
     try {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
@@ -289,7 +289,7 @@ export class AutoreplyService {
   }
 
   // Dialogflow integration (not yet implemented)
-  private async callDialogflow(cfg: any, message: string, context?: any): Promise<string | null> {
+  private async callDialogflow(_cfg: any, _message: string, _context?: any): Promise<string | null> {
     // Dialogflow CX/ES integration can be added here
     return null;
   }

@@ -66,7 +66,7 @@ export class IntegrationsController {
   @ApiOperation({ summary: 'Update integration configuration (env-based, restart required)' })
   @ApiResponse({ status: 200, description: 'Configuration noted, restart needed' })
   @ApiValidationError()
-  async updateConfig(@Body() config: IntegrationConfig) {
+  async updateConfig(@Body() _config: IntegrationConfig) {
     // Note: The services read from environment variables.
     // This endpoint acknowledges the config but env changes require a restart.
     this.logger.log('Integration config update requested — environment restart needed for changes to take effect');

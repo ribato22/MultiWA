@@ -2,7 +2,6 @@
 // Tests push notification subscription management and delivery
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as webpush from 'web-push';
 
 // Mock web-push
 vi.mock('web-push', () => ({

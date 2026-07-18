@@ -14,7 +14,7 @@ export interface MessageJob {
 
 export class MessageProcessor {
   async process(job: Job<MessageJob>) {
-    const { profileId, messageId, to, type, content } = job.data;
+    const { profileId, messageId, to, type, content: _content } = job.data;
 
     try {
       // Get profile

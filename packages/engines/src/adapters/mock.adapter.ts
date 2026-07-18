@@ -80,7 +80,7 @@ export class MockAdapter implements IWhatsAppEngine {
   async sendText(
     to: string,
     text: string,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending text to ${to}: ${text.substring(0, 50)}...`);
     return this.mockSend('text');
@@ -88,8 +88,8 @@ export class MockAdapter implements IWhatsAppEngine {
 
   async sendImage(
     to: string,
-    media: MediaOptions,
-    options?: SendMessageOptions
+    _media: MediaOptions,
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending image to ${to}`);
     return this.mockSend('image');
@@ -97,8 +97,8 @@ export class MockAdapter implements IWhatsAppEngine {
 
   async sendVideo(
     to: string,
-    media: MediaOptions,
-    options?: SendMessageOptions
+    _media: MediaOptions,
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending video to ${to}`);
     return this.mockSend('video');
@@ -106,8 +106,8 @@ export class MockAdapter implements IWhatsAppEngine {
 
   async sendAudio(
     to: string,
-    media: MediaOptions,
-    options?: SendMessageOptions
+    _media: MediaOptions,
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending audio to ${to}`);
     return this.mockSend('audio');
@@ -115,8 +115,8 @@ export class MockAdapter implements IWhatsAppEngine {
 
   async sendDocument(
     to: string,
-    media: MediaOptions,
-    options?: SendMessageOptions
+    _media: MediaOptions,
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending document to ${to}`);
     return this.mockSend('document');
@@ -125,7 +125,7 @@ export class MockAdapter implements IWhatsAppEngine {
   async sendLocation(
     to: string,
     location: LocationOptions,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending location to ${to}: ${location.latitude}, ${location.longitude}`);
     return this.mockSend('location');
@@ -134,7 +134,7 @@ export class MockAdapter implements IWhatsAppEngine {
   async sendContact(
     to: string,
     contact: ContactOptions,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending contact to ${to}: ${contact.name}`);
     return this.mockSend('contact');
@@ -148,7 +148,7 @@ export class MockAdapter implements IWhatsAppEngine {
   async sendPoll(
     to: string,
     poll: PollOptions,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     console.log(`[Mock] Sending poll to ${to}: ${poll.question} (${poll.options.length} options)`);
     return this.mockSend('poll');
@@ -213,7 +213,7 @@ export class MockAdapter implements IWhatsAppEngine {
     return { mock: true, profileId: this.config?.profileId };
   }
 
-  async restoreSession(data: any): Promise<boolean> {
+  async restoreSession(_data: any): Promise<boolean> {
     console.log(`[Mock] Restoring session for profile ${this.config?.profileId}`);
     return true;
   }

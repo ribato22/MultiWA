@@ -67,7 +67,7 @@ export class ConversationsService {
 
     // For conversations without a contact, try to resolve names by JID phone number
     const unlinkedConvs = conversations.filter(c => !c.contact && c.jid?.includes('@s.whatsapp.net'));
-    let phoneToName: Record<string, string> = {};
+    const phoneToName: Record<string, string> = {};
     
     if (unlinkedConvs.length > 0) {
       const phones = unlinkedConvs.map(c => c.jid.split('@')[0]);
@@ -90,7 +90,7 @@ export class ConversationsService {
       (c.type === 'group' || c.jid?.includes('@g.us')) &&
       (!c.name || /^[0-9]+(@g\.us|@s\.whatsapp\.net)?$/.test(c.name) || c.name === c.jid)
     );
-    let groupJidToName: Record<string, string> = {};
+    const groupJidToName: Record<string, string> = {};
 
     if (groupConvs.length > 0) {
       // Resolve each group name individually (faster than loading all 270+ groups)

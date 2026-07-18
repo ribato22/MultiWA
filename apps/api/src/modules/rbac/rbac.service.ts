@@ -314,7 +314,7 @@ export class RbacService {
   // ============================================
 
   async seedDefaultRoles(organizationId: string) {
-    for (const [key, role] of Object.entries(DEFAULT_ROLES)) {
+    for (const [_key, role] of Object.entries(DEFAULT_ROLES)) {
       const existing = await prisma.role.findFirst({
         where: { organizationId, name: role.name },
       });

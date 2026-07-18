@@ -273,7 +273,7 @@ export class StatisticsService {
   // Response Time Analytics
   // ============================================
 
-  async getResponseTimeStats(profileId: string, range: DateRange) {
+  async getResponseTimeStats(_profileId: string, _range: DateRange) {
     // This would require conversation-level tracking in production
     // For now, return mock structure
     return {

@@ -157,7 +157,7 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    const { passwordHash, twoFactorSecret, backupCodes, ...profile } = user;
+    const { passwordHash: _passwordHash, twoFactorSecret: _twoFactorSecret, backupCodes, ...profile } = user;
     return {
       ...profile,
       twoFactorEnabled: user.twoFactorEnabled,

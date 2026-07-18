@@ -224,7 +224,7 @@ export class AccountsService {
     };
   }
 
-  async getQr(accountId: string, profileId: string) {
+  async getQr(_accountId: string, _profileId: string) {
     // This would integrate with the WhatsApp engine to get QR code
     // For now return a placeholder
     return {

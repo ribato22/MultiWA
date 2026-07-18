@@ -1,7 +1,7 @@
 // MultiWA Gateway - Enhanced Messages Controller
 // apps/api/src/modules/messages/messages.controller.ts
 
-import { Controller, Get, Post, Delete, Put, Body, Param, Query, UseGuards, Req, applyDecorators, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Req, applyDecorators, HttpException, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery, ApiCreatedResponse } from '@nestjs/swagger';
 import { ApiAuthErrors, ApiValidationError, ApiRateLimited, ApiNotFound } from '../../common/decorators/api-responses';
 import { MessagesService } from './messages.service';

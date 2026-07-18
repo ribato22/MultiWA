@@ -2,7 +2,7 @@
 // packages/sdk/src/clients/automation.ts
 
 import type { MultiWAClient } from '../client';
-import type { Automation, CreateAutomationOptions, PaginatedResponse } from '../types';
+import type { Automation, CreateAutomationOptions } from '../types';
 
 export class AutomationClient {
   constructor(private client: MultiWAClient) {}

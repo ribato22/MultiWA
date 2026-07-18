@@ -2,7 +2,7 @@
 // apps/api/src/modules/templates/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsNotEmpty, IsObject, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty, IsObject } from 'class-validator';
 
 export class CreateTemplateDto {
   @ApiProperty({ example: 'profile-uuid' })

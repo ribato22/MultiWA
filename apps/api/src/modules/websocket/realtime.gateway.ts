@@ -11,8 +11,7 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, UseGuards } from '@nestjs/common';
-import { WsApiKeyGuard } from '../auth/guards/ws-api-key.guard';
+import { Logger } from '@nestjs/common';
 
 export interface SubscribePayload {
   sessionId?: string;

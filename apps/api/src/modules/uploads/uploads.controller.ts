@@ -1,11 +1,9 @@
 // MultiWA Gateway - Upload Controller
 // apps/api/src/modules/uploads/uploads.controller.ts
 
-import { Controller, Post, Get, Param, Res, UseGuards, Req, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Controller, Post, UseGuards, Req, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiConsumes, ApiBearerAuth, ApiSecurity, ApiBody } from '@nestjs/swagger';
-import { FastifyRequest, FastifyReply } from 'fastify';
-import { existsSync, createReadStream } from 'fs';
-import { resolve, join } from 'path';
+import { FastifyRequest } from 'fastify';
 import { UploadsService } from './uploads.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
@@ -60,7 +58,7 @@ export class UploadsController {
   })
   @ApiValidationError()
   async uploadMedia(@Req() request: FastifyRequest) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const data = await (request as any).file();
 
     if (!data) {

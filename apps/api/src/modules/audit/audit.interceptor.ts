@@ -149,7 +149,7 @@ export class AuditInterceptor implements NestInterceptor {
     const userAgent = req.headers?.['user-agent'];
     
     return next.handle().pipe(
-      tap((response) => {
+      tap((_response) => {
         // Log successful action (fire-and-forget)
         this.auditService.log({
           action,
