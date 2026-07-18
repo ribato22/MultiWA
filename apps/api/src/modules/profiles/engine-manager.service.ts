@@ -18,6 +18,7 @@ import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
+import { serializeWaMessageId } from './wa-message-id';
 
 
 interface EngineInstance {
@@ -1017,7 +1018,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             data: {
               profileId,
               conversationId: conversation.id,
-              messageId: message.id?._serialized || message.id || `in_${Date.now()}`,
+              messageId: serializeWaMessageId(message),
               direction: 'incoming',
               senderJid,
               type: msgType === 'chat' ? 'text' : msgType,
