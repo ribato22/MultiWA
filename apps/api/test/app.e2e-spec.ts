@@ -159,6 +159,36 @@ describe('API (e2e)', () => {
       expect(listB.statusCode).toBe(200);
       expect((listB.json() as any[]).map((a) => a.id)).not.toContain(accountIdA);
     });
+
+    it("blocks cross-org update and delete of another org's account", async () => {
+      const stamp = Date.now();
+      const tokenA = await register(app, `widor_a_${stamp}@test.local`);
+      const tokenB = await register(app, `widor_b_${stamp}@test.local`);
+
+      const accountIdA: string = (await authGet(app, '/api/v1/accounts', tokenA)).json()[0].id;
+
+      // B cannot rename A's account (TenantGuard blocks the write, not just reads).
+      const bUpdate = await app.inject({
+        method: 'PUT',
+        url: `/api/v1/accounts/${accountIdA}`,
+        headers: { authorization: `Bearer ${tokenB}` },
+        payload: { name: 'hacked-by-b' },
+      });
+      expect([403, 404]).toContain(bUpdate.statusCode);
+
+      // B cannot delete A's account.
+      const bDelete = await app.inject({
+        method: 'DELETE',
+        url: `/api/v1/accounts/${accountIdA}`,
+        headers: { authorization: `Bearer ${tokenB}` },
+      });
+      expect([403, 404]).toContain(bDelete.statusCode);
+
+      // A's account survives and was never renamed by B's blocked write.
+      const aRead = await authGet(app, `/api/v1/accounts/${accountIdA}`, tokenA);
+      expect(aRead.statusCode).toBe(200);
+      expect(aRead.json().name).not.toBe('hacked-by-b');
+    });
   });
 
   // API-key auth is how bots/integrations authenticate (not JWT). Exercises the
