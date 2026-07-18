@@ -9,6 +9,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.factory';
 import { EngineManagerService } from '../src/modules/profiles/engine-manager.service';
@@ -40,6 +41,10 @@ describe('API (e2e)', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(EngineManagerService)
       .useValue(engineStub)
+      // e2e drives many auth requests; the per-route @Throttle (register/login 5/min)
+      // would rate-limit the suite itself, so disable rate limiting for tests.
+      .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
@@ -170,9 +175,7 @@ describe('API (e2e)', () => {
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'e2e-integration' },
       });
-      if (![200, 201].includes(created.statusCode)) {
-        throw new Error(`create api-key failed: ${created.statusCode} — ${created.body}`);
-      }
+      expect([200, 201]).toContain(created.statusCode);
       const apiKey: string = created.json().key;
       expect(apiKey).toMatch(/^mwa_/); // raw key returned only on creation
 
