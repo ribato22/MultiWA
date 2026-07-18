@@ -156,6 +156,12 @@ describe('API (e2e)', () => {
   describe('API-key authentication', () => {
     it('creates a key and authenticates a request with x-api-key', async () => {
       const token = await register(app, `apikey_${Date.now()}@test.local`);
+      expect(typeof token).toBe('string');
+
+      // Sanity: the same token authenticates a known-good endpoint (isolates any
+      // failure below to the api-keys route rather than the token).
+      const sanity = await authGet(app, '/api/v1/accounts', token);
+      expect(sanity.statusCode).toBe(200);
 
       // Create an API key (JWT-authed).
       const created = await app.inject({
@@ -164,7 +170,9 @@ describe('API (e2e)', () => {
         headers: { authorization: `Bearer ${token}` },
         payload: { name: 'e2e-integration' },
       });
-      expect([200, 201]).toContain(created.statusCode);
+      if (![200, 201].includes(created.statusCode)) {
+        throw new Error(`create api-key failed: ${created.statusCode} — ${created.body}`);
+      }
       const apiKey: string = created.json().key;
       expect(apiKey).toMatch(/^mwa_/); // raw key returned only on creation
 
