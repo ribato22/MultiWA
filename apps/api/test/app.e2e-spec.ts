@@ -21,13 +21,23 @@ const engineStub = {
 };
 
 // register() creates a fresh org + default workspace + "Default Account" + owner user.
+let clientSeq = 0;
 async function register(app: NestFastifyApplication, email: string): Promise<string> {
+  clientSeq += 1;
   const res = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/register',
+    // Unique client IP per call: /auth/register carries @Throttle(5/min), which is
+    // per-IP — a growing e2e suite from one IP would rate-limit itself (429). Each
+    // registration is treated as a distinct client. (req.ip = socket addr; no trustProxy.)
+    remoteAddress: `10.9.${Math.floor(clientSeq / 254) % 254}.${(clientSeq % 254) + 1}`,
     payload: { email, password: 'password123', name: 'U', organizationName: `Org-${email}` },
   });
-  return res.json().accessToken as string;
+  const token = res.json()?.accessToken;
+  if (typeof token !== 'string') {
+    throw new Error(`register failed: ${res.statusCode} — ${res.body}`);
+  }
+  return token;
 }
 
 const authGet = (app: NestFastifyApplication, url: string, token: string) =>
@@ -148,6 +158,47 @@ describe('API (e2e)', () => {
       const listB = await authGet(app, '/api/v1/accounts', tokenB);
       expect(listB.statusCode).toBe(200);
       expect((listB.json() as any[]).map((a) => a.id)).not.toContain(accountIdA);
+    });
+  });
+
+  // API-key auth is how bots/integrations authenticate (not JWT). Exercises the
+  // JwtOrApiKeyGuard + api-key passport strategy end-to-end.
+  describe('API-key authentication', () => {
+    it('creates a key and authenticates a request with x-api-key', async () => {
+      const token = await register(app, `apikey_${Date.now()}@test.local`);
+      expect(typeof token).toBe('string');
+
+      // Sanity: the same token authenticates a known-good endpoint (isolates any
+      // failure below to the api-keys route rather than the token).
+      const sanity = await authGet(app, '/api/v1/accounts', token);
+      expect(sanity.statusCode).toBe(200);
+
+      // Create an API key (JWT-authed).
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/api-keys',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'e2e-integration' },
+      });
+      expect([200, 201]).toContain(created.statusCode);
+      const apiKey: string = created.json().key;
+      expect(apiKey).toMatch(/^mwa_/); // raw key returned only on creation
+
+      // The key authenticates a JwtOrApiKey-guarded endpoint.
+      const withKey = await app.inject({
+        method: 'GET',
+        url: '/api/v1/accounts',
+        headers: { 'x-api-key': apiKey },
+      });
+      expect(withKey.statusCode).toBe(200);
+
+      // A bogus key is rejected.
+      const bogus = await app.inject({
+        method: 'GET',
+        url: '/api/v1/accounts',
+        headers: { 'x-api-key': 'mwa_not_a_real_key' },
+      });
+      expect(bogus.statusCode).toBe(401);
     });
   });
 });
