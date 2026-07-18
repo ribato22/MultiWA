@@ -20,6 +20,19 @@ const engineStub = {
   getStatus: () => 'DISCONNECTED',
 };
 
+// register() creates a fresh org + default workspace + "Default Account" + owner user.
+async function register(app: NestFastifyApplication, email: string): Promise<string> {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/register',
+    payload: { email, password: 'password123', name: 'U', organizationName: `Org-${email}` },
+  });
+  return res.json().accessToken as string;
+}
+
+const authGet = (app: NestFastifyApplication, url: string, token: string) =>
+  app.inject({ method: 'GET', url, headers: { authorization: `Bearer ${token}` } });
+
 describe('API (e2e)', () => {
   let app: NestFastifyApplication;
 
@@ -102,5 +115,39 @@ describe('API (e2e)', () => {
   it('requires auth on a protected route (401 without a token)', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/auth/me' });
     expect(res.statusCode).toBe(401);
+  });
+
+  // Tenant isolation / IDOR: the TenantGuard must stop one org from reaching another
+  // org's resources. Unit tests assert the guard is *applied* (route-coverage meta-test);
+  // this proves it actually *blocks* over real HTTP + Prisma.
+  describe('tenant isolation (IDOR)', () => {
+    it("blocks cross-org access to another org's account, and scopes the list", async () => {
+      const stamp = Date.now();
+      const tokenA = await register(app, `idor_a_${stamp}@test.local`);
+      const tokenB = await register(app, `idor_b_${stamp}@test.local`);
+      expect(tokenA).toBeTruthy();
+      expect(tokenB).toBeTruthy();
+
+      // A owns a "Default Account" created at register time.
+      const listA = await authGet(app, '/api/v1/accounts', tokenA);
+      expect(listA.statusCode).toBe(200);
+      const accountsA = listA.json();
+      expect(Array.isArray(accountsA)).toBe(true);
+      expect(accountsA.length).toBeGreaterThan(0);
+      const accountIdA: string = accountsA[0].id;
+
+      // Owner can read their own account.
+      const ownerRead = await authGet(app, `/api/v1/accounts/${accountIdA}`, tokenA);
+      expect(ownerRead.statusCode).toBe(200);
+
+      // A different org's user cannot (TenantGuard → forbidden/not-found, never 200).
+      const crossRead = await authGet(app, `/api/v1/accounts/${accountIdA}`, tokenB);
+      expect([403, 404]).toContain(crossRead.statusCode);
+
+      // B's account list must not leak A's account.
+      const listB = await authGet(app, '/api/v1/accounts', tokenB);
+      expect(listB.statusCode).toBe(200);
+      expect((listB.json() as any[]).map((a) => a.id)).not.toContain(accountIdA);
+    });
   });
 });
