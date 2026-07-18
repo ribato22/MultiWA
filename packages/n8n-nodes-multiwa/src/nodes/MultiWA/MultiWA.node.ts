@@ -298,7 +298,7 @@ export class MultiWA implements INodeType {
         const to = this.getNodeParameter('to', i) as string;
 
         let endpoint: string;
-        let body: Record<string, unknown> = { profileId, to };
+        const body: Record<string, unknown> = { profileId, to };
 
         switch (operation) {
           case 'sendText':

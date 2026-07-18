@@ -95,12 +95,13 @@ export class WorkerRuleEngineService {
     const config = automation.triggerConfig as any;
 
     switch (automation.triggerType) {
-      case 'keyword':
+      case 'keyword': {
         const keywordMatch = this.matchKeyword(message.content?.text || '', config);
         if (!keywordMatch) {
           // Log for debugging keyword matching
         }
         return keywordMatch;
+      }
 
       case 'regex':
         return this.matchRegex(message.content?.text || '', config);
@@ -213,16 +214,18 @@ export class WorkerRuleEngineService {
       case 'message_type':
         return condition.types?.includes(message.messageType);
 
-      case 'time_range':
+      case 'time_range': {
         const now = new Date();
         const hour = now.getHours();
         return hour >= condition.startHour && hour < condition.endHour;
+      }
 
-      case 'day_of_week':
+      case 'day_of_week': {
         const day = new Date().getDay();
         return condition.days?.includes(day);
+      }
 
-      case 'contact_tag':
+      case 'contact_tag': {
         const contact = await prisma.contact.findFirst({
           where: {
             profileId: message.profileId,
@@ -230,6 +233,7 @@ export class WorkerRuleEngineService {
           },
         });
         return contact?.tags?.some((t) => condition.tags?.includes(t)) || false;
+      }
 
       default:
         // Unknown condition types should NOT pass silently

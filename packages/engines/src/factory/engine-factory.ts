@@ -84,7 +84,7 @@ export class EngineFactory {
    * Destroy all engine instances
    */
   static async destroyAll(): Promise<void> {
-    for (const [profileId, engine] of this.instances) {
+    for (const [_profileId, engine] of this.instances) {
       await engine.destroy();
     }
     this.instances.clear();

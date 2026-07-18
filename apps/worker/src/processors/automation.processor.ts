@@ -18,7 +18,7 @@ export interface AutomationJob {
 
 export class AutomationProcessor {
   async process(job: Job<AutomationJob>) {
-    const { profileId, event, messageId, messageBody, contactId } = job.data;
+    const { profileId, event, messageBody, contactId } = job.data;
 
     // Get contact
     const contact = await prisma.contact.findUnique({
@@ -46,7 +46,6 @@ export class AutomationProcessor {
     // Process each automation
     for (const automation of automations) {
       const startTime = Date.now();
-      const triggerConfig = automation.triggerConfig as any;
       const conditions = automation.conditions as any;
       const actions = automation.actions as any[];
 

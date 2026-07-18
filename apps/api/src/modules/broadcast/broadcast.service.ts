@@ -419,7 +419,7 @@ export class BroadcastService implements OnModuleInit {
 
     // Resume from persisted cursor; seed counters from persisted stats so a resumed
     // or recovered run keeps counting rather than resetting to zero.
-    let cursor = broadcast.cursor || 0;
+    const cursor = broadcast.cursor || 0;
     const persistedStats = (broadcast.stats as any) || {};
     let sentCount = persistedStats.sent || 0;
     let failedCount = persistedStats.failed || 0;
@@ -574,7 +574,7 @@ export class BroadcastService implements OnModuleInit {
   }
 
   // Resolve template variables in message
-  private resolveTemplate(message: any, phone: string): string {
+  private resolveTemplate(message: any, _phone: string): string {
     if (typeof message === 'string') return message;
     if (message?.text) return message.text;
     if (message?.type === 'text' && message?.text) return message.text;

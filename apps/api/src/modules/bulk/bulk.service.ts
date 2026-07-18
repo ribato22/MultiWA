@@ -288,7 +288,7 @@ export class BulkService {
     
     for (const [batchId, batch] of this.batches.entries()) {
       if (this.batchProfiles.get(batchId) === profileId) {
-        const { results, ...batchSummary } = batch;
+        const { results: _results, ...batchSummary } = batch;
         batches.push(batchSummary);
       }
     }

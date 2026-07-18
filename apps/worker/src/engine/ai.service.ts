@@ -181,7 +181,7 @@ export class AIService {
       knowledgeContext?: string; // Pre-fetched KB context
     }
   ): Promise<AICompletionResult> {
-    let kbContext = context?.knowledgeContext || '';
+    const kbContext = context?.knowledgeContext || '';
 
     const systemPrompt = context?.customPrompt || `
 You are a helpful customer service assistant for ${context?.businessName || 'our business'}.

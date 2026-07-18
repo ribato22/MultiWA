@@ -35,17 +35,18 @@ export default tseslint.config(
     rules: {
       // The codebase intentionally uses `any` at boundaries and dynamic payloads.
       '@typescript-eslint/no-explicit-any': 'off',
-      // Surface dead bindings without failing CI; ignore _-prefixed + caught errs.
+      // Dead bindings now fail CI; _-prefixed and caught errors are allowed.
       '@typescript-eslint/no-unused-vars': [
-        'warn',
+        'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrors: 'none' },
       ],
       'no-empty': ['warn', { allowEmptyCatch: true }],
-      // Downgraded to warnings for the initial green baseline — these are real
-      // cleanups, not new-bug guards, so they shouldn't block CI on day one.
-      // Ratchet each back to 'error' as the existing violations are cleared.
-      'prefer-const': 'warn',
-      'no-case-declarations': 'warn',
+      // Ratcheted to 'error' after clearing the existing violations (dead code removed,
+      // case bodies blocked). New violations now fail CI.
+      'prefer-const': 'error',
+      'no-case-declarations': 'error',
+      // Still 'warn': the remaining require()s are an intentional pattern (Fastify
+      // plugin registration in app.factory/main, lazy Baileys load) — not dead code.
       '@typescript-eslint/no-require-imports': 'warn',
     },
   },

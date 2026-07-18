@@ -1,7 +1,7 @@
 // MultiWA Gateway - Automation Service
 // apps/api/src/modules/automation/automation.service.ts
 
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { CreateAutomationDto, UpdateAutomationDto } from './dto';
 
@@ -86,19 +86,19 @@ export class AutomationService {
     const config = automation.triggerConfig as any;
     
     let matches = false;
-    let matchDetails: any = {};
+    const matchDetails: any = {};
 
     switch (automation.triggerType) {
-      case 'keyword':
+      case 'keyword': {
         const keywords = config.keywords || [];
         const matchMode = config.matchMode || 'contains';
         const caseSensitive = config.caseSensitive || false;
-        
+
         const testMsg = caseSensitive ? message : message.toLowerCase();
-        
+
         for (const keyword of keywords) {
           const testKeyword = caseSensitive ? keyword : keyword.toLowerCase();
-          
+
           if (matchMode === 'exact' && testMsg === testKeyword) {
             matches = true;
             matchDetails.matchedKeyword = keyword;
@@ -114,6 +114,7 @@ export class AutomationService {
           }
         }
         break;
+      }
 
       case 'regex':
         try {
@@ -211,7 +212,7 @@ export class AutomationService {
   }
 
   // Check cooldown
-  async checkCooldown(id: string, contactJid: string): Promise<boolean> {
+  async checkCooldown(id: string, _contactJid: string): Promise<boolean> {
     const automation = await this.findOne(id);
     if (!automation.cooldownSecs) return true;
 

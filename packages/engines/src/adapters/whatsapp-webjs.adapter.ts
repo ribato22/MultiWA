@@ -1,7 +1,7 @@
 // MultiWA Gateway - WhatsApp Web.js Adapter (PRIMARY ENGINE)
 // packages/engines/src/adapters/whatsapp-webjs.adapter.ts
 
-import { Client, LocalAuth, MessageMedia, Location, Contact, Poll } from 'whatsapp-web.js';
+import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import type { 
   IWhatsAppEngine, 
@@ -273,7 +273,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     to: string, 
     media: MediaOptions, 
     type: string,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     try {
       if (!this.isReady()) {
@@ -321,7 +321,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
   }
 
-  async sendLocation(to: string, location: LocationOptions, options?: SendMessageOptions): Promise<MessageResult> {
+  async sendLocation(to: string, location: LocationOptions, _options?: SendMessageOptions): Promise<MessageResult> {
     try {
       if (!this.isReady()) {
         return { success: false, error: 'Client not ready' };
@@ -346,7 +346,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
   }
 
-  async sendContact(to: string, contact: ContactOptions, options?: SendMessageOptions): Promise<MessageResult> {
+  async sendContact(to: string, contact: ContactOptions, _options?: SendMessageOptions): Promise<MessageResult> {
     try {
       if (!this.isReady()) {
         return { success: false, error: 'Client not ready' };
@@ -405,7 +405,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
   }
 
-  async sendPoll(to: string, poll: PollOptions, options?: SendMessageOptions): Promise<MessageResult> {
+  async sendPoll(to: string, poll: PollOptions, _options?: SendMessageOptions): Promise<MessageResult> {
     try {
       if (!this.isReady()) {
         return { success: false, error: 'Client not ready' };
@@ -474,7 +474,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   /**
    * Mark a chat or specific messages as read.
    */
-  async markAsRead(chatId: string, messageIds?: string[]): Promise<void> {
+  async markAsRead(chatId: string, _messageIds?: string[]): Promise<void> {
     try {
       if (!this.isReady() || !this.client) return;
 
@@ -609,7 +609,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     return null;
   }
 
-  async restoreSession(data: any): Promise<boolean> {
+  async restoreSession(_data: any): Promise<boolean> {
     // whatsapp-web.js handles session restoration via LocalAuth
     return true;
   }

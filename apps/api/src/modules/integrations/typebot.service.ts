@@ -51,7 +51,7 @@ export class TypeBotService {
 
     try {
       const sessionKey = `${typebotId}:${contactJid}`;
-      let session = this.sessions.get(sessionKey);
+      const session = this.sessions.get(sessionKey);
 
       let url: string;
       let body: any;

@@ -672,7 +672,7 @@ export class MessagesService {
 
   // Delete message (from database only)
   async delete(id: string) {
-    const message = await this.findOne(id);
+    const _message = await this.findOne(id);
     await prisma.message.delete({ where: { id } });
     return { success: true };
   }
@@ -680,7 +680,7 @@ export class MessagesService {
   // ========== NEW FEATURES ==========
 
   // Send typing indicator
-  async sendTyping(profileId: string, to: string, state: 'composing' | 'recording' | 'available' = 'composing', duration?: number) {
+  async sendTyping(profileId: string, to: string, state: 'composing' | 'recording' | 'available' = 'composing', _duration?: number) {
     const jid = this.normalizeJid(to);
 
     if (isWorkerEngine()) {

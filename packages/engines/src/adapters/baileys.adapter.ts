@@ -7,7 +7,6 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
   WAMessageContent,
-  proto,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import * as qrcode from 'qrcode-terminal';
@@ -356,7 +355,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   async sendText(
     to: string,
     text: string,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     try {
       if (!this.isReady() || !this.socket) {
@@ -413,7 +412,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
     to: string,
     media: MediaOptions,
     type: 'image' | 'video' | 'audio' | 'document',
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     try {
       if (!this.isReady() || !this.socket) {
@@ -462,7 +461,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   async sendLocation(
     to: string,
     location: LocationOptions,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     try {
       if (!this.isReady() || !this.socket) {
@@ -493,7 +492,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   async sendContact(
     to: string,
     contact: ContactOptions,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     try {
       if (!this.isReady() || !this.socket) {
@@ -521,7 +520,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
     }
   }
 
-  async sendReaction(messageId: string, emoji: string): Promise<MessageResult> {
+  async sendReaction(messageId: string, _emoji: string): Promise<MessageResult> {
     try {
       if (!this.isReady() || !this.socket) {
         return { success: false, error: 'Client not ready' };
@@ -539,7 +538,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   async sendPoll(
     to: string,
     poll: PollOptions,
-    options?: SendMessageOptions
+    _options?: SendMessageOptions
   ): Promise<MessageResult> {
     try {
       if (!this.isReady() || !this.socket) {
@@ -643,7 +642,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
     return null; // Baileys uses file-based auth
   }
 
-  async restoreSession(data: any): Promise<boolean> {
+  async restoreSession(_data: any): Promise<boolean> {
     return true;
   }
 
@@ -753,7 +752,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
 
       // If store is empty, try to get from chats
       if (contacts.length === 0) {
-        const chats = await this.socket.profilePictureUrl(this.status.phone + '@s.whatsapp.net', 'preview').catch(() => null);
+        const _chats = await this.socket.profilePictureUrl(this.status.phone + '@s.whatsapp.net', 'preview').catch(() => null);
         console.log('[Baileys] GetContacts: Store empty, contacts from chats not available yet');
       }
 
