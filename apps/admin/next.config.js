@@ -3,13 +3,15 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   transpilePackages: ["@multiwa/core", "@multiwa/database"],
-  // Ignore ESLint and TypeScript errors during production build
-  // This prevents version mismatch issues on different servers
+  // TypeScript IS enforced during `next build`: the admin `tsc --noEmit` CI gate keeps
+  // the app type-clean, and builds now run in CI (consistent env), so there is no
+  // silent-type-error footgun. ESLint stays off during build for now (the admin's
+  // Next-lint isn't gated yet — a separate follow-up).
   eslint: {
     ignoreDuringBuilds: true,
   },
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   experimental: {
     serverActions: {
