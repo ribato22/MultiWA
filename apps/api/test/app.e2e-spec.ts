@@ -28,7 +28,11 @@ async function register(app: NestFastifyApplication, email: string): Promise<str
     url: '/api/v1/auth/register',
     payload: { email, password: 'password123', name: 'U', organizationName: `Org-${email}` },
   });
-  return res.json().accessToken as string;
+  const token = res.json()?.accessToken;
+  if (typeof token !== 'string') {
+    throw new Error(`register failed: ${res.statusCode} — ${res.body}`);
+  }
+  return token;
 }
 
 const authGet = (app: NestFastifyApplication, url: string, token: string) =>
