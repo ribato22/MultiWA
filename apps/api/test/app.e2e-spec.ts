@@ -31,7 +31,7 @@ async function register(app: NestFastifyApplication, email: string): Promise<str
     // per-IP — a growing e2e suite from one IP would rate-limit itself (429). Each
     // registration is treated as a distinct client. (req.ip = socket addr; no trustProxy.)
     remoteAddress: `10.9.${Math.floor(clientSeq / 254) % 254}.${(clientSeq % 254) + 1}`,
-    payload: { email, password: 'password123', name: 'U', organizationName: `Org-${email}` },
+    payload: { email, password: 'password1234!', name: 'U', organizationName: `Org-${email}` },
   });
   const token = res.json()?.accessToken;
   if (typeof token !== 'string') {
@@ -75,7 +75,7 @@ describe('API (e2e)', () => {
       url: '/api/v1/auth/register',
       payload: {
         email,
-        password: 'password123',
+        password: 'password1234!',
         name: 'E2E User',
         organizationName: 'E2E Org',
         // hostile extra: RegisterDto has no `role` — whitelist must strip it so the
@@ -91,7 +91,7 @@ describe('API (e2e)', () => {
     const login = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/login',
-      payload: { email, password: 'password123' },
+      payload: { email, password: 'password1234!' },
     });
     expect([200, 201]).toContain(login.statusCode);
     expect(login.json().accessToken).toBeTruthy();
@@ -102,7 +102,7 @@ describe('API (e2e)', () => {
     await app.inject({
       method: 'POST',
       url: '/api/v1/auth/register',
-      payload: { email, password: 'password123', name: 'B', organizationName: 'B Org' },
+      payload: { email, password: 'password1234!', name: 'B', organizationName: 'B Org' },
     });
 
     const bad = await app.inject({
@@ -117,7 +117,7 @@ describe('API (e2e)', () => {
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/register',
-      payload: { email: 'x@test.local', password: 'password123' }, // no name / organizationName
+      payload: { email: 'x@test.local', password: 'password1234!' }, // no name / organizationName
     });
     expect(res.statusCode).toBe(400);
   });
@@ -125,6 +125,22 @@ describe('API (e2e)', () => {
   it('requires auth on a protected route (401 without a token)', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/v1/auth/me' });
     expect(res.statusCode).toBe(401);
+  });
+
+  it('enforces the 12-char register password floor (400 under, 201 at)', async () => {
+    const short = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email: `pw_${Date.now()}@test.local`, password: 'elevenchar1', name: 'P', organizationName: 'P Org' },
+    });
+    expect(short.statusCode).toBe(400); // 11 chars < 12
+
+    const ok = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/register',
+      payload: { email: `pw_ok_${Date.now()}@test.local`, password: 'twelvechars1', name: 'P', organizationName: 'P Org' },
+    });
+    expect(ok.statusCode).toBe(201); // exactly 12 chars
   });
 
   // Tenant isolation / IDOR: the TenantGuard must stop one org from reaching another
@@ -229,6 +245,38 @@ describe('API (e2e)', () => {
         headers: { 'x-api-key': 'mwa_not_a_real_key' },
       });
       expect(bogus.statusCode).toBe(401);
+    });
+
+    it('enforces API-key scopes: a message:read key is blocked from send but not from unscoped routes', async () => {
+      const token = await register(app, `scope_${Date.now()}@test.local`);
+
+      // A restricted, read-only messaging key.
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/v1/api-keys',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'read-only', permissions: ['message:read'] },
+      });
+      expect([200, 201]).toContain(created.statusCode);
+      const readKey: string = created.json().key;
+
+      // The scope gate runs before tenant/validation, so sending is a clean 403
+      // (missing message:send) — not a 400/404 from the body/tenant.
+      const send = await app.inject({
+        method: 'POST',
+        url: '/api/v1/messages/text',
+        headers: { 'x-api-key': readKey },
+        payload: { profileId: 'nonexistent', to: '628123', text: 'hi' },
+      });
+      expect(send.statusCode).toBe(403);
+
+      // A route with no @RequireScope is unaffected by the key's scopes.
+      const list = await app.inject({
+        method: 'GET',
+        url: '/api/v1/accounts',
+        headers: { 'x-api-key': readKey },
+      });
+      expect(list.statusCode).toBe(200);
     });
   });
 

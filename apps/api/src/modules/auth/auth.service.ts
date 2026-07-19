@@ -200,8 +200,8 @@ export class AuthService {
     const isValid = await this.verifyPassword(currentPassword, user.passwordHash);
     if (!isValid) throw new BadRequestException('Current password is incorrect');
 
-    if (newPassword.length < 8) {
-      throw new BadRequestException('New password must be at least 8 characters');
+    if (newPassword.length < 12) {
+      throw new BadRequestException('New password must be at least 12 characters');
     }
 
     const newHash = await this.hashPassword(newPassword);

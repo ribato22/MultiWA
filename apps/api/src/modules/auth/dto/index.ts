@@ -20,9 +20,9 @@ export class RegisterDto {
   @IsEmail()
   email: string;
 
-  @ApiProperty({ example: 'password123' })
+  @ApiProperty({ example: 'ChangeMe1234!' })
   @IsString()
-  @MinLength(6)
+  @MinLength(12, { message: 'Password must be at least 12 characters' })
   password: string;
 
   @ApiProperty({ example: 'John Doe' })
