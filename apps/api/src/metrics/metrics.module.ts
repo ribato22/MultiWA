@@ -2,12 +2,19 @@
 // apps/api/src/metrics/metrics.module.ts
 
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { MetricsController } from './metrics.controller';
 import { MetricsService } from './metrics.service';
+import { HttpMetricsInterceptor } from './http-metrics.interceptor';
 
 @Module({
   controllers: [MetricsController],
-  providers: [MetricsService],
+  providers: [
+    MetricsService,
+    // Global HTTP RED interceptor. MetricsModule is imported first in AppModule,
+    // so this is the outermost interceptor and measures total handler time.
+    { provide: APP_INTERCEPTOR, useClass: HttpMetricsInterceptor },
+  ],
   exports: [MetricsService],
 })
 export class MetricsModule {}
