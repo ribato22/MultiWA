@@ -5,7 +5,7 @@ import { Injectable, Logger, NotFoundException, BadRequestException, HttpExcepti
 import { SendBulkDto, BulkBatchStatus, BulkMessageType, BulkMessageContent } from './dto';
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { MessagesService } from '../messages/messages.service';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'node:crypto';
 
 @Injectable()
 export class BulkService {
