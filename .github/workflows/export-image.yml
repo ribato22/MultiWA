@@ -20,7 +20,7 @@ jobs:
   export:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build image (amd64)
         env:
@@ -42,7 +42,7 @@ jobs:
           ls -lh "multiwa-$SERVICE-$TAG.tar.gz"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: multiwa-image-${{ inputs.service }}-${{ inputs.tag }}
           path: multiwa-*.tar.gz
