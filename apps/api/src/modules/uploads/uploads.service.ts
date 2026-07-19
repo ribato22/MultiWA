@@ -2,7 +2,7 @@
 // apps/api/src/modules/uploads/uploads.service.ts
 
 import { Injectable, Inject, Logger } from '@nestjs/common';
-import { v4 as uuid } from 'uuid';
+import { randomUUID as uuid } from 'node:crypto';
 import { STORAGE_ADAPTER, type IStorageAdapter } from './storage.interface';
 
 @Injectable()
