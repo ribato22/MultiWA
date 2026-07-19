@@ -34,7 +34,7 @@
     "@nestjs/platform-fastify": "^10.4.0",
     "@nestjs/platform-socket.io": "^10.4.0",
     "@nestjs/schedule": "^4.0.0",
-    "@nestjs/swagger": "^7.4.0",
+    "@nestjs/swagger": "^11.4.6",
     "@nestjs/throttler": "^6.4.0",
     "@nestjs/websockets": "^10.4.0",
     "@types/qrcode": "^1.5.6",
