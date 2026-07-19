@@ -13,6 +13,8 @@ env:
 permissions:
   contents: read
   packages: write
+  id-token: write # OIDC: keyless cosign signing + build-provenance attestation
+  attestations: write # actions/attest-build-provenance
 
 jobs:
   publish:
@@ -29,6 +31,9 @@ jobs:
           - service: admin
             dockerfile: docker/Dockerfile.admin
             build-args: NEXT_PUBLIC_API_URL=http://localhost:3333
+          - service: worker
+            dockerfile: docker/Dockerfile.worker
+            build-args: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +72,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # -- Build and push Docker image --
+      # -- Build and push Docker image (with SBOM + max-mode SLSA provenance) --
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v6
@@ -79,3 +84,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             ${{ matrix.build-args }}
+          sbom: true
+          provenance: mode=max
+
+      # -- Keyless supply-chain: cosign signature + build-provenance attestation --
+      # Both use the workflow's OIDC token (id-token: write) against the public
+      # Sigstore Fulcio/Rekor + GitHub's attestation store. No long-lived key.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the GHCR image (keyless)
+        env:
+          IMAGE: ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Attest build provenance (GHCR)
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          push-to-registry: true

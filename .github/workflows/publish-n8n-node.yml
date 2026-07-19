@@ -1,0 +1,49 @@
+name: Publish n8n node to npm
+
+# Publishes n8n-nodes-multiwa to npmjs.org (which is what makes it installable
+# via n8n Settings -> Community Nodes and eligible for the verified registry).
+# Decoupled tag: push `n8n-v<version>` (matching the package version) or run
+# manually.
+#
+# Keyless via a Trusted Publisher on npm (repo + this workflow file); provenance
+# is automatic. NPM_TOKEN is only the bootstrap fallback for the first publish.
+# See docs/21-releasing-and-distribution.md.
+
+on:
+  push:
+    tags:
+      - 'n8n-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OIDC: npm Trusted Publishing + build provenance
+
+jobs:
+  publish:
+    name: Publish n8n-nodes-multiwa
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      - name: Upgrade npm (OIDC Trusted Publishing support)
+        run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build node
+        run: pnpm --filter n8n-nodes-multiwa build
+
+      - name: Publish
+        working-directory: packages/n8n-nodes-multiwa
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

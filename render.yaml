@@ -1,0 +1,98 @@
+# MultiWA — Render Blueprint (one-click deploy)
+#
+# Deploys the full stack from the published GHCR images: managed Postgres +
+# Key Value (Redis) + api/admin (web) + worker. The API entrypoint runs
+# `prisma db push` on boot, so the schema is created automatically.
+#
+# Prerequisites:
+#   1. The GHCR images must be PUBLIC (ghcr.io/ribato22/multiwa-{api,admin,worker}).
+#      Publish them via the "Publish Docker Images" workflow, then set each
+#      package's visibility to Public.
+#   2. ENCRYPTION_KEY must be a 32-byte hex string — Render prompts for it at
+#      deploy time (sync: false). Generate one with: openssl rand -hex 32
+#   3. After the api service is live, set the admin service's NEXT_PUBLIC_API_URL
+#      to the api's public URL (https://<api>.onrender.com) — it is browser-facing
+#      and cannot be derived at build time.
+#
+# This is a starting template; tune plans/regions to your account.
+
+databases:
+  - name: multiwa-postgres
+    plan: free
+    databaseName: multiwa
+    user: multiwa
+
+services:
+  # ─── Redis (BullMQ queue) — noeviction is required by BullMQ ───
+  - type: keyvalue
+    name: multiwa-redis
+    plan: free
+    ipAllowList: [] # internal only
+    maxmemoryPolicy: noeviction
+
+  # ─── API ───
+  - type: web
+    name: multiwa-api
+    runtime: image
+    image:
+      url: ghcr.io/ribato22/multiwa-api:latest
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: "3000"
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        fromDatabase:
+          name: multiwa-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: multiwa-redis
+          type: keyvalue
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # 32-byte hex; Render prompts (a random generateValue is not hex-formatted).
+      - key: ENCRYPTION_KEY
+        sync: false
+
+  # ─── Background worker (BullMQ) ───
+  - type: worker
+    name: multiwa-worker
+    runtime: image
+    image:
+      url: ghcr.io/ribato22/multiwa-worker:latest
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ENGINE_HOST
+        value: api
+      - key: DATABASE_URL
+        fromDatabase:
+          name: multiwa-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: multiwa-redis
+          type: keyvalue
+          property: connectionString
+
+  # ─── Admin dashboard ───
+  - type: web
+    name: multiwa-admin
+    runtime: image
+    image:
+      url: ghcr.io/ribato22/multiwa-admin:latest
+    plan: starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Browser-facing API URL — set to the api service's public URL after first deploy.
+      - key: NEXT_PUBLIC_API_URL
+        sync: false

@@ -83,6 +83,9 @@ That's it! Access:
 
 > **Full stack** (with S3 storage + Nginx proxy): `docker compose --profile full up -d`
 
+> 📦 **Published SDK packages, signed container images, and a one-click Render
+> deploy are rolling out** — see [Releasing & Distribution](docs/21-releasing-and-distribution.md).
+
 ### Option 2: Local Development
 
 **Prerequisites:** Node.js ≥ 20 · PostgreSQL ≥ 16 · Redis ≥ 7 · pnpm ≥ 9
