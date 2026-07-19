@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Send Policy Engine** — window-aware multi-lane outbound governor (SERVICE replies flow free; UTILITY/AUTH/MARKETING cold lanes capped + warmed) with a delivery-health circuit breaker and delivery-confirmed OTP failover.
+- **Durable broadcast** — BullMQ-backed broadcast execution with crash-window recovery and scheduled-broadcast triggers.
+- **HTTP RED metrics** — `http_requests_total` + `http_request_duration_seconds` (labelled by method / route pattern / status) at `/metrics`, plus a sample `prometheus.yml` and a Grafana dashboard under `docs/monitoring/`.
+- **API-key scope enforcement** — `@RequireScope` guard reads each key's stored permissions (unscoped / `*` keys remain full-access).
+- **Distribution** — keyless (OIDC) publish workflows for the TypeScript / Python / n8n SDKs, container-image supply chain (SBOM + cosign signature + SLSA provenance), a Render one-click blueprint, and `docs/21-releasing-and-distribution.md`.
+- **CI security scanning** — CodeQL, Dependabot, gitleaks, and an advisory `pnpm audit`.
+- **End-to-end test harness** — auth, tenant/IDOR isolation, API-key auth, session revocation, and webhook cross-org isolation against live Postgres + Redis.
+
+### Changed
+
+- Registration and password-change minimum length raised to 12 characters (login accepts existing shorter passwords).
+- Refresh tokens are signed and verified with `JWT_REFRESH_SECRET`, distinct from the access-token secret.
+- Documentation reconciled with the actual code (AI provider, engine status, webhook event names, SDK base URLs, HMAC example).
+- Admin build enforces TypeScript; backend lint ratcheted to error.
+
+### Fixed
+
+- Production Redis backing BullMQ set to `--maxmemory-policy noeviction` with AOF, so queued jobs are never silently evicted; container log rotation added.
+- Graceful shutdown (`enableShutdownHooks`) drains in-flight work on `SIGTERM`.
+- Inbound WhatsApp group (`@lid`) messages are no longer dropped (message-id serialization).
+
+### Security
+
+- Session revocation on logout; SSRF-guarded webhook delivery; org-scoped roles.
+
+### Removed
+
+- Deleted a dead, unauthenticated duplicate WebSocket gateway (`RealtimeGateway` / `WsApiKeyGuard`); realtime is served only by the authenticated `EventsGateway`.
+
 ## [1.0.0] - 2026-05-24
 
 ### Aligned

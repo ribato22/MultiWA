@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Questions & usage help
+    url: https://github.com/ribato22/MultiWA/discussions
+    about: Ask how-to and usage questions here instead of the issue tracker.
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/ribato22/MultiWA/security/policy
+    about: Please disclose vulnerabilities privately per SECURITY.md — do not open a public issue.
+  - name: 📖 Documentation
+    url: https://github.com/ribato22/MultiWA#readme
+    about: Setup, API reference, and guides.
