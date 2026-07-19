@@ -36,6 +36,22 @@ sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total
 histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_bucket[5m])))
 ```
 
+## Domain metrics (API)
+
+Emitted off the internal event bus by a listener (never on the send hot path).
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `multiwa_messages_sent_total` | counter | `type` | messages sent OK, by message type |
+| `multiwa_messages_failed_total` | counter | `type` | message sends that failed, by type |
+| `multiwa_connected_profiles` | gauge | — | connected WhatsApp profiles (resynced from the DB at startup, then adjusted by connection events — approximate) |
+
+```promql
+# Send failure ratio
+sum(rate(multiwa_messages_failed_total[5m]))
+  / sum(rate(multiwa_messages_sent_total[5m]) + rate(multiwa_messages_failed_total[5m]))
+```
+
 ## Setup
 
 1. Point Prometheus at the endpoints — see [`prometheus.yml`](./prometheus.yml)
@@ -45,6 +61,6 @@ histogram_quantile(0.95, sum by (le, route) (rate(http_request_duration_seconds_
 
 ## Roadmap
 
-Domain counters (messages sent/failed, send-gate 429 by lane, webhook
-delivery/failure, connected-profile gauge) and OpenTelemetry tracing are
-tracked as follow-ups — see the world-class roadmap.
+Remaining observability follow-ups: send-gate 429 by lane and webhook
+delivery/failure counters (these live in the engine-runtime / worker, a
+different process registry), plus OpenTelemetry tracing and an error sink.

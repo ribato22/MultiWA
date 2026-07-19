@@ -8,7 +8,7 @@
 // added by injecting this service and registering on `registry` via getOrCreate.
 
 import { Injectable } from '@nestjs/common';
-import { collectDefaultMetrics, Registry, Counter, Histogram, Metric } from 'prom-client';
+import { collectDefaultMetrics, Registry, Counter, Histogram, Gauge, Metric } from 'prom-client';
 
 @Injectable()
 export class MetricsService {
@@ -18,6 +18,14 @@ export class MetricsService {
   // (e.g. /api/v1/messages/:id), never the raw URL, so cardinality stays bounded.
   readonly httpRequestsTotal: Counter<'method' | 'route' | 'status'>;
   readonly httpRequestDuration: Histogram<'method' | 'route' | 'status'>;
+
+  // Domain metrics. Incremented by MetricsEventsListener off the EventEmitter bus
+  // (never on the send hot path). `type` = message type (text/image/…).
+  readonly messagesSentTotal: Counter<'type'>;
+  readonly messagesFailedTotal: Counter<'type'>;
+  // Approximate live count of connected WhatsApp profiles: resynced from the DB at
+  // startup, then adjusted by connection.ready / connection.disconnected events.
+  readonly connectedProfiles: Gauge;
 
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
@@ -42,6 +50,38 @@ export class MetricsService {
           help: 'HTTP request latency (seconds) by method, matched route pattern, and status code',
           labelNames: ['method', 'route', 'status'] as const,
           buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+          registers: [this.registry],
+        }),
+    );
+
+    this.messagesSentTotal = this.getOrCreate(
+      'multiwa_messages_sent_total',
+      () =>
+        new Counter({
+          name: 'multiwa_messages_sent_total',
+          help: 'WhatsApp messages sent successfully, by message type',
+          labelNames: ['type'] as const,
+          registers: [this.registry],
+        }),
+    );
+
+    this.messagesFailedTotal = this.getOrCreate(
+      'multiwa_messages_failed_total',
+      () =>
+        new Counter({
+          name: 'multiwa_messages_failed_total',
+          help: 'WhatsApp message sends that failed, by message type',
+          labelNames: ['type'] as const,
+          registers: [this.registry],
+        }),
+    );
+
+    this.connectedProfiles = this.getOrCreate(
+      'multiwa_connected_profiles',
+      () =>
+        new Gauge({
+          name: 'multiwa_connected_profiles',
+          help: 'WhatsApp profiles currently connected (approximate)',
           registers: [this.registry],
         }),
     );
