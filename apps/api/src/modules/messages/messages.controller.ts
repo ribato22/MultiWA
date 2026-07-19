@@ -6,6 +6,8 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery, ApiCreated
 import { ApiAuthErrors, ApiValidationError, ApiRateLimited, ApiNotFound } from '../../common/decorators/api-responses';
 import { MessagesService } from './messages.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import {
@@ -41,7 +43,12 @@ const ApiSend = (summary: string, description?: string) =>
 
 @ApiTags('Messages')
 @Controller('messages')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+// ApiKeyScopeGuard runs between auth and tenant: a cheap in-memory capability
+// check before the per-resource tenant DB lookup. Class default requires the
+// `message:send` scope; the read (GET) routes below override it to `message:read`.
+// No-op for JWT logins and for API keys with no scopes / a `*` wildcard.
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
+@RequireScope('message:send')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -204,6 +211,7 @@ export class MessagesController {
   }
 
   @Get('schedule/:profileId')
+  @RequireScope('message:read')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get scheduled messages by profile' })
   @ApiQuery({ name: 'status', required: false, enum: ['pending', 'sent', 'failed', 'cancelled'] })
@@ -223,6 +231,7 @@ export class MessagesController {
 
   // Get messages by profile
   @Get('profile/:profileId')
+  @RequireScope('message:read')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get messages by profile' })
   @ApiQuery({ name: 'limit', required: false })
@@ -241,6 +250,7 @@ export class MessagesController {
 
   // Get messages by conversation
   @Get('conversation/:conversationId')
+  @RequireScope('message:read')
   @RequireTenant({ from: 'param', key: 'conversationId', resource: 'conversation' })
   @ApiOperation({ summary: 'Get messages by conversation' })
   @ApiQuery({ name: 'limit', required: false })
@@ -256,6 +266,7 @@ export class MessagesController {
   // Load older messages on-demand: pulls deeper history from WhatsApp, persists it,
   // and returns the refreshed page. Profile must be connected.
   @Get('conversation/:conversationId/load-older')
+  @RequireScope('message:read')
   @RequireTenant({ from: 'param', key: 'conversationId', resource: 'conversation' })
   @ApiOperation({ summary: 'Fetch older messages for a conversation from WhatsApp and persist them' })
   @ApiQuery({ name: 'limit', required: false, description: 'Total most-recent messages to pull (default 100, max 500)' })
@@ -268,6 +279,7 @@ export class MessagesController {
 
   // Get single message
   @Get(':id')
+  @RequireScope('message:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'message' })
   @ApiOperation({ summary: 'Get message by ID' })
   @ApiNotFound('Message')

@@ -1,0 +1,48 @@
+name: Security
+
+# Dependency audit + secret scanning.
+#
+# The dependency audit is ADVISORY (non-blocking) for now: the tree currently
+# carries a backlog of high/critical advisories (mostly dev tooling + a NestJS 11
+# fastify fix that needs a major bump). Dependabot opens the remediation PRs; once
+# the backlog is burned down, drop `continue-on-error` to turn this into a hard gate.
+# Secret scanning IS a hard gate — a leaked credential must fail the build.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * 1' # Mondays 03:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency audit (pnpm) — advisory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Advisory only: print the high/critical report but never fail the check
+      # (the tree has a known backlog). `|| true` keeps it green; the report is in
+      # the log and Dependabot opens the fixes. Drop `|| true` to make it a gate.
+      - name: pnpm audit (high/critical)
+        run: pnpm audit --audit-level high || true
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

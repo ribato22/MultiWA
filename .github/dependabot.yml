@@ -1,0 +1,28 @@
+version: 2
+
+# Automated dependency updates. Grouped to avoid PR spam; security updates are
+# opened by Dependabot regardless of schedule. This is the mechanism that
+# actually burns down the `pnpm audit` high/critical backlog over time.
+updates:
+  - package-ecosystem: npm # covers the pnpm workspace (pnpm-lock.yaml)
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      production-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"

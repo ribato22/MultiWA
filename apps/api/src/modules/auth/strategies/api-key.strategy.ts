@@ -55,6 +55,7 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       organizationId: key.user.organizationId,
       organization: key.user.organization,
       apiKeyId: key.id,
+      apiKeyScopes: key.permissions, // string[]; [] or ['*'] == full access (enforced by ApiKeyScopeGuard)
     };
   }
 }
