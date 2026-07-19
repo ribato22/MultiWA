@@ -22,9 +22,9 @@ jobs:
     name: Build sdist + wheel
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -35,7 +35,7 @@ jobs:
           python -m build
           python -m twine check dist/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python-sdk-dist
           path: packages/sdk-python/dist/
@@ -48,7 +48,7 @@ jobs:
     permissions:
       id-token: write # OIDC: PyPI Trusted Publishing (no password/token)
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: python-sdk-dist
           path: dist/
