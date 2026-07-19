@@ -137,6 +137,9 @@ export class SessionsService {
    * Revoke all sessions except the current one.
    */
   async revokeAllSessions(userId: string, currentToken?: string): Promise<number> {
+    // Fail closed: an undefined userId would make deleteMany drop the filter
+    // (WHERE 1=1) and delete EVERY user's sessions. Guard the destructive path.
+    if (!userId) return 0;
     const where: any = { userId };
 
     if (currentToken) {
