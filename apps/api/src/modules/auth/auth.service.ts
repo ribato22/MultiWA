@@ -287,10 +287,16 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload);
-    const refreshToken = this.jwtService.sign(payload, {
-      secret: this.refreshSecret,
-      expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN', '30d'),
-    });
+    // A unique jti makes every refresh JWT distinct even when two are issued in the
+    // same second for the same user (register+login, rapid rotation) — otherwise
+    // identical payload+iat would collide on the stored tokenHash.
+    const refreshToken = this.jwtService.sign(
+      { ...payload, jti: crypto.randomUUID() },
+      {
+        secret: this.refreshSecret,
+        expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN', '30d'),
+      },
+    );
 
     // Persist the refresh token (hashed) so it is revocable + rotatable. Without
     // this a stateless refresh JWT would keep minting access tokens after logout.

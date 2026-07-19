@@ -314,10 +314,13 @@ describe('API (e2e)', () => {
   // logged-out refresh token can't keep minting access tokens.
   describe('refresh token rotation & revocation', () => {
     it('rotates the refresh token and rejects reuse of the old one', async () => {
+      // Dedicated client IP: /auth/register is per-IP throttled (5/min).
+      const ip = '10.50.0.1';
       const email = `refresh_${Date.now()}@test.local`;
       const reg = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/register',
+        remoteAddress: ip,
         payload: { email, password: 'password1234!', name: 'R', organizationName: 'R Org' },
       });
       expect(reg.statusCode).toBe(201);
@@ -328,6 +331,7 @@ describe('API (e2e)', () => {
       const rot = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/refresh',
+        remoteAddress: ip,
         payload: { refreshToken: r1 },
       });
       expect([200, 201]).toContain(rot.statusCode);
@@ -340,6 +344,7 @@ describe('API (e2e)', () => {
       const reuse = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/refresh',
+        remoteAddress: ip,
         payload: { refreshToken: r1 },
       });
       expect(reuse.statusCode).toBe(401);
@@ -347,16 +352,19 @@ describe('API (e2e)', () => {
       const afterReuse = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/refresh',
+        remoteAddress: ip,
         payload: { refreshToken: r2 },
       });
       expect(afterReuse.statusCode).toBe(401);
     });
 
     it('logout revokes the refresh token (no new access tokens after logout)', async () => {
+      const ip = '10.50.0.2';
       const email = `refreshlogout_${Date.now()}@test.local`;
       const reg = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/register',
+        remoteAddress: ip,
         payload: { email, password: 'password1234!', name: 'R', organizationName: 'R Org' },
       });
       const { accessToken, refreshToken } = reg.json();
@@ -364,6 +372,7 @@ describe('API (e2e)', () => {
       const logout = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/logout',
+        remoteAddress: ip,
         headers: { authorization: `Bearer ${accessToken}` },
       });
       expect([200, 201]).toContain(logout.statusCode);
@@ -371,6 +380,7 @@ describe('API (e2e)', () => {
       const refresh = await app.inject({
         method: 'POST',
         url: '/api/v1/auth/refresh',
+        remoteAddress: ip,
         payload: { refreshToken },
       });
       expect(refresh.statusCode).toBe(401);
