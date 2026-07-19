@@ -310,6 +310,73 @@ describe('API (e2e)', () => {
     });
   });
 
+  // Refresh tokens are revocable + rotated with reuse detection, so a leaked or
+  // logged-out refresh token can't keep minting access tokens.
+  describe('refresh token rotation & revocation', () => {
+    it('rotates the refresh token and rejects reuse of the old one', async () => {
+      const email = `refresh_${Date.now()}@test.local`;
+      const reg = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        payload: { email, password: 'password1234!', name: 'R', organizationName: 'R Org' },
+      });
+      expect(reg.statusCode).toBe(201);
+      const r1: string = reg.json().refreshToken;
+      expect(r1).toBeTruthy();
+
+      // Rotate: exchange r1 for a fresh pair.
+      const rot = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/refresh',
+        payload: { refreshToken: r1 },
+      });
+      expect([200, 201]).toContain(rot.statusCode);
+      const r2: string = rot.json().refreshToken;
+      expect(r2).toBeTruthy();
+      expect(r2).not.toBe(r1);
+
+      // Replaying the now-rotated r1 is reuse → rejected, and it revokes the whole
+      // family, so even the fresh r2 is dead afterwards.
+      const reuse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/refresh',
+        payload: { refreshToken: r1 },
+      });
+      expect(reuse.statusCode).toBe(401);
+
+      const afterReuse = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/refresh',
+        payload: { refreshToken: r2 },
+      });
+      expect(afterReuse.statusCode).toBe(401);
+    });
+
+    it('logout revokes the refresh token (no new access tokens after logout)', async () => {
+      const email = `refreshlogout_${Date.now()}@test.local`;
+      const reg = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        payload: { email, password: 'password1234!', name: 'R', organizationName: 'R Org' },
+      });
+      const { accessToken, refreshToken } = reg.json();
+
+      const logout = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/logout',
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      expect([200, 201]).toContain(logout.statusCode);
+
+      const refresh = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/refresh',
+        payload: { refreshToken },
+      });
+      expect(refresh.statusCode).toBe(401);
+    });
+  });
+
   // Webhooks are profile-scoped; the profile is org-scoped, so webhook access is
   // isolated across orgs. (This is the surface behind the recent bot integration.)
   describe('webhooks (profile-scoped, cross-org isolation)', () => {

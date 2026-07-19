@@ -135,27 +135,66 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string): Promise<TokenResponseDto> {
+    let payload: { sub: string };
     try {
-      const payload = this.jwtService.verify(refreshToken, { secret: this.refreshSecret });
-      const user = await prisma.user.findUnique({
-        where: { id: payload.sub },
-      });
-
-      if (!user) {
-        throw new UnauthorizedException('Invalid token');
-      }
-
-      return this.generateTokens(user);
+      payload = this.jwtService.verify(refreshToken, { secret: this.refreshSecret });
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
+
+    const tokenHash = this.hashToken(refreshToken);
+    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+
+    // Unknown token — not in the store (e.g. issued before rotation existed, or
+    // forged). Reject; the holder re-authenticates once.
+    if (!stored) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    // Reuse of an already-rotated token → someone is replaying an old token.
+    // Revoke the whole family so neither the attacker nor the victim can refresh.
+    if (stored.revokedAt) {
+      await this.revokeFamily(stored.family);
+      throw new UnauthorizedException('Refresh token reuse detected');
+    }
+
+    if (stored.expiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('Refresh token expired');
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || !user.isActive) {
+      await this.revokeFamily(stored.family);
+      throw new UnauthorizedException('Invalid token');
+    }
+
+    // Rotate: revoke the presented token, mint a new pair in the SAME family.
+    await prisma.refreshToken.update({
+      where: { id: stored.id },
+      data: { revokedAt: new Date() },
+    });
+    return this.generateTokens(
+      user,
+      { ipAddress: stored.ipAddress ?? undefined, userAgent: stored.userAgent ?? undefined },
+      stored.family,
+    );
   }
 
   /**
-   * Logout — revoke current session.
+   * Logout — revoke the current access session AND the user's refresh tokens, so
+   * a logged-out client cannot mint new access tokens via /auth/refresh.
    */
   async logout(accessToken: string): Promise<void> {
     await this.sessionsService.removeSessionByToken(accessToken);
+    // decode (unverified) is enough — the caller was already authenticated to
+    // reach logout; a garbage token decodes to null and no-ops.
+    const payload = this.jwtService.decode(accessToken) as { sub?: string } | null;
+    if (payload?.sub) {
+      await prisma.refreshToken.updateMany({
+        where: { userId: payload.sub, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+    }
   }
 
   async getProfile(userId: string) {
@@ -236,6 +275,9 @@ export class AuthService {
   private async generateTokens(
     user: any,
     sessionContext?: { ipAddress?: string; userAgent?: string },
+    // Rotation lineage. Fresh logins start a new family; /auth/refresh reuses the
+    // rotated token's family so reuse detection spans the whole chain.
+    family?: string,
   ): Promise<TokenResponseDto> {
     const payload = {
       sub: user.id,
@@ -249,6 +291,10 @@ export class AuthService {
       secret: this.refreshSecret,
       expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN', '30d'),
     });
+
+    // Persist the refresh token (hashed) so it is revocable + rotatable. Without
+    // this a stateless refresh JWT would keep minting access tokens after logout.
+    await this.storeRefreshToken(user.id, refreshToken, family ?? crypto.randomUUID(), sessionContext);
 
     // Every issued access token is bound to a server-side session so logout and
     // session revocation actually invalidate it (JwtStrategy checks the session
@@ -272,6 +318,41 @@ export class AuthService {
         organizationId: user.organizationId,
       },
     };
+  }
+
+  // Store a refresh token as a SHA-256 hash (never the raw JWT), with its expiry
+  // taken from the token's own `exp` claim so the row and the JWT agree.
+  private async storeRefreshToken(
+    userId: string,
+    rawToken: string,
+    family: string,
+    ctx?: { ipAddress?: string; userAgent?: string },
+  ): Promise<void> {
+    const decoded = this.jwtService.decode(rawToken) as { exp?: number } | null;
+    const expiresAt = decoded?.exp
+      ? new Date(decoded.exp * 1000)
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await prisma.refreshToken.create({
+      data: {
+        userId,
+        tokenHash: this.hashToken(rawToken),
+        family,
+        expiresAt,
+        ipAddress: ctx?.ipAddress,
+        userAgent: ctx?.userAgent,
+      },
+    });
+  }
+
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  private async revokeFamily(family: string): Promise<void> {
+    await prisma.refreshToken.updateMany({
+      where: { family, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
   private async hashPassword(password: string): Promise<string> {
