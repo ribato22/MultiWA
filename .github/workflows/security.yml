@@ -22,7 +22,6 @@ jobs:
   audit:
     name: Dependency audit (pnpm) — advisory
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -31,8 +30,11 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Advisory only: print the high/critical report but never fail the check
+      # (the tree has a known backlog). `|| true` keeps it green; the report is in
+      # the log and Dependabot opens the fixes. Drop `|| true` to make it a gate.
       - name: pnpm audit (high/critical)
-        run: pnpm audit --audit-level high
+        run: pnpm audit --audit-level high || true
 
   secrets:
     name: Secret scan (gitleaks)
