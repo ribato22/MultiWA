@@ -1163,6 +1163,14 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         }
       },
       onMessageAck: async (messageId: string, status: string) => {
+        // Guard an unresolvable ack id: Prisma treats `where: { messageId: undefined }`
+        // as NO filter, so updateMany degrades to `WHERE 1=1` and would rewrite EVERY
+        // message's status — table-wide corruption + a full-table lock that deadlocks
+        // against concurrent acks. Skip when the id is absent/empty.
+        if (!messageId) {
+          this.logger.warn(`[ACK] Ignoring ack with no message id (status: ${status})`);
+          return;
+        }
         this.logger.log(`[ACK] Message ${messageId} → status: ${status}`);
         try {
           // The engine adapter already maps numeric ack to string status
