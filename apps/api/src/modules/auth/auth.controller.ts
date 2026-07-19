@@ -41,7 +41,7 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Request() req: any,
   ) {
-    const ip = req.ip || req.connection?.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
     const ua = req.headers?.['user-agent'];
     return this.authService.login(dto, ip, ua);
   }
@@ -57,7 +57,7 @@ export class AuthController {
     @Body() body: { userId: string; token: string },
     @Request() req: any,
   ): Promise<TokenResponseDto> {
-    const ip = req.ip || req.connection?.remoteAddress;
+    const ip = req.ip || req.socket?.remoteAddress;
     const ua = req.headers?.['user-agent'];
     return this.authService.loginWith2FA(body.userId, body.token, ip, ua);
   }

@@ -26,7 +26,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get('JWT_SECRET'),
+      // getOrThrow -> string (passport-jwt 4 types now reject string | undefined);
+      // JWT_SECRET is already fail-fast validated at boot in main.ts.
+      secretOrKey: config.getOrThrow<string>('JWT_SECRET'),
       passReqToCallback: true,
     });
   }
