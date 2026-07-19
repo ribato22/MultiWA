@@ -1,7 +1,7 @@
 // MultiWA Gateway - GDPR Compliance Controller
 // apps/api/src/modules/accounts/gdpr.controller.ts
 
-import { Controller, Get, Delete, Req, UseGuards, Logger } from '@nestjs/common';
+import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
@@ -224,7 +224,14 @@ export class GdprController {
   @ApiResponse({ status: 404, description: 'User not found' })
   @ApiNotFound('User')
   async deleteAccount(@Req() req: any) {
-    const userId = req.user.id;
+    const userId = req.user?.id;
+    // Fail closed: every deleteMany below filters by { userId }. With an undefined
+    // userId, Prisma drops the filter (WHERE 1=1) and would erase EVERY user's push
+    // subscriptions/notifications/audit logs/sessions/API keys. The auth guard already
+    // guarantees a user id, but this operation is IRREVERSIBLE, so we double-check.
+    if (!userId) {
+      throw new UnauthorizedException('Authenticated user id is required');
+    }
     this.logger.warn(`GDPR account deletion requested by user ${userId}`);
 
     const deletionLog: Record<string, number> = {};
