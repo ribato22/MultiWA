@@ -1,0 +1,26 @@
+# Sample Prometheus scrape config for MultiWA.
+# The API exposes /metrics on its HTTP port (default 3333); the worker exposes
+# /metrics on its health port (default 3002). Both serve prom-client text.
+#
+# Adjust the targets to your deployment (service names on the Docker network, or
+# host:port). Restrict access to /metrics at your proxy/firewall — it is public
+# like /health.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: multiwa-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['api:3333']
+        labels:
+          service: multiwa-api
+
+  - job_name: multiwa-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['worker:3002']
+        labels:
+          service: multiwa-worker
