@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-engine architecture** — Pluggable WhatsApp engine adapters (whatsapp-web.js, Baileys)
 - **Admin Dashboard** — Full-featured Next.js dashboard with real-time session monitoring
 - **Visual Automation Builder** — Drag & drop flow builder for message automation
-- **Knowledge Base** — AI-powered auto-reply using document context (OpenAI, Google AI)
+- **Knowledge Base** — AI-powered auto-reply using document context (OpenAI-compatible API)
 - **Broadcast System** — Bulk messaging with template support and delivery tracking
 - **Contact Management** — Import/export contacts, tagging, and segmentation
 - **Template System** — Reusable message templates with variable substitution

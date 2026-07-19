@@ -19,7 +19,7 @@ from multiwa import MultiWA
 
 # Initialize client
 client = MultiWA(
-    base_url="http://localhost:3001/api",
+    base_url="http://localhost:3333/api/v1",
     api_key="YOUR_API_KEY"
 )
 
@@ -43,7 +43,7 @@ import asyncio
 
 async def main():
     client = AsyncMultiWA(
-        base_url="http://localhost:3001/api",
+        base_url="http://localhost:3333/api/v1",
         api_key="YOUR_API_KEY"
     )
 

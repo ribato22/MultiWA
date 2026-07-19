@@ -50,7 +50,7 @@ If you want to send and receive WhatsApp messages from your own backend without 
 | **Multi-engine** | ✅ whatsapp-web.js (Baileys adapter experimental) | ❌ Single | ❌ Fixed |
 | **Admin Dashboard** | ✅ Full-featured | ❌ None | ⚠️ Basic |
 | **Visual Automation** | ✅ Drag & drop builder | ❌ | ❌ |
-| **Knowledge Base AI** | ✅ OpenAI / Google AI | ❌ | ❌ |
+| **Knowledge Base AI** | ✅ OpenAI-compatible | ❌ | ❌ |
 | **Plugin System** | ✅ Extensible | ❌ | ❌ |
 | **Free** | ✅ MIT License | ⚠️ Per-message pricing | ✅ |
 | **Official SDKs** | ✅ TS, Python, PHP | ✅ Multiple | ⚠️ Community |
@@ -113,7 +113,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 
 ### Core
 - 📱 **Multi-Session Management** — Connect unlimited WhatsApp accounts
-- 🔌 **Pluggable Engine Adapters** — Clean engine interface with per-profile engine selection: whatsapp-web.js (default, production) or a Baileys adapter (experimental)
+- 🔌 **Pluggable Engine Adapters** — Clean engine interface with per-profile engine selection: whatsapp-web.js (default, production) or a Baileys adapter (experimental — not production-validated; `sendReaction` and `resolveIdentity` are stubs and history sync / WhatsApp-addressbook contact save are whatsapp-web.js-only; see [Engine Abstraction](docs/06-engine-abstraction.md))
 - 📨 **Unified Messaging API** — Send text, media, documents, contacts, locations
 - 📡 **Real-time WebSocket** — Live session status, QR codes, and events via Socket.IO
 - 🔐 **JWT Authentication** — Secure API access with refresh tokens
@@ -126,7 +126,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 
 ### Automation & AI
 - 🤖 **Visual Flow Builder** — Drag & drop automation design
-- 🧠 **Knowledge Base** — AI-powered replies using OpenAI or Google AI
+- 🧠 **Knowledge Base** — AI-powered replies using OpenAI (or any OpenAI-compatible API) with keyword (TF-IDF) retrieval
 - 📅 **Scheduled Messages** — Queue messages for future delivery
 - 📢 **Broadcast** — Bulk messaging with templates and tracking
 
@@ -178,7 +178,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 │                      ├───────────────────────────────────┤
 │                      │  WhatsApp Engine Adapters         │
 │                      │  ├─ whatsapp-web.js               │
-│                      │  └─ Baileys                       │
+│                      │  └─ Baileys (experimental)        │
 ├──────────────────────┴───────────────────────────────────┤
 │  Worker (BullMQ)  │  PostgreSQL 16  │  Redis 7           │
 └──────────────────────────────────────────────────────────┘
@@ -192,7 +192,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 | **Admin** | Next.js 14 + Tailwind CSS |
 | **Database** | PostgreSQL 16 + Prisma ORM |
 | **Cache/Queue** | Redis 7 + BullMQ |
-| **WhatsApp** | whatsapp-web.js / Baileys |
+| **WhatsApp** | whatsapp-web.js (production) / Baileys (experimental) |
 | **Auth** | JWT (access + refresh tokens) |
 | **Realtime** | Socket.IO |
 | **Container** | Docker + Docker Compose |

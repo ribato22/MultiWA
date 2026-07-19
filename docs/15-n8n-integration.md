@@ -25,7 +25,7 @@ Or install via n8n UI:
 1. In n8n, go to **Credentials** → **Add Credential**
 2. Search for **MultiWA API**
 3. Enter:
-   - **API Base URL**: `http://localhost:3001/api`
+   - **API Base URL**: `http://localhost:3333/api/v1`
    - **API Key**: Your MultiWA API key
 
 ---

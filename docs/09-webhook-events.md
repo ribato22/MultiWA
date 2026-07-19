@@ -16,7 +16,7 @@ POST /api/v1/profiles/:id/webhook
 {
   "url": "https://yourserver.com/webhook",
   "secret": "optional-hmac-secret",
-  "events": ["message.received", "session.status"]
+  "events": ["message.received", "connection.ready"]
 }
 ```
 
@@ -40,9 +40,10 @@ POST /api/v1/webhooks
 | `message.sent` | Outgoing message confirmed |
 | `message.delivered` | Message delivered (✓✓) |
 | `message.read` | Message read (blue ✓✓) |
-| `session.connected` | WhatsApp connected |
-| `session.disconnected` | WhatsApp disconnected |
-| `session.qr` | New QR code generated |
+| `message.failed` | Message delivery failed |
+| `connection.qr` | New QR code generated |
+| `connection.ready` | WhatsApp connected |
+| `connection.disconnected` | WhatsApp disconnected |
 
 ---
 
@@ -67,23 +68,28 @@ POST /api/v1/webhooks
 
 ## HMAC Verification
 
-If you set a `secret`, verify the signature:
+If you set a `secret`, verify the signature over the **raw request body** (the exact bytes MultiWA sent), not a re-serialized object:
 
 ```javascript
 const crypto = require('crypto');
 
-function verifyWebhook(body, signature, secret) {
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(JSON.stringify(body))
-    .digest('hex');
-  return `sha256=${expected}` === signature;
+// Capture the RAW request body so the HMAC matches byte-for-byte. MultiWA signs
+// the exact bytes it sends, so verify against the raw body — a re-serialized
+// object (JSON.stringify(req.body)) is NOT guaranteed to match.
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+
+function verifyWebhook(rawBody, signature, secret) {
+  const expected =
+    'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+  const got = signature || '';
+  return expected.length === got.length &&
+    crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(got));
 }
 
 // In your handler
 app.post('/webhook', (req, res) => {
   const signature = req.headers['x-multiwa-signature'];
-  if (!verifyWebhook(req.body, signature, 'your-secret')) {
+  if (!verifyWebhook(req.rawBody, signature, 'your-secret')) {
     return res.status(401).send('Invalid signature');
   }
   // Process event...
