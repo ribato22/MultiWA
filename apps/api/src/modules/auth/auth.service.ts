@@ -3,6 +3,7 @@
 
 import { Injectable, UnauthorizedException, ConflictException, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { prisma } from '@multiwa/database';
 import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { TwoFactorService } from './two-factor.service';
@@ -16,7 +17,17 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly twoFactorService: TwoFactorService,
     private readonly sessionsService: SessionsService,
+    private readonly config: ConfigService,
   ) {}
+
+  // Refresh tokens are signed/verified with a SEPARATE secret from access tokens
+  // (JWT_REFRESH_SECRET, validated at boot in main.ts). This cryptographically
+  // isolates the two token classes: a leaked access-token secret cannot forge a
+  // refresh token (and vice versa), and a refresh token cannot be replayed as an
+  // access token — JwtStrategy verifies access tokens with JWT_SECRET only.
+  private get refreshSecret(): string {
+    return this.config.get<string>('JWT_REFRESH_SECRET') as string;
+  }
 
   async register(dto: RegisterDto): Promise<TokenResponseDto> {
     // Check if user exists
@@ -125,7 +136,7 @@ export class AuthService {
 
   async refreshToken(refreshToken: string): Promise<TokenResponseDto> {
     try {
-      const payload = this.jwtService.verify(refreshToken);
+      const payload = this.jwtService.verify(refreshToken, { secret: this.refreshSecret });
       const user = await prisma.user.findUnique({
         where: { id: payload.sub },
       });
@@ -234,7 +245,10 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload);
-    const refreshToken = this.jwtService.sign(payload, { expiresIn: '30d' });
+    const refreshToken = this.jwtService.sign(payload, {
+      secret: this.refreshSecret,
+      expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN', '30d'),
+    });
 
     // Every issued access token is bound to a server-side session so logout and
     // session revocation actually invalidate it (JwtStrategy checks the session
