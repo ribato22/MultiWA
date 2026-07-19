@@ -46,9 +46,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { BulkModule } from './modules/bulk/bulk.module';
 import { MetricsModule } from './metrics/metrics.module';
-// WebSocketModule (RealtimeGateway) intentionally not imported: it was a second,
-// unauthenticated gateway on the same /ws namespace as the (now authenticated)
-// EventsGateway and is unused by any service. Consolidated to one gateway.
+// Realtime is served by the single authenticated EventsGateway (modules/events).
 
 @Module({
   imports: [

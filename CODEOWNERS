@@ -1,0 +1,13 @@
+# Code owners for MultiWA. Owners are automatically requested for review on PRs
+# touching matching paths. See https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Enable "Require review from Code Owners" in branch protection for this to gate.
+
+# Default owner for everything.
+*                       @ribato22
+
+# Security-sensitive areas — always review.
+/apps/api/src/modules/auth/        @ribato22
+/packages/engine-runtime/          @ribato22
+/.github/workflows/                @ribato22
+/docker/                           @ribato22
