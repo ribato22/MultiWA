@@ -21,8 +21,8 @@
     "dotenv": "^17.2.4"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "prisma": "^6.3.0",
-    "typescript": "^5.7.0"
+    "@types/node": "^26.1.1",
+    "prisma": "^7.8.0",
+    "typescript": "^7.0.2"
   }
 }
