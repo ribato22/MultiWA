@@ -122,6 +122,12 @@ async function bootstrap() {
     });
     console.log('✅ [6/7] Validation & Swagger configured');
 
+    // Enable graceful shutdown: on SIGTERM/SIGINT Nest fires OnModuleDestroy /
+    // OnApplicationShutdown so in-flight work drains (BullMQ workers/queues close,
+    // engine sessions detach, DB/Redis connections release) instead of being
+    // killed mid-flight. Must be enabled before listen() to register the hooks.
+    app.enableShutdownHooks();
+
     // Start server
     const port = process.env.API_PORT || 3000;
     const host = process.env.API_HOST || '0.0.0.0';

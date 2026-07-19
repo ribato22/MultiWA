@@ -43,6 +43,13 @@ describe('AuthService', () => {
     createSession: vi.fn(),
     removeSessionByToken: vi.fn(),
   };
+  const mockConfigService = {
+    // refresh-token secret + ttl (defaults mirror ConfigService.get(key, default))
+    get: vi.fn((key: string, def?: unknown) => {
+      if (key === 'JWT_REFRESH_SECRET') return 'test-refresh-secret';
+      return def;
+    }),
+  };
 
   beforeEach(() => {
     // Reset all mocks — clears call history AND resets implementations
@@ -61,10 +68,13 @@ describe('AuthService', () => {
     mockSessionsService.removeSessionByToken.mockReset();
     mockTwoFactorService.verifyTwoFactor.mockReset();
 
+    mockConfigService.get.mockClear();
+
     authService = new AuthService(
       mockJwtService as any,
       mockTwoFactorService as any,
       mockSessionsService as any,
+      mockConfigService as any,
     );
   });
 
