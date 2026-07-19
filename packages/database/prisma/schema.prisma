@@ -96,6 +96,7 @@ model User {
   notifications       Notification[]
   assignedConversations Conversation[] @relation("AssignedAgent")
   sessions            Session[]
+  refreshTokens       RefreshToken[]
   pushSubscriptions   PushSubscription[]
 
   @@map("users")
@@ -498,6 +499,29 @@ model Session {
   @@index([userId])
   @@index([expiresAt])
   @@map("sessions")
+}
+
+// Revocable, rotating refresh tokens. Each successful /auth/refresh rotates the
+// presented token (revoke it, mint a new one in the same `family`). Replaying an
+// already-revoked token is reuse: the whole family is revoked. Logout revokes the
+// user's active tokens. Stored as a SHA-256 hash of the raw JWT (never the token).
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String
+  tokenHash   String   @unique
+  family      String
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([family])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }
 
 // ============================================

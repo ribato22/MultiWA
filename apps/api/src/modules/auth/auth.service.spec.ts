@@ -24,6 +24,12 @@ vi.mock('@multiwa/database', () => ({
     account: {
       create: vi.fn(),
     },
+    refreshToken: {
+      create: vi.fn(),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
   },
 }));
 
@@ -35,6 +41,7 @@ describe('AuthService', () => {
   const mockJwtService = {
     sign: vi.fn().mockReturnValue('mock-token'),
     verify: vi.fn(),
+    decode: vi.fn(),
   };
   const mockTwoFactorService = {
     verifyTwoFactor: vi.fn(),
@@ -61,9 +68,14 @@ describe('AuthService', () => {
     vi.mocked(prisma.organization.delete).mockReset();
     vi.mocked(prisma.workspace.create).mockReset();
     vi.mocked(prisma.account.create).mockReset();
+    vi.mocked(prisma.refreshToken.create).mockReset().mockResolvedValue({} as any);
+    vi.mocked(prisma.refreshToken.findUnique).mockReset();
+    vi.mocked(prisma.refreshToken.update).mockReset().mockResolvedValue({} as any);
+    vi.mocked(prisma.refreshToken.updateMany).mockReset().mockResolvedValue({ count: 0 } as any);
 
     mockJwtService.sign.mockReset().mockReturnValue('mock-token');
     mockJwtService.verify.mockReset();
+    mockJwtService.decode.mockReset();
     mockSessionsService.createSession.mockReset();
     mockSessionsService.removeSessionByToken.mockReset();
     mockTwoFactorService.verifyTwoFactor.mockReset();
