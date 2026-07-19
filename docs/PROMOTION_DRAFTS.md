@@ -21,7 +21,7 @@ docker compose up -d
 ### Key features:
 - 📱 **Multi-Session** — Connect unlimited WhatsApp numbers via single API
 - 🔌 **Pluggable engines** — pick whatsapp-web.js (production) or Baileys (experimental) per profile
-- 🤖 **AI Auto-Reply** — Knowledge base powered by OpenAI or Google AI
+- 🤖 **AI Auto-Reply** — Knowledge base powered by OpenAI (or any OpenAI-compatible API)
 - ⚡ **Visual Flow Builder** — Drag & drop automation (no code needed)
 - 📢 **Broadcast** — Bulk messaging with templates, variables, tracking
 - 🖥️ **Admin Dashboard** — Full-featured Next.js dashboard with dark mode
@@ -56,7 +56,7 @@ I'm sharing my open-source project **MultiWA** — a self-hosted WhatsApp Busine
 **What makes it different from other WhatsApp tools:**
 - Pluggable engines: whatsapp-web.js (production) or Baileys (experimental), selectable per profile
 - Visual automation builder: drag & drop, no coding required
-- AI-powered knowledge base: plug in OpenAI or Google AI for smart auto-replies
+- AI-powered knowledge base: plug in OpenAI (or any OpenAI-compatible API) for smart auto-replies
 - Full admin dashboard with real-time chat, analytics, broadcast
 - Official SDKs for TypeScript, Python, and PHP
 
@@ -87,7 +87,7 @@ Adds MultiWA to the Communication - Custom section.
 MultiWA is a self-hosted WhatsApp Business API gateway featuring:
 - Multi-engine support (whatsapp-web.js + Baileys)
 - Visual drag-and-drop automation builder
-- AI-powered auto-reply (OpenAI, Google AI)
+- AI-powered auto-reply (OpenAI-compatible API)
 - Full admin dashboard (Next.js 14)
 - Official SDKs (TypeScript, Python, PHP)
 - One-command Docker setup
@@ -108,7 +108,7 @@ Source: https://github.com/ribato22/MultiWA
 ```
 I built MultiWA, a self-hosted WhatsApp Business API gateway.
 
-It supports multiple WhatsApp engines (whatsapp-web.js, Baileys), has a visual drag-and-drop automation builder, AI-powered knowledge base (OpenAI/Google AI), and a full admin dashboard.
+It supports multiple WhatsApp engines (whatsapp-web.js production, Baileys experimental), has a visual drag-and-drop automation builder, AI-powered knowledge base (OpenAI-compatible), and a full admin dashboard.
 
 Docker one-click setup:
   git clone ... && docker compose up -d

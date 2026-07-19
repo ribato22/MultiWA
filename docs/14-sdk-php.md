@@ -7,7 +7,7 @@ Official PHP SDK for MultiWA.
 ## Installation
 
 ```bash
-composer require multiwa/multiwa
+composer require multiwa/multiwa-php
 ```
 
 ---
@@ -29,7 +29,7 @@ require_once 'vendor/autoload.php';
 use MultiWA\MultiWA;
 
 $client = new MultiWA(
-    baseUrl: 'http://localhost:3001/api',
+    baseUrl: 'http://localhost:3333/api/v1',
     apiKey: 'YOUR_API_KEY'
 );
 
@@ -149,7 +149,7 @@ try {
 ```php
 // config/services.php
 'multiwa' => [
-    'base_url' => env('MULTIWA_BASE_URL', 'http://localhost:3001/api'),
+    'base_url' => env('MULTIWA_BASE_URL', 'http://localhost:3333/api/v1'),
     'api_key' => env('MULTIWA_API_KEY'),
 ],
 

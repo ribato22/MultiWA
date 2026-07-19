@@ -16,7 +16,7 @@ X-API-Key: <your-api-key>
 
 ## 1. Webhook integration
 
-MultiWA delivers events (`message.received`, `session.status`, …) as `POST`
+MultiWA delivers events (`message.received`, `message.sent`, …) as `POST`
 requests to your endpoint. When the webhook has a `secret`, each request carries
 an HMAC-SHA256 signature header so you can verify it came from MultiWA:
 
@@ -121,7 +121,7 @@ curl -X POST https://your-multiwa-host/api/v1/webhooks \
   -d '{
     "url": "https://yourserver.com/webhook",
     "secret": "a-long-random-string",
-    "events": ["message.received", "session.status"]
+    "events": ["message.received", "connection.ready"]
   }'
 ```
 
