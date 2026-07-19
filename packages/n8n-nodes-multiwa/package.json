@@ -16,12 +16,17 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/multiwa/n8n-nodes-multiwa"
+    "url": "git+https://github.com/ribato22/MultiWA.git",
+    "directory": "packages/n8n-nodes-multiwa"
+  },
+  "homepage": "https://github.com/ribato22/MultiWA/tree/main/packages/n8n-nodes-multiwa#readme",
+  "bugs": {
+    "url": "https://github.com/ribato22/MultiWA/issues"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc && cp -f src/nodes/MultiWA/multiwa.svg dist/nodes/MultiWA/ 2>/dev/null || true",
+    "build": "tsc && cp -f src/nodes/MultiWA/multiwa.svg dist/nodes/MultiWA/multiwa.svg",
     "dev": "tsc --watch",
     "lint": "eslint .",
     "lintfix": "eslint . --fix"
@@ -29,6 +34,13 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20.15"
+  },
   "n8n": {
     "n8nNodesApiVersion": 1,
     "credentials": [

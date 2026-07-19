@@ -1,0 +1,54 @@
+name: Publish TS SDK to npm
+
+# Publishes @multiwa/sdk to npmjs.org. Decoupled from the monorepo-wide `v*`
+# release tag so the SDK versions independently: push a `sdk-v<version>` tag
+# (matching packages/sdk/package.json version) or run manually.
+#
+# Keyless by default: with a Trusted Publisher configured on npm
+# (npmjs.com -> @multiwa/sdk -> Settings -> Trusted Publishing, pointing at this
+# repo + this workflow file) no NPM_TOKEN is needed and provenance is automatic.
+# For the very first publish (before the package exists, so OIDC can't attach
+# yet), set the NPM_TOKEN repo secret and this workflow falls back to it.
+# See docs/21-releasing-and-distribution.md.
+
+on:
+  push:
+    tags:
+      - 'sdk-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # OIDC: npm Trusted Publishing + build provenance
+
+jobs:
+  publish:
+    name: Publish @multiwa/sdk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+
+      # npm >= 11.5.1 is required for OIDC Trusted Publishing; Node 20 ships npm 10.
+      - name: Upgrade npm (OIDC Trusted Publishing support)
+        run: npm install -g npm@latest
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build SDK
+        run: pnpm --filter @multiwa/sdk build
+
+      - name: Publish
+        working-directory: packages/sdk
+        run: npm publish --provenance --access public
+        env:
+          # Only used as the bootstrap fallback for the first publish; once a
+          # Trusted Publisher is configured this is ignored (OIDC is preferred).
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

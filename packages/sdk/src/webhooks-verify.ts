@@ -1,6 +1,6 @@
 // MultiWA Gateway SDK — webhook signature verification
 // packages/sdk/src/webhooks-verify.ts
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /**
  * Verify a MultiWA webhook signature.
