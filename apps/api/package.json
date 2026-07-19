@@ -16,7 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.500.0",
+    "@aws-sdk/client-s3": "^3.1090.0",
     "@fastify/helmet": "^11.1.0",
     "@fastify/multipart": "^8.0.0",
     "@fastify/static": "^7.0.0",
@@ -39,11 +39,11 @@
     "@nestjs/websockets": "^10.4.0",
     "@types/qrcode": "^1.5.6",
     "bcrypt": "^5.1.1",
-    "bullmq": "^5.30.0",
+    "bullmq": "^5.80.9",
     "class-transformer": "^0.5.1",
-    "class-validator": "^0.14.0",
+    "class-validator": "^0.15.1",
     "fastify": "^4.28.0",
-    "ioredis": "^5.4.0",
+    "ioredis": "^5.11.1",
     "nodemailer": "^8.0.1",
     "passport": "^0.7.0",
     "passport-custom": "^1.1.1",

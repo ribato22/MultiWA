@@ -51,7 +51,7 @@
     "@nestjs/event-emitter": "^3.0.1",
     "@nestjs/schedule": "^6.1.1",
     "@types/qrcode": "^1.5.6",
-    "otplib": "^13.2.1",
+    "otplib": "^13.4.1",
     "qrcode": "^1.5.4"
   }
 }
