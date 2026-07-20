@@ -13,6 +13,7 @@ import {
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { prisma } from '@multiwa/database';
 
 export interface GroupInfo {
   id: string;
@@ -45,39 +46,62 @@ export class GroupsService {
    * Get all groups for a profile
    */
   async getAll(profileId: string): Promise<GroupInfo[]> {
-    if (isWorkerEngine()) return this.engineCommands.groupOp(profileId, 'getAll', {});
+    // Try the live engine first (freshest membership counts), but never let a flaky
+    // engine call empty the group list: whatsapp-web.js getGroups can throw (e.g. a
+    // WhatsApp Web build whose group Store isn't hooked) while send still works. Fall
+    // back to the groups persisted from message history so the picker stays usable.
+    try {
+      const live = isWorkerEngine()
+        ? await this.engineCommands.groupOp(profileId, 'getAll', {})
+        : await this.getFromLiveEngine(profileId);
+      if (Array.isArray(live) && live.length > 0) return live;
+    } catch (error: any) {
+      this.logger.warn(`Live getGroups failed for ${profileId} (${error?.message}); using stored groups`);
+    }
+    return this.getGroupsFromDb(profileId);
+  }
+
+  private async getFromLiveEngine(profileId: string): Promise<GroupInfo[]> {
     const engine = this.engineManager.getEngine(profileId);
     if (!engine) {
-      // Return empty array if engine not connected (instead of throwing error)
-      this.logger.warn(`Profile ${profileId} not connected, returning empty groups`);
+      this.logger.warn(`Profile ${profileId} not connected; using stored groups`);
       return [];
     }
+    // Add timeout to prevent indefinite hang (30 seconds)
+    const timeoutMs = 30000;
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`getGroups timed out after ${timeoutMs}ms`)), timeoutMs)
+    );
+    const groups = await Promise.race([engine.getGroups(), timeoutPromise]);
+    this.logger.log(`Mapping ${groups.length} live groups for profile ${profileId}`);
+    return groups.map(g => ({
+      id: g.id,
+      name: g.name,
+      description: g.description || '',
+      owner: '',
+      createdAt: new Date(),
+      participantsCount: g.participantCount || g.participants?.length || 0,
+    }));
+  }
 
-    try {
-      // Add timeout to prevent indefinite hang (30 seconds)
-      const timeoutMs = 30000;
-      const groupsPromise = engine.getGroups();
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`getGroups timed out after ${timeoutMs}ms`)), timeoutMs)
-      );
-      
-      const groups = await Promise.race([groupsPromise, timeoutPromise]);
-      
-      this.logger.log(`Mapping ${groups.length} groups for profile ${profileId}`);
-      
-      return groups.map(g => ({
-        id: g.id,
-        name: g.name,
-        description: g.description || '',
-        owner: '',
-        createdAt: new Date(),
-        participantsCount: g.participantCount || g.participants?.length || 0,
-      }));
-    } catch (error: any) {
-      this.logger.error(`Failed to get groups for ${profileId}: ${error.message}`);
-      // Return empty array instead of throwing - engine may be disconnected
-      return [];
-    }
+  /**
+   * Fallback source: groups persisted from message history (conversations of type
+   * "group"). Resilient to engine / WhatsApp-Web-version issues that break the live
+   * getGroups call, so the group picker never silently empties.
+   */
+  private async getGroupsFromDb(profileId: string): Promise<GroupInfo[]> {
+    const convs = await prisma.conversation.findMany({
+      where: { profileId, OR: [{ type: 'group' }, { jid: { endsWith: '@g.us' } }] },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return convs.map((c) => ({
+      id: c.jid,
+      name: c.name || 'Group Chat',
+      description: '',
+      owner: '',
+      createdAt: c.createdAt,
+      participantsCount: 0,
+    }));
   }
 
   /**
