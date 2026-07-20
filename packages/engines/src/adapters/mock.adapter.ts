@@ -145,6 +145,10 @@ export class MockAdapter implements IWhatsAppEngine {
     return { success: true, messageId };
   }
 
+  async rejectCall(callId: string): Promise<void> {
+    console.log(`[Mock] Reject call ${callId}`);
+  }
+
   async sendPoll(
     to: string,
     poll: PollOptions,

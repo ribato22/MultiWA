@@ -16,6 +16,17 @@ export interface EngineConfig {
   onDisconnected?: (reason: string) => void;
   onMessage?: (message: any) => void;
   onMessageAck?: (messageId: string, status: string) => void;
+  onCall?: (call: IncomingCall) => void;
+}
+
+/** Normalized incoming WhatsApp call, engine-agnostic. */
+export interface IncomingCall {
+  /** Engine call id, passed back to `rejectCall`. */
+  id: string;
+  /** Caller JID (e.g. `628xxx@c.us`). */
+  from: string;
+  isVideo: boolean;
+  isGroup: boolean;
 }
 
 export interface SendMessageOptions {
@@ -158,6 +169,10 @@ export interface IWhatsAppEngine {
   
   // Message management
   deleteForEveryone(chatId: string, messageId: string): Promise<void>;
+
+  // Calls
+  /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). */
+  rejectCall(callId: string): Promise<void>;
 
   // QR Code
   getQRCode(): Promise<string | null>;

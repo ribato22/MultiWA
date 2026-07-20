@@ -59,6 +59,16 @@ export class UpdateProfileDto {
   @IsString()
   webhookSecret?: string;
 
+  @ApiPropertyOptional({ description: 'Auto-reject incoming voice/video calls for this profile.' })
+  @IsOptional()
+  @IsBoolean()
+  autoRejectCalls?: boolean;
+
+  @ApiPropertyOptional({ description: 'Optional message sent to the caller after auto-rejecting a call. Blank = reject silently.' })
+  @IsOptional()
+  @IsString()
+  autoRejectCallMessage?: string;
+
   @ApiPropertyOptional({
     example: 1500,
     description: 'Minimum delay (ms) enforced between outbound messages for this profile (anti-ban pacing).',

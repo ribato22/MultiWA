@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1215,6 +1215,20 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           }
         } catch (error) {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
+        }
+      },
+      onCall: async (call) => {
+        try {
+          const p = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
+          const eng = this.getEngine(profileId);
+          if (!eng) return;
+          await handleAutoRejectCall(call, (p?.settings ?? {}) as any, {
+            rejectCall: (id) => eng.rejectCall(id),
+            sendText: async (to, text) => { await eng.sendText(to, text); },
+            logger: { log: (m) => this.logger.log(m), warn: (m) => this.logger.warn(m) },
+          });
+        } catch (e) {
+          this.logger.warn(`onCall handler failed: ${(e as Error).message}`);
         }
       },
     };

@@ -121,6 +121,14 @@ export class ProfilesService {
       if (dto.warmupEnabled && !wasEnabled) data.warmupStartedAt = new Date();
     }
     if (dto.engine !== undefined) data.engine = dto.engine;
+    // Auto-reject-call config lives in the settings JSON — merge so we never clobber
+    // other settings keys.
+    if (dto.autoRejectCalls !== undefined || dto.autoRejectCallMessage !== undefined) {
+      const settings = { ...(((existing as any).settings as Record<string, unknown>) || {}) };
+      if (dto.autoRejectCalls !== undefined) settings.autoRejectCalls = dto.autoRejectCalls;
+      if (dto.autoRejectCallMessage !== undefined) settings.autoRejectCallMessage = dto.autoRejectCallMessage;
+      data.settings = settings;
+    }
 
     const updated = await prisma.profile.update({ where: { id }, data });
 

@@ -26,6 +26,8 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   };
   private currentQR: string | null = null;
   private qrCallbacks: ((qr: string) => void)[] = [];
+  // Raw whatsapp-web.js Call objects, keyed by id, so rejectCall() can act on them.
+  private calls = new Map<string, any>();
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -169,10 +171,29 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       };
       
       this.config?.onMessageAck?.(
-        message.id._serialized, 
+        message.id._serialized,
         statusMap[ack] || 'unknown'
       );
     });
+
+    // Incoming voice/video call — surface it so the engine-manager can auto-reject.
+    this.client.on('call', (call: any) => {
+      if (call?.id) this.calls.set(call.id, call);
+      this.config?.onCall?.({
+        id: call?.id,
+        from: call?.from || call?.peerJid || '',
+        isVideo: !!call?.isVideo,
+        isGroup: !!call?.isGroup,
+      });
+    });
+  }
+
+  async rejectCall(callId: string): Promise<void> {
+    const call = this.calls.get(callId);
+    if (call?.reject) {
+      await call.reject();
+    }
+    this.calls.delete(callId);
   }
 
   async connect(): Promise<void> {
