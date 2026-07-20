@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-20
+
 ### Added
 
 - **Send Policy Engine** — window-aware multi-lane outbound governor (SERVICE replies flow free; UTILITY/AUTH/MARKETING cold lanes capped + warmed) with a delivery-health circuit breaker and delivery-confirmed OTP failover.
@@ -16,9 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Distribution** — keyless (OIDC) publish workflows for the TypeScript / Python / n8n SDKs, container-image supply chain (SBOM + cosign signature + SLSA provenance), a Render one-click blueprint, and `docs/21-releasing-and-distribution.md`.
 - **CI security scanning** — CodeQL, Dependabot, gitleaks, and an advisory `pnpm audit`.
 - **End-to-end test harness** — auth, tenant/IDOR isolation, API-key auth, session revocation, and webhook cross-org isolation against live Postgres + Redis.
+- **Unit test coverage** — 90+ validated unit tests across API services (organizations, api-keys, contacts, conversations, autoreply, rbac) and worker processors (webhook, automation, message, webhook-dispatcher); vitest stood up for `apps/worker`; coverage gates ratcheted (api 5→14 %, worker 0→21 %).
+- **Deadlock-resilient acks** — `withDeadlockRetry` retries transient Postgres write conflicts / deadlocks (Prisma `P2034`; Postgres `40P01` / `40001` / `55P03`) with backoff and logs each retry (`[db-retry]`) so the previously-silent prod conflicts become countable.
 
 ### Changed
 
+- **Prisma 7** — database layer migrated to Prisma 7.8 with the node-postgres driver adapter (`@prisma/adapter-pg`) and `prisma.config.ts`.
+- **NestJS 11 + Fastify 5** — upgraded the backend framework and the aligned `@nestjs/*` / `@fastify/*` majors.
+- Dropped the `uuid` dependency in favour of `node:crypto` `randomUUID`; 30 production dependencies bumped (bullmq, ioredis, axios, aws-sdk, radix, tanstack-query, …).
 - Registration and password-change minimum length raised to 12 characters (login accepts existing shorter passwords).
 - Refresh tokens are signed and verified with `JWT_REFRESH_SECRET`, distinct from the access-token secret.
 - Documentation reconciled with the actual code (AI provider, engine status, webhook event names, SDK base URLs, HMAC example).
@@ -29,9 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Production Redis backing BullMQ set to `--maxmemory-policy noeviction` with AOF, so queued jobs are never silently evicted; container log rotation added.
 - Graceful shutdown (`enableShutdownHooks`) drains in-flight work on `SIGTERM`.
 - Inbound WhatsApp group (`@lid`) messages are no longer dropped (message-id serialization).
+- **Group picker no longer silently empties** — `GroupsService.getAll` falls back to persisted group conversations when the live `getGroups` engine call fails (e.g. a WhatsApp Web build whose group Store isn't hooked while send still works).
+- API-key send scope aligned to the admin-UI convention (`messages:write` / `messages:read`) so keys issued from the dashboard can actually send.
+- Refresh-token unique-hash collision (a 500 on rapid re-login) resolved with a per-token `jti`; the ack handler no longer degrades to a table-wide `WHERE 1=1` status rewrite when the message id is missing.
 
 ### Security
 
+- Resolved the real CodeQL critical/high findings — SSRF in the automation rule-engine, stored XSS in the admin chat media URL, request-body type confusion in contact tags, insecure randomness in the org temp password, and ReDoS in the SDK URL join — and cleared the code-scanning tab to **0 open** (verified false positives dismissed with justifications).
+- Hardened the lockfile so Dependabot regenerations can't swap the runtime git dependency `libsignal` to an unreachable SSH URL (`pnpm.overrides` HTTPS pins + a CI guard), and pinned the WhatsApp Web engine version served air-gap-safe from local nginx.
 - Session revocation on logout; SSRF-guarded webhook delivery; org-scoped roles.
 
 ### Removed
