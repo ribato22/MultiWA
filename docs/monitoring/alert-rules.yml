@@ -1,0 +1,94 @@
+# MultiWA Prometheus alerting rules.
+#
+# Load these by adding to prometheus.yml:
+#   rule_files:
+#     - alert-rules.yml
+# and point Prometheus at an Alertmanager (see alertmanager.yml).
+#
+# These cover the failure modes that actually took MultiWA down in production and
+# were invisible until a human noticed hours later: a WhatsApp profile dropping,
+# the outgoing send path wedging (a stale WhatsApp Web build), and API/worker
+# outages — plus HTTP error-rate / latency SLO burn.
+#
+# Metrics used (exposed by the api at /metrics, worker at :3002/metrics):
+#   multiwa_connected_profiles           gauge
+#   multiwa_messages_sent_total{type}    counter
+#   multiwa_messages_failed_total{type}  counter
+#   http_requests_total{method,route,status}          counter
+#   http_request_duration_seconds_bucket{...,le}      histogram
+#   up{job}                              Prometheus target health
+
+groups:
+  - name: multiwa-availability
+    rules:
+      - alert: MultiWAApiDown
+        expr: up{job="multiwa-api"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "MultiWA API is down"
+          description: "The multiwa-api scrape target has been unreachable for over 1 minute."
+
+      - alert: MultiWAWorkerDown
+        expr: up{job="multiwa-worker"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "MultiWA worker is down"
+          description: "The multiwa-worker scrape target has been unreachable for over 2 minutes; queued jobs (webhooks, broadcasts, automations) are not being processed."
+
+  - name: multiwa-whatsapp
+    rules:
+      # The exact 'profiles look disconnected' shape of the disk-full and
+      # WhatsApp-Web-version incidents.
+      - alert: WhatsAppAllProfilesDisconnected
+        expr: multiwa_connected_profiles == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "No WhatsApp profiles are connected"
+          description: "multiwa_connected_profiles has been 0 for over 3 minutes — the gateway can neither send nor receive. Check the engine/session state."
+
+      # The exact 'sending dead' incident: a profile is connected (so we still
+      # receive) but nothing goes out — the engine send path is wedged.
+      - alert: WhatsAppSendingStalled
+        expr: (sum(rate(multiwa_messages_sent_total[10m])) == 0) and (multiwa_connected_profiles > 0)
+        for: 20m
+        labels: { severity: critical }
+        annotations:
+          summary: "Outgoing WhatsApp messages have stalled"
+          description: "A profile is connected but no messages have been sent for 20 minutes — the engine send path may be wedged (e.g. a stale pinned WhatsApp Web version). Sends fail while receives keep working."
+
+      - alert: WhatsAppHighSendFailureRate
+        expr: |
+          sum(rate(multiwa_messages_failed_total[10m]))
+            / clamp_min(sum(rate(multiwa_messages_sent_total[10m])) + sum(rate(multiwa_messages_failed_total[10m])), 1)
+            > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "WhatsApp send failure rate above 20%"
+          description: "Over 20% of attempted sends failed in the last 10 minutes (value: {{ $value | humanizePercentage }})."
+
+  - name: multiwa-http-slo
+    rules:
+      # SLO: < 1% of requests return 5xx (availability). Alert on a 5% burn.
+      - alert: HighHttpErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 1)
+            > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "HTTP 5xx error rate above 5%"
+          description: "The API is serving over 5% 5xx for 5 minutes (value: {{ $value | humanizePercentage }}) — SLO burn."
+
+      # SLO: p95 latency < 500ms. Alert when p95 exceeds 1s for a sustained window.
+      - alert: HighHttpLatencyP95
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "HTTP p95 latency above 1s"
+          description: "95th-percentile request latency has exceeded 1 second for 10 minutes (value: {{ $value }}s)."
