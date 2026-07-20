@@ -176,6 +176,10 @@ jobs:
       - name: Run SDK tests
         run: pnpm --filter @multiwa/sdk test
 
+      # Worker unit tests (pure — prisma/engine deps mocked, no DB/Redis needed).
+      - name: Run worker tests (with coverage gate)
+        run: pnpm --filter @multiwa/worker run test:cov
+
       # Create the schema in the test DB (no migrations dir → db push), same mechanism
       # as the Prisma generate step above. Kept out of vitest so it runs in a full shell.
       - name: Prepare e2e database
