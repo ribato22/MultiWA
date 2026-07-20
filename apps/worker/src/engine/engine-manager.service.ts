@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1082,33 +1082,18 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         }
       },
       onMessageAck: async (messageId: string, status: string) => {
-        // Guard an unresolvable ack id: Prisma treats `where: { messageId: undefined }`
-        // as NO filter, so updateMany degrades to `WHERE 1=1` and would rewrite EVERY
-        // message's status — table-wide corruption + a full-table lock that deadlocks
-        // against concurrent acks. Skip when the id is absent/empty.
-        if (!messageId) {
-          this.logger.warn(`[ACK] Ignoring ack with no message id (status: ${status})`);
-          return;
-        }
-        this.logger.log(`[ACK] Message ${messageId} → status: ${status}`);
         try {
-          // The engine adapter already maps numeric ack to string status
-          // (pending, sent, delivered, read, played)
-          // No need for double-mapping
-          
-          // Read prior state before updating so the cold-circuit eval fires only on
-          // the FIRST terminal transition (a message emits delivered→read→played).
-          const prior = await prisma.message.findFirst({
-            where: { messageId },
-            select: { status: true, lane: true },
-          });
-
-          const updated = await prisma.message.updateMany({
-            where: { messageId },
-            data: { status },
-          });
-
-          this.logger.log(`[ACK] Updated ${updated.count} message(s) for ${messageId} → ${status}`);
+          // Shared, guarded ack update: a null result means the ack had no resolvable
+          // id and was skipped. The guard lives in applyAckStatusUpdate so both
+          // engine-manager forks share ONE implementation (an absent id would otherwise
+          // degrade updateMany to WHERE 1=1 and rewrite every message + deadlock).
+          const ack = await applyAckStatusUpdate(messageId, status);
+          if (!ack) {
+            this.logger.warn(`[ACK] Ignoring ack with no message id (status: ${status})`);
+            return;
+          }
+          const { prior, count } = ack;
+          this.logger.log(`[ACK] Message ${messageId} → status: ${status} (updated ${count})`);
 
           // Emit WebSocket event for real-time UI updates
           this.realtime.emitMessageAck(profileId, messageId, status);
