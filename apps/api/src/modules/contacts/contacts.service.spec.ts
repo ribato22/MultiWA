@@ -46,8 +46,8 @@ describe('ContactsService', () => {
     vi.mocked(prisma.contact.create).mockReset();
     vi.mocked(prisma.contact.update).mockReset();
     // update/create echo the data back so the return value is inspectable.
-    vi.mocked(prisma.contact.update).mockImplementation(async (args: any) => args.data);
-    vi.mocked(prisma.contact.create).mockImplementation(async (args: any) => args.data);
+    (prisma.contact.update as any).mockImplementation(async (args: any) => args.data);
+    (prisma.contact.create as any).mockImplementation(async (args: any) => args.data);
     service = makeService();
   });
 

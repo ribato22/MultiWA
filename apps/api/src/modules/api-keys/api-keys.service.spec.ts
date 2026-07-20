@@ -33,7 +33,7 @@ describe('ApiKeysService', () => {
     service = new ApiKeysService();
 
     // Echo the persisted row back with a synthetic id/createdAt, mirroring Prisma.
-    vi.mocked(prisma.apiKey.create).mockImplementation(async ({ data }: any) => ({
+    (prisma.apiKey.create as any).mockImplementation(async ({ data }: any) => ({
       id: 'key_1',
       createdAt: new Date('2026-07-20T00:00:00.000Z'),
       expiresAt: null,
