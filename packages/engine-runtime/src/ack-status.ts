@@ -6,6 +6,7 @@
 // drift). The guard here is load-bearing — see below.
 
 import { prisma } from '@multiwa/database';
+import { withDeadlockRetry } from './db-retry';
 
 export interface AckPriorState {
   status: string;
@@ -45,10 +46,14 @@ export async function applyAckStatusUpdate(
     select: { status: true, lane: true },
   });
 
-  const { count } = await prisma.message.updateMany({
-    where: { messageId },
-    data: { status },
-  });
+  // Retry the hot-row write on a transient Postgres deadlock / write conflict:
+  // concurrent acks for overlapping message rows periodically deadlock under load.
+  const { count } = await withDeadlockRetry(() =>
+    prisma.message.updateMany({
+      where: { messageId },
+      data: { status },
+    }),
+  );
 
   return { prior, count };
 }
