@@ -239,7 +239,7 @@ function convertFlowToAutomations(nodes: any[], edges: any[], profileId: string)
 
 export default function AutomationBuilderPage() {
   const router = useRouter();
-  const [saving, setSaving] = useState(false);
+  const [, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'draft' | 'saved' | 'error'>('idle');
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');

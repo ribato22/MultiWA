@@ -21,7 +21,6 @@ import {
   FileUp,
   Search,
   Clock,
-  Calendar,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -382,28 +381,6 @@ export default function MessagesPage() {
     }
   };
 
-  const buildContent = (url: string) => {
-    switch (messageType) {
-      case 'TEXT':
-        return { text: textContent };
-      case 'IMAGE':
-      case 'VIDEO':
-      case 'AUDIO':
-        return {
-          url,
-          caption: caption || undefined,
-        };
-      case 'DOCUMENT':
-        return {
-          url,
-          filename: fileName || 'document',
-          caption: caption || undefined,
-        };
-      default:
-        return { text: textContent };
-    }
-  };
-
   const sendMessage = async () => {
     if (!selectedProfile || !recipient) {
       setStatus('Please select profile and enter recipient');
@@ -480,8 +457,6 @@ export default function MessagesPage() {
         setStatus('Sending message...');
       }
 
-      const content = buildContent(finalUrl);
-      
       // Determine endpoint and body based on message type
       const typeEndpointMap: Record<string, string> = {
         TEXT: 'text',

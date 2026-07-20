@@ -35,8 +35,6 @@ import {
   Link as LinkIcon,
   Search,
   MoreVertical,
-  Info,
-  Sticker,
   Bell,
   BellOff,
   Trash2,
@@ -160,7 +158,6 @@ export default function ChatPage() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const attachRef = useRef<HTMLInputElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastTypingSentRef = useRef<number>(0);
   const socketRef = useRef<Socket | null>(null);
 
@@ -782,13 +779,11 @@ export default function ChatPage() {
               >
                 <ArrowLeft className="w-5 h-5" aria-hidden="true" />
               </button>
-              {selectedConversation && (
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-foreground truncate">
-                    {getDisplayName(selectedConversation)}
-                  </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-foreground truncate">
+                  {getDisplayName(selectedConversation)}
                 </div>
-              )}
+              </div>
             </div>
             {/* Chat Header */}
             <div className="p-4 border-b border-border bg-secondary/30 flex items-center gap-4">
