@@ -98,7 +98,7 @@ COPY --from=builder /app/packages/engines ./packages/engines
 COPY --from=builder /app/packages/engine-runtime ./packages/engine-runtime
 
 # Re-generate Prisma client for production
-RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
+RUN npm install -g prisma@7.8.0 && cd packages/database && prisma generate
 
 # Create symlinks for workspace packages (both root and app-level node_modules)
 RUN rm -rf /app/node_modules/@multiwa && mkdir -p /app/node_modules/@multiwa && \

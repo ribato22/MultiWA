@@ -78,7 +78,7 @@ COPY --from=builder /app/packages/engines ./packages/engines
 COPY --from=builder /app/packages/engine-runtime ./packages/engine-runtime
 
 # Generate Prisma client in runner (pin to v6.19.2 to match project)
-RUN npm install -g prisma@6.19.2 && cd packages/database && prisma generate
+RUN npm install -g prisma@7.8.0 && cd packages/database && prisma generate
 
 # Create sessions directory
 RUN mkdir -p /data/sessions

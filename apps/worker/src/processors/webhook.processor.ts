@@ -1,10 +1,10 @@
 // apps/worker/src/processors/webhook.processor.ts
 import { Job } from 'bullmq';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '@multiwa/database';
 import * as crypto from 'crypto';
 import { assertWebhookUrlSafe } from '@multiwa/engine-runtime';
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 export interface WebhookJob {
   webhookId: string;
