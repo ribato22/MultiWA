@@ -3,10 +3,9 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
-  Plus,
   X,
   CheckCircle2,
   XCircle,
@@ -29,7 +28,6 @@ import {
   Folder,
   Cloud,
   ArrowRight,
-  Trash2,
   type LucideIcon,
 } from 'lucide-react';
 import { api, User, Profile } from '@/lib/api';
@@ -396,12 +394,6 @@ export default function SettingsPage() {
     } finally {
       setDeletingAccount(false);
     }
-  };
-
-  const copyApiKey = () => {
-    const token = localStorage.getItem('accessToken') || '';
-    navigator.clipboard.writeText(token);
-    toast({ title: 'API key copied to clipboard' });
   };
 
   const fetchMembers = async () => {

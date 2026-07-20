@@ -76,7 +76,6 @@ export default function DashboardPage() {
     fetchDataCb();
 
     const wsUrl = getSocketUrl();
-    const token = typeof window !== 'undefined' ? localStorage.getItem('accessToken') : null;
     const socket = io(`${wsUrl}/ws`, {
       transports: ['websocket', 'polling'],
       auth: (cb) => cb({ token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') : undefined }),
@@ -240,7 +239,7 @@ export default function DashboardPage() {
         {loading ? (
           <ProfileGrid>
             {[1, 2, 3].map((i) => (
-              <ProfileCard key={i} id="" name="" status="offline" loading />
+              <ProfileCard key={i} id={`skeleton-${i}`} name="" status="offline" loading />
             ))}
           </ProfileGrid>
         ) : profiles.length > 0 ? (

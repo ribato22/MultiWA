@@ -9,6 +9,8 @@
 import express from 'express';
 import axios, { AxiosInstance } from 'axios';
 
+const cleanLog = (v: unknown) => String(v ?? '').replace(/\p{Cc}/gu, ' ');
+
 // ─── Configuration ────────────────────────────────────────────────────────
 
 export interface ChatwootBridgeConfig {
@@ -113,7 +115,7 @@ export class ChatwootBridge {
       }
     );
 
-    console.log(`[Bridge] MultiWA → Chatwoot: ${phoneNumber} → Conv #${conversation.id}`);
+    console.log(`[Bridge] MultiWA → Chatwoot: ${cleanLog(phoneNumber)} → Conv #${conversation.id}`);
   }
 
   /**
@@ -142,7 +144,7 @@ export class ChatwootBridge {
       text: content,
     });
 
-    console.log(`[Bridge] Chatwoot → MultiWA: Conv #${conversation.id} → ${phone}`);
+    console.log(`[Bridge] Chatwoot → MultiWA: Conv #${conversation.id} → ${cleanLog(phone)}`);
   }
 
   private async findOrCreateChatwootContact(phone: string, name?: string) {

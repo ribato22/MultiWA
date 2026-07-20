@@ -24,7 +24,7 @@ export default function NewProfilePage() {
   const [engineType, setEngineType] = useState('whatsapp-web-js');
   const [loading, setLoading] = useState(false);
   const [qrCode, setQrCode] = useState<string | null>(null);
-  const [profileId, setProfileId] = useState<string | null>(null);
+  const [, setProfileId] = useState<string | null>(null);
   const [status, setStatus] = useState('Initializing...');
   const [showEngineCompare, setShowEngineCompare] = useState(false);
   const socketRef = useRef<Socket | null>(null);

@@ -28,6 +28,8 @@
 const http = require("http");
 const crypto = require("crypto");
 
+const cleanLog = (v) => String(v ?? "").replace(/\p{Cc}/gu, " ");
+
 // === Configuration ===
 const PORT = parseInt(process.argv[2] || "9999", 10);
 const SECRET = process.env.WEBHOOK_SECRET || "";
@@ -256,9 +258,9 @@ const server = http.createServer((req, res) => {
     // Headers
     const event = req.headers["x-multiwa-event"] || "unknown";
     const signature = req.headers["x-multiwa-signature"] || "";
-    console.log(`  Event:     ${event}`);
-    console.log(`  Path:      ${req.url}`);
-    console.log(`  Signature: ${signature || "(none)"}`);
+    console.log(`  Event:     ${cleanLog(event)}`);
+    console.log(`  Path:      ${cleanLog(req.url)}`);
+    console.log(`  Signature: ${cleanLog(signature) || "(none)"}`);
 
     // Verify HMAC if secret is available
     if (SECRET && signature) {
@@ -269,8 +271,8 @@ const server = http.createServer((req, res) => {
       const isValid = signature === expected;
       console.log(`  Verified:  ${isValid ? "✅ Valid" : "❌ Invalid"}`);
       if (!isValid) {
-        console.log(`    Expected: ${expected}`);
-        console.log(`    Got:      ${signature}`);
+        console.log(`    Expected: ${cleanLog(expected)}`);
+        console.log(`    Got:      ${cleanLog(signature)}`);
       }
     }
 
@@ -287,7 +289,7 @@ const server = http.createServer((req, res) => {
       );
     } catch (e) {
       console.log("\n  📦 Raw Body:");
-      console.log("    " + (body || "(empty)"));
+      console.log("    " + (cleanLog(body) || "(empty)"));
     }
 
     // Auto-reply: forward to Me&Me group

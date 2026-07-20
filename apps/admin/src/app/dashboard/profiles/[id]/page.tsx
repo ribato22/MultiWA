@@ -36,7 +36,6 @@ import {
   MessageCircle,
   PlugZap,
   RefreshCw,
-  Power,
   Trash2,
   AlertTriangle,
   Smartphone,
@@ -108,14 +107,6 @@ const fmtPhone = (raw: string | null | undefined): string => {
   if (digits.length <= 8) return `${digits.slice(0, 4)} ${digits.slice(4)}`;
   return `+${digits.slice(0, 2)} ${digits.slice(2, 6)} ${digits.slice(6, 10)} ${digits.slice(10)}`.trim();
 };
-
-const ChipDot = ({ color }: { color: string }) => (
-  <span
-    aria-hidden
-    className="inline-block w-1.5 h-1.5 rounded-full"
-    style={{ background: color }}
-  />
-);
 
 function StatusBadge({ status }: { status: WireStatus }) {
   const s = (status || '').toLowerCase();
