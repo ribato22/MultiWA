@@ -34,6 +34,8 @@ export class BaileysAdapter implements IWhatsAppEngine {
   };
   private currentQR: string | null = null;
   private qrCallbacks: ((qr: string) => void)[] = [];
+  // Caller JID per call id — Baileys' rejectCall(id, from) needs both.
+  private callFrom = new Map<string, string>();
   private authState: any = null;
   private connectionRetryCount: number = 0;
   private maxConnectionRetries: number = 3;
@@ -151,6 +153,21 @@ export class BaileysAdapter implements IWhatsAppEngine {
     // a reconnect or process messages against an obsolete session.
     const sock = this.socket;
     const isCurrent = () => this.socket === sock;
+
+    // Incoming voice/video call — surface the initial offer for auto-reject.
+    this.socket.ev.on('call', (calls: any[]) => {
+      if (!isCurrent()) return;
+      for (const call of calls || []) {
+        if (call?.status && call.status !== 'offer') continue;
+        if (call?.id && call?.from) this.callFrom.set(call.id, call.from);
+        this.config?.onCall?.({
+          id: call?.id,
+          from: call?.from || '',
+          isVideo: !!call?.isVideo,
+          isGroup: (call?.from || '').includes('@g.us'),
+        });
+      }
+    });
 
     // Connection update
     this.socket.ev.on('connection.update', async (update) => {
@@ -580,6 +597,14 @@ export class BaileysAdapter implements IWhatsAppEngine {
       console.error('[Baileys] Send presence update error:', error);
       // Non-critical — don't throw
     }
+  }
+
+  async rejectCall(callId: string): Promise<void> {
+    const from = this.callFrom.get(callId);
+    if (this.socket && from) {
+      await this.socket.rejectCall(callId, from);
+    }
+    this.callFrom.delete(callId);
   }
 
   async markAsRead(chatId: string, messageIds?: string[]): Promise<void> {
