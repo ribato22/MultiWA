@@ -10,6 +10,17 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Alerting rules (availability, WhatsApp connectivity / send-stall, HTTP SLO burn).
+rule_files:
+  - alert-rules.yml
+
+# Point at an Alertmanager (see alertmanager.yml). Comment out if you only want
+# recording/evaluation without paging.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
 scrape_configs:
   - job_name: multiwa-api
     metrics_path: /metrics

@@ -58,6 +58,29 @@ sum(rate(multiwa_messages_failed_total[5m]))
    (adjust the targets to your network/host:port).
 2. Import [`grafana-dashboard.json`](./grafana-dashboard.json) into Grafana
    (Dashboards → New → Import) and select your Prometheus data source.
+3. `prometheus.yml` already loads [`alert-rules.yml`](./alert-rules.yml) and points
+   at an Alertmanager — run Alertmanager with [`alertmanager.yml`](./alertmanager.yml)
+   and replace the placeholder receiver with your sink (Slack, PagerDuty, a MultiWA
+   webhook, …). Comment out the `alerting:` block if you only want rule evaluation.
+
+## Alerting & SLOs
+
+[`alert-rules.yml`](./alert-rules.yml) ships rules for the failure modes that
+actually took MultiWA down and were invisible until a human noticed:
+
+| Alert | Fires when | Severity |
+|---|---|---|
+| `MultiWAApiDown` / `MultiWAWorkerDown` | scrape target unreachable | critical |
+| `WhatsAppAllProfilesDisconnected` | `multiwa_connected_profiles == 0` for 3m | critical |
+| `WhatsAppSendingStalled` | a profile is connected but **0 sends for 20m** (the "sending dead" incident) | critical |
+| `WhatsAppHighSendFailureRate` | send failure ratio > 20% for 10m | warning |
+| `HighHttpErrorRate` | 5xx ratio > 5% for 5m | warning |
+| `HighHttpLatencyP95` | p95 latency > 1s for 10m | warning |
+
+Target **SLOs** (tune to your traffic): availability — < 1 % of requests return 5xx;
+latency — p95 < 500 ms; WhatsApp — at least one profile connected and outbound sends
+non-zero during business hours. The alert thresholds above are set to page on a burn,
+not at the SLO boundary itself.
 
 ## Roadmap
 

@@ -1,0 +1,37 @@
+# Sample Alertmanager config for MultiWA.
+#
+# Point Prometheus at Alertmanager (see prometheus.yml `alerting:` block) and run
+# Alertmanager with this file. Replace the receiver webhook/email with your own
+# (Slack, PagerDuty, Opsgenie, a MultiWA webhook back into WhatsApp, etc.).
+# `critical` alerts page immediately; `warning` alerts are grouped and slower.
+
+route:
+  receiver: default
+  group_by: ['alertname']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers:
+        - severity = "critical"
+      receiver: pager
+      group_wait: 10s
+      repeat_interval: 1h
+
+receivers:
+  - name: default
+    webhook_configs:
+      # Replace with your own sink (Slack incoming webhook, a MultiWA webhook, …).
+      - url: "http://example.invalid/alertmanager"
+        send_resolved: true
+
+  - name: pager
+    webhook_configs:
+      - url: "http://example.invalid/alertmanager/critical"
+        send_resolved: true
+
+inhibit_rules:
+  # If everything is down (API down), don't also page for the derived WhatsApp alerts.
+  - source_matchers: [alertname = "MultiWAApiDown"]
+    target_matchers: [severity = "critical"]
+    equal: ['service']
