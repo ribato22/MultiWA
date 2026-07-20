@@ -73,7 +73,18 @@ const formatPhone = (phone: string) => {
 const fixMediaUrl = (url?: string): string => {
   if (!url) return '';
   // Replace Docker-internal minio hostname with localhost
-  return url.replace(/http:\/\/minio:9000/g, 'http://localhost:9000');
+  const normalized = url.replace(/http:\/\/minio:9000/g, 'http://localhost:9000');
+  // Allowlist http/https only: message content.url is user-controlled, so a
+  // `javascript:`/`data:`/`vbscript:` URL rendered into an <a href> (document
+  // links / window.open) would be stored XSS in the admin origin. Reject anything
+  // else. A relative path resolves against the base and stays same-origin.
+  try {
+    const p = new URL(normalized, 'http://localhost');
+    if (p.protocol !== 'http:' && p.protocol !== 'https:') return '';
+  } catch {
+    return '';
+  }
+  return normalized;
 };
 
 // Check if a name looks like a raw JID (e.g. "120363421805328930@g.us" or "6282283011108@s.whatsapp.net" or all digits)

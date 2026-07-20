@@ -326,7 +326,11 @@ export class ContactsService {
   // Add tags to contact
   async addTags(id: string, tags: string[]) {
     const contact = await this.findOne(id);
-    const newTags = [...new Set([...contact.tags, ...tags])];
+    // `tags` reaches here untyped (@Body('tags') skips the ValidationPipe for the
+    // native Array metatype). Coerce to string[] so a non-array (e.g. { tags: 5 })
+    // can't throw on spread or corrupt data on a string's substring semantics.
+    const addList = (Array.isArray(tags) ? tags : []).filter((t): t is string => typeof t === 'string');
+    const newTags = [...new Set([...contact.tags, ...addList])];
     
     return prisma.contact.update({
       where: { id },
@@ -337,7 +341,11 @@ export class ContactsService {
   // Remove tags from contact
   async removeTags(id: string, tagsToRemove: string[]) {
     const contact = await this.findOne(id);
-    const newTags = contact.tags.filter((t) => !tagsToRemove.includes(t));
+    // Coerce to string[] (see addTags): a non-array/string `tagsToRemove` would
+    // otherwise throw (500) or run String.includes substring matching and delete
+    // unintended tags.
+    const removeList = (Array.isArray(tagsToRemove) ? tagsToRemove : []).filter((t): t is string => typeof t === 'string');
+    const newTags = contact.tags.filter((t) => !removeList.includes(t));
     
     return prisma.contact.update({
       where: { id },
