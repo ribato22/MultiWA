@@ -9,7 +9,7 @@
 import express from 'express';
 import axios, { AxiosInstance } from 'axios';
 
-const cleanLog = (v: unknown) => String(v ?? '').replace(/[\r\n\t\x00-\x1f\x7f]/g, ' ');
+const cleanLog = (v: unknown) => String(v ?? '').replace(/\p{Cc}/gu, ' ');
 
 // ─── Configuration ────────────────────────────────────────────────────────
 

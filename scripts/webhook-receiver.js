@@ -28,7 +28,7 @@
 const http = require("http");
 const crypto = require("crypto");
 
-const cleanLog = (v) => String(v ?? "").replace(/[\r\n\t\x00-\x1f\x7f]/g, " ");
+const cleanLog = (v) => String(v ?? "").replace(/\p{Cc}/gu, " ");
 
 // === Configuration ===
 const PORT = parseInt(process.argv[2] || "9999", 10);
