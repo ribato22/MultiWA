@@ -8,9 +8,14 @@ Use MultiWA with n8n for powerful workflow automation.
 
 ### n8n Community Nodes
 
+Registry publishing is pending — `n8n-nodes-multiwa` is not yet on npm. Install from
+this repository meanwhile:
+
 ```bash
-npm install n8n-nodes-multiwa
+npm install ./packages/n8n-nodes-multiwa
 ```
+
+Once it is published, `npm install n8n-nodes-multiwa` will work directly.
 
 Or install via n8n UI:
 1. Go to **Settings** → **Community Nodes**
