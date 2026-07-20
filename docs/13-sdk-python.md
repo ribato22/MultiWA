@@ -6,16 +6,9 @@ Official Python SDK for MultiWA.
 
 ## Installation
 
-Registry publishing is pending — `multiwa` is not yet on PyPI. Install from this
-repository meanwhile:
-
 ```bash
-pip install ./packages/sdk-python
-# or straight from GitHub:
-pip install "git+https://github.com/ribato22/MultiWA.git#subdirectory=packages/sdk-python"
+pip install multiwa
 ```
-
-Once it is published, `pip install multiwa` will work directly.
 
 ---
 

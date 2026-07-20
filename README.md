@@ -233,16 +233,19 @@ curl -X POST http://localhost:3333/api/v1/accounts/YOUR_ACCOUNT_ID/profiles/YOUR
 
 ## 📦 SDKs
 
-Official SDKs are included in the repository today. Registry publishing
-(NPM, PyPI, Packagist) is tracked as a release follow-up — until those
-registries are verified, install from this repo or via the local
+The Python SDK is published on PyPI (`pip install multiwa`) and the n8n
+community node on npm (`npm install n8n-nodes-multiwa`). The TypeScript and
+PHP SDKs are included in the repository today; their registry publishing
+(npm `@multiwa/sdk`, Packagist) is tracked as a release follow-up — until
+those registries are verified, install them from this repo or via the local
 workspace path.
 
 | Language | Source | Status |
 |----------|--------|--------|
 | TypeScript/Node.js | [`packages/sdk`](packages/sdk) | Included in repository · registry publishing pending |
-| Python | [`packages/sdk-python`](packages/sdk-python) | Included in repository · registry publishing pending |
+| Python | [`packages/sdk-python`](packages/sdk-python) | Published on PyPI · `pip install multiwa` |
 | PHP | [`packages/sdk-php`](packages/sdk-php) | Included in repository · registry publishing pending |
+| n8n community node | [`packages/n8n-nodes-multiwa`](packages/n8n-nodes-multiwa) | Published on npm · `npm install n8n-nodes-multiwa` |
 
 ### TypeScript SDK Example
 
