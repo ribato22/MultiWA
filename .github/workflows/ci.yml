@@ -179,7 +179,7 @@ jobs:
       # Create the schema in the test DB (no migrations dir → db push), same mechanism
       # as the Prisma generate step above. Kept out of vitest so it runs in a full shell.
       - name: Prepare e2e database
-        run: pnpm --filter database exec prisma db push --skip-generate --accept-data-loss
+        run: pnpm --filter database exec prisma db push --accept-data-loss
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test
 

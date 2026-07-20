@@ -77,8 +77,10 @@ COPY --from=builder /app/packages/database ./packages/database
 COPY --from=builder /app/packages/engines ./packages/engines
 COPY --from=builder /app/packages/engine-runtime ./packages/engine-runtime
 
-# Generate Prisma client in runner (pin to v6.19.2 to match project)
-RUN npm install -g prisma@7.8.0 && cd packages/database && prisma generate
+# Generate Prisma client in runner. Prisma 7's prisma.config.ts imports
+# `prisma/config`, so run the workspace-local CLI (prisma is a prod dependency
+# of @multiwa/database) via pnpm exec — a global install can't satisfy that import.
+RUN cd packages/database && pnpm exec prisma generate
 
 # Create sessions directory
 RUN mkdir -p /data/sessions
