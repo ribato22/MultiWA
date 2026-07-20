@@ -70,6 +70,7 @@ interface Profile {
   dailyMessageLimit?: number | null;
   dailyMessageCount?: number;
   warmupEnabled?: boolean;
+  settings?: { autoRejectCalls?: boolean; autoRejectCallMessage?: string };
   warmupStartPerDay?: number | null;
   warmupRampDays?: number | null;
   warmupStartedAt?: string | null;
@@ -218,6 +219,8 @@ export default function ProfileDetailPage() {
   const [jitterMs, setJitterMs] = useState<number>(0);
   const [dailyLimit, setDailyLimit] = useState<string>(''); // '' means unlimited
   const [warmupEnabled, setWarmupEnabled] = useState(false);
+  const [autoRejectCalls, setAutoRejectCalls] = useState(false);
+  const [autoRejectCallMessage, setAutoRejectCallMessage] = useState('');
   const [warmupStart, setWarmupStart] = useState<string>(''); // per-day start, string for number input
   const [warmupRampDays, setWarmupRampDays] = useState<string>('');
   const [coldDailyLimit, setColdDailyLimit] = useState<string>(''); // '' = fall back to default
@@ -430,6 +433,8 @@ export default function ProfileDetailPage() {
       profile.dailyMessageLimit != null ? String(profile.dailyMessageLimit) : '',
     );
     setWarmupEnabled(profile.warmupEnabled ?? false);
+    setAutoRejectCalls(profile.settings?.autoRejectCalls ?? false);
+    setAutoRejectCallMessage(profile.settings?.autoRejectCallMessage ?? '');
     setWarmupStart(profile.warmupStartPerDay != null ? String(profile.warmupStartPerDay) : '');
     setWarmupRampDays(profile.warmupRampDays != null ? String(profile.warmupRampDays) : '');
     setColdDailyLimit(profile.coldDailyLimit != null ? String(profile.coldDailyLimit) : '');
@@ -491,6 +496,8 @@ export default function ProfileDetailPage() {
           warmupRampDays: parsedRampDays,
           coldDailyLimit: parsedCold,
           serviceWindowHours: parsedWindow ?? 24,
+          autoRejectCalls,
+          autoRejectCallMessage: autoRejectCallMessage.trim() || undefined,
         }),
       });
       if (res.ok) {
@@ -630,6 +637,8 @@ export default function ProfileDetailPage() {
     delayMs !== (profile.messageDelayMs ?? 1500) ||
     jitterMs !== (profile.messageDelayJitterMs ?? 0) ||
     warmupEnabled !== (profile.warmupEnabled ?? false) ||
+    autoRejectCalls !== (profile.settings?.autoRejectCalls ?? false) ||
+    autoRejectCallMessage !== (profile.settings?.autoRejectCallMessage ?? '') ||
     (warmupStartN ?? null) !== (profile.warmupStartPerDay ?? null) ||
     (warmupRampN ?? null) !== (profile.warmupRampDays ?? null) ||
     (coldLimitN ?? null) !== (profile.coldDailyLimit ?? null) ||
@@ -1034,6 +1043,37 @@ export default function ProfileDetailPage() {
                 )}
               </p>
             </>
+          )}
+        </div>
+
+        {/* Auto-reject incoming calls */}
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <Label htmlFor="autoRejectCalls" className="text-xs font-medium text-slate-200 cursor-pointer">
+                Auto-reject incoming calls
+              </Label>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Automatically decline voice/video calls to this number.
+              </p>
+            </div>
+            <Switch id="autoRejectCalls" checked={autoRejectCalls} onCheckedChange={setAutoRejectCalls} />
+          </div>
+          {autoRejectCalls && (
+            <div className="space-y-1.5">
+              <Label htmlFor="autoRejectCallMessage" className="text-xs text-slate-300">
+                Reply message (optional)
+              </Label>
+              <Input
+                id="autoRejectCallMessage"
+                type="text"
+                placeholder="Maaf, panggilan tidak dilayani. Silakan chat."
+                value={autoRejectCallMessage}
+                onChange={(e) => setAutoRejectCallMessage(e.target.value)}
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              />
+              <p className="text-[11px] text-slate-500">Sent to the caller after the call is rejected.</p>
+            </div>
           )}
         </div>
 
