@@ -7,7 +7,9 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  // Prisma 7: the connection URL is no longer declared here. The runtime client
+  // receives it through the node-postgres driver adapter (see src/prisma-client.ts)
+  // and the CLI reads it from prisma.config.ts (datasource.url = env DATABASE_URL).
 }
 
 // ============================================

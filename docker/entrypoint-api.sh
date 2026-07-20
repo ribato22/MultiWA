@@ -83,5 +83,5 @@ fi
 
 # Sync the DB schema before booting. No migrations directory exists, so use
 # `prisma db push` (idempotent: creates tables on a fresh DB, no-op if matched).
-cd /app/packages/database && prisma db push --skip-generate || echo 'prisma db push failed; starting API anyway'
+cd /app/packages/database && pnpm exec prisma db push || echo 'prisma db push failed; starting API anyway'
 cd /app/apps/api && exec node dist/main.js

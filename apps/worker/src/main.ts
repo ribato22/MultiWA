@@ -5,7 +5,7 @@ import Redis from 'ioredis';
 import http from 'node:http';
 import { collectDefaultMetrics, Gauge, Registry } from 'prom-client';
 import pino from 'pino';
-import { PrismaClient } from '@prisma/client';
+import { createPrismaClient } from '@multiwa/database';
 import { NestFactory } from '@nestjs/core';
 import type { INestApplicationContext } from '@nestjs/common';
 import { WorkerEngineModule } from './engine/worker-engine.module';
@@ -33,7 +33,7 @@ const logger = pino(
       },
 );
 
-const prisma = new PrismaClient();
+const prisma = createPrismaClient();
 
 // Redis connection
 const connection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
