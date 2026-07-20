@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -933,15 +933,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           if (message.hasMedia) {
             try {
               const media = await message.downloadMedia?.();
-              if (media) {
-                content.mimetype = media.mimetype;
-                content.filename = media.filename;
-                content.hasMedia = true;
-                // Store base64 data as data URL for frontend rendering
-                if (media.data) {
-                  content.url = `data:${media.mimetype};base64,${media.data}`;
-                }
-              }
+              // Shared: sets mimetype/filename/hasMedia and inlines the base64 data
+              // URL only when it's under the size cap (oversized media is flagged,
+              // not stored, to avoid bloating Postgres).
+              applyInboundMedia(content, media);
             } catch (e) {
               this.logger.warn(`Failed to download media: ${(e as Error).message}`);
               content.hasMedia = true;
