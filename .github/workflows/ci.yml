@@ -10,9 +10,17 @@ jobs:
   lint-and-build:
     name: Lint, Typecheck & Build
     runs-on: ubuntu-latest
-    
+
     steps:
       - uses: actions/checkout@v7
+
+      - name: Guard — lockfile must resolve git deps over HTTPS (no SSH)
+        run: |
+          if grep -nE 'git@github\.com:|ssh://git@github\.com' pnpm-lock.yaml; then
+            echo "::error::pnpm-lock.yaml contains SSH git URLs. Dependabot's environment rewrites the transitive git deps (libsignal, @whiskeysockets/eslint-config) to git@github.com:, which breaks 'pnpm install --frozen-lockfile' and the air-gapped Docker image build. Fix: regenerate the lockfile with 'pnpm install' (the pnpm.overrides in package.json pin the HTTPS codeload tarballs) on a host without a git url.insteadOf rewrite, then commit."
+            exit 1
+          fi
+          echo "OK: no SSH git URLs in pnpm-lock.yaml"
 
       - uses: pnpm/action-setup@v6
 
