@@ -31,9 +31,9 @@ export class ApiKeysController {
   @ApiValidationError()
   async create(
     @Req() req: any,
-    @Body() body: { name: string; permissions?: string[] },
+    @Body() body: { name: string; permissions?: string[]; expiresInDays?: number },
   ) {
-    const result = await this.service.create(req.user.id, body.name, body.permissions);
+    const result = await this.service.create(req.user.id, body.name, body.permissions, body.expiresInDays);
     this.auditService.log({
       action: AuditAction.APIKEY_CREATE,
       userId: req.user.id,

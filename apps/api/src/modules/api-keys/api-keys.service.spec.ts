@@ -52,6 +52,22 @@ describe('ApiKeysService', () => {
       expect(result.name).toBe('CI token');
     });
 
+    it('creates a non-expiring key by default', async () => {
+      await service.create('user-1', 'k');
+      const persisted = vi.mocked(prisma.apiKey.create).mock.calls[0][0].data as any;
+      expect(persisted.expiresAt).toBeNull();
+    });
+
+    it('sets expiresAt ~N days out when expiresInDays is given', async () => {
+      const before = Date.now();
+      await service.create('user-1', 'k', [], 7);
+      const persisted = vi.mocked(prisma.apiKey.create).mock.calls[0][0].data as any;
+      expect(persisted.expiresAt).toBeInstanceOf(Date);
+      const ms = persisted.expiresAt.getTime() - before;
+      expect(ms).toBeGreaterThan(6.9 * 24 * 3600 * 1000);
+      expect(ms).toBeLessThan(7.1 * 24 * 3600 * 1000);
+    });
+
     it('persists ONLY a sha256 hash of the raw key — never the raw secret', async () => {
       const result = await service.create('user-1', 'CI token');
 

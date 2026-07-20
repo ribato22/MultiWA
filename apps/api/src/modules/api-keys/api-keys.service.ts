@@ -8,11 +8,19 @@ import * as crypto from 'crypto';
 @Injectable()
 export class ApiKeysService {
   // Generate a new API key
-  async create(userId: string, name: string, permissions: string[] = []) {
+  async create(userId: string, name: string, permissions: string[] = [], expiresInDays?: number) {
     // Generate a random API key with prefix
     const rawKey = `mwa_${crypto.randomBytes(32).toString('hex')}`;
     const prefix = rawKey.substring(0, 12);
     const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+
+    // Optional expiry: keys are non-expiring by default, but callers may request a
+    // TTL. The api-key strategy already rejects an expired key (`expiresAt` in the
+    // past); this lets operators actually mint short-lived keys.
+    const days = Number(expiresInDays);
+    const expiresAt = Number.isFinite(days) && days > 0
+      ? new Date(Date.now() + days * 24 * 60 * 60 * 1000)
+      : null;
 
     const apiKey = await prisma.apiKey.create({
       data: {
@@ -21,6 +29,7 @@ export class ApiKeysService {
         keyHash,
         prefix,
         permissions,
+        expiresAt,
       },
     });
 
@@ -31,6 +40,7 @@ export class ApiKeysService {
       key: rawKey,
       prefix: apiKey.prefix,
       permissions: apiKey.permissions,
+      expiresAt: apiKey.expiresAt,
       createdAt: apiKey.createdAt,
     };
   }
