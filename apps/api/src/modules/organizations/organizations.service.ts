@@ -2,6 +2,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 
 // Roles that may be assigned through member-management endpoints. `owner` is
 // deliberately excluded: ownership is set when the org is created and is not
@@ -62,8 +63,10 @@ export class OrganizationsService {
       throw new BadRequestException('A user with this email already exists');
     }
 
-    // Create member with a temporary password
-    const tempPassword = Math.random().toString(36).slice(-10);
+    // Create member with a temporary password. Must be cryptographically random:
+    // Math.random() is a predictable PRNG, so a temp LOGIN password minted with it
+    // is guessable -> account takeover before first login.
+    const tempPassword = crypto.randomBytes(12).toString('base64url');
     const passwordHash = await bcrypt.hash(tempPassword, 10);
 
     const user = await prisma.user.create({

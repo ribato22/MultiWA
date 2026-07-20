@@ -42,8 +42,18 @@ export interface MultiWAClientOptions {
  *     => 'http://localhost:3333/api/v1/messages/text'
  */
 export function joinApiUrl(baseUrl: string, path: string): string {
-  const base = String(baseUrl || '').replace(/\/+$/, '');
-  const rel = String(path || '').replace(/^\/+/, '');
+  // Linear, backtracking-free slash trimming. The previous `/\/+$/` was O(n^2)
+  // (polynomial ReDoS) on a long run of leading slashes; char-scanning is O(n).
+  const b = String(baseUrl || '');
+  let end = b.length;
+  while (end > 0 && b.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  const base = b.slice(0, end);
+
+  const p = String(path || '');
+  let start = 0;
+  while (start < p.length && p.charCodeAt(start) === 47) start++;
+  const rel = p.slice(start);
+
   return rel.length ? `${base}/${rel}` : base;
 }
 

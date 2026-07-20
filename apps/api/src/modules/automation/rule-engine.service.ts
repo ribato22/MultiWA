@@ -3,6 +3,7 @@
 
 import { Injectable, Inject, forwardRef, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { assertWebhookUrlSafe } from '@multiwa/engine-runtime';
 import { AutomationService } from './automation.service';
 import { MessagesService } from '../messages/messages.service';
 import { AIService } from '../ai/ai.service';
@@ -602,12 +603,17 @@ export class RuleEngineService {
     }
   }
 
-  // Call external webhook
+  // Call external webhook. The URL comes from an attacker-controllable automation
+  // action, so it MUST pass the SSRF guard (blocks cloud metadata + private ranges,
+  // DNS-resolved) and use redirect:error + a timeout — same as autoreply/webhooks.
   private async callWebhook(url: string, method: string, data: any): Promise<any> {
-    const response = await fetch(url, {
+    const safeUrl = await assertWebhookUrlSafe(url);
+    const response = await fetch(safeUrl, {
       method: method || 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
+      redirect: 'error',
+      signal: AbortSignal.timeout(30000),
     });
 
     return {
