@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId, isSystemMessageType } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId, isSystemMessageType, resolveEngineType as resolveEngineTypeShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -541,32 +541,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    * getOrCreate) — EngineManagerService.engines is the sole instance owner.
    */
   private resolveEngineType(engineField?: string | null): EngineType {
-    const valid: EngineType[] = ['whatsapp-web-js', 'baileys', 'mock'];
-    let selected: EngineType;
-
-    if (engineField && valid.includes(engineField as EngineType)) {
-      selected = engineField as EngineType;
-    } else {
-      const envDefault = process.env.DEFAULT_ENGINE;
-      if (envDefault && valid.includes(envDefault as EngineType)) {
-        if (engineField) {
-          this.logger.warn(`Profile engine '${engineField}' invalid; falling back to DEFAULT_ENGINE='${envDefault}'`);
-        }
-        selected = envDefault as EngineType;
-      } else {
-        if (engineField) {
-          this.logger.warn(`Profile engine '${engineField}' is not a known engine; defaulting to whatsapp-web-js`);
-        }
-        selected = 'whatsapp-web-js';
-      }
-    }
-
-    if (selected === 'baileys') {
-      this.logger.warn(
-        'Profile is using the EXPERIMENTAL Baileys engine — sendReaction is a no-op stub and getContacts may be unavailable. Use whatsapp-web-js for production.',
-      );
-    }
-    return selected;
+    return resolveEngineTypeShared(engineField, {
+      defaultEngine: process.env.DEFAULT_ENGINE,
+      warn: (m) => this.logger.warn(m),
+    });
   }
 
   /**
