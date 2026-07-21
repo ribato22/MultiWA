@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serializeWaMessageId } from './wa-message-id';
+import { serializeWaMessageId } from '@multiwa/engine-runtime';
 
 describe('serializeWaMessageId', () => {
   it('passes through a plain string id', () => {

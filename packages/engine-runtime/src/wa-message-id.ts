@@ -1,4 +1,4 @@
-// apps/api/src/modules/profiles/wa-message-id.ts
+// packages/engine-runtime/src/wa-message-id.ts
 //
 // The WhatsApp engine normally hands us a message whose id is the serialized string,
 // but for GROUP messages from @lid participants (and across some engine/serialization
@@ -9,6 +9,10 @@
 // `message.received` webhook fired → downstream bots/integrations stopped responding.
 //
 // This coerces any of those shapes to the canonical serialized id string.
+//
+// Shared between apps/api (ENGINE_HOST=api) and apps/worker (ENGINE_HOST=worker) so
+// both engine-managers serialize inbound ids identically; see
+// architecture/engine-worker-migration-sop.md.
 
 export function serializeWaMessageId(message: any): string {
   const fallback = () => `in_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

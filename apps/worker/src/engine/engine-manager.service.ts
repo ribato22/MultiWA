@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -953,7 +953,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             data: {
               profileId,
               conversationId: conversation.id,
-              messageId: message.id?._serialized || message.id || `in_${Date.now()}`,
+              messageId: serializeWaMessageId(message),
               direction: 'incoming',
               senderJid,
               type: msgType === 'chat' ? 'text' : msgType,
