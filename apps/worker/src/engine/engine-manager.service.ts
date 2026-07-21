@@ -538,6 +538,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    * Initialize and connect a WhatsApp engine for a profile
    */
   async connectProfile(profileId: string): Promise<{ status: string; message: string }> {
+    // Defense-in-depth: profileId is server-generated (uuid) and the DB lookup below
+    // already rejects unknown ids, but validate the shape up front so it can NEVER
+    // reach the SESSIONS_DIR/<profileId> filesystem paths (path traversal) even if a
+    // future caller skips the lookup.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profileId)) {
+      throw new Error('Invalid profileId');
+    }
     this.logger.log(`Connecting profile: ${profileId}`);
 
     // A (re)connect intent clears any manual-disconnect flag so the watchdog and
