@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -18,7 +18,6 @@ import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService, IncomingMessage } from '../automation/rule-engine.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
-import { serializeWaMessageId } from './wa-message-id';
 
 
 interface EngineInstance {
