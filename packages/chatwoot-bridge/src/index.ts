@@ -9,10 +9,12 @@
 import express from 'express';
 import axios, { AxiosInstance } from 'axios';
 
-// Strip CR/LF first (the CodeQL-recognized log-injection barrier), then any
-// remaining Unicode control chars, before interpolating untrusted values into logs.
+// Drop CR/LF entirely, then collapse any remaining Unicode control chars to a
+// space, before interpolating untrusted values into logs. The empty-string
+// replacement on /[\r\n]/ is the exact form CodeQL recognises as a
+// log-injection barrier (StringReplaceCall.replaces(s, "") with s matching \n).
 const cleanLog = (v: unknown) =>
-  String(v ?? '').replace(/[\r\n]/g, ' ').replace(/\p{Cc}/gu, ' ');
+  String(v ?? '').replace(/[\r\n]/g, '').replace(/\p{Cc}/gu, ' ');
 
 // ─── Configuration ────────────────────────────────────────────────────────
 

@@ -28,10 +28,12 @@
 const http = require("http");
 const crypto = require("crypto");
 
-// Strip CR/LF first (the CodeQL-recognized log-injection barrier), then any
-// remaining Unicode control chars, before logging untrusted request data.
+// Drop CR/LF entirely, then collapse any remaining Unicode control chars to a
+// space, before logging untrusted request data. The empty-string replacement
+// on /[\r\n]/ is the exact form CodeQL recognises as a log-injection barrier
+// (StringReplaceCall.replaces(s, "") with s matching \n).
 const cleanLog = (v) =>
-  String(v ?? "").replace(/[\r\n]/g, " ").replace(/\p{Cc}/gu, " ");
+  String(v ?? "").replace(/[\r\n]/g, "").replace(/\p{Cc}/gu, " ");
 
 // === Configuration ===
 const PORT = parseInt(process.argv[2] || "9999", 10);
