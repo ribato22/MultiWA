@@ -550,255 +550,17 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   /**
    * Initialize and connect a WhatsApp engine for a profile
    */
-  async connectProfile(profileId: string): Promise<{ status: string; message: string }> {
-    // Defense-in-depth: profileId is server-generated (uuid) and the DB lookup below
-    // already rejects unknown ids, but validate the shape up front so it can NEVER
-    // reach the SESSIONS_DIR/<profileId> filesystem paths (path traversal) even if a
-    // future caller skips the lookup.
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profileId)) {
-      throw new Error('Invalid profileId');
-    }
-    this.logger.log(`Connecting profile: ${profileId}`);
-    // A (re)connect clears any "manually disconnected" marker so the reconnect
-    // sweep watches this profile again.
-    this.manuallyDisconnected.delete(profileId);
 
-    // Check if already connected
-    const existing = this.engines.get(profileId);
-    if (existing && existing.status === 'connected') {
-      return { status: 'already_connected', message: 'Profile already connected' };
-    }
-
-    // Destroy any existing engine instance (e.g. from a failed previous attempt)
-    if (existing) {
-      this.logger.log(`Destroying stale engine instance for ${profileId}`);
-      try {
-        await existing.engine.destroy?.();
-      } catch (e) {
-        this.logger.warn(`Error destroying stale engine: ${(e as Error).message}`);
-      }
-      this.engines.delete(profileId);
-    }
-
-    // Get profile from database
-    const profile = await prisma.profile.findUnique({
-      where: { id: profileId },
-    });
-
-    if (!profile) {
-      throw new Error('Profile not found');
-    }
-
-    // Update status to connecting
-    await prisma.profile.update({
-      where: { id: profileId },
-      data: { status: 'connecting' },
-    });
-
-    // Create engine config with callbacks
-    const sessionsBase = process.env.SESSIONS_DIR || './sessions';
-    const sessionDir = path.join(sessionsBase, profileId);
-
-    // Clean up stale Chromium lock files from previous container runs
-    // Without this, Puppeteer refuses to launch: "The profile appears to be in use by another Chromium process"
-    await this.cleanupStaleLockFiles(sessionDir);
-    
-    const engineConfig: EngineConfig = {
-      profileId,
-      sessionDir,
-      onQR: async (qr: string) => {
-        this.logger.log(`QR code received for profile ${profileId}`);
-        
-        try {
-          // Convert QR string to data URL for frontend <img> display
-          const qrDataUrl = await QRCode.toDataURL(qr, {
-            width: 256,
-            margin: 2,
-            color: { dark: '#000000', light: '#ffffff' },
-          });
-          
-          // Emit QR data URL to WebSocket clients
-          this.realtime.emitQrUpdate(profileId, qrDataUrl);
-          this.emitEvent(AppEvents.CONNECTION.QR, { profileId, qr: qrDataUrl });
-          this.logger.log(`QR code emitted via WebSocket for profile ${profileId}`);
-        } catch (error) {
-          this.logger.error(`Error generating QR data URL:`, error);
-          // Fallback: send raw QR string
-          this.realtime.emitQrUpdate(profileId, qr);
-        }
-      },
-      onReady: async (phone: string, pushName: string) => {
-        this.logger.log(`Profile ${profileId} connected: ${phone} (${pushName})`);
-        // Reached 'ready' — cancel the watchdog and reset its retry counter.
-        this.clearReadyTimer(profileId);
-        this.readyTimeoutRetries.delete(profileId);
-
-        // Phone number guard: if user initially registered the profile with a
-        // specific phone number, refuse to silently overwrite it with a
-        // different WhatsApp account. The frontend listens for
-        // 'connection:status' status='error' and shows the toast.
-        const existing = await prisma.profile.findUnique({
-          where: { id: profileId },
-          select: { phoneNumber: true, displayName: true },
-        });
-        const expected = (existing?.phoneNumber || '').replace(/\D/g, '');
-        const actual = (phone || '').replace(/\D/g, '');
-        if (expected && expected !== actual) {
-          this.logger.warn(
-            `Profile ${profileId}: scanned WA number ${actual} does not match expected ${expected}. Disconnecting.`,
-          );
-          this.realtime.emitConnectionStatus(
-            profileId,
-            'error',
-            `Scanned number does not match this profile. Expected ${expected}, got ${actual}.`,
-          );
-          // Disconnect the just-linked engine; user can rescan with the correct device.
-          try {
-            const instance2 = this.engines.get(profileId);
-            await instance2?.engine.disconnect();
-          } catch (err) {
-            this.logger.warn(`Failed to disconnect mismatched engine: ${(err as Error).message}`);
-          }
-          this.engines.delete(profileId);
-          await prisma.profile.update({
-            where: { id: profileId },
-            data: { status: 'disconnected' },
-          });
-          return;
-        }
-
-        // Update engine instance status
-        const instance = this.engines.get(profileId);
-        if (instance) {
-          instance.status = 'connected';
-        }
-
-        // Update database
-        await prisma.profile.update({
-          where: { id: profileId },
-          data: {
-            status: 'connected',
-            phoneNumber: phone,
-            lastConnectedAt: new Date(),
-          },
-        });
-
-        // Emit connection status via WebSocket
-        this.realtime.emitConnectionStatus(profileId, 'connected', phone);
-        this.emitEvent(AppEvents.CONNECTION.READY, { profileId, phone, pushName });
-
-        // === Notification: profile connected ===
-        this.notifyOrgUsers(profileId, NotificationType.CONNECTION,
-          '✅ Profile Connected',
-          `${profile.displayName || phone} is now connected`,
-          { profileId, phone },
-        ).catch(err => this.logger.warn(`Notification error (connection): ${err.message}`));
-
-        // Background, best-effort: pull recent chats + their latest messages so
-        // existing conversations show up in the dashboard (whatsapp-web.js only
-        // streams NEW messages from connect onward). Bounded + deduped; never blocks
-        // connect. Disable with HISTORY_SYNC_ON_CONNECT=false.
-        if (process.env.HISTORY_SYNC_ON_CONNECT !== 'false') {
-          this.syncRecentHistory(profileId).catch(err =>
-            this.logger.warn(`History sync failed for ${profileId}: ${(err as Error).message}`));
-        }
-      },
-      onDisconnected: async (reason: string) => {
-        this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
-        this.clearReadyTimer(profileId);
-
-        // Update engine instance status
-        const instance = this.engines.get(profileId);
-        if (instance) {
-          instance.status = 'disconnected';
-        }
-
-        // Only clear session folder for actual session invalidation (logged out, expired)
-        // Do NOT clear for temporary errors like 'Stream Errored' or 'Connection Failure'
-        // as these may recover on reconnect
-        const sessionInvalidReasons = ['Session Expired', 'Logged Out', 'loggedOut'];
-        const isSessionInvalid = sessionInvalidReasons.some(r => reason.includes(r));
-        
-        if (isSessionInvalid) {
-          this.logger.warn(`Session invalidated for ${profileId}, clearing session folder for fresh QR`);
-          try {
-            const fs = await import('fs/promises');
-            await fs.rm(sessionDir, { recursive: true, force: true });
-            this.logger.log(`Session folder cleared for ${profileId}`);
-          } catch (err) {
-            this.logger.error(`Failed to clear session folder:`, err);
-          }
-          
-          // Update database
-          await prisma.profile.update({
-            where: { id: profileId },
-            data: { status: 'disconnected' },
-          });
-          this.realtime.emitConnectionStatus(profileId, 'disconnected');
-          this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason });
-
-          // === Notification: session invalidated ===
-          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
-            '⚠️ Profile Disconnected',
-            `${profile.displayName || profileId} was disconnected: ${reason}`,
-            { profileId, reason },
-          ).catch(err => this.logger.warn(`Notification error (disconnection): ${err.message}`));
-        } else {
-
-          // Temporary disconnect — attempt auto-retry with exponential backoff
-          const maxRetries = 3;
-          const baseDelay = 5000; // 5 seconds
-          
-          // Clean up the failed engine instance first
-          try {
-            await instance?.engine?.destroy?.();
-          } catch (e) {
-            this.logger.warn(`Error destroying engine before retry: ${(e as Error).message}`);
-          }
-          this.engines.delete(profileId);
-
-          for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            const delay = baseDelay * Math.pow(3, attempt - 1); // 5s, 15s, 45s
-            this.logger.log(`Auto-retry ${attempt}/${maxRetries} for ${profileId} in ${delay / 1000}s (reason: ${reason})`);
-            
-            // Emit reconnecting status so frontend shows progress
-            await prisma.profile.update({
-              where: { id: profileId },
-              data: { status: 'connecting' },
-            });
-            this.realtime.emitConnectionStatus(profileId, `reconnecting (${attempt}/${maxRetries})`);
-            
-            await new Promise(resolve => setTimeout(resolve, delay));
-            
-            try {
-              const result = await this.connectProfile(profileId);
-              if (result.status === 'connecting' || result.status === 'already_connected') {
-                this.logger.log(`Auto-retry successful for ${profileId} on attempt ${attempt}`);
-                return; // Success, exit the retry loop
-              }
-            } catch (retryErr: any) {
-              this.logger.warn(`Auto-retry attempt ${attempt}/${maxRetries} failed for ${profileId}: ${retryErr.message}`);
-            }
-          }
-          
-          // All retries exhausted
-          this.logger.error(`All ${maxRetries} auto-retry attempts failed for ${profileId}`);
-          await prisma.profile.update({
-            where: { id: profileId },
-            data: { status: 'disconnected' },
-          });
-          this.realtime.emitConnectionStatus(profileId, 'disconnected');
-          this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'max retries exhausted' });
-          // A transient disconnect that never recovered is a terminal state an operator
-          // should act on — notify org users (previously only session-invalidation did).
-          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
-            '⚠️ Profile Disconnected',
-            `${profile.displayName || profileId} disconnected (${reason}) and auto-recovery failed after ${maxRetries} attempts. Manual reconnect needed.`,
-            { profileId, reason: 'max-retries-exhausted' },
-          ).catch(err => this.logger.warn(`Notification error (retry-exhausted): ${err.message}`));
-        }
-      },
-      onMessage: async (message: any) => {
+  /**
+   * Handle one inbound WhatsApp message: skip own/system messages, dedup the
+   * conversation (incl. @lid resolution + group-subject), build the content
+   * object, persist the message, update the conversation (+ optional auto-read),
+   * emit realtime + app-bus + notification, auto-create the contact, and run
+   * automation. Extracted verbatim from the onMessage engine callback so the API
+   * and worker can share one implementation; behaviour is identical.
+   * See architecture/engine-worker-migration-sop.md.
+   */
+  private async handleInboundMessage(message: any, profileId: string): Promise<void> {
         // Skip bot's own messages to prevent reply loops
         if (message.fromMe) {
           this.logger.debug(`Skipping own message for profile ${profileId}`);
@@ -1134,7 +896,256 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         } catch (error) {
           this.logger.error(`Error processing incoming message:`, error);
         }
+  }
+  async connectProfile(profileId: string): Promise<{ status: string; message: string }> {
+    // Defense-in-depth: profileId is server-generated (uuid) and the DB lookup below
+    // already rejects unknown ids, but validate the shape up front so it can NEVER
+    // reach the SESSIONS_DIR/<profileId> filesystem paths (path traversal) even if a
+    // future caller skips the lookup.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(profileId)) {
+      throw new Error('Invalid profileId');
+    }
+    this.logger.log(`Connecting profile: ${profileId}`);
+    // A (re)connect clears any "manually disconnected" marker so the reconnect
+    // sweep watches this profile again.
+    this.manuallyDisconnected.delete(profileId);
+
+    // Check if already connected
+    const existing = this.engines.get(profileId);
+    if (existing && existing.status === 'connected') {
+      return { status: 'already_connected', message: 'Profile already connected' };
+    }
+
+    // Destroy any existing engine instance (e.g. from a failed previous attempt)
+    if (existing) {
+      this.logger.log(`Destroying stale engine instance for ${profileId}`);
+      try {
+        await existing.engine.destroy?.();
+      } catch (e) {
+        this.logger.warn(`Error destroying stale engine: ${(e as Error).message}`);
+      }
+      this.engines.delete(profileId);
+    }
+
+    // Get profile from database
+    const profile = await prisma.profile.findUnique({
+      where: { id: profileId },
+    });
+
+    if (!profile) {
+      throw new Error('Profile not found');
+    }
+
+    // Update status to connecting
+    await prisma.profile.update({
+      where: { id: profileId },
+      data: { status: 'connecting' },
+    });
+
+    // Create engine config with callbacks
+    const sessionsBase = process.env.SESSIONS_DIR || './sessions';
+    const sessionDir = path.join(sessionsBase, profileId);
+
+    // Clean up stale Chromium lock files from previous container runs
+    // Without this, Puppeteer refuses to launch: "The profile appears to be in use by another Chromium process"
+    await this.cleanupStaleLockFiles(sessionDir);
+    
+    const engineConfig: EngineConfig = {
+      profileId,
+      sessionDir,
+      onQR: async (qr: string) => {
+        this.logger.log(`QR code received for profile ${profileId}`);
+        
+        try {
+          // Convert QR string to data URL for frontend <img> display
+          const qrDataUrl = await QRCode.toDataURL(qr, {
+            width: 256,
+            margin: 2,
+            color: { dark: '#000000', light: '#ffffff' },
+          });
+          
+          // Emit QR data URL to WebSocket clients
+          this.realtime.emitQrUpdate(profileId, qrDataUrl);
+          this.emitEvent(AppEvents.CONNECTION.QR, { profileId, qr: qrDataUrl });
+          this.logger.log(`QR code emitted via WebSocket for profile ${profileId}`);
+        } catch (error) {
+          this.logger.error(`Error generating QR data URL:`, error);
+          // Fallback: send raw QR string
+          this.realtime.emitQrUpdate(profileId, qr);
+        }
       },
+      onReady: async (phone: string, pushName: string) => {
+        this.logger.log(`Profile ${profileId} connected: ${phone} (${pushName})`);
+        // Reached 'ready' — cancel the watchdog and reset its retry counter.
+        this.clearReadyTimer(profileId);
+        this.readyTimeoutRetries.delete(profileId);
+
+        // Phone number guard: if user initially registered the profile with a
+        // specific phone number, refuse to silently overwrite it with a
+        // different WhatsApp account. The frontend listens for
+        // 'connection:status' status='error' and shows the toast.
+        const existing = await prisma.profile.findUnique({
+          where: { id: profileId },
+          select: { phoneNumber: true, displayName: true },
+        });
+        const expected = (existing?.phoneNumber || '').replace(/\D/g, '');
+        const actual = (phone || '').replace(/\D/g, '');
+        if (expected && expected !== actual) {
+          this.logger.warn(
+            `Profile ${profileId}: scanned WA number ${actual} does not match expected ${expected}. Disconnecting.`,
+          );
+          this.realtime.emitConnectionStatus(
+            profileId,
+            'error',
+            `Scanned number does not match this profile. Expected ${expected}, got ${actual}.`,
+          );
+          // Disconnect the just-linked engine; user can rescan with the correct device.
+          try {
+            const instance2 = this.engines.get(profileId);
+            await instance2?.engine.disconnect();
+          } catch (err) {
+            this.logger.warn(`Failed to disconnect mismatched engine: ${(err as Error).message}`);
+          }
+          this.engines.delete(profileId);
+          await prisma.profile.update({
+            where: { id: profileId },
+            data: { status: 'disconnected' },
+          });
+          return;
+        }
+
+        // Update engine instance status
+        const instance = this.engines.get(profileId);
+        if (instance) {
+          instance.status = 'connected';
+        }
+
+        // Update database
+        await prisma.profile.update({
+          where: { id: profileId },
+          data: {
+            status: 'connected',
+            phoneNumber: phone,
+            lastConnectedAt: new Date(),
+          },
+        });
+
+        // Emit connection status via WebSocket
+        this.realtime.emitConnectionStatus(profileId, 'connected', phone);
+        this.emitEvent(AppEvents.CONNECTION.READY, { profileId, phone, pushName });
+
+        // === Notification: profile connected ===
+        this.notifyOrgUsers(profileId, NotificationType.CONNECTION,
+          '✅ Profile Connected',
+          `${profile.displayName || phone} is now connected`,
+          { profileId, phone },
+        ).catch(err => this.logger.warn(`Notification error (connection): ${err.message}`));
+
+        // Background, best-effort: pull recent chats + their latest messages so
+        // existing conversations show up in the dashboard (whatsapp-web.js only
+        // streams NEW messages from connect onward). Bounded + deduped; never blocks
+        // connect. Disable with HISTORY_SYNC_ON_CONNECT=false.
+        if (process.env.HISTORY_SYNC_ON_CONNECT !== 'false') {
+          this.syncRecentHistory(profileId).catch(err =>
+            this.logger.warn(`History sync failed for ${profileId}: ${(err as Error).message}`));
+        }
+      },
+      onDisconnected: async (reason: string) => {
+        this.logger.log(`Profile ${profileId} disconnected: ${reason}`);
+        this.clearReadyTimer(profileId);
+
+        // Update engine instance status
+        const instance = this.engines.get(profileId);
+        if (instance) {
+          instance.status = 'disconnected';
+        }
+
+        // Only clear session folder for actual session invalidation (logged out, expired)
+        // Do NOT clear for temporary errors like 'Stream Errored' or 'Connection Failure'
+        // as these may recover on reconnect
+        const sessionInvalidReasons = ['Session Expired', 'Logged Out', 'loggedOut'];
+        const isSessionInvalid = sessionInvalidReasons.some(r => reason.includes(r));
+        
+        if (isSessionInvalid) {
+          this.logger.warn(`Session invalidated for ${profileId}, clearing session folder for fresh QR`);
+          try {
+            const fs = await import('fs/promises');
+            await fs.rm(sessionDir, { recursive: true, force: true });
+            this.logger.log(`Session folder cleared for ${profileId}`);
+          } catch (err) {
+            this.logger.error(`Failed to clear session folder:`, err);
+          }
+          
+          // Update database
+          await prisma.profile.update({
+            where: { id: profileId },
+            data: { status: 'disconnected' },
+          });
+          this.realtime.emitConnectionStatus(profileId, 'disconnected');
+          this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason });
+
+          // === Notification: session invalidated ===
+          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
+            '⚠️ Profile Disconnected',
+            `${profile.displayName || profileId} was disconnected: ${reason}`,
+            { profileId, reason },
+          ).catch(err => this.logger.warn(`Notification error (disconnection): ${err.message}`));
+        } else {
+
+          // Temporary disconnect — attempt auto-retry with exponential backoff
+          const maxRetries = 3;
+          const baseDelay = 5000; // 5 seconds
+          
+          // Clean up the failed engine instance first
+          try {
+            await instance?.engine?.destroy?.();
+          } catch (e) {
+            this.logger.warn(`Error destroying engine before retry: ${(e as Error).message}`);
+          }
+          this.engines.delete(profileId);
+
+          for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            const delay = baseDelay * Math.pow(3, attempt - 1); // 5s, 15s, 45s
+            this.logger.log(`Auto-retry ${attempt}/${maxRetries} for ${profileId} in ${delay / 1000}s (reason: ${reason})`);
+            
+            // Emit reconnecting status so frontend shows progress
+            await prisma.profile.update({
+              where: { id: profileId },
+              data: { status: 'connecting' },
+            });
+            this.realtime.emitConnectionStatus(profileId, `reconnecting (${attempt}/${maxRetries})`);
+            
+            await new Promise(resolve => setTimeout(resolve, delay));
+            
+            try {
+              const result = await this.connectProfile(profileId);
+              if (result.status === 'connecting' || result.status === 'already_connected') {
+                this.logger.log(`Auto-retry successful for ${profileId} on attempt ${attempt}`);
+                return; // Success, exit the retry loop
+              }
+            } catch (retryErr: any) {
+              this.logger.warn(`Auto-retry attempt ${attempt}/${maxRetries} failed for ${profileId}: ${retryErr.message}`);
+            }
+          }
+          
+          // All retries exhausted
+          this.logger.error(`All ${maxRetries} auto-retry attempts failed for ${profileId}`);
+          await prisma.profile.update({
+            where: { id: profileId },
+            data: { status: 'disconnected' },
+          });
+          this.realtime.emitConnectionStatus(profileId, 'disconnected');
+          this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'max retries exhausted' });
+          // A transient disconnect that never recovered is a terminal state an operator
+          // should act on — notify org users (previously only session-invalidation did).
+          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
+            '⚠️ Profile Disconnected',
+            `${profile.displayName || profileId} disconnected (${reason}) and auto-recovery failed after ${maxRetries} attempts. Manual reconnect needed.`,
+            { profileId, reason: 'max-retries-exhausted' },
+          ).catch(err => this.logger.warn(`Notification error (retry-exhausted): ${err.message}`));
+        }
+      },
+      onMessage: async (message: any) => this.handleInboundMessage(message, profileId),
       onMessageAck: async (messageId: string, status: string) => {
         try {
           // Shared, guarded ack update: a null result means the ack had no resolvable
