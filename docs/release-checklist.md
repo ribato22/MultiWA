@@ -54,10 +54,10 @@ everything that needs human attention.
 - [ ] Local-dev examples use `http://localhost:3000` (port 3000).
 - [ ] No SDK install snippet implies a registry release that has not
       actually happened. Published packages use their real install command
-      (Python: `pip install multiwa`; n8n node: `npm install
-      n8n-nodes-multiwa`). SDKs still awaiting a registry (TypeScript
-      `@multiwa/sdk`, PHP `multiwa/sdk`) must say "Included in repository ·
-      registry publishing pending."
+      (TypeScript: `npm install @multiwa/sdk`; Python: `pip install multiwa`;
+      n8n node: `npm install n8n-nodes-multiwa`). SDKs still awaiting a
+      registry (PHP `multiwa/sdk`) must say "Included in repository · registry
+      publishing pending."
 
 ## 5. Docker Quick Start Smoke Test
 
