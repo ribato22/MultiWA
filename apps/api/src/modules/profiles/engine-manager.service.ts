@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId, isSystemMessageType } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -95,12 +95,6 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     this.connectProfile(profileId).catch(err =>
       this.logger.warn(`Ready-timeout reconnect failed for ${profileId}: ${(err as Error).message}`));
   }
-  // WhatsApp system/protocol "message" types that are not real chat content.
-  static readonly SYSTEM_MESSAGE_TYPES = new Set<string>([
-    'e2e_notification', 'notification_template', 'notification',
-    'call_log', 'gp2', 'ciphertext', 'protocol', 'revoked',
-  ]);
-
   constructor(
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
     @Inject(forwardRef(() => RuleEngineService))
@@ -212,7 +206,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           let lastTs: Date | null = null;
           for (const m of chat.messages || []) {
             const msgType: string = m?.type || 'chat';
-            if (EngineManagerService.SYSTEM_MESSAGE_TYPES.has(msgType)) continue;
+            if (isSystemMessageType(msgType)) continue;
             const messageId: string = m?.id || '';
             if (!messageId) continue;
             const exists = await prisma.message.findFirst({
@@ -836,7 +830,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         // (E2E-encryption notices, business notification templates, call logs,
         // group-system events, deleted-message markers). Persisting them produced
         // bogus "conversations" with unresolved @lid numbers and noisy notifications.
-        if (EngineManagerService.SYSTEM_MESSAGE_TYPES.has(message.type)) {
+        if (isSystemMessageType(message.type)) {
           this.logger.debug(`Skipping system message (type=${message.type}) for profile ${profileId}`);
           return;
         }

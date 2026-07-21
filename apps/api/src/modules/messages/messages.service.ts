@@ -24,6 +24,7 @@ import {
   effectiveCapForLane,
   isColdCircuitBlocking,
   COLD_CIRCUIT_COOLDOWN_MS,
+  isSystemMessageType,
 } from '@multiwa/engine-runtime';
 import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import {
@@ -624,7 +625,7 @@ export class MessagesService {
       const fetched = await engine.fetchChatMessages(conversation.jid, cap);
       for (const m of fetched || []) {
         const msgType: string = m?.type || 'chat';
-        if (EngineManagerService.SYSTEM_MESSAGE_TYPES.has(msgType)) continue;
+        if (isSystemMessageType(msgType)) continue;
         const messageId: string = m?.id || '';
         if (!messageId) continue;
         const exists = await prisma.message.findFirst({ where: { profileId, messageId }, select: { id: true } });

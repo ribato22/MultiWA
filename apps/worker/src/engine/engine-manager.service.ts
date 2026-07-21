@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId, isSystemMessageType } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -772,6 +772,14 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         // Skip bot's own messages to prevent reply loops
         if (message.fromMe) {
           this.logger.debug(`Skipping own message for profile ${profileId}`);
+          return;
+        }
+        // Skip WhatsApp system/protocol messages — these are not real chat content
+        // (E2E-encryption notices, business notification templates, call logs,
+        // group-system events, deleted-message markers). Persisting them produced
+        // bogus "conversations" with unresolved @lid numbers and noisy notifications.
+        if (isSystemMessageType(message.type)) {
+          this.logger.debug(`Skipping system message (type=${message.type}) for profile ${profileId}`);
           return;
         }
         this.logger.log(`📨 Incoming message for profile ${profileId} from ${message.from}: type=${message.type}, body=${(message.body || '').substring(0, 50)}`);
