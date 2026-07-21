@@ -17,3 +17,4 @@ export * from './auto-reject-call';
 export * from './wa-message-id';
 export * from './system-message';
 export * from './engine-type';
+export * from './lock-files';

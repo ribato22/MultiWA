@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId, isSystemMessageType, resolveEngineType as resolveEngineTypeShared } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, applyInboundMedia, handleAutoRejectCall, serializeWaMessageId, isSystemMessageType, resolveEngineType as resolveEngineTypeShared, cleanupStaleLockFiles as cleanupStaleLockFilesShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -453,33 +453,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    * These files prevent Puppeteer from launching a new browser.
    */
   private async cleanupStaleLockFiles(sessionDir: string): Promise<void> {
-    const fs = await import('fs/promises');
-    const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
-    
-    // Recursively find and remove lock files in the session directory
-    try {
-      await fs.access(sessionDir);
-    } catch {
-      return; // Session dir doesn't exist yet, nothing to clean
-    }
-    
-    // Walk through known Chromium profile subdirectories
-    try {
-      const entries = await fs.readdir(sessionDir, { recursive: true, withFileTypes: true });
-      for (const entry of entries) {
-        if (lockFiles.includes(entry.name)) {
-          const lockPath = path.join(entry.parentPath || entry.path, entry.name);
-          try {
-            await fs.unlink(lockPath);
-            this.logger.log(`Removed stale Chromium lock file: ${lockPath}`);
-          } catch (e) {
-            this.logger.warn(`Could not remove lock file ${lockPath}: ${(e as Error).message}`);
-          }
-        }
-      }
-    } catch (e) {
-      this.logger.warn(`Error scanning for lock files: ${(e as Error).message}`);
-    }
+    await cleanupStaleLockFilesShared(sessionDir, {
+      log: (m) => this.logger.log(m),
+      warn: (m) => this.logger.warn(m),
+    });
   }
 
   async onModuleDestroy() {
