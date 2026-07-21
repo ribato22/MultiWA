@@ -233,7 +233,11 @@ export async function handleInboundMessage(message: any, profileId: string, deps
             try {
               const vcard = message.vCards[0];
               const fnMatch = vcard.match(/FN:(.*)/i);
-              const telMatch = vcard.match(/TEL[^:]*:([\d+\-\s]+)/i);
+              // Bounded quantifiers keep this linear-time: as a shared exported helper
+              // the vCard is untrusted input, and the original unbounded /[^:]*:([\d+\-\s]+)/
+              // is a polynomial-ReDoS sink. Real vCard TEL lines are short, so the caps
+              // are behaviour-equivalent for genuine contacts.
+              const telMatch = vcard.match(/TEL[^:]{0,200}:([\d+\-\s]{1,64})/i);
               if (fnMatch) content.displayName = fnMatch[1].trim();
               if (telMatch) content.phone = telMatch[1].trim();
               // Store all vCards if multiple contacts
