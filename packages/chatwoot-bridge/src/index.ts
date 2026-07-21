@@ -120,7 +120,7 @@ export class ChatwootBridge {
       }
     );
 
-    console.log(`[Bridge] MultiWA → Chatwoot: ${cleanLog(phoneNumber)} → Conv #${conversation.id}`);
+    console.log(`[Bridge] MultiWA → Chatwoot: ${cleanLog(phoneNumber)} → Conv #${cleanLog(conversation.id)}`);
   }
 
   /**
@@ -149,7 +149,7 @@ export class ChatwootBridge {
       text: content,
     });
 
-    console.log(`[Bridge] Chatwoot → MultiWA: Conv #${conversation.id} → ${cleanLog(phone)}`);
+    console.log(`[Bridge] Chatwoot → MultiWA: Conv #${cleanLog(conversation.id)} → ${cleanLog(phone)}`);
   }
 
   private async findOrCreateChatwootContact(phone: string, name?: string) {
