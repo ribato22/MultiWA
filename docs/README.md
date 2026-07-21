@@ -47,7 +47,7 @@ Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp AP
 - **Python SDK source**: [`packages/sdk-python`](../packages/sdk-python)
 - **PHP SDK source**: [`packages/sdk-php`](../packages/sdk-php)
 
-> SDKs ship as in-repo packages today. The public registry entries (`@multiwa/sdk`, `multiwa-sdk`, `multiwa/sdk`) are tracked as a release follow-up; until then, install from this repository or via the package's local path.
+> The Python SDK is live on PyPI (`pip install multiwa`) and the n8n community node on npm (`npm install n8n-nodes-multiwa`). The TypeScript (`@multiwa/sdk`) and PHP (`multiwa/sdk`) SDKs still ship as in-repo packages; their public registry entries are tracked as a release follow-up — until then, install them from this repository or via the package's local path.
 
 ---
 
