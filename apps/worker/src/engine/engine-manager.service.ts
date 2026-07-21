@@ -773,6 +773,13 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           });
           this.realtime.emitConnectionStatus(profileId, 'disconnected');
           this.emitEvent(AppEvents.CONNECTION.DISCONNECTED, { profileId, reason: 'max retries exhausted' });
+          // A transient disconnect that never recovered is a terminal state an operator
+          // should act on — notify org users (previously only session-invalidation did).
+          this.notifyOrgUsers(profileId, NotificationType.DISCONNECTION,
+            '⚠️ Profile Disconnected',
+            `${profile.displayName || profileId} disconnected (${reason}) and auto-recovery failed after ${maxRetries} attempts. Manual reconnect needed.`,
+            { profileId, reason: 'max-retries-exhausted' },
+          ).catch(err => this.logger.warn(`Notification error (retry-exhausted): ${err.message}`));
         }
       },
       onMessage: async (message: any) => {
