@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.0.0-green.svg" alt="Version" /></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.2.0-green.svg" alt="Version" /></a>
   <a href="https://ribato22.github.io/MultiWA/"><img src="https://img.shields.io/badge/🌐_Website-Live-brightgreen.svg" alt="Website" /></a>
   <a href="docker-compose.yml"><img src="https://img.shields.io/badge/docker-one--click-2496ED.svg" alt="Docker" /></a>
   <a href="https://hub.docker.com/r/ribato/multiwa-api"><img src="https://img.shields.io/docker/pulls/ribato/multiwa-api.svg" alt="Docker Pulls" /></a>

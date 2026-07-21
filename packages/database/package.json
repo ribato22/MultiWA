@@ -1,6 +1,6 @@
 {
   "name": "@multiwa/database",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "description": "MultiWA Database Layer (Prisma)",
   "main": "./dist/index.js",

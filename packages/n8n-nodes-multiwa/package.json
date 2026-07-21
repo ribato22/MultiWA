@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-multiwa",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "n8n nodes for MultiWA WhatsApp Business API Gateway",
   "keywords": [
     "n8n-community-node-package",

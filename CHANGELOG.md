@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-21
+
+Unified versioning: the app, all workspace packages, and every SDK now share a
+single version, matching the GitHub release tag.
+
+### Added
+
+- **Auto-reject incoming calls** — per-profile setting to auto-reject WhatsApp voice/video calls, with an optional canned reply, wired through the engine adapters, `@multiwa/engine-runtime`, the API, the worker, and an admin toggle on the profile settings page.
+- **Expiring API keys** — `expiresInDays` on key creation mints short-lived keys (the api-key strategy already rejects expired keys); keys remain non-expiring by default.
+- **Observability (P1)** — Prometheus alert rules, an Alertmanager config, and documented SLOs under `docs/monitoring/`.
+- **Inbound media cap** — inbound base64 media is size-capped via a shared `applyInboundMedia` helper used by both engine-managers.
+- **SDKs published** — the TypeScript SDK is live on npm (`@multiwa/sdk`), the Python SDK on PyPI (`multiwa`), and the n8n community node on npm (`n8n-nodes-multiwa`); docs updated accordingly. (PHP/Packagist still pending a split repo.)
+
+### Changed
+
+- **Engine-manager dedup (start)** — `serializeWaMessageId`, `isSystemMessageType`/`SYSTEM_MESSAGE_TYPES`, and `resolveEngineType` were promoted into `@multiwa/engine-runtime` as shared, unit-tested helpers so the API and worker engine-managers no longer maintain divergent copies.
+- CI: SDK/n8n publish workflows run on Node 22 (npm 12 requires Node ≥ 22).
+
+### Fixed
+
+- **Worker: @lid group messages no longer silently dropped** — the worker built the persisted message id inline and passed the raw id object into a String column for `@lid` group messages, throwing and dropping the message with no `message.received` webhook. It now uses the shared `serializeWaMessageId`.
+- **Worker: system/protocol messages filtered** — the worker persisted `e2e_notification`/`protocol`/`gp2`/`ciphertext`/`call_log`/etc. as bogus conversations with noisy notifications; it now applies the same `isSystemMessageType` filter the API had.
+- **Worker: `connectProfile` path-traversal guard** — a non-UUID `profileId` is rejected before it can reach the `SESSIONS_DIR/<id>` filesystem paths (mirrors the API guard).
+- **Worker: operator alert on exhausted auto-reconnect** — a profile that burns through all auto-retries now notifies org users instead of going silently offline.
+
+### Security
+
+- **Code scanning cleared to 0 open** — resolved the CodeQL `js/log-injection` findings (the recognised sanitizer is an empty-string CR/LF strip, `.replace(/[\r\n]/g, '')`) across the Chatwoot bridge and the webhook-receiver script, sanitized the untrusted `conversation.id` in bridge logs, and removed an unused import flagged by `js/unused-local-variable`.
+
 ## [1.1.0] - 2026-07-20
 
 ### Added
