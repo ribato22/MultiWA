@@ -9,7 +9,10 @@
 import express from 'express';
 import axios, { AxiosInstance } from 'axios';
 
-const cleanLog = (v: unknown) => String(v ?? '').replace(/\p{Cc}/gu, ' ');
+// Strip CR/LF first (the CodeQL-recognized log-injection barrier), then any
+// remaining Unicode control chars, before interpolating untrusted values into logs.
+const cleanLog = (v: unknown) =>
+  String(v ?? '').replace(/[\r\n]/g, ' ').replace(/\p{Cc}/gu, ' ');
 
 // ─── Configuration ────────────────────────────────────────────────────────
 

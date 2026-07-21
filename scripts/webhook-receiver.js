@@ -28,7 +28,10 @@
 const http = require("http");
 const crypto = require("crypto");
 
-const cleanLog = (v) => String(v ?? "").replace(/\p{Cc}/gu, " ");
+// Strip CR/LF first (the CodeQL-recognized log-injection barrier), then any
+// remaining Unicode control chars, before logging untrusted request data.
+const cleanLog = (v) =>
+  String(v ?? "").replace(/[\r\n]/g, " ").replace(/\p{Cc}/gu, " ");
 
 // === Configuration ===
 const PORT = parseInt(process.argv[2] || "9999", 10);

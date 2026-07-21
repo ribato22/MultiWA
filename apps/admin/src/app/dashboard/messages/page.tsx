@@ -19,7 +19,6 @@ import {
   BarChart3,
   MessageSquare,
   FileUp,
-  Search,
   Clock,
   Loader2,
   AlertCircle,
