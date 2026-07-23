@@ -1,0 +1,104 @@
+name: 🐛 Bug report
+description: Report a reproducible problem in MultiWA
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug! Please search [existing issues](https://github.com/ribato22/MultiWA/issues?q=is%3Aissue) first.
+        For usage questions use [Discussions](https://github.com/ribato22/MultiWA/discussions); for security issues follow [SECURITY.md](https://github.com/ribato22/MultiWA/security/policy) — do **not** open a public issue.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I removed any secrets, tokens, phone numbers, and internal hostnames from the logs/details below.
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps (requests, UI actions) to reproduce the behaviour.
+      placeholder: |
+        1. …
+        2. …
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behaviour
+      description: What you expected to happen, and what actually happened.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MultiWA version
+      description: Release tag or commit (e.g. v1.2.0). See the README badge / CHANGELOG.
+      placeholder: v1.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected component
+      multiple: true
+      options:
+        - API (apps/api)
+        - Worker (apps/worker)
+        - Admin dashboard (apps/admin)
+        - Engine adapter (packages/engines)
+        - SDK (TypeScript / Python / PHP)
+        - Webhooks
+        - Docs
+        - Other / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: WhatsApp engine
+      options:
+        - whatsapp-web.js (default)
+        - Baileys (experimental)
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker (docker compose)
+        - Local development (pnpm dev)
+        - Air-gapped / offline image
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: API/worker/admin logs around the failure. Redact secrets & phone numbers.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, Postgres/Redis versions, browser (for admin issues).
+      placeholder: |
+        - OS: Ubuntu 24.04
+        - Node: 20.x
+        - Postgres: 16 / Redis: 7
