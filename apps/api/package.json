@@ -58,16 +58,16 @@
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
-    "@swc/cli": "^0.3.0",
-    "@swc/core": "^1.4.0",
+    "@swc/cli": "^0.8.1",
+    "@swc/core": "^1.15.46",
     "@types/bcrypt": "^5.0.2",
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.1.1",
     "@types/nodemailer": "^7.0.9",
     "@types/passport-jwt": "^4.0.0",
     "@types/web-push": "^3.6.4",
-    "@vitest/coverage-v8": "^2",
-    "typescript": "^5.7.0",
+    "@vitest/coverage-v8": "^4",
+    "typescript": "^7.0.2",
     "unplugin-swc": "^1.5.1",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.10"
   }
 }
