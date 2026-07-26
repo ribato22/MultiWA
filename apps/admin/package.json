@@ -35,7 +35,7 @@
     "reactflow": "^11.11.4",
     "recharts": "^3.9.2",
     "socket.io-client": "^4.8.3",
-    "tailwind-merge": "^2.6.1",
+    "tailwind-merge": "^3.6.0",
     "tailwindcss-animate": "^1.0.7",
     "zustand": "^5.0.14"
   },
