@@ -62,7 +62,7 @@
     "@swc/core": "^1.15.46",
     "@types/bcrypt": "^6.0.0",
     "@types/node": "^20.19.43",
-    "@types/nodemailer": "^7.0.9",
+    "@types/nodemailer": "^8.0.1",
     "@types/passport-jwt": "^4.0.0",
     "@types/web-push": "^3.6.4",
     "@vitest/coverage-v8": "^2",
