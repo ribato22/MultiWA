@@ -26,8 +26,10 @@ updates:
           - minor
           - patch
     ignore:
-      # React 19 requires Next.js 15 — a coordinated framework migration, not a
-      # drop-in bump. Revisit when the admin moves to Next 15.
+      # Next.js + React move together: Next 15+ requires React 19, so the admin
+      # can only cross either major as one deliberate, tested migration.
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "react"
         update-types: ["version-update:semver-major"]
       - dependency-name: "react-dom"
@@ -43,9 +45,15 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "tailwind-merge"
         update-types: ["version-update:semver-major"]
-      # @vitest/coverage-v8 must match the vitest major (we pin vitest ^2), so it
-      # can only move as part of a deliberate vitest upgrade — never on its own.
+      # vitest and @vitest/coverage-v8 must move together and stay identical across
+      # every workspace package, so a vitest major is a single deliberate PR.
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "@vitest/coverage-v8"
+        update-types: ["version-update:semver-major"]
+      # n8n-workflow 2.x is a new n8n node-API major — the published
+      # n8n-nodes-multiwa package must be reconciled against it and re-published.
+      - dependency-name: "n8n-workflow"
         update-types: ["version-update:semver-major"]
       # lucide-react 1.x renames/removes icons — needs an icon-usage reconciliation.
       - dependency-name: "lucide-react"
