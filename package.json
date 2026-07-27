@@ -58,6 +58,9 @@
     "overrides": {
       "@whiskeysockets/eslint-config": "https://codeload.github.com/whiskeysockets/eslint-config/tar.gz/299e8389baf62f9aa3034de18ff0d62cc0a5e838",
       "libsignal": "https://codeload.github.com/WhiskeySockets/libsignal-node/tar.gz/bcea72df9ec34d9d9140ab30619cf479c7c144c7"
-    }
+    },
+    "neverBuiltDependencies": [
+      "isolated-vm"
+    ]
   }
 }
