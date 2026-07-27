@@ -36,8 +36,16 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@types/react-dom"
         update-types: ["version-update:semver-major"]
-      # tailwind-merge 3.x targets Tailwind CSS v4; the admin is on Tailwind v3.
+      # Tailwind v4 is a full migration (new engine, CSS-first config, changed
+      # class semantics) — not a drop-in bump. tailwind-merge 3.x targets v4, so
+      # both stay pinned to the v3 line until we do that migration together.
+      - dependency-name: "tailwindcss"
+        update-types: ["version-update:semver-major"]
       - dependency-name: "tailwind-merge"
+        update-types: ["version-update:semver-major"]
+      # @vitest/coverage-v8 must match the vitest major (we pin vitest ^2), so it
+      # can only move as part of a deliberate vitest upgrade — never on its own.
+      - dependency-name: "@vitest/coverage-v8"
         update-types: ["version-update:semver-major"]
       # lucide-react 1.x renames/removes icons — needs an icon-usage reconciliation.
       - dependency-name: "lucide-react"
