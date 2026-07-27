@@ -26,7 +26,7 @@
     "bullmq": "^5.81.2",
     "ioredis": "^5.11.1",
     "nodemailer": "^8.0.1",
-    "pino": "^9.0.0",
+    "pino": "^10.3.1",
     "prom-client": "^15",
     "qrcode": "^1.5.3",
     "reflect-metadata": "^0.2.0",
