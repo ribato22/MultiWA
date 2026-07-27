@@ -243,8 +243,8 @@ importers:
         specifier: ^5.11.1
         version: 5.11.1
       nodemailer:
-        specifier: ^8.0.1
-        version: 8.0.1
+        specifier: ^9.0.3
+        version: 9.0.3
       passport:
         specifier: ^0.7.0
         version: 0.7.0
@@ -352,8 +352,8 @@ importers:
         specifier: ^5.11.1
         version: 5.11.1
       nodemailer:
-        specifier: ^8.0.1
-        version: 8.0.1
+        specifier: ^9.0.3
+        version: 9.0.3
       pino:
         specifier: ^10.3.1
         version: 10.3.1
@@ -454,8 +454,8 @@ importers:
         specifier: ^11.0.0
         version: 11.1.28(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       nodemailer:
-        specifier: ^8.0.1
-        version: 8.0.1
+        specifier: ^9.0.3
+        version: 9.0.3
       web-push:
         specifier: ^3.6.7
         version: 3.6.7
@@ -6070,8 +6070,8 @@ packages:
   node-webpmux@3.2.1:
     resolution: {integrity: sha512-MKgpq9nFgo44pIVNx/umD3nkqb2E8oqQTfmstVsfNdx9uV4cX7a4LqA+d8AZd3v5tgJXwENKUFsXNP3bRLP8nQ==}
 
-  nodemailer@8.0.1:
-    resolution: {integrity: sha512-5kcldIXmaEjZcHR6F28IKGSgpmZHaF1IXLWFTG+Xh3S+Cce4MiakLtWY+PlBU69fLbRa8HlaGIrC/QolUpHkhg==}
+  nodemailer@9.0.3:
+    resolution: {integrity: sha512-n+YP+NKwR5zRWa60k3GiQ6Q3B4KXCoAw40dAKeCtYn020iNN74aWK2liXIC3ZEATeGql7we3tE3t8QwhY0eskw==}
     engines: {node: '>=6.0.0'}
 
   normalize-package-data@2.5.0:
@@ -14315,7 +14315,7 @@ snapshots:
 
   node-webpmux@3.2.1: {}
 
-  nodemailer@8.0.1: {}
+  nodemailer@9.0.3: {}
 
   normalize-package-data@2.5.0:
     dependencies:
