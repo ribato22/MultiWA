@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@types/hapi__boom": "^9.0.1",
-    "@types/node": "^22.0.0",
+    "@types/node": "^20.19.43",
     "typescript": "^5.7.0"
   }
 }

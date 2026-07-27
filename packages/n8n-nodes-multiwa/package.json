@@ -52,7 +52,7 @@
     ]
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.43",
     "eslint": "^8.0.0",
     "gulp": "^4.0.2",
     "n8n-workflow": "^1.0.0",
