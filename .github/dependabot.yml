@@ -3,6 +3,11 @@ version: 2
 # Automated dependency updates. Grouped to avoid PR spam; security updates are
 # opened by Dependabot regardless of schedule. This is the mechanism that
 # actually burns down the `pnpm audit` high/critical backlog over time.
+#
+# Both groups are restricted to minor/patch so a group PR always installs +
+# builds cleanly. MAJOR bumps arrive as their own individual PRs so each
+# breaking upgrade is reviewed on its own — except the framework majors below
+# that need a coordinated migration (kept ignored until we do that work).
 updates:
   - package-ecosystem: npm # covers the pnpm workspace (pnpm-lock.yaml)
     directory: /
@@ -12,11 +17,37 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+        update-types:
+          - minor
+          - patch
       production-dependencies:
         dependency-type: production
         update-types:
           - minor
           - patch
+    ignore:
+      # React 19 requires Next.js 15 — a coordinated framework migration, not a
+      # drop-in bump. Revisit when the admin moves to Next 15.
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+      # tailwind-merge 3.x targets Tailwind CSS v4; the admin is on Tailwind v3.
+      - dependency-name: "tailwind-merge"
+        update-types: ["version-update:semver-major"]
+      # lucide-react 1.x renames/removes icons — needs an icon-usage reconciliation.
+      - dependency-name: "lucide-react"
+        update-types: ["version-update:semver-major"]
+      # TypeScript 7 (native/Go preview) and Node 26 types outrun the pinned
+      # runtime (Node 20/22, TS 5.x). Bump these deliberately, not automatically.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
