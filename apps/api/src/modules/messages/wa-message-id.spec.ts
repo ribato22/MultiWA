@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serializeWaMessageId } from '@multiwa/engine-runtime';
+import { serializeWaMessageId, resolveWaMessageId } from '@multiwa/engine-runtime';
 
 describe('serializeWaMessageId', () => {
   it('passes through a plain string id', () => {
@@ -35,5 +35,39 @@ describe('serializeWaMessageId', () => {
     expect(serializeWaMessageId(null)).toMatch(/^in_/);
     expect(serializeWaMessageId({ id: {} })).toMatch(/^in_/);
     expect(serializeWaMessageId({ id: 123 })).toMatch(/^in_/);
+  });
+});
+
+// resolveWaMessageId is the ack-correlation variant: it must return null instead of
+// fabricating an id, because a synthetic id can never match a stored outbound row —
+// "no id" has to stay "no id" so applyAckStatusUpdate hits its skip guard rather
+// than issuing a pointless (or, historically, table-wide) update.
+describe('resolveWaMessageId (ack correlation)', () => {
+  it('resolves the same real ids as serializeWaMessageId', () => {
+    expect(resolveWaMessageId({ id: 'false_628@c.us_ABC' })).toBe('false_628@c.us_ABC');
+    expect(resolveWaMessageId({ _serialized: 'TOP' })).toBe('TOP');
+    expect(resolveWaMessageId({ id: { _serialized: 'Y' } })).toBe('Y');
+  });
+
+  // WhatsApp Web >= 2.3000.1042401057 renamed the message key's cached serialized
+  // value to `$1`; reading `_serialized` yielded undefined, so every ack lost its id
+  // and all outbound rows froze at `pending`.
+  it('resolves the renamed $1 key (the frozen-pending root cause)', () => {
+    expect(resolveWaMessageId({ id: { $1: 'true_628@c.us_ACKME' } })).toBe('true_628@c.us_ACKME');
+    expect(resolveWaMessageId({ $1: 'true_628@c.us_TOPLEVEL' })).toBe('true_628@c.us_TOPLEVEL');
+  });
+
+  it('reconstructs from key parts when no serialized field survives', () => {
+    expect(resolveWaMessageId({ id: { fromMe: true, remote: '628@c.us', id: 'QQ' } })).toBe('true_628@c.us_QQ');
+  });
+
+  it('returns null (never a synthetic id) when the id is unresolvable', () => {
+    expect(resolveWaMessageId(null)).toBeNull();
+    expect(resolveWaMessageId(undefined)).toBeNull();
+    expect(resolveWaMessageId({})).toBeNull();
+    expect(resolveWaMessageId({ id: {} })).toBeNull();
+    expect(resolveWaMessageId({ id: 123 })).toBeNull();
+    // Not enough key parts to rebuild a canonical id.
+    expect(resolveWaMessageId({ id: { fromMe: true, remote: '628@c.us' } })).toBeNull();
   });
 });

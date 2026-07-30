@@ -2,3 +2,4 @@
 export * from './phone-number';
 export * from './jid';
 export * from './whatsapp-recipient';
+export * from './wa-message-id';
