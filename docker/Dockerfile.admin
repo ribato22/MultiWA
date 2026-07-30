@@ -8,6 +8,8 @@ RUN apk add --no-cache git && npm install -g pnpm
 
 # Copy workspace and pnpm config files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+# pnpm.patchedDependencies references patches/ — install fails without it.
+COPY patches ./patches
 COPY apps/admin/package.json ./apps/admin/
 COPY apps/api/package.json ./apps/api/
 COPY apps/worker/package.json ./apps/worker/
