@@ -10,6 +10,11 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
 import { AppEvents } from '@multiwa/core';
 import { MetricsService } from './metrics.service';
+import {
+  InternalEvents,
+  type EngineAckDroppedPayload,
+  type EngineGroupFetchPayload,
+} from './internal-events';
 
 @Injectable()
 export class MetricsEventsListener implements OnModuleInit {
@@ -61,6 +66,25 @@ export class MetricsEventsListener implements OnModuleInit {
       this.metrics.connectedProfiles.dec();
     } catch (err) {
       this.logger.debug(`connectedProfiles.dec failed: ${(err as Error).message}`);
+    }
+  }
+
+  // Engine-degradation probes (internal events — never delivered to webhooks).
+  @OnEvent(InternalEvents.ENGINE_GROUP_FETCH)
+  onEngineGroupFetch(payload: EngineGroupFetchPayload): void {
+    try {
+      this.metrics.engineGroupFetchTotal.inc({ source: payload?.source ?? 'unknown' });
+    } catch (err) {
+      this.logger.debug(`engineGroupFetch metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.ENGINE_ACK_DROPPED)
+  onEngineAckDropped(_payload: EngineAckDroppedPayload): void {
+    try {
+      this.metrics.engineAckDroppedTotal.inc();
+    } catch (err) {
+      this.logger.debug(`engineAckDropped metric failed: ${(err as Error).message}`);
     }
   }
 }

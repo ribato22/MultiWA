@@ -18,6 +18,7 @@ import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService } from '../automation/rule-engine.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
+import { InternalEvents } from '../../metrics/internal-events';
 
 
 interface EngineInstance {
@@ -830,6 +831,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           const ack = await applyAckStatusUpdate(messageId, status);
           if (!ack) {
             this.logger.warn(`[ACK] Ignoring ack with no message id (status: ${status})`);
+            // Surface it as a metric too: a WhatsApp Web key rename makes EVERY ack
+            // land here, freezing outbound status at `pending`, and a log line alone
+            // kept that invisible to monitoring for ~10 days.
+            this.emitEvent(InternalEvents.ENGINE_ACK_DROPPED, { profileId, status });
             return;
           }
           const { prior, count } = ack;

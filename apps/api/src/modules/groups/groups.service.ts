@@ -14,6 +14,8 @@ import { EngineManagerService } from '../profiles/engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
 import { prisma } from '@multiwa/database';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { InternalEvents } from '../../metrics/internal-events';
 
 export interface GroupInfo {
   id: string;
@@ -40,7 +42,22 @@ export class GroupsService {
     private readonly engineManager: EngineManagerService,
     // Routes group operations to the worker-hosted engine when ENGINE_HOST=worker.
     private readonly engineCommands: EngineCommandsService,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  /**
+   * Report which source served a group list. `fallback` means the live engine call
+   * failed, which is the early-warning signal that the engine's chat Store broke —
+   * previously this degradation was silent (only a log line) and went unnoticed for
+   * ~10 days. Never allowed to affect the response.
+   */
+  private reportGroupFetch(profileId: string, source: 'live' | 'fallback', count: number): void {
+    try {
+      this.eventEmitter.emit(InternalEvents.ENGINE_GROUP_FETCH, { profileId, source, count });
+    } catch {
+      /* telemetry must never break the group list */
+    }
+  }
 
   /**
    * Get all groups for a profile
@@ -54,11 +71,16 @@ export class GroupsService {
       const live = isWorkerEngine()
         ? await this.engineCommands.groupOp(profileId, 'getAll', {})
         : await this.getFromLiveEngine(profileId);
-      if (Array.isArray(live) && live.length > 0) return live;
+      if (Array.isArray(live) && live.length > 0) {
+        this.reportGroupFetch(profileId, 'live', live.length);
+        return live;
+      }
     } catch (error: any) {
       this.logger.warn(`Live getGroups failed for ${profileId} (${error?.message}); using stored groups`);
     }
-    return this.getGroupsFromDb(profileId);
+    const stored = await this.getGroupsFromDb(profileId);
+    this.reportGroupFetch(profileId, 'fallback', stored.length);
+    return stored;
   }
 
   private async getFromLiveEngine(profileId: string): Promise<GroupInfo[]> {

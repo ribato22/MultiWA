@@ -16,6 +16,8 @@
 #   multiwa_messages_failed_total{type}  counter
 #   http_requests_total{method,route,status}          counter
 #   http_request_duration_seconds_bucket{...,le}      histogram
+#   multiwa_engine_group_fetch_total{source}          counter
+#   multiwa_engine_ack_dropped_total                  counter
 #   up{job}                              Prometheus target health
 
 groups:
@@ -92,3 +94,30 @@ groups:
         annotations:
           summary: "HTTP p95 latency above 1s"
           description: "95th-percentile request latency has exceeded 1 second for 10 minutes (value: {{ $value }}s)."
+
+  - name: multiwa-engine-degradation
+    # Both of these fired silently for ~10 days in July 2026: WhatsApp Web renamed a
+    # message-key property, which broke the whatsapp-web.js chat Store. The group list
+    # quietly degraded to database rows and every delivery ack lost its message id,
+    # freezing outbound status at `pending`. Neither moved a metric, so a user reported
+    # it before monitoring did. These rules close that gap.
+    rules:
+      # Keyed on the SOURCE, not on group/participant counts: a profile legitimately
+      # having zero groups must not look like an outage.
+      - alert: MultiWAGroupListDegraded
+        expr: increase(multiwa_engine_group_fetch_total{source="fallback"}[15m]) > 0
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Group list is being served from the database fallback"
+          description: "The live engine group fetch has been failing for 15m, so stored groups are returned (raw JIDs, participantsCount 0). Usually the WhatsApp Web chat Store broke after a WhatsApp update. Check api logs for 'Get groups error' / 'Live getGroups failed'."
+
+      # A sustained non-zero rate means outbound status is frozen: acks arrive but
+      # carry no resolvable message id, so nothing ever leaves `pending`.
+      - alert: MultiWAAcksDropped
+        expr: increase(multiwa_engine_ack_dropped_total[15m]) > 10
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Delivery acks are being dropped (outbound status frozen)"
+          description: "Acks are arriving without a resolvable WhatsApp message id, so message rows stay 'pending' forever even though delivery still works. Signature of a WhatsApp Web message-key rename."

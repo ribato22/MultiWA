@@ -19,8 +19,18 @@ import { GroupsService } from './groups.service';
 function makeService(engine: any) {
   const engineManager = { getEngine: vi.fn(() => engine) } as any;
   const engineCommands = { groupOp: vi.fn() } as any;
-  return new GroupsService(engineManager, engineCommands);
+  // Captures the internal engine-degradation probe (live vs DB fallback).
+  const emitted: { event: string; payload: any }[] = [];
+  const eventEmitter = { emit: vi.fn((event: string, payload: any) => { emitted.push({ event, payload }); return true; }) } as any;
+  const service = new GroupsService(engineManager, engineCommands, eventEmitter);
+  (service as any).__emitted = emitted;
+  return service;
 }
+
+const emittedSources = (svc: any): string[] =>
+  (svc.__emitted as { event: string; payload: any }[])
+    .filter((e) => e.event === 'internal.engine.group_fetch')
+    .map((e) => e.payload.source);
 
 describe('GroupsService.getAll — resilient group list', () => {
   beforeEach(() => vi.mocked(prisma.conversation.findMany).mockReset());
@@ -57,5 +67,36 @@ describe('GroupsService.getAll — resilient group list', () => {
     const out = await svc.getAll('p1');
 
     expect(out[0].name).toBe('Group Chat');
+  });
+});
+
+// The engine-degradation probe: the alert keys on WHICH SOURCE served the list, so
+// the silent Store break behind the 2026-07-30 incident becomes visible to
+// monitoring instead of being just a log line.
+describe('GroupsService.getAll — degradation probe', () => {
+  beforeEach(() => vi.mocked(prisma.conversation.findMany).mockReset());
+
+  it('reports source="live" when the engine answers', async () => {
+    const svc = makeService({
+      getGroups: vi.fn().mockResolvedValue([{ id: '1@g.us', name: 'Live Group', participantCount: 3 }]),
+    });
+    await svc.getAll('p1');
+    expect(emittedSources(svc)).toEqual(['live']);
+  });
+
+  it('reports source="fallback" when the live call throws', async () => {
+    vi.mocked(prisma.conversation.findMany).mockResolvedValue([
+      { id: 'c1', jid: '1@g.us', name: 'Stored Group', createdAt: new Date() },
+    ] as any);
+    const svc = makeService({ getGroups: vi.fn().mockRejectedValue(new Error('r')) });
+    await svc.getAll('p1');
+    expect(emittedSources(svc)).toEqual(['fallback']);
+  });
+
+  it('reports source="fallback" when the engine returns an empty list', async () => {
+    vi.mocked(prisma.conversation.findMany).mockResolvedValue([] as any);
+    const svc = makeService({ getGroups: vi.fn().mockResolvedValue([]) });
+    await svc.getAll('p1');
+    expect(emittedSources(svc)).toEqual(['fallback']);
   });
 });
