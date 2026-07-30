@@ -444,6 +444,9 @@ importers:
 
   packages/engine-runtime:
     dependencies:
+      '@multiwa/core':
+        specifier: workspace:*
+        version: link:../core
       '@multiwa/database':
         specifier: workspace:*
         version: link:../database

@@ -3,6 +3,7 @@
 
 import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
+import { resolveWaMessageId } from '@multiwa/core';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -138,11 +139,16 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
     // Message received
     this.client.on('message', async (message: any) => {
-      console.log(`[WhatsApp-WebJS] Message received: ${message.id._serialized}`);
-      
+      // Resolve the id defensively: WhatsApp Web >= 2.3000.1042401057 renamed the
+      // cached serialized value on the message key from `_serialized` to `$1`, and
+      // @lid group messages deliver `id` as a raw object. Reading `_serialized`
+      // directly yields undefined on current builds.
+      const serializedId = resolveWaMessageId(message);
+      console.log(`[WhatsApp-WebJS] Message received: ${serializedId ?? '(unresolved id)'}`);
+
       const transformedMessage = {
         id: message.id,
-        _serialized: message.id._serialized,
+        _serialized: serializedId ?? undefined,
         from: message.from,
         to: message.to,
         body: message.body,
@@ -169,11 +175,21 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         3: 'read',
         4: 'played',
       };
-      
-      this.config?.onMessageAck?.(
-        message.id._serialized,
-        statusMap[ack] || 'unknown'
-      );
+
+      // Reading `message.id._serialized` here returned undefined on WhatsApp Web
+      // >= 2.3000.1042401057 (the `_serialized` -> `$1` key rename), so EVERY ack
+      // arrived without an id. `applyAckStatusUpdate` correctly skips those, which
+      // left every outbound row frozen at `pending` forever. Resolve the id the
+      // same way the inbound path does. `resolveWaMessageId` returns null rather
+      // than a synthetic id: for ack correlation a fabricated id could never match
+      // a stored row, so "no id" must stay "no id" and hit the skip guard.
+      const ackId = resolveWaMessageId(message);
+      if (!ackId) {
+        console.warn(`[WhatsApp-WebJS] Ack (${statusMap[ack] || 'unknown'}) has no resolvable message id; skipping`);
+        return;
+      }
+
+      this.config?.onMessageAck?.(ackId, statusMap[ack] || 'unknown');
     });
 
     // Incoming voice/video call — surface it so the engine-manager can auto-reject.
@@ -253,7 +269,8 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         // let that fail the whole send: warn and send unquoted.
         try {
           const quotedMsg = await this.client?.getMessageById(options.quotedMessageId);
-          if (quotedMsg) opts.quotedMessageId = quotedMsg.id._serialized;
+          const quotedId = quotedMsg ? resolveWaMessageId(quotedMsg) : null;
+          if (quotedId) opts.quotedMessageId = quotedId;
         } catch (e: any) {
           console.warn(
             `[WhatsApp-WebJS] Ignoring unresolvable quotedMessageId "${options.quotedMessageId}": ${e?.message}`,
@@ -265,7 +282,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       
       return {
         success: true,
-        messageId: result?.id._serialized,
+        messageId: resolveWaMessageId(result) ?? undefined,
         timestamp: new Date(),
       };
     } catch (error: any) {
@@ -333,7 +350,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       
       return {
         success: true,
-        messageId: result?.id._serialized,
+        messageId: resolveWaMessageId(result) ?? undefined,
         timestamp: new Date(),
       };
     } catch (error: any) {
@@ -358,7 +375,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       
       return {
         success: true,
-        messageId: result?.id._serialized,
+        messageId: resolveWaMessageId(result) ?? undefined,
         timestamp: new Date(),
       };
     } catch (error: any) {
@@ -382,7 +399,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         const result = await this.client?.sendMessage(chatId, vcard, { parseVCards: true });
         return {
           success: true,
-          messageId: result?.id._serialized,
+          messageId: resolveWaMessageId(result) ?? undefined,
           timestamp: new Date(),
         };
       }
@@ -394,7 +411,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         const result = await this.client?.sendMessage(chatId, vcard, { parseVCards: true });
         return {
           success: true,
-          messageId: result?.id._serialized,
+          messageId: resolveWaMessageId(result) ?? undefined,
           timestamp: new Date(),
         };
       }
@@ -441,7 +458,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       
       return {
         success: true,
-        messageId: result?.id._serialized,
+        messageId: resolveWaMessageId(result) ?? undefined,
         timestamp: new Date(),
       };
     } catch (error: any) {
