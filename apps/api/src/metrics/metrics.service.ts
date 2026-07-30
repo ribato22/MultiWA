@@ -27,6 +27,14 @@ export class MetricsService {
   // startup, then adjusted by connection.ready / connection.disconnected events.
   readonly connectedProfiles: Gauge;
 
+  // Engine-degradation probes. Both failures behind the 2026-07-30 incident were
+  // silent — the group Store broke (list quietly served from the DB fallback) and
+  // acks lost their message id (every outbound row froze at `pending`) — so
+  // monitoring saw nothing for ~10 days. These make the next occurrence alertable.
+  // `source="fallback"` on any sustained rate means the live chat Store is broken.
+  readonly engineGroupFetchTotal: Counter<'source'>;
+  readonly engineAckDroppedTotal: Counter;
+
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
     collectDefaultMetrics({ register: this.registry });
@@ -82,6 +90,32 @@ export class MetricsService {
         new Gauge({
           name: 'multiwa_connected_profiles',
           help: 'WhatsApp profiles currently connected (approximate)',
+          registers: [this.registry],
+        }),
+    );
+
+    this.engineGroupFetchTotal = this.getOrCreate(
+      'multiwa_engine_group_fetch_total',
+      () =>
+        new Counter({
+          name: 'multiwa_engine_group_fetch_total',
+          help:
+            'Group-list fetches by source. source="fallback" means the live engine ' +
+            'call failed and stored groups were served — the engine chat Store is degraded.',
+          labelNames: ['source'] as const,
+          registers: [this.registry],
+        }),
+    );
+
+    this.engineAckDroppedTotal = this.getOrCreate(
+      'multiwa_engine_ack_dropped_total',
+      () =>
+        new Counter({
+          name: 'multiwa_engine_ack_dropped_total',
+          help:
+            'Delivery acks discarded because they carried no resolvable message id — ' +
+            'the signature of a WhatsApp Web message-key rename. Sustained non-zero ' +
+            'means outbound message status is frozen.',
           registers: [this.registry],
         }),
     );
