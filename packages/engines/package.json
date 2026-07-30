@@ -17,7 +17,7 @@
     "@multiwa/core": "workspace:*",
     "@whiskeysockets/baileys": "^6.7.0",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.7"
+    "whatsapp-web.js": "1.34.7"
   },
   "devDependencies": {
     "@types/hapi__boom": "^9.0.1",

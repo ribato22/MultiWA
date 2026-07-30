@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y git && npm install -g pnpm
 
 # Copy workspace files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+# pnpm.patchedDependencies references patches/ — install fails without it.
+COPY patches ./patches
 COPY apps/worker/package.json ./apps/worker/
 COPY packages/core/package.json ./packages/core/
 COPY packages/database/package.json ./packages/database/
@@ -26,6 +28,12 @@ COPY tsconfig.json ./tsconfig.json
 
 # Install dependencies
 RUN pnpm install --no-frozen-lockfile
+
+# Fail the build if the whatsapp-web.js patch did not apply. A silently-unpatched
+# image reintroduces the WhatsApp Web `$1` MsgKey break (getChats/getGroups/
+# getRecentChats all die with the minified `r`), so this must never ship quietly.
+RUN test "$(grep -c getMsgKeyId packages/engines/node_modules/whatsapp-web.js/src/util/Injected/Utils.js)" -ge 1 \
+    || (echo "::error::whatsapp-web.js patch NOT applied (patches/whatsapp-web.js@1.34.7.patch)" && exit 1)
 
 # Generate Prisma client FIRST (before worker build)
 RUN cd packages/database && npx prisma generate
@@ -61,6 +69,8 @@ RUN apt-get update && apt-get install -y \
 
 # Copy workspace definition and lockfile
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
+# The prod install re-applies pnpm.patchedDependencies, so it needs patches/ too.
+COPY --from=builder /app/patches ./patches
 COPY --from=builder /app/apps/worker/package.json ./apps/worker/
 COPY --from=builder /app/packages/core/package.json ./packages/core/
 COPY --from=builder /app/packages/database/package.json ./packages/database/

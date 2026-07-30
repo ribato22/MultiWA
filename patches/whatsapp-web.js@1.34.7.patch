@@ -1,0 +1,161 @@
+diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
+index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037af8efc976 100644
+--- a/src/util/Injected/Utils.js
++++ b/src/util/Injected/Utils.js
+@@ -582,7 +582,7 @@ exports.LoadUtils = () => {
+ 
+         return window
+             .require('WAWebCollections')
+-            .Msg.get(newMsgKey._serialized);
++            .Msg.get(window.WWebJS.getMsgKeyId(newMsgKey));
+     };
+ 
+     window.WWebJS.editMessage = async (msg, content, options = {}) => {
+@@ -625,7 +625,9 @@ exports.LoadUtils = () => {
+         await window
+             .require('WAWebSendMessageEditAction')
+             .sendMessageEdit(msg, content, internalOptions);
+-        return window.require('WAWebCollections').Msg.get(msg.id._serialized);
++        return window
++            .require('WAWebCollections')
++            .Msg.get(window.WWebJS.getMsgKeyId(msg.id));
+     };
+ 
+     window.WWebJS.toStickerData = async (mediaInfo) => {
+@@ -800,9 +802,32 @@ exports.LoadUtils = () => {
+         return mediaData;
+     };
+ 
++    /**
++     * MultiWA patch: WhatsApp Web >= 2.3000.1042401057 renamed the cached
++     * serialized value on WAWebMsgKey from `_serialized` to the minified `$1`.
++     * Reading `_serialized` now yields undefined, which reaches
++     * `Msg.getMessagesById([undefined])` and throws a DOM `DataError`
++     * ("Failed to execute 'get' on 'IDBObjectStore'"), surfacing as the minified
++     * `r`. `_serialized` stays preferred so nothing changes where it survives.
++     */
++    window.WWebJS.getMsgKeyId = (key) =>
++        key?._serialized ?? key?.$1 ?? undefined;
++
+     window.WWebJS.getMessageModel = (message) => {
+         const msg = message.serialize();
+ 
++        // MultiWA patch: mirror the renamed `$1` back onto `id._serialized` so every
++        // downstream consumer (Message.id._serialized, ack correlation, DB rows)
++        // keeps working unchanged.
++        if (
++            msg.id &&
++            typeof msg.id === 'object' &&
++            msg.id._serialized == null &&
++            typeof msg.id.$1 === 'string'
++        ) {
++            msg.id = Object.assign({}, msg.id, { _serialized: msg.id.$1 });
++        }
++
+         const { findLinks } = window.require('WALinkify');
+ 
+         msg.isEphemeral = message.isEphemeral;
+@@ -919,10 +944,20 @@ exports.LoadUtils = () => {
+ 
+     window.WWebJS.getChats = async () => {
+         const chats = window.require('WAWebCollections').Chat.getModelsArray();
+-        const chatPromises = chats.map((chat) =>
+-            window.WWebJS.getChatModel(chat),
+-        );
+-        return await Promise.all(chatPromises);
++        // MultiWA patch: `Promise.all` is fail-fast, so ONE unreadable chat
++        // discarded the entire chat list (and with it getGroups / getRecentChats).
++        // Isolate per chat and count what we skipped instead.
++        const results = [];
++        for (const chat of chats) {
++            try {
++                const model = await window.WWebJS.getChatModel(chat);
++                if (model) results.push(model);
++            } catch (err) {
++                window.WWebJS.__multiwaChatModelErrors =
++                    (window.WWebJS.__multiwaChatModelErrors || 0) + 1;
++            }
++        }
++        return results;
+     };
+ 
+     window.WWebJS.getChannels = async () => {
+@@ -950,21 +985,46 @@ exports.LoadUtils = () => {
+         }
+ 
+         if (chat.groupMetadata) {
++            // MultiWA patch: guard the whole group block. `isGroup` must stay true
++            // (ChatFactory dispatches on it) and `groupMetadata` must never be left
++            // undefined (GroupChat's participants/description/owner getters
++            // dereference it unconditionally), so degrade to an empty stub.
+             model.isGroup = true;
+-            const chatWid = window
+-                .require('WAWebWidFactory')
+-                .createWid(chat.id._serialized);
+-            const groupMetadata =
+-                window.require('WAWebCollections').GroupMetadata ||
+-                window.require('WAWebCollections').WAWebGroupMetadataCollection;
+-            await groupMetadata.update(chatWid);
+-            const { toPn } = window.require('WAWebLidMigrationUtils');
+-            const serializedMetadata = chat.groupMetadata.serialize();
+-            for (const p of serializedMetadata.participants || []) {
+-                p.id = toPn(p.id) ?? p.id;
++            try {
++                const chatWid = window
++                    .require('WAWebWidFactory')
++                    .createWid(chat.id._serialized);
++                const groupMetadata =
++                    window.require('WAWebCollections').GroupMetadata ||
++                    window.require('WAWebCollections')
++                        .WAWebGroupMetadataCollection;
++                await groupMetadata.update(chatWid);
++                const serializedMetadata = chat.groupMetadata.serialize();
++                // The LID->phone mapper is a newer module; if it is absent, keep the
++                // raw participant ids rather than losing the whole group.
++                let toPn = null;
++                try {
++                    toPn = window.require('WAWebLidMigrationUtils')?.toPn ?? null;
++                } catch (e) {
++                    toPn = null;
++                }
++                if (typeof toPn === 'function') {
++                    for (const p of serializedMetadata.participants || []) {
++                        p.id = toPn(p.id) ?? p.id;
++                    }
++                }
++                model.groupMetadata = serializedMetadata;
++                model.isReadOnly = chat.groupMetadata.announce;
++            } catch (err) {
++                model.groupMetadata = {
++                    participants: [],
++                    desc: '',
++                    owner: undefined,
++                    creation: 0,
++                };
++                model.isReadOnly = false;
++                model.__multiwaDegraded = String(err?.message || err);
+             }
+-            model.groupMetadata = serializedMetadata;
+-            model.isReadOnly = chat.groupMetadata.announce;
+         }
+ 
+         if (chat.newsletterMetadata) {
+@@ -984,12 +1044,16 @@ exports.LoadUtils = () => {
+             const lastMessage = chat.lastReceivedKey
+                 ? window
+                       .require('WAWebCollections')
+-                      .Msg.get(chat.lastReceivedKey._serialized) ||
++                      .Msg.get(
++                          window.WWebJS.getMsgKeyId(chat.lastReceivedKey),
++                      ) ||
+                   (
+                       await window
+                           .require('WAWebCollections')
+                           .Msg.getMessagesById([
+-                              chat.lastReceivedKey._serialized,
++                              window.WWebJS.getMsgKeyId(
++                                  chat.lastReceivedKey,
++                              ),
+                           ])
+                   )?.messages?.[0]
+                 : null;
