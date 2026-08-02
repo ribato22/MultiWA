@@ -17,10 +17,10 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@prisma/adapter-pg": "^7.9.0",
-    "@prisma/client": "^7.9.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
     "dotenv": "^17.4.2",
-    "prisma": "^7.9.0"
+    "prisma": "^7.9.1"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
