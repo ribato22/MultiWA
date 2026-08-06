@@ -7,6 +7,9 @@ import { Strategy } from 'passport-custom';
 import { prisma } from '@multiwa/database';
 import * as crypto from 'crypto';
 
+/** Persist lastUsedAt at most once per window (mirrors sessions TOUCH_THROTTLE_MS). */
+const LAST_USED_THROTTLE_MS = 5 * 60 * 1000;
+
 @Injectable()
 export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
   constructor() {
@@ -41,11 +44,14 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       throw new UnauthorizedException('API key expired');
     }
 
-    // Update last used
-    await prisma.apiKey.update({
-      where: { id: key.id },
-      data: { lastUsedAt: new Date() },
-    });
+    // Update last used (throttled — avoid a DB write per request)
+    const now = new Date();
+    if (!key.lastUsedAt || now.getTime() - key.lastUsedAt.getTime() > LAST_USED_THROTTLE_MS) {
+      await prisma.apiKey.update({
+        where: { id: key.id },
+        data: { lastUsedAt: now },
+      });
+    }
 
     return {
       id: key.user.id,

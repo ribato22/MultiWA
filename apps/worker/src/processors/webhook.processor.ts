@@ -39,6 +39,14 @@ function policedLogPayload(payload: any): any {
   return clone;
 }
 
+/**
+ * Delivery timeout per attempt. WEBHOOK_TIMEOUT_MS (default 30s).
+ */
+function webhookTimeoutMs(): number {
+  const v = parseInt(process.env.WEBHOOK_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 30000;
+}
+
 export class WebhookProcessor {
   async process(job: Job<WebhookJob>) {
     const { webhookId, event, payload } = job.data;
@@ -86,7 +94,7 @@ export class WebhookProcessor {
         },
         body,
         redirect: 'error',
-        signal: AbortSignal.timeout(30000), // 30s timeout
+        signal: AbortSignal.timeout(webhookTimeoutMs()),
       });
 
       const responseText = await response.text().catch((): null => null);

@@ -9,15 +9,17 @@
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import helmet from '@fastify/helmet';
+import multipart from '@fastify/multipart';
 
 export async function configureApp(app: NestFastifyApplication): Promise<void> {
   // File uploads
-  await app.register(require('@fastify/multipart'), {
+  await app.register(multipart, {
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max
   });
 
   // Security headers
-  await app.register(require('@fastify/helmet'), {
+  await app.register(helmet, {
     contentSecurityPolicy: false, // CSP handled by Next.js admin
     crossOriginEmbedderPolicy: false, // Allow embedding for chat widget
     hsts: { maxAge: 31536000, includeSubDomains: true },

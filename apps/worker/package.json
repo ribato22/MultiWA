@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:cov": "vitest run --coverage"
   },
   "dependencies": {

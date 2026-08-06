@@ -4,6 +4,7 @@
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as crypto from 'crypto';
 import { AppModule } from './app.module';
 import { configureApp } from './app.factory';
 
@@ -17,8 +18,10 @@ function validateSecurityConfig() {
     'change-this-refresh-secret',
     'change-this-to-a-random-secret',
     'your-secure-generated-secret-key-here',
+    'your-super-secret-jwt-key-change-in-production',
+    'your-super-secret-refresh-key-change-in-production',
+    'CHANGE_ME',
   ]);
-  const crypto = require('crypto');
   for (const name of ['JWT_SECRET', 'JWT_REFRESH_SECRET']) {
     const v = process.env[name];
     if (!v || KNOWN_WEAK.has(v)) {
@@ -128,8 +131,9 @@ async function bootstrap() {
     // killed mid-flight. Must be enabled before listen() to register the hooks.
     app.enableShutdownHooks();
 
-    // Start server
-    const port = process.env.API_PORT || 3000;
+    // Start server. API_PORT wins; fall back to the platform-injected PORT (e.g.
+    // Render) so image deploys bind the port the platform health-checks.
+    const port = process.env.API_PORT || process.env.PORT || 3000;
     const host = process.env.API_HOST || '0.0.0.0';
     
     console.log(`🔧 [7/7] Listening on ${host}:${port}...`);
