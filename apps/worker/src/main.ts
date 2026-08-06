@@ -170,22 +170,17 @@ scheduledWorker.on('failed', (job, err) => {
 
 // Schedule periodic job for checking scheduled messages (every minute)
 const setupScheduledJobs = async () => {
-  // Remove existing repeatable jobs to prevent duplicates
-  const repeatableJobs = await scheduledQueue.getRepeatableJobs();
-  for (const job of repeatableJobs) {
-    await scheduledQueue.removeRepeatableByKey(job.key);
-  }
-
-  // Add new repeatable job - runs every minute
-  await scheduledQueue.add(
+  // BullMQ v6 Job Scheduler: upsert is idempotent, so repeated calls (worker
+  // restarts) never create duplicate schedules — this replaces the v5
+  // repeatable-job cleanup loop (getRepeatableJobs/removeRepeatableByKey),
+  // which is removed in BullMQ 6.
+  await scheduledQueue.upsertJobScheduler(
     'check-scheduled-messages',
-    { type: 'check' },
+    { every: 60000 },
     {
-      repeat: {
-        every: 60000, // Every minute
-      },
-      removeOnComplete: 100,
-      removeOnFail: 50,
+      name: 'check-scheduled-messages',
+      data: { type: 'check' },
+      opts: { removeOnComplete: 100, removeOnFail: 50 },
     }
   );
 
