@@ -54,8 +54,13 @@ export class WorkerWebhookDispatcherService implements OnModuleInit {
             { webhookId: webhook.id, event, payload },
             {
               jobId: messageId ? `${webhook.id}-${event}-${messageId}` : undefined,
-              attempts: 5,
-              backoff: { type: 'exponential', delay: 30000 },
+              // Retry policy tunable: WEBHOOK_RETRY_ATTEMPTS / WEBHOOK_RETRY_DELAY_MS
+              // (defaults preserve the historical 5 attempts × 30s exponential backoff).
+              attempts: parseInt(process.env.WEBHOOK_RETRY_ATTEMPTS ?? '5', 10) || 5,
+              backoff: {
+                type: 'exponential',
+                delay: parseInt(process.env.WEBHOOK_RETRY_DELAY_MS ?? '30000', 10) || 30000,
+              },
               removeOnComplete: 200,
               removeOnFail: 100,
             },

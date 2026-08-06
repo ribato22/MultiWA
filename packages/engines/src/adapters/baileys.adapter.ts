@@ -10,6 +10,8 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import * as qrcode from 'qrcode-terminal';
+import * as fs from 'fs';
+import * as path from 'path';
 import type {
   IWhatsAppEngine,
   EngineConfig,
@@ -219,8 +221,6 @@ export class BaileysAdapter implements IWhatsAppEngine {
             console.log(`[Baileys] Max retries (${this.maxConnectionRetries}) reached for ${this.config?.profileId}. Clearing stale session...`);
             const sessionDir = this.config?.sessionDir || `./sessions/${this.config?.profileId}`;
             try {
-              const fs = require('fs');
-              const path = require('path');
               for (const file of fs.readdirSync(sessionDir)) {
                 fs.unlinkSync(path.join(sessionDir, file));
               }

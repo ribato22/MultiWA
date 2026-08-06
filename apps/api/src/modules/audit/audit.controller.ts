@@ -3,7 +3,7 @@
 
 import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
-import { AuditService } from './audit.service';
+import { AuditAction, AuditService } from './audit.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiAuthErrors } from '../../common/decorators/api-responses';
 
@@ -66,7 +66,7 @@ export class AuditController {
   @Get('actions')
   @ApiOperation({ summary: 'List available audit actions' })
   getActions() {
-    return Object.entries(require('./audit.service').AuditAction).map(([key, value]) => ({
+    return Object.entries(AuditAction).map(([key, value]) => ({
       key,
       action: value,
       category: (value as string).split('.')[0],
