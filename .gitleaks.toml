@@ -1,0 +1,21 @@
+# MultiWA gitleaks configuration.
+#
+# Extends the default gitleaks rule set. Only the `curl-auth-header` rule is
+# customized: documentation curl examples use placeholder tokens
+# (e.g. `YOUR_TOKEN`), which the stock rule flags despite being non-secrets.
+# The allowlist is scoped by path to the two documentation trees so real
+# secrets anywhere else are still detected.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "curl-auth-header"
+description = "Discovered a potential authorization token provided in a curl command header, which could compromise the curl accessed resource."
+regex = '''\bcurl\b(?:.*?|.*?(?:[\r\n]{1,2}.*?){1,5})[ \t\n\r](?:-H|--header)(?:=|[ \t]{0,5})(?:"(?i)(?:Authorization:[ \t]{0,5}(?:Basic[ \t]([a-z0-9+/]{8,}={0,3})|(?:Bearer|(?:Api-)?Token)[ \t]([\w=~@.+/-]{8,})|([\w=~@.+/-]{8,}))|(?:(?:X-(?:[a-z]+-)?)?(?:Api-?)?(?:Key|Token)):[ \t]{0,5}([\w=~@.+/-]{8,}))"|'(?i)(?:Authorization:[ \t]{0,5}(?:Basic[ \t]([a-z0-9+/]{8,}={0,3})|(?:Bearer|(?:Api-)?Token)[ \t]([\w=~@.+/-]{8,})|([\w=~@.+/-]{8,}))|(?:(?:X-(?:[a-z]+-)?)?(?:Api-?)?(?:Key|Token)):[ \t]{0,5}([\w=~@.+/-]{8,}))')(?:\B|\s|\z)'''
+entropy = 2.75
+keywords = ["curl"]
+
+[rules.allowlist]
+description = "Documentation curl examples with placeholder tokens"
+paths = ["^docs/.*\\.(md|markdown|mdx|rst|txt)$", "^docs-site/.*\\.(md|markdown|mdx|rst|txt)$"]

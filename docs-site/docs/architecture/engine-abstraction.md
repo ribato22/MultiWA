@@ -13,10 +13,14 @@ MultiWA supports multiple WhatsApp client libraries through an abstraction layer
 
 ## Supported Engines
 
-| Engine | Status | Description |
-|--------|--------|-------------|
-| **Baileys** | ✅ Default | Pure Node.js, fastest |
-| **WhatsApp-Web.js** | ✅ Supported | Puppeteer-based, more stable |
+| Engine | Key | Status | Notes |
+|--------|-----|--------|-------|
+| **WhatsApp-Web.js** | `whatsapp-web-js` | ✅ Default (production) | Puppeteer-based, most stable, best group support |
+| **Baileys** | `baileys` | ⚠️ Experimental | Pure Node.js; `sendReaction` is a no-op stub and `getContacts` may be unavailable — not validated for production |
+| **Mock** | `mock` | 🧪 Testing only | Simulated adapter for local/dev and tests |
+
+Each `Profile` has an `engine` column selecting its adapter. The engine is
+instantiated through `EngineFactory.create()` when the profile connects.
 
 ---
 
@@ -52,16 +56,29 @@ interface IWhatsAppEngine {
 
 ## Configuration
 
-```typescript
-// .env
-ENGINE_TYPE=baileys  // or whatsapp-web.js
+Engine selection precedence (resolved in `EngineManagerService.resolveEngineType`):
 
-// Per-profile override
+1. The profile's `engine` field (validated: `whatsapp-web-js` | `baileys` | `mock`)
+2. The `DEFAULT_ENGINE` environment variable (if a valid engine key)
+3. `whatsapp-web-js` (fallback)
+
+```bash
+# .env — default engine for profiles that don't set one explicitly
+# Options: whatsapp-web-js (default) | baileys (EXPERIMENTAL) | mock (testing only)
+DEFAULT_ENGINE=whatsapp-web-js
+```
+
+```jsonc
+// Per-profile selection — POST/PUT /profiles
 {
-  "profileId": "abc123",
-  "engine": "WHATSAPP_WEB_JS"
+  "engine": "whatsapp-web-js"
 }
 ```
+
+> Changing a profile's engine takes effect on the **next reconnect**; the API
+> returns a warning when the engine changes. Clear the engine-specific session
+> directory (`.wwebjs_auth` for whatsapp-web-js, `creds.json` for Baileys) before
+> reconnecting to avoid a stale session.
 
 ---
 
@@ -77,10 +94,12 @@ Engine Event → EngineManager → EventsGateway → WebSocket/Webhook
 
 ## Adding New Engines
 
-1. Implement `IWhatsAppEngine` interface
-2. Register in `EngineFactory`
-3. Add to `EngineType` enum in Prisma
+1. Implement the `IWhatsAppEngine` interface (`packages/engines`)
+2. Register the new key in `EngineFactory.create()`
+3. Add the key to the `EngineType` union (`packages/engines/src/types.ts`) and the
+   `EngineType` DTO enum (`apps/api/.../profiles/dto`). The Prisma `Profile.engine`
+   column is a plain `String`, so no schema enum change is needed.
 
 ---
 
-[← Database Design](/architecture/database-design) · [Documentation Index](/getting-started/project-overview) · [API Specification →](/api/api-specification)
+[← Database Design](<database-design.md>) · [Documentation Index](<../intro.md>) · [API Specification →](<../api/api-specification.md>)

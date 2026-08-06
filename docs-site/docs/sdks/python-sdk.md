@@ -24,7 +24,7 @@ from multiwa import MultiWA
 
 # Initialize client
 client = MultiWA(
-    base_url="http://localhost:3001/api",
+    base_url="http://localhost:3333/api/v1",
     api_key="YOUR_API_KEY"
 )
 
@@ -48,7 +48,7 @@ import asyncio
 
 async def main():
     client = AsyncMultiWA(
-        base_url="http://localhost:3001/api",
+        base_url="http://localhost:3333/api/v1",
         api_key="YOUR_API_KEY"
     )
 
@@ -159,4 +159,4 @@ contact: Contact = client.contacts.get(...)
 
 ---
 
-[← Automation](/features/automation) · [Documentation Index](/getting-started/project-overview) · [PHP SDK →](/sdks/php-sdk)
+[← Automation](<../features/automation.md>) · [Documentation Index](<../intro.md>) · [PHP SDK →](<php-sdk.md>)

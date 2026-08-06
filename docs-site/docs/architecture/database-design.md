@@ -41,8 +41,8 @@ model Profile {
   id          String    @id @default(cuid())
   name        String
   phone       String?
-  status      SessionStatus @default(DISCONNECTED)
-  engine      EngineType    @default(BAILEYS)
+  status      String        @default("disconnected")
+  engine      String        @default("whatsapp-web-js") // whatsapp-web-js | baileys | mock
   webhookUrl  String?
   createdAt   DateTime  @default(now())
   
@@ -95,10 +95,8 @@ enum SessionStatus {
   CONNECTED
 }
 
-enum EngineType {
-  BAILEYS
-  WHATSAPP_WEB_JS
-}
+// Engine is stored as a plain String on Profile (not a DB enum). Valid values are
+// validated at the application layer: whatsapp-web-js (default) | baileys | mock.
 
 enum MessageType {
   TEXT
@@ -125,4 +123,4 @@ enum MessageType {
 
 ---
 
-[← System Architecture](/architecture/system-architecture) · [Documentation Index](/getting-started/project-overview) · [Engine Abstraction →](/architecture/engine-abstraction)
+[← System Architecture](<system-architecture.md>) · [Documentation Index](<../intro.md>) · [Engine Abstraction →](<engine-abstraction.md>)

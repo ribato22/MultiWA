@@ -30,7 +30,7 @@ Or install via n8n UI:
 1. In n8n, go to **Credentials** → **Add Credential**
 2. Search for **MultiWA API**
 3. Enter:
-   - **API Base URL**: `http://localhost:3001/api`
+   - **API Base URL**: `http://localhost:3333/api/v1`
    - **API Key**: Your MultiWA API key
 
 ---
@@ -146,4 +146,4 @@ Receive WhatsApp events in real-time:
 
 ---
 
-[← PHP SDK](/sdks/php-sdk) · [Documentation Index](/getting-started/project-overview) · [Docker Deployment →](/operations/deployment-docker)
+[← PHP SDK](<php-sdk.md>) · [Documentation Index](<../intro.md>) · [Docker Deployment →](<../operations/deployment-docker.md>)

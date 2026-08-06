@@ -134,4 +134,4 @@ pnpm format
 
 ---
 
-[← Docker Deployment](/operations/deployment-docker) · [Documentation Index](/getting-started/project-overview)
+[← Docker Deployment](<deployment-docker.md>) · [Documentation Index](<../intro.md>)

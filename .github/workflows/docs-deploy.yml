@@ -39,6 +39,12 @@ jobs:
         working-directory: docs-site
         run: npm ci
 
+      - name: Sync docs into docs-site
+        # docs/ is the single source of truth; regenerate the Docusaurus pages
+        # (frontmatter + link rewriting) so the published site always matches
+        # the repo docs. No-op when already in sync.
+        run: node scripts/sync-docsite.mjs
+
       - name: Build Docusaurus (baseUrl /MultiWA/docs/)
         working-directory: docs-site
         run: npx docusaurus build

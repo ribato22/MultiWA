@@ -26,7 +26,9 @@ is_weak() {
     | "change-this-refresh-secret" \
     | "change-this-to-a-random-secret" \
     | "your-secure-generated-secret-key-here" \
-    | "your-super-secret-jwt-key-change-in-production")
+    | "your-super-secret-jwt-key-change-in-production" \
+    | "your-super-secret-refresh-key-change-in-production" \
+    | "CHANGE_ME")
       return 0 ;;
     *) return 1 ;;
   esac

@@ -7,6 +7,7 @@ const sidebars: SidebarsConfig = {
       label: 'Getting Started',
       collapsed: false,
       items: [
+        'intro',
         'getting-started/project-overview',
         'getting-started/requirements',
         'getting-started/quick-start',
@@ -64,6 +65,7 @@ const sidebars: SidebarsConfig = {
         'operations/configuration-reference',
         'operations/demo-mode',
         'operations/database-backup',
+        'operations/releasing-and-distribution',
       ],
     },
   ],

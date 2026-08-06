@@ -13,19 +13,21 @@ MultiWA delivers real-time events to your HTTP endpoints via webhooks.
 
 ## Configuration
 
+All paths use the API base URL described in [API Specification](<api-specification.md#71-overview>): Docker default is `http://localhost:3333/api/v1`.
+
 ### Per-Profile Webhook
 ```bash
-POST /api/profiles/:id/webhook
+POST /api/v1/profiles/:id/webhook
 {
   "url": "https://yourserver.com/webhook",
   "secret": "optional-hmac-secret",
-  "events": ["message.received", "session.status"]
+  "events": ["message.received", "connection.ready"]
 }
 ```
 
 ### Global Webhook
 ```bash
-POST /api/webhooks
+POST /api/v1/webhooks
 {
   "url": "https://yourserver.com/webhook",
   "secret": "your-secret",
@@ -43,9 +45,10 @@ POST /api/webhooks
 | `message.sent` | Outgoing message confirmed |
 | `message.delivered` | Message delivered (✓✓) |
 | `message.read` | Message read (blue ✓✓) |
-| `session.connected` | WhatsApp connected |
-| `session.disconnected` | WhatsApp disconnected |
-| `session.qr` | New QR code generated |
+| `message.failed` | Message delivery failed |
+| `connection.qr` | New QR code generated |
+| `connection.ready` | WhatsApp connected |
+| `connection.disconnected` | WhatsApp disconnected |
 
 ---
 
@@ -70,23 +73,28 @@ POST /api/webhooks
 
 ## HMAC Verification
 
-If you set a `secret`, verify the signature:
+If you set a `secret`, verify the signature over the **raw request body** (the exact bytes MultiWA sent), not a re-serialized object:
 
 ```javascript
 const crypto = require('crypto');
 
-function verifyWebhook(body, signature, secret) {
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(JSON.stringify(body))
-    .digest('hex');
-  return `sha256=${expected}` === signature;
+// Capture the RAW request body so the HMAC matches byte-for-byte. MultiWA signs
+// the exact bytes it sends, so verify against the raw body — a re-serialized
+// object (JSON.stringify(req.body)) is NOT guaranteed to match.
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+
+function verifyWebhook(rawBody, signature, secret) {
+  const expected =
+    'sha256=' + crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+  const got = signature || '';
+  return expected.length === got.length &&
+    crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(got));
 }
 
 // In your handler
 app.post('/webhook', (req, res) => {
   const signature = req.headers['x-multiwa-signature'];
-  if (!verifyWebhook(req.body, signature, 'your-secret')) {
+  if (!verifyWebhook(req.rawBody, signature, 'your-secret')) {
     return res.status(401).send('Invalid signature');
   }
   // Process event...
@@ -95,18 +103,33 @@ app.post('/webhook', (req, res) => {
 
 ---
 
-## Retry Policy
+## Delivery & Retry
 
-| Attempt | Delay |
-|---------|-------|
+Webhook delivery is **durable**: events are enqueued to a BullMQ queue and
+delivered by the worker, so deliveries survive an API restart and a slow or failing
+endpoint never blocks the WhatsApp pipeline. Each delivery is signed with
+`X-MultiWA-Signature: sha256=<hmac>` and carries `X-MultiWA-Event`. A 30s per-request
+timeout applies.
+
+Failed deliveries (non-2xx, network error, or timeout) are retried with BullMQ
+exponential backoff (`delay: 30s`):
+
+| Attempt | Approx. delay before it runs |
+|---------|------------------------------|
 | 1 | Immediate |
-| 2 | 30 seconds |
-| 3 | 2 minutes |
-| 4 | 10 minutes |
-| 5 | 1 hour |
+| 2 | ~30 seconds |
+| 3 | ~1 minute |
+| 4 | ~2 minutes |
+| 5 | ~4 minutes |
 
-After 5 failed attempts, the webhook is marked as failing.
+Retry delays are approximate BullMQ exponential-backoff values. After 5 failed
+attempts the job enters the BullMQ failed state. Every attempt (success or failure)
+writes a `WebhookLog` row, so the rows for a webhook give the full delivery history.
+
+> Payload logging: the worker honours `WEBHOOK_LOG_PAYLOAD_MAX_BYTES` (default 512;
+> `0` omits the payload; `-1` keeps it in full) to control how much of each event
+> body is persisted in `WebhookLog`.
 
 ---
 
-[← WebSocket API](/api/websocket-api) · [Documentation Index](/getting-started/project-overview) · [Messaging →](/features/messaging)
+[← WebSocket API](<websocket-api.md>) · [Documentation Index](<../intro.md>) · [Messaging →](<../features/messaging.md>)

@@ -96,6 +96,26 @@ jobs:
             --build-arg NEXT_PUBLIC_API_URL=http://localhost:3000 \
             -t multiwa-admin:test .
 
+  nginx-config:
+    name: Validate nginx reverse-proxy config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install nginx
+        run: sudo apt-get update && sudo apt-get install -y nginx
+
+      # nginx resolves upstream hostnames at startup; make `api`/`admin`
+      # resolvable so `nginx -t` can validate the config in CI.
+      - name: Add compose upstream hosts
+        run: |
+          sudo sh -c 'echo "127.0.0.1 api" >> /etc/hosts'
+          sudo sh -c 'echo "127.0.0.1 admin" >> /etc/hosts'
+
+      - name: Check reverse-proxy config (nginx -t)
+        run: sudo nginx -t -c "$PWD/docker/nginx/nginx.conf"
+
   test:
     name: Tests
     runs-on: ubuntu-latest

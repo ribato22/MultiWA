@@ -32,7 +32,9 @@
     "check:public-boundary": "bash scripts/check-public-boundary.sh",
     "check:api-contract": "node scripts/check-api-contract.mjs",
     "check:api-contract:update": "node scripts/check-api-contract.mjs --update",
-    "check:release": "git diff --check && pnpm run check:public-boundary && pnpm run check:api-contract"
+    "sync:docsite": "node scripts/sync-docsite.mjs",
+    "check:docsite": "node scripts/sync-docsite.mjs --check",
+    "check:release": "git diff --check && pnpm run check:public-boundary && pnpm run check:api-contract && pnpm run check:docsite"
   },
   "devDependencies": {
     "@eslint/js": "^9",

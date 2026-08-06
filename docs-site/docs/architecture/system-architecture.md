@@ -87,4 +87,4 @@ Organization (Tenant)
 
 ---
 
-[← Quick Start](/getting-started/quick-start) · [Documentation Index](/getting-started/project-overview) · [Database Design →](/architecture/database-design)
+[← Quick Start](<../getting-started/quick-start.md>) · [Documentation Index](<../intro.md>) · [Database Design →](<database-design.md>)

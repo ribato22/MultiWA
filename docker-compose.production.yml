@@ -91,7 +91,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${DB_USER:-multiwa}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-multiwa}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      API_PORT: 3000
+      # Must match the API upstream port in docker/nginx/nginx.conf (api:3333).
+      API_PORT: 3333
       API_HOST: 0.0.0.0
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
@@ -113,7 +114,7 @@ services:
     volumes:
       - wa_sessions:/data/sessions
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3333/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 3
