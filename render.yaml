@@ -40,8 +40,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Must match the API_PORT the image listens on (also used by nginx upstream).
       - key: API_PORT
-        value: "3000"
+        value: "3333"
       - key: API_HOST
         value: 0.0.0.0
       - key: DATABASE_URL

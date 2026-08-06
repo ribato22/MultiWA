@@ -144,7 +144,10 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 - 🛡️ **Security** — Helmet, CSP, rate limiting, encryption at rest
 - 🐳 **Docker** — Production-ready containers with health checks
 - 📈 **Metrics** — Prometheus `/metrics` (API, root path) + `/metrics` on the worker health port: default Node/process metrics plus BullMQ queue depth. Public like `/health` — restrict at your proxy/firewall
-- ⚙️ **Background Worker** — BullMQ worker scaffolding (a durable async send queue is on the roadmap; today message sending and scheduling run in the API process)
+- ⚙️ **Background Worker** — BullMQ worker for durable webhook delivery and
+  background jobs; with `DURABLE_SEND=true` outbound sends are enqueued (Redis)
+  and delivered with retry, and with `ENGINE_HOST=worker` the worker can host
+  the WhatsApp engine itself (default: engine runs in the API process)
 - 🔒 **GDPR** — Data export and deletion endpoints
 - 🔌 **Plugin System** — Extend with custom plugins
 
@@ -279,17 +282,23 @@ MultiWA/
 ├── apps/
 │   ├── api/             # NestJS backend API
 │   ├── admin/           # Next.js admin dashboard
-│   └── worker/          # BullMQ background worker
+│   └── worker/          # BullMQ background worker (can host the engine)
 ├── packages/
 │   ├── core/            # Shared types and utilities
 │   ├── database/        # Prisma schema and migrations
-│   ├── engines/         # WhatsApp engine adapters
+│   ├── engines/         # WhatsApp engine adapters (whatsapp-web.js, Baileys, mock)
+│   ├── engine-runtime/  # Shared engine helpers (ack status, media, send gate, …)
 │   ├── sdk/             # TypeScript SDK (`@multiwa/sdk`)
 │   ├── sdk-python/      # Python SDK (`multiwa`)
-│   └── sdk-php/         # PHP SDK (`multiwa/multiwa-php`)
-├── plugins/             # Plugin directory
-├── docker/              # Dockerfiles (api, admin, worker)
-├── docs/                # Public documentation
+│   ├── sdk-php/         # PHP SDK (`multiwa/multiwa-php`)
+│   ├── n8n-nodes-multiwa/ # n8n community node (`n8n-nodes-multiwa`)
+│   ├── chatwoot-bridge/ # Chatwoot integration
+│   └── wordpress-plugin/# WordPress contact-form plugin
+├── plugins/             # Plugin directory (runtime loadable)
+├── docker/              # Dockerfiles + nginx reverse-proxy config
+├── docs/                # Public documentation (mirrored into docs-site)
+├── docs-site/           # Docusaurus documentation site (+ GitHub Pages build)
+├── landing/             # Static landing page assets
 ├── scripts/             # Release-gate scripts and utilities
 └── .github/workflows/   # CI, release-gate, docker-publish, docs-deploy
 ```

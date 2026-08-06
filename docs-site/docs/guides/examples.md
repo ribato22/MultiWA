@@ -1,9 +1,9 @@
 ---
-title: "Examples & Recipes"
 sidebar_position: 1
+title: "Examples & Recipes"
 ---
 
-# Examples & Recipes
+# 20 - Examples & Recipes
 
 Practical, copy-pasteable examples for the most common MultiWA integrations:
 webhook receivers in three languages, advanced automation rules, and scheduling
@@ -21,7 +21,7 @@ X-API-Key: <your-api-key>
 
 ## 1. Webhook integration
 
-MultiWA delivers events (`message.received`, `session.status`, …) as `POST`
+MultiWA delivers events (`message.received`, `message.sent`, …) as `POST`
 requests to your endpoint. When the webhook has a `secret`, each request carries
 an HMAC-SHA256 signature header so you can verify it came from MultiWA:
 
@@ -48,7 +48,6 @@ function verify(req) {
   const expected =
     'sha256=' + crypto.createHmac('sha256', SECRET).update(req.rawBody).digest('hex');
   const got = req.headers['x-multiwa-signature'] || '';
-  // timing-safe compare
   return expected.length === got.length &&
     crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(got));
 }
@@ -127,7 +126,7 @@ curl -X POST https://your-multiwa-host/api/v1/webhooks \
   -d '{
     "url": "https://yourserver.com/webhook",
     "secret": "a-long-random-string",
-    "events": ["message.received", "session.status"]
+    "events": ["message.received", "connection.ready"]
   }'
 ```
 
@@ -142,9 +141,6 @@ Automations pair a **trigger** with an **action**. Create them via
 `POST /api/v1/automation` (or visually in the dashboard's Flow Builder).
 
 ### Keyword → AI reply
-
-Reply with an AI-generated answer whenever an inbound message contains "price"
-or "pricing":
 
 ```json
 {
@@ -161,8 +157,6 @@ or "pricing":
 ```
 
 ### Regex trigger → tag + templated reply
-
-Detect an order number like `#12345`, tag the contact, then send a template:
 
 ```json
 {
@@ -199,8 +193,7 @@ Detect an order number like `#12345`, tag the contact, then send a template:
 
 ## 3. Schedule a broadcast via the API
 
-Sending a scheduled broadcast is a two-step flow: **create** the broadcast, then
-**schedule** it for a future time.
+A scheduled broadcast is a two-step flow: **create**, then **schedule**.
 
 ### Step 1 — Create the broadcast
 
@@ -247,9 +240,9 @@ You can `pause`, `resume`, or `cancel` a running broadcast with the matching
 
 ---
 
-## Where to next
+## See also
 
-- [API Specification](/api/api-specification) — every endpoint and payload
-- [Webhook Events](/api/webhook-events) — full event catalog
-- [Automation](/features/automation) — the Flow Builder in depth
-- [SDKs](/sdks/python-sdk) — typed clients for TypeScript, Python, and PHP
+- [07 - API Specification](<../api/api-specification.md>)
+- [09 - Webhook Events](<../api/webhook-events.md>)
+- [12 - Automation](<../features/automation.md>)
+- [13 - Python SDK](<../sdks/python-sdk.md>) · [14 - PHP SDK](<../sdks/php-sdk.md>)

@@ -7,20 +7,24 @@ title: "Automation"
 
 ## Overview
 
-MultiWA provides powerful automation capabilities:
+All paths use the global `/api/v1` prefix (Docker default base URL: `http://localhost:3333/api/v1`). Endpoints below are source-verified from `apps/api/src/modules/autoreply/autoreply.controller.ts` and `apps/api/src/modules/automation/automation.controller.ts`.
 
-- **Auto-Reply**: AI-powered automatic responses
-- **Visual Flow Builder**: Drag-and-drop workflow designer
-- **Scheduled Messages**: Time-based sending
+MultiWA provides three layers of automation:
+
+- **Auto-Reply** — keyword, exact, or AI-generated replies driven by an incoming message.
+- **Visual Flow Builder** — drag-and-drop multi-step workflows on top of the same engine.
+- **Scheduled Messages** — time-based sending via the messages module.
 
 ---
 
 ## Auto-Reply
 
-### AI-Powered Replies
+The auto-reply controller is mounted at `/autoreply`. Rules live directly under that prefix — there is no `/rules` segment.
+
+### Create an AI-Powered Rule
 
 ```bash
-POST /api/autoreply/rules
+POST /api/v1/autoreply
 {
   "profileId": "profile-123",
   "name": "Support Bot",
@@ -37,10 +41,10 @@ POST /api/autoreply/rules
 }
 ```
 
-### Keyword-Based Replies
+### Create a Keyword-Based Rule
 
 ```bash
-POST /api/autoreply/rules
+POST /api/v1/autoreply
 {
   "profileId": "profile-123",
   "name": "Price List",
@@ -55,11 +59,52 @@ POST /api/autoreply/rules
 }
 ```
 
+### Manage Rules
+
+```bash
+# List
+GET    /api/v1/autoreply
+
+# Get one
+GET    /api/v1/autoreply/:id
+
+# Update
+PUT    /api/v1/autoreply/:id
+
+# Delete
+DELETE /api/v1/autoreply/:id
+
+# Toggle active flag
+PUT    /api/v1/autoreply/:id/toggle
+```
+
+### Quick Replies
+
+A separate sub-resource for canned replies surfaced in the Admin UI:
+
+```bash
+POST   /api/v1/autoreply/quick-replies
+GET    /api/v1/autoreply/quick-replies
+DELETE /api/v1/autoreply/quick-replies/:id
+```
+
+### Webhook-Driven and AI-Hook Replies
+
+For more advanced setups you can wire an HTTP webhook or an AI hook per profile:
+
+```bash
+POST /api/v1/autoreply/webhook-reply
+GET  /api/v1/autoreply/webhook-reply/:profileId
+
+POST /api/v1/autoreply/ai-hook
+GET  /api/v1/autoreply/ai-hook/:profileId
+```
+
 ---
 
 ## Visual Flow Builder
 
-Create complex automation workflows visually:
+Create complex automation workflows visually. The controller is mounted at `/automation`; flows live directly under that prefix — there is no `/flows` segment.
 
 ### Node Types
 
@@ -82,11 +127,8 @@ Create complex automation workflows visually:
 ### API
 
 ```bash
-# List flows
-GET /api/automation/flows?profileId=xxx
-
 # Create flow
-POST /api/automation/flows
+POST   /api/v1/automation
 {
   "profileId": "profile-123",
   "name": "Order Flow",
@@ -94,27 +136,54 @@ POST /api/automation/flows
   "edges": [...]
 }
 
-# Activate/deactivate
-PATCH /api/automation/flows/:id
-{
-  "isActive": true
-}
+# List flows (filter by profile via query string)
+GET    /api/v1/automation?profileId=xxx
+
+# Get one
+GET    /api/v1/automation/:id
+
+# Update
+PUT    /api/v1/automation/:id
+
+# Delete
+DELETE /api/v1/automation/:id
+
+# Toggle active flag
+PUT    /api/v1/automation/:id/toggle
+
+# Test a flow with a sample payload
+POST   /api/v1/automation/:id/test
+
+# Read execution stats
+GET    /api/v1/automation/:id/stats
+
+# Reorder flows
+POST   /api/v1/automation/reorder
 ```
 
 ---
 
 ## Scheduled Messages
 
+Scheduling is part of the messages module, not the automation module:
+
 ```bash
-POST /api/messages/schedule
+# Schedule
+POST   /api/v1/messages/schedule
 {
   "profileId": "profile-123",
   "to": "628123456789",
   "text": "Happy Birthday!",
   "scheduledAt": "2026-02-14T00:00:00Z"
 }
+
+# List scheduled messages for a profile
+GET    /api/v1/messages/schedule/:profileId
+
+# Cancel a scheduled message
+DELETE /api/v1/messages/schedule/:id
 ```
 
 ---
 
-[← Groups](/features/groups) · [Documentation Index](/getting-started/project-overview) · [Python SDK →](/sdks/python-sdk)
+[← Groups](<groups.md>) · [Documentation Index](<../intro.md>) · [Python SDK →](<../sdks/python-sdk.md>)

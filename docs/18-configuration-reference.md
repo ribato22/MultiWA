@@ -17,6 +17,11 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `CORS_ORIGINS` | ❌ | `http://localhost:3001,http://localhost:3333` (Docker) | Comma-separated allowed origins |
 | `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:3333` (Docker) | URL the browser uses to reach the API. **Build-time** in the admin image. |
 | `DEFAULT_ENGINE` | ❌ | `whatsapp-web-js` | WhatsApp engine (`whatsapp-web-js` or `baileys`) |
+| `ENGINE_HOST` | ❌ | `api` | Where the engine runs: `api` or `worker` |
+| `DURABLE_SEND` | ❌ | `false` | Enqueue outbound sends in Redis (BullMQ) with retry |
+| `OUTBOUND_SEND_CONCURRENCY` | ❌ | `10` | Max concurrent durable send deliveries |
+| `WEBHOOK_TIMEOUT_MS` | ❌ | `30000` | Webhook delivery timeout |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
 
 ---
 
@@ -177,17 +182,87 @@ WORKER_CONCURRENCY=20
 
 ---
 
+## Engine Hosting
+
+Where the WhatsApp engine runs — `api` (default) or `worker`.
+
+### `ENGINE_HOST`
+**Optional** | `api` | `worker` | Default: `api`
+
+Selects the process that owns the WhatsApp engine sessions:
+- `api` (default) — the engine lives in the API process (current behaviour).
+- `worker` — the engine runs in `apps/worker`; the API delegates engine
+  operations over BullMQ. The worker must be running and share the API's
+  sessions volume.
+
+```env
+ENGINE_HOST=api
+```
+
+---
+
+## Durable Sending
+
+Outbound sends are synchronous by default. When `DURABLE_SEND=true` they are
+enqueued in Redis (BullMQ) and delivered by an in-process consumer with retry —
+the API returns `202 { status: "queued" }` immediately and delivery is reported
+via `message.status` and `message.sent`/`message.failed` webhooks.
+
+### `DURABLE_SEND`
+**Optional** | Boolean | Default: `false`
+
+```env
+DURABLE_SEND=true
+```
+
+### `OUTBOUND_SEND_CONCURRENCY`
+**Optional** | Number | Default: `10`
+
+Maximum concurrent deliveries from the durable send queue.
+
+```env
+OUTBOUND_SEND_CONCURRENCY=10
+```
+
+---
+
 ## Webhook
 
-### `WEBHOOK_TIMEOUT`
+> Delivery knobs: the retry policy (attempts/backoff) and per-attempt timeout
+> are read from these env vars by the worker's webhook dispatcher/processor.
+
+### `WEBHOOK_TIMEOUT_MS`
 **Optional** | Number | Default: `30000`
 
 Timeout in milliseconds for webhook delivery.
 
 ### `WEBHOOK_RETRY_ATTEMPTS`
-**Optional** | Number | Default: `3`
+**Optional** | Number | Default: `5`
 
-Number of retry attempts if webhook delivery fails.
+Number of delivery attempts (BullMQ job attempts) if a webhook delivery fails.
+Defaults to the historical fixed policy of 5 attempts.
+
+### `WEBHOOK_RETRY_DELAY_MS`
+**Optional** | Number | Default: `30000`
+
+Base delay (ms) between retries (exponential backoff). Defaults to the
+historical fixed policy of 30s.
+
+### `WEBHOOK_ALLOW_PRIVATE_TARGETS`
+**Optional** | Boolean | Default: `false`
+
+SSRF guard for tenant-controlled URLs (webhook targets, custom-AI endpoints).
+By default targets that resolve to loopback, private, link-local or reserved
+addresses are **blocked** (cloud metadata `169.254.169.254` is always blocked,
+even when this is `true`). Self-hosted deployments that deliver to internal
+services on the same network (Chatwoot, Typebot, n8n, localhost) set this to
+`true` to allow private targets. Leave `false` for public / multi-tenant
+deployments.
+
+```env
+# Allow webhooks to reach internal services on the same network
+WEBHOOK_ALLOW_PRIVATE_TARGETS=true
+```
 
 ---
 

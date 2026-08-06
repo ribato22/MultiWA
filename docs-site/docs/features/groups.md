@@ -180,7 +180,7 @@ Returns new invite link after revoking the old one.
 ```python
 from multiwa import MultiWA
 
-client = MultiWA("http://localhost:3001/api", "YOUR_API_KEY")
+client = MultiWA("http://localhost:3333/api/v1", "YOUR_API_KEY")
 
 # List all groups
 groups = client.groups.get_all("profile-123")
@@ -202,4 +202,4 @@ client.groups.add_participants(
 
 ---
 
-[← Messaging](/features/messaging) · [Documentation Index](/getting-started/project-overview) · [Automation →](/features/automation)
+[← Messaging](<messaging.md>) · [Documentation Index](<../intro.md>) · [Automation →](<automation.md>)
