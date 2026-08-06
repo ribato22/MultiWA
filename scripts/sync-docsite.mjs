@@ -104,7 +104,12 @@ for (const p of PAGES) {
     continue;
   }
   const dstFile = path.join(DST_ROOT, p.dst);
-  const current = fs.existsSync(dstFile) ? fs.readFileSync(dstFile, 'utf8') : null;
+  let current = null;
+  try {
+    current = fs.readFileSync(dstFile, 'utf8');
+  } catch {
+    // First sync (or missing target) — the generated page is written below.
+  }
 
   if (CHECK) {
     if (current !== generated) {
