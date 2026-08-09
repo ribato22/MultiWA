@@ -41,7 +41,7 @@
     "eslint": "^9",
     "globals": "^17",
     "prettier": "^3.9.6",
-    "turbo": "^2.10.7",
+    "turbo": "^2.10.8",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8"
   },
