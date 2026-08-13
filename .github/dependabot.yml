@@ -58,6 +58,14 @@ updates:
       # lucide-react 1.x renames/removes icons — needs an icon-usage reconciliation.
       - dependency-name: "lucide-react"
         update-types: ["version-update:semver-major"]
+      # fastify can NEVER be bumped on its own: @nestjs/platform-fastify declares an
+      # EXACT fastify dependency (11.1.28 -> 5.10.0, 11.1.29 -> 5.11.0). A standalone
+      # bump therefore resolves a SECOND fastify copy, and the plugin typings
+      # (@fastify/multipart, @fastify/helmet) bind to the other one — app.factory.ts
+      # then fails with TS2345 (this is exactly why PR #153 could not build). The pair
+      # moves together in a hand-made PR; a fastify-only security patch is unusable
+      # until Nest ships a matching platform-fastify anyway.
+      - dependency-name: "fastify"
       # TypeScript 7 (native/Go preview) and Node 26 types outrun the pinned
       # runtime (Node 20/22, TS 5.x). Bump these deliberately, not automatically.
       - dependency-name: "typescript"
