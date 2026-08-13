@@ -16,6 +16,17 @@ import { APP_EVENT_SET } from '@multiwa/core';
 /** DI token for the worker's BullMQ 'webhooks' producer queue. */
 export const WORKER_WEBHOOK_QUEUE = 'WORKER_WEBHOOK_QUEUE';
 
+/**
+ * Webhook retry policy from env, mirroring webhookTimeoutMs() in the worker's
+ * webhook processor. `parseInt(...) || fallback` was wrong in two ways: it
+ * swallowed a deliberate 0 and it accepted negatives (BullMQ would then never
+ * retry, or throw). Only a finite positive value overrides the default.
+ */
+function positiveIntEnv(name: string, fallback: number): number {
+  const v = parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
 @Injectable()
 export class WorkerWebhookDispatcherService implements OnModuleInit {
   private readonly logger = new Logger(WorkerWebhookDispatcherService.name);
@@ -56,10 +67,10 @@ export class WorkerWebhookDispatcherService implements OnModuleInit {
               jobId: messageId ? `${webhook.id}-${event}-${messageId}` : undefined,
               // Retry policy tunable: WEBHOOK_RETRY_ATTEMPTS / WEBHOOK_RETRY_DELAY_MS
               // (defaults preserve the historical 5 attempts × 30s exponential backoff).
-              attempts: parseInt(process.env.WEBHOOK_RETRY_ATTEMPTS ?? '5', 10) || 5,
+              attempts: positiveIntEnv('WEBHOOK_RETRY_ATTEMPTS', 5),
               backoff: {
                 type: 'exponential',
-                delay: parseInt(process.env.WEBHOOK_RETRY_DELAY_MS ?? '30000', 10) || 30000,
+                delay: positiveIntEnv('WEBHOOK_RETRY_DELAY_MS', 30000),
               },
               removeOnComplete: 200,
               removeOnFail: 100,
