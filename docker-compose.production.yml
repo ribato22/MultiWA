@@ -111,6 +111,10 @@ services:
       # whatsapp-web.js LocalAuth dataPath). Must match the volume mount below,
       # or logins are lost on every container recreate.
       SESSIONS_DIR: /data/sessions
+      # Webhook retry policy (read by BOTH dispatchers — apps/api and apps/worker).
+      # Defaults preserve the historical 5 attempts x 30s exponential backoff.
+      WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
+      WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
     volumes:
       - wa_sessions:/data/sessions
     healthcheck:
@@ -158,6 +162,12 @@ services:
       S3_BUCKET: ${S3_BUCKET:-multiwa}
       S3_REGION: ${S3_REGION:-us-east-1}
       WEBHOOK_LOG_PAYLOAD_MAX_BYTES: ${WEBHOOK_LOG_PAYLOAD_MAX_BYTES:-512}
+      # Webhook retry policy (read by BOTH dispatchers — apps/api and apps/worker).
+      # Defaults preserve the historical 5 attempts x 30s exponential backoff.
+      WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
+      WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
+      # Per-attempt webhook delivery timeout (read by apps/worker's webhook processor).
+      WEBHOOK_TIMEOUT_MS: ${WEBHOOK_TIMEOUT_MS:-30000}
     volumes:
       - wa_sessions:/data/sessions
     networks:

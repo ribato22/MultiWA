@@ -47,6 +47,9 @@ const webhookProcessor = new WebhookProcessor();
 const scheduledProcessor = new ScheduledProcessor();
 
 // Queues
+// Stable id for the scheduled-message tick. Also used to recognise (and drop) the
+// legacy BullMQ 5 repeatable left behind by the v6 upgrade.
+const SCHEDULED_JOB_SCHEDULER_ID = 'check-scheduled-messages';
 const scheduledQueue = new Queue('scheduled', { connection });
 
 // Workers
@@ -175,7 +178,7 @@ const setupScheduledJobs = async () => {
   // repeatable-job cleanup loop (getRepeatableJobs/removeRepeatableByKey),
   // which is removed in BullMQ 6.
   await scheduledQueue.upsertJobScheduler(
-    'check-scheduled-messages',
+    SCHEDULED_JOB_SCHEDULER_ID,
     { every: 60000 },
     {
       name: 'check-scheduled-messages',
@@ -183,6 +186,26 @@ const setupScheduledJobs = async () => {
       opts: { removeOnComplete: 100, removeOnFail: 50 },
     }
   );
+
+  // Drop any scheduler that is NOT ours. Upgrading from BullMQ 5 leaves the old
+  // repeatable behind (its key is an md5 of the v5 repeat options, e.g.
+  // `bull:scheduled:repeat:e631811d…`) because v6 removed the
+  // getRepeatableJobs/removeRepeatableByKey cleanup this function used to do.
+  // Redis is append-only on a persistent volume, so without this the legacy entry
+  // survives the upgrade and the tick fires twice a minute forever. Harmless while
+  // ScheduledProcessor is a no-op, but it would become duplicate delivery the day
+  // that processor gains real send logic. Idempotent, so re-running is safe.
+  try {
+    for (const scheduler of await scheduledQueue.getJobSchedulers()) {
+      if (scheduler.key && scheduler.key !== SCHEDULED_JOB_SCHEDULER_ID) {
+        await scheduledQueue.removeJobScheduler(scheduler.key);
+        logger.warn(`Removed stale job scheduler: ${scheduler.key}`);
+      }
+    }
+  } catch (err) {
+    // Never let cleanup stop the worker from starting.
+    logger.warn(`Stale-scheduler cleanup skipped: ${(err as Error).message}`);
+  }
 
   logger.info('📅 Scheduled message check job registered (every 1 minute)');
 };
