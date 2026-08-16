@@ -54,7 +54,7 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "eslint": "^8.0.0",
-    "n8n-workflow": "^1.120.23",
+    "n8n-workflow": "^1.120.24",
     "typescript": "^5.0.0"
   },
   "peerDependencies": {
