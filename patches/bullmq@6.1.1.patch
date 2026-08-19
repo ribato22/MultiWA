@@ -1,0 +1,42 @@
+diff --git a/dist/cjs/classes/redis-queue-backend.js b/dist/cjs/classes/redis-queue-backend.js
+index 25c6c720eb3f61694f658083e930ac6f4d12b92f..77bb12559dcd9a5009648c37a8111cc6ad56c9c5 100644
+--- a/dist/cjs/classes/redis-queue-backend.js
++++ b/dist/cjs/classes/redis-queue-backend.js
+@@ -1850,7 +1850,15 @@ class RedisQueueBackend extends events_1.EventEmitter {
+         const timeout = new Promise(resolve => {
+             watchdog = setTimeout(() => {
+                 timedOut = true;
+-                bclient.disconnect(false);
++                // PATCH (MultiWA): only tear down the blocking client if it is actually
++                // connected. When Redis has already gone away the client is 'reconnecting',
++                // and disconnect(false) cancels its retry timer WITHOUT emitting 'close' —
++                // the client becomes a zombie and the Worker never consumes again.
++                // Upstream calls this unconditionally; bullmq 5 used disconnect(!this.closing),
++                // which is why v5 recovered. See patches/README or the PR for the repro.
++                if (bclient.status === 'ready') {
++                    bclient.disconnect(false);
++                }
+                 resolve(null);
+             }, roundedTimeout * 1000 + 1000);
+         });
+diff --git a/dist/esm/classes/redis-queue-backend.js b/dist/esm/classes/redis-queue-backend.js
+index 762f18308074d23cf5e3f126ed63183ede10a2e0..6a1a9471cced11f0d185a65919edf9aba75b871d 100644
+--- a/dist/esm/classes/redis-queue-backend.js
++++ b/dist/esm/classes/redis-queue-backend.js
+@@ -1847,7 +1847,15 @@ export class RedisQueueBackend extends EventEmitter {
+         const timeout = new Promise(resolve => {
+             watchdog = setTimeout(() => {
+                 timedOut = true;
+-                bclient.disconnect(false);
++                // PATCH (MultiWA): only tear down the blocking client if it is actually
++                // connected. When Redis has already gone away the client is 'reconnecting',
++                // and disconnect(false) cancels its retry timer WITHOUT emitting 'close' —
++                // the client becomes a zombie and the Worker never consumes again.
++                // Upstream calls this unconditionally; bullmq 5 used disconnect(!this.closing),
++                // which is why v5 recovered. See patches/README or the PR for the repro.
++                if (bclient.status === 'ready') {
++                    bclient.disconnect(false);
++                }
+                 resolve(null);
+             }, roundedTimeout * 1000 + 1000);
+         });

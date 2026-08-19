@@ -35,6 +35,16 @@ RUN pnpm install --no-frozen-lockfile
 RUN test "$(grep -c getMsgKeyId packages/engines/node_modules/whatsapp-web.js/src/util/Injected/Utils.js)" -ge 1 \
     || (echo "::error::whatsapp-web.js patch NOT applied (patches/whatsapp-web.js@1.34.7.patch)" && exit 1)
 
+# Fail the build if the bullmq patch did not apply. Unpatched, BullMQ 6's blocking-read
+# watchdog calls bclient.disconnect(false) even when the client is already 'reconnecting',
+# which cancels its retry timer without emitting 'close'. The Worker then stops consuming
+# FOREVER after any Redis outage >~6s, silently: the base connection returns to 'ready',
+# queue.add keeps succeeding, `waiting` grows, `active` stays 0, health checks stay green.
+# The file lives under the pnpm store, so locate it rather than hardcoding a path.
+RUN f="$(find /app/node_modules/.pnpm -path '*bullmq*/dist/cjs/classes/redis-queue-backend.js' | head -1)" \
+    && test -n "$f" && grep -q "bclient.status === 'ready'" "$f" \
+    || (echo "::error::bullmq patch NOT applied (patches/bullmq@6.1.1.patch)" && exit 1)
+
 # Generate Prisma client FIRST (before worker build)
 RUN cd packages/database && npx prisma generate
 
