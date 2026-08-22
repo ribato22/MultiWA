@@ -25,6 +25,7 @@ import {
   isColdCircuitBlocking,
   COLD_CIRCUIT_COOLDOWN_MS,
   isSystemMessageType,
+  repeatDedupeText,
 } from '@multiwa/engine-runtime';
 import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import {
@@ -313,6 +314,7 @@ export class MessagesService {
         () => this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
         jid,
         isCold,
+        repeatDedupeText(type, content),
       );
     } catch (error: any) {
       await prisma.message.update({
@@ -465,6 +467,7 @@ export class MessagesService {
         () => this.dispatchToEngine(engine, type, to, content, quotedMessageId),
         to,
         laneRow?.lane === 'cold',
+        repeatDedupeText(type, content),
       );
       await prisma.message.update({
         where: { id: messageDbId },

@@ -249,6 +249,35 @@ export async function evaluateColdCircuit(
   return null;
 }
 
+// Repeat-reply suppressor. An automation that answers every inbound message with
+// the same text turns one upstream incident into a quota outage: on 2026-08-23 a
+// mass power-cut drove an 18x inbound surge, and 1463 identical "VirA belum
+// memahami maksud Anda" replies burned 74% of a 2000/day cap in two hours — one
+// conversation alone took 596. The customers were real and their messages were
+// distinct; only the REPLY was stuttering, so nothing upstream of the gate could
+// see it. Suppress an identical text to the same recipient inside the window.
+//
+// Deliberately scoped tight so it cannot eat real traffic: same profile, same
+// recipient, byte-identical text, short window. Distinct texts (OTPs, answers,
+// media) never match. Set SEND_REPEAT_SUPPRESS_MS=0 to disable entirely.
+export const REPEAT_SUPPRESS_MS = Number(process.env.SEND_REPEAT_SUPPRESS_MS ?? 60_000);
+/** Cap on remembered (recipient, text) pairs, so a long-running process cannot grow unbounded. */
+const REPEAT_MEMO_MAX = 5000;
+
+/**
+ * The suppressor key for an outbound send, or undefined to opt this send out.
+ *
+ * Only plain `text` opts in. Media, location, contacts, buttons and everything
+ * else return undefined and are never suppressed: their payloads are large or
+ * structured, two of them are rarely byte-identical by accident, and wrongly
+ * dropping one is far more costly than the quota it saves.
+ */
+export function repeatDedupeText(type: string, content: any): string | undefined {
+  if (type !== 'text') return undefined;
+  const text = content?.text;
+  return typeof text === 'string' && text.length > 0 ? text : undefined;
+}
+
 @Injectable()
 export class SendGateService {
   private readonly logger = new Logger(SendGateService.name);
@@ -258,24 +287,47 @@ export class SendGateService {
   // promise carries the real result/error. Single-instance only (see SOP).
   private readonly profileChains = new Map<string, Promise<unknown>>();
   private readonly lastSentAt = new Map<string, number>();
+  /** key -> epoch ms of the last IDENTICAL text accepted for that recipient. */
+  private readonly lastRepeatAt = new Map<string, number>();
+
+  /**
+   * Drop memo entries older than the window, then hard-cap the map. Called on
+   * every check, so the map tracks only what the window can still match.
+   */
+  private pruneRepeatMemo(now: number): void {
+    for (const [k, t] of this.lastRepeatAt) {
+      if (now - t >= REPEAT_SUPPRESS_MS) this.lastRepeatAt.delete(k);
+    }
+    // Insertion-ordered: deleting from the front drops the oldest first.
+    while (this.lastRepeatAt.size > REPEAT_MEMO_MAX) {
+      const oldest = this.lastRepeatAt.keys().next().value;
+      if (oldest === undefined) break;
+      this.lastRepeatAt.delete(oldest);
+    }
+  }
 
   /**
    * Serialize the send for this profile, apply the inter-message delay, enforce
    * the daily limit (429 when reached), run sendFn, and increment the daily
    * counter on success. Returns sendFn's result, or rejects with the send error
    * / a 429 HttpException.
+   *
+   * `dedupeText` opts this send into the repeat-reply suppressor. Pass the plain
+   * message text for text sends; omit it (media, or any send that must always go
+   * out) and the suppressor is skipped for that call.
    */
   async executeWithGate<T>(
     profileId: string,
     sendFn: () => Promise<T>,
     recipient?: string,
     isCold?: boolean,
+    dedupeText?: string,
   ): Promise<T> {
     const prev = this.profileChains.get(profileId) ?? Promise.resolve();
     // Run after the previous send for this profile, whether it resolved or rejected.
     const runResult = prev.then(
-      () => this.gatedRun(profileId, sendFn, recipient, isCold),
-      () => this.gatedRun(profileId, sendFn, recipient, isCold),
+      () => this.gatedRun(profileId, sendFn, recipient, isCold, dedupeText),
+      () => this.gatedRun(profileId, sendFn, recipient, isCold, dedupeText),
     );
     // The stored tail must never reject (or it poisons the chain).
     this.profileChains.set(
@@ -293,7 +345,32 @@ export class SendGateService {
     sendFn: () => Promise<T>,
     recipient?: string,
     isColdArg?: boolean,
+    dedupeText?: string,
   ): Promise<T> {
+    // 0. Repeat-reply suppression. Runs FIRST: a stuttered reply must cost neither
+    //    the inter-message delay nor a slot of the daily cap. Rejected with 429 so
+    //    existing callers mark the row 'failed' (excluded from cold-circuit
+    //    accounting) rather than reporting a send that never happened.
+    const repeatKey =
+      REPEAT_SUPPRESS_MS > 0 && recipient && dedupeText
+        ? `${profileId}|${recipient}|${dedupeText}`
+        : null;
+    if (repeatKey) {
+      const now = Date.now();
+      this.pruneRepeatMemo(now);
+      const previous = this.lastRepeatAt.get(repeatKey);
+      if (previous !== undefined && now - previous < REPEAT_SUPPRESS_MS) {
+        const retryInMs = REPEAT_SUPPRESS_MS - (now - previous);
+        this.logger.warn(
+          `Suppressed repeat reply to ${recipient.replace(/[\r\n]/g, '')} on profile ${profileId.replace(/[\r\n]/g, '')} (identical text ${now - previous}ms ago)`,
+        );
+        throw new HttpException(
+          { error: 'REPEAT_SUPPRESSED', retryInMs },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+    }
+
     const profile = await prisma.profile.findUnique({
       where: { id: profileId },
       select: {
@@ -385,6 +462,10 @@ export class SendGateService {
     // 4. Send, then increment counters only on a real successful send. Cold sends
     // advance both the total and the cold counter; replies advance only the total.
     const result = await sendFn();
+    // Arm the repeat window only on a send that actually went out. Arming before
+    // sendFn would let one engine failure suppress the legitimate retry of a
+    // message the customer never received.
+    if (repeatKey) this.lastRepeatAt.set(repeatKey, Date.now());
     await prisma.profile.update({
       where: { id: profileId },
       data: {
