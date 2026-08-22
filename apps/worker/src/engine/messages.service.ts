@@ -9,7 +9,7 @@
 import { Injectable, Logger, HttpException, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
-import { SendGateService, classifyColdSend } from '@multiwa/engine-runtime';
+import { SendGateService, classifyColdSend, repeatDedupeText } from '@multiwa/engine-runtime';
 import { AppEvents, isWhatsAppRecipient } from '@multiwa/core';
 import { EngineManagerService } from './engine-manager.service';
 
@@ -101,6 +101,7 @@ export class WorkerMessagesService {
         () => this.dispatchToEngine(engine, type, jid, content, quotedMessageId),
         jid,
         isCold,
+        repeatDedupeText(type, content),
       );
       if (result?.messageId) {
         await prisma.message.update({ where: { id: message.id }, data: { messageId: result.messageId, status: 'sent' } });
@@ -133,6 +134,7 @@ export class WorkerMessagesService {
         () => this.dispatchToEngine(engine, type, to, content, quotedMessageId),
         to,
         laneRow?.lane === 'cold',
+        repeatDedupeText(type, content),
       );
       await prisma.message.update({
         where: { id: messageDbId },
