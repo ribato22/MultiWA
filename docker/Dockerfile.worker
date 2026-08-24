@@ -17,6 +17,14 @@ COPY packages/engines/package.json ./packages/engines/
 COPY packages/engine-runtime/package.json ./packages/engine-runtime/
 COPY packages/sdk/package.json ./packages/sdk/
 
+# Every workspace package.json must be present or `--frozen-lockfile` fails its
+# lockfile check. These four are manifest-only: they are copied so pnpm can verify
+# the lockfile, and `--filter` below keeps them out of the actual install.
+COPY apps/api/package.json ./apps/api/
+COPY apps/admin/package.json ./apps/admin/
+COPY packages/chatwoot-bridge/package.json ./packages/chatwoot-bridge/
+COPY packages/n8n-nodes-multiwa/package.json ./packages/n8n-nodes-multiwa/
+
 # Copy all source BEFORE install to avoid BuildKit COPY overlay conflict
 COPY apps/worker ./apps/worker
 COPY packages/core ./packages/core
@@ -27,7 +35,7 @@ COPY packages/sdk ./packages/sdk
 COPY tsconfig.json ./tsconfig.json
 
 # Install dependencies
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile --filter @multiwa/worker...
 
 # Fail the build if the whatsapp-web.js patch did not apply. A silently-unpatched
 # image reintroduces the WhatsApp Web `$1` MsgKey break (getChats/getGroups/
@@ -88,7 +96,7 @@ COPY --from=builder /app/packages/engines/package.json ./packages/engines/
 COPY --from=builder /app/packages/engine-runtime/package.json ./packages/engine-runtime/
 
 # Install production dependencies only
-RUN pnpm install --no-frozen-lockfile --prod
+RUN pnpm install --frozen-lockfile --prod --filter @multiwa/worker...
 
 # Copy built worker and workspace packages
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
