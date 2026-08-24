@@ -19,8 +19,14 @@ COPY packages/engines/package.json ./packages/engines/
 COPY packages/engine-runtime/package.json ./packages/engine-runtime/
 COPY packages/sdk/package.json ./packages/sdk/
 
+# Every workspace package.json must be present or `--frozen-lockfile` fails its
+# lockfile check. These four are manifest-only: they are copied so pnpm can verify
+# the lockfile, and `--filter` below keeps them out of the actual install.
+COPY packages/chatwoot-bridge/package.json ./packages/chatwoot-bridge/
+COPY packages/n8n-nodes-multiwa/package.json ./packages/n8n-nodes-multiwa/
+
 # Install all dependencies with frozen lockfile
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile --filter @multiwa/admin...
 
 # Copy source
 COPY . .
