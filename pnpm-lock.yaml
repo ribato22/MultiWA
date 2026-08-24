@@ -233,7 +233,7 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0
       bullmq:
-        specifier: ^6.1.1
+        specifier: 6.1.1
         version: 6.1.1(patch_hash=yrtq7penq7c7vh66hmw564uy5m)(ioredis@6.0.0)(pg@8.22.0)
       class-transformer:
         specifier: ^0.5.1
@@ -351,7 +351,7 @@ importers:
         specifier: ^7.9.1
         version: 7.9.1(prisma@7.9.1(@types/react-dom@18.3.7(@types/react@19.2.17))(@types/react@19.2.17)(magicast@0.3.5)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3))(typescript@5.9.3)
       bullmq:
-        specifier: ^6.1.1
+        specifier: 6.1.1
         version: 6.1.1(patch_hash=yrtq7penq7c7vh66hmw564uy5m)(ioredis@6.0.0)(pg@8.22.0)
       ioredis:
         specifier: ^6.0.0
