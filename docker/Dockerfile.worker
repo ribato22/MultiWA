@@ -4,7 +4,11 @@ FROM node:20-slim AS builder
 WORKDIR /app
 
 # Install pnpm and git
-RUN apt-get update && apt-get install -y git && npm install -g pnpm
+# Pin pnpm to the version declared in the root package.json (pnpm@9.15.0). Unpinned,
+# `npm install -g pnpm` grabs whatever is latest at build time — and a pnpm release
+# in Aug 2026 added an engine-identity check that fails on Alpine with
+# ERR_PNPM_PNPM_ENGINE_IDENTITY_UNVERIFIABLE, breaking every admin image build.
+RUN apt-get update && apt-get install -y git && npm install -g pnpm@9.15.0
 
 # Copy workspace files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
@@ -83,7 +87,7 @@ RUN apt-get update && apt-get install -y \
       chromium libnss3 libfreetype6 libharfbuzz0b \
       ca-certificates fonts-freefont-ttf libxshmfence1 libgbm1 \
       git --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/* && npm install -g pnpm
+    rm -rf /var/lib/apt/lists/* && npm install -g pnpm@9.15.0
 
 # Copy workspace definition and lockfile
 COPY --from=builder /app/package.json /app/pnpm-lock.yaml /app/pnpm-workspace.yaml ./
