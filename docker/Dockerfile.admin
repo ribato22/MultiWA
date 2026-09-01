@@ -4,7 +4,11 @@ FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install pnpm and git (required for baileys dependency)
-RUN apk add --no-cache git && npm install -g pnpm
+# Pin pnpm to the version declared in the root package.json (pnpm@9.15.0). Unpinned,
+# `npm install -g pnpm` grabs whatever is latest at build time — and a pnpm release
+# in Aug 2026 added an engine-identity check that fails on Alpine with
+# ERR_PNPM_PNPM_ENGINE_IDENTITY_UNVERIFIABLE, breaking every admin image build.
+RUN apk add --no-cache git && npm install -g pnpm@9.15.0
 
 # Copy workspace and pnpm config files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
