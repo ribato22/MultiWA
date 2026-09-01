@@ -66,6 +66,41 @@ updates:
       # moves together in a hand-made PR; a fastify-only security patch is unusable
       # until Nest ships a matching platform-fastify anyway.
       - dependency-name: "fastify"
+      # The NestJS family is ONE framework and must cross a major as a single
+      # coordinated migration. Bumping one package alone pairs mismatched majors and
+      # the app cannot even load: Nest 12 PRs failed with
+      #   Cannot find module '.../@nestjs+core@12.0.1_@nestjs+common@11.2.1_...'
+      # Dependabot opened EIGHT such PRs (#177-#184) on 2026-08-30, each individually
+      # unbuildable. Note @nestjs/config jumps 4.x -> 12.x, so it is not even the same
+      # numbering. Do Nest majors as one deliberate PR, then unignore if desired.
+      - dependency-name: "@nestjs/common"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/core"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/platform-fastify"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/platform-socket.io"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/websockets"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/jwt"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/config"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/schematics"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/testing"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/swagger"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/event-emitter"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/schedule"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/passport"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nestjs/throttler"
+        update-types: ["version-update:semver-major"]
       # TypeScript 7 (native/Go preview) and Node 26 types outrun the pinned
       # runtime (Node 20/22, TS 5.x). Bump these deliberately, not automatically.
       - dependency-name: "typescript"
