@@ -56,7 +56,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "@nestjs/cli": "^11.0.0",
+    "@nestjs/cli": "^12.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.2.3",
     "@swc/cli": "^0.8.1",
