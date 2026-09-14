@@ -47,6 +47,12 @@ pass the Release Gate CI and receive a review before it can be merged.
    `pnpm typecheck`, `pnpm lint`, `pnpm test`, and `pnpm check:release`.
 6. Write [Conventional Commit](https://www.conventionalcommits.org/) messages,
    e.g. `fix(engine): resolve canonical group id before sending`.
+   **No AI attribution** — no `Co-Authored-By` naming an AI assistant, no
+   "Generated with …" footer, in either commit messages or the PR description.
+   `pnpm install` installs a `commit-msg` hook that rejects these, and CI checks
+   the PR body too. Human co-author trailers are welcome and are never blocked.
+   (Why the PR body: this repo squash-merges using the description as the commit
+   message, so a footer there becomes `main`'s history.)
 7. Self-review your diff, then open the PR and fill in the template.
 8. **Link the issues your PR resolves** by putting `Closes #<number>` (or
    `Fixes #<number>`) in the PR description. Referenced issues close

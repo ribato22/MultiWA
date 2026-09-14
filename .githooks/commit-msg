@@ -1,35 +1,54 @@
 #!/usr/bin/env sh
 # Tolak atribusi AI di pesan commit.
 #
-# Aturan proyek: repo ini TIDAK PERNAH memakai trailer Co-Authored-By Claude.
-# Pernah lolos sekali dan memunculkan kontributor "claude" di halaman GitHub;
-# membersihkannya menuntut penulisan ulang history + force push + melonggarkan
-# branch protection sementara. Jauh lebih murah ditolak di sini.
+# Aturan proyek: repo ini TIDAK PERNAH memakai trailer atribusi AI. Pernah lolos
+# sekali dan memunculkan kontributor AI di halaman GitHub; membersihkannya
+# menuntut penulisan ulang history + force push + melonggarkan branch protection
+# sementara — dan itu pun TIDAK tuntas, karena ref `refs/pull/N/head` di GitHub
+# bersifat permanen sehingga commit lama tetap disajikan selamanya lewat SHA-nya.
+# Jauh lebih murah ditolak di sini.
 #
 # Aktifkan (sekali per klon):  git config core.hooksPath .githooks
+# `pnpm install` sudah melakukannya otomatis lewat skrip `prepare`.
 #
 # CATATAN PRESISI: pola HARUS ditambatkan ke awal baris. Versi pertama hook ini
 # mencocokkan di mana saja, sehingga menolak commit yang sekadar MEMBICARAKAN
 # trailer di prosa — termasuk commit yang memperkenalkan hook ini sendiri.
 # Trailer sejati selalu berdiri sendiri di awal baris.
+#
+# Polanya sendiri TIDAK tinggal di sini. Ia ada di
+# scripts/check-ai-attribution.sh, satu sumber kebenaran yang dipakai bersama
+# oleh hook ini dan oleh gate CI. Hook hanya melindungi commit lokal; ia tidak
+# bisa melihat body pull request, dan tidak jalan pada commit lewat web UI
+# GitHub atau `--no-verify`. Gate CI menutup sisanya.
 
 msg_file="$1"
 [ -f "$msg_file" ] || exit 0
 
-# Abaikan baris komentar git (#) — template commit boleh menyebut apa saja.
-body="$(grep -v '^#' "$msg_file")"
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+checker="${root}/scripts/check-ai-attribution.sh"
 
-pattern='^[[:space:]]*(Co-authored-by:[[:space:]]*(claude|anthropic)|(🤖[[:space:]]*)?Generated with[[:space:]]*\[?Claude Code)'
-
-if printf '%s\n' "$body" | grep -qiE "$pattern"; then
+# Kalau skrip bersama tidak ada (checkout sebagian, atau commit yang menghapusnya),
+# jangan diam-diam meloloskan: beri tahu dan tolak.
+if [ ! -f "$checker" ]; then
   echo "" >&2
-  echo "commit-msg DITOLAK: pesan memuat trailer atribusi AI." >&2
-  echo "" >&2
-  printf '%s\n' "$body" | grep -inE "$pattern" | sed 's/^/  baris /' >&2
-  echo "" >&2
-  echo "Repo ini tidak memakai atribusi AI. Hapus baris trailer itu, lalu commit lagi." >&2
-  echo "(Menyebut pola ini di dalam prosa tidak diblokir — hanya trailer sungguhan.)" >&2
+  echo "commit-msg DITOLAK: ${checker} tidak ditemukan." >&2
+  echo "Gate atribusi AI tidak bisa dijalankan, jadi commit ini tidak diloloskan." >&2
   echo "" >&2
   exit 1
 fi
+
+# Panggil dengan `bash`, bukan `sh`: skripnya memakai array, yang tidak ada di
+# POSIX sh (dash di Debian/Ubuntu akan gagal parse).
+if ! command -v bash >/dev/null 2>&1; then
+  echo "" >&2
+  echo "commit-msg DITOLAK: bash tidak tersedia, gate atribusi tidak bisa jalan." >&2
+  echo "" >&2
+  exit 1
+fi
+
+if ! bash "$checker" --strip-comments --label "pesan commit" "$msg_file"; then
+  exit 1
+fi
+
 exit 0
