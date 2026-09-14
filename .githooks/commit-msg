@@ -1,0 +1,35 @@
+#!/usr/bin/env sh
+# Tolak atribusi AI di pesan commit.
+#
+# Aturan proyek: repo ini TIDAK PERNAH memakai trailer Co-Authored-By Claude.
+# Pernah lolos sekali dan memunculkan kontributor "claude" di halaman GitHub;
+# membersihkannya menuntut penulisan ulang history + force push + melonggarkan
+# branch protection sementara. Jauh lebih murah ditolak di sini.
+#
+# Aktifkan (sekali per klon):  git config core.hooksPath .githooks
+#
+# CATATAN PRESISI: pola HARUS ditambatkan ke awal baris. Versi pertama hook ini
+# mencocokkan di mana saja, sehingga menolak commit yang sekadar MEMBICARAKAN
+# trailer di prosa — termasuk commit yang memperkenalkan hook ini sendiri.
+# Trailer sejati selalu berdiri sendiri di awal baris.
+
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+# Abaikan baris komentar git (#) — template commit boleh menyebut apa saja.
+body="$(grep -v '^#' "$msg_file")"
+
+pattern='^[[:space:]]*(Co-authored-by:[[:space:]]*(claude|anthropic)|(🤖[[:space:]]*)?Generated with[[:space:]]*\[?Claude Code)'
+
+if printf '%s\n' "$body" | grep -qiE "$pattern"; then
+  echo "" >&2
+  echo "commit-msg DITOLAK: pesan memuat trailer atribusi AI." >&2
+  echo "" >&2
+  printf '%s\n' "$body" | grep -inE "$pattern" | sed 's/^/  baris /' >&2
+  echo "" >&2
+  echo "Repo ini tidak memakai atribusi AI. Hapus baris trailer itu, lalu commit lagi." >&2
+  echo "(Menyebut pola ini di dalam prosa tidak diblokir — hanya trailer sungguhan.)" >&2
+  echo "" >&2
+  exit 1
+fi
+exit 0
