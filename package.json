@@ -21,6 +21,7 @@
   "license": "MIT",
   "author": "MultiWA Team",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true",
     "build": "turbo build",
     "dev": "turbo dev",
     "lint": "eslint \"apps/api/**/*.ts\" \"apps/worker/**/*.ts\" \"packages/**/*.ts\"",
@@ -29,6 +30,7 @@
     "clean": "turbo clean && rm -rf node_modules",
     "format": "prettier --write \"**/*.{ts,tsx,md,json}\"",
     "typecheck": "turbo typecheck",
+    "check:trailers": "bash scripts/check-commit-trailers.sh",
     "check:public-boundary": "bash scripts/check-public-boundary.sh",
     "check:api-contract": "node scripts/check-api-contract.mjs",
     "check:api-contract:update": "node scripts/check-api-contract.mjs --update",
