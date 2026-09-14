@@ -1,0 +1,122 @@
+name: Commit Policy
+
+# Server-side enforcement of the commit trailer policy: attribution names people.
+# See scripts/check-commit-trailers.sh for the policy and the patterns.
+#
+# WHY THIS IS NOT REDUNDANT WITH THE COMMIT HOOK
+#   .githooks/commit-msg is client-side and opt-in. It cannot see three of the four
+#   surfaces that carry attribution:
+#     - a commit made with `--no-verify`
+#     - a commit authored through the GitHub web UI, where no hook ever runs
+#     - the PULL REQUEST DESCRIPTION, which is not a commit at all
+#   The last one matters most. This repository permits squash merges only, and
+#   `squash_merge_commit_message` is set to `PR_BODY`, so GitHub copies the pull
+#   request description verbatim into the commit message on `main`. A footer in a
+#   description therefore becomes commit history automatically.
+#
+# SECURITY NOTE
+#   Unlike release-gate.yml, this workflow DOES read user-controlled fields (the
+#   pull request title and body). They are NEVER interpolated into a shell script.
+#   Each is passed through an `env:` block and written to a file with printf using a
+#   quoted variable, so the contents can never be evaluated as shell. Keep it that
+#   way — see
+#   https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+
+on:
+  pull_request:
+    branches: [main]
+    # `edited` matters: a description can be changed after the first green run, and
+    # the squash message is read at merge time, not at open time. Without this the
+    # check is trivially bypassed.
+    types: [opened, reopened, synchronize, edited]
+  push:
+    branches: [main, production]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  commit-policy:
+    name: Commit and PR policy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the pull request title and description
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -uo pipefail
+          printf '%s\n' "$PR_TITLE" > /tmp/pr-title.txt
+          printf '%s\n' "$PR_BODY"  > /tmp/pr-body.txt
+          status=0
+          bash scripts/check-commit-trailers.sh --label "pull request title" /tmp/pr-title.txt || status=1
+          bash scripts/check-commit-trailers.sh --label "pull request description" /tmp/pr-body.txt || status=1
+          if [ "$status" -ne 0 ]; then
+            echo "::error::The pull request title or description contains a disallowed trailer. This repo squash-merges using the description as the commit message, so that text would land in commit history on main."
+            exit 1
+          fi
+          echo "Title and description clean."
+
+      - name: Check commit messages in this pull request
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          git fetch --no-tags --quiet origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || true
+          if ! git rev-parse --verify --quiet "$BASE_SHA^{commit}" >/dev/null; then
+            echo "::warning::base commit not available; skipping commit-message check."
+            exit 0
+          fi
+          git log --format='%B' "$BASE_SHA..$HEAD_SHA" > /tmp/commit-msgs.txt
+          echo "Checking $(git rev-list --count "$BASE_SHA..$HEAD_SHA") commit message(s)."
+          bash scripts/check-commit-trailers.sh --label "commit messages in this PR" /tmp/commit-msgs.txt
+
+      # Backstop for the paths a PR check cannot cover: a web-UI merge, an admin
+      # bypass, or a direct push. Fails loudly on main so it is caught in hours.
+      - name: Check commit messages pushed to this branch
+        if: github.event_name == 'push'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          range="$BEFORE_SHA..$AFTER_SHA"
+          # A new branch or a force-push can report an all-zero / missing "before".
+          if ! git rev-parse --verify --quiet "$BEFORE_SHA^{commit}" >/dev/null; then
+            echo "No usable previous SHA; checking the most recent 50 commits instead."
+            range=""
+          fi
+          if [ -n "$range" ]; then
+            git log --format='%B' "$range" > /tmp/pushed-msgs.txt
+          else
+            git log --format='%B' -n 50 > /tmp/pushed-msgs.txt
+          fi
+          bash scripts/check-commit-trailers.sh --label "commit messages on this branch" /tmp/pushed-msgs.txt
+
+      - name: Self-test the checker
+        # Proves the check can actually fail. A checker that silently matches
+        # nothing — a real failure mode noted in scripts/check-public-boundary.sh
+        # for long shell alternations — would otherwise report green forever.
+        run: |
+          set -uo pipefail
+          printf 'fix: something\n\nCo-authored-by: Copilot <copilot@users.noreply.github.com>\n' > /tmp/neg.txt
+          if bash scripts/check-commit-trailers.sh /tmp/neg.txt >/dev/null 2>&1; then
+            echo "::error::Negative control PASSED the checker. The gate is not working."
+            exit 1
+          fi
+          printf 'fix: something\n\nCo-authored-by: Budi <budi@example.com>\n' > /tmp/pos.txt
+          if ! bash scripts/check-commit-trailers.sh /tmp/pos.txt >/dev/null 2>&1; then
+            echo "::error::A human co-author trailer was rejected. The checker over-blocks."
+            exit 1
+          fi
+          echo "Self-test passed: rejects machine trailers, allows human co-authors."

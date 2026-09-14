@@ -1,0 +1,54 @@
+#!/usr/bin/env sh
+# Kebijakan trailer commit: atribusi di repo ini menyebut orang.
+#
+# Trailer `Co-authored-by:` dipetakan GitHub ke akun sungguhan dan ikut dihitung
+# ke dalam grafik kontributor repositori, jadi trailer yang keliru salah
+# menyatakan siapa yang menulis kode. Trailer juga praktis permanen begitu
+# terbit: `refs/pull/N/head` sebuah pull request tidak bisa dihapus pemilik repo,
+# sehingga menulis ulang branch pun tidak menariknya kembali. Lebih murah
+# ditolak di sini.
+#
+# Aktifkan (sekali per klon):  git config core.hooksPath .githooks
+# `pnpm install` sudah melakukannya otomatis lewat skrip `prepare`.
+#
+# CATATAN PRESISI: pola HARUS ditambatkan ke awal baris. Versi pertama hook ini
+# mencocokkan di mana saja, sehingga menolak commit yang sekadar MEMBICARAKAN
+# trailer di prosa — termasuk commit yang memperkenalkan hook ini sendiri.
+# Trailer sejati selalu berdiri sendiri di awal baris.
+#
+# Polanya sendiri TIDAK tinggal di sini. Ia ada di
+# scripts/check-commit-trailers.sh, satu sumber kebenaran yang dipakai bersama
+# oleh hook ini dan oleh gate CI. Hook hanya melindungi commit lokal; ia tidak
+# bisa melihat deskripsi pull request, dan tidak jalan pada commit lewat web UI
+# GitHub atau `--no-verify`. Gate CI menutup sisanya.
+
+msg_file="$1"
+[ -f "$msg_file" ] || exit 0
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+checker="${root}/scripts/check-commit-trailers.sh"
+
+# Kalau skrip bersama tidak ada (checkout sebagian, atau commit yang menghapusnya),
+# jangan diam-diam meloloskan: beri tahu dan tolak.
+if [ ! -f "$checker" ]; then
+  echo "" >&2
+  echo "commit-msg DITOLAK: ${checker} tidak ditemukan." >&2
+  echo "Gate kebijakan trailer tidak bisa dijalankan, jadi commit ini tidak diloloskan." >&2
+  echo "" >&2
+  exit 1
+fi
+
+# Panggil dengan `bash`, bukan `sh`: skripnya memakai array, yang tidak ada di
+# POSIX sh (dash di Debian/Ubuntu akan gagal parse).
+if ! command -v bash >/dev/null 2>&1; then
+  echo "" >&2
+  echo "commit-msg DITOLAK: bash tidak tersedia, gate tidak bisa jalan." >&2
+  echo "" >&2
+  exit 1
+fi
+
+if ! bash "$checker" --strip-comments --label "pesan commit" "$msg_file"; then
+  exit 1
+fi
+
+exit 0
