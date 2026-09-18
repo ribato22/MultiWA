@@ -78,6 +78,10 @@ services:
       dockerfile: docker/Dockerfile.api
     container_name: multiwa-api
     restart: unless-stopped
+    # tini as PID 1: node here registers SIGTRAP/SEGV handlers (puppeteer), so as
+    # PID 1 a fatal V8 abort spins at 100% CPU instead of exiting and `restart`
+    # never fires. With an init process the crash exits and the container restarts.
+    init: true
     shm_size: '1gb'
     working_dir: /app/apps/api
     environment:
