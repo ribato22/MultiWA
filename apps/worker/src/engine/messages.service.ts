@@ -110,6 +110,14 @@ export class WorkerMessagesService {
       return { success: true, messageId: message.id, conversationId: conversation.id, waMessageId: result?.messageId, status: 'sent' };
     } catch (error: any) {
       await prisma.message.update({ where: { id: message.id }, data: { status: 'failed' } });
+      // Same reason as the api copy: the row is now `failed`, `messages` has no
+      // error column and `metadata` stays null, so without a log line the
+      // failure is invisible. Send-gate rejections arrive here as HttpException
+      // and their body carries the reason (DAILY_LIMIT_REACHED,
+      // COLD_DAILY_LIMIT_REACHED, COLD_CIRCUIT_OPEN, REPEAT_SUPPRESSED).
+      // message.id is a generated uuid, so there is no untrusted text to sanitise.
+      const reason = typeof error?.getResponse === 'function' ? JSON.stringify(error.getResponse()) : error?.message;
+      this.logger.warn(`Send failed for message ${message.id}: ${reason}`);
       this.eventEmitter.emit(AppEvents.MESSAGE.FAILED, { profileId, messageId: message.id, to: jid, type, error: error?.message });
       return { success: false, messageId: message.id, conversationId: conversation.id, status: 'failed', error: error?.message };
     }

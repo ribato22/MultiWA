@@ -16,6 +16,24 @@ import type {
   SendMessageOptions
 } from '../types';
 
+/**
+ * whatsapp-web.js `MessageAck` → the status string stored on the message row.
+ *
+ * `-1` is `ACK_ERROR`. It was missing, so a delivery error fell through to
+ * `'unknown'`: a message WhatsApp had actually rejected was stored as neither
+ * sent nor failed, and nothing could alert on it.
+ *
+ * Module-level so it can be asserted directly; the handler reads this map.
+ */
+export const ACK_STATUS_MAP: Record<number, string> = {
+  [-1]: 'failed',
+  0: 'pending',
+  1: 'sent',
+  2: 'delivered',
+  3: 'read',
+  4: 'played',
+};
+
 export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   readonly engineType = 'whatsapp-web-js' as const;
   
@@ -168,13 +186,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
     // Message ACK
     this.client.on('message_ack', (message: any, ack: number) => {
-      const statusMap: Record<number, string> = {
-        0: 'pending',
-        1: 'sent',
-        2: 'delivered',
-        3: 'read',
-        4: 'played',
-      };
+      const statusMap = ACK_STATUS_MAP;
 
       // Reading `message.id._serialized` here returned undefined on WhatsApp Web
       // >= 2.3000.1042401057 (the `_serialized` -> `$1` key rename), so EVERY ack

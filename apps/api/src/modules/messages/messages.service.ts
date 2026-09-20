@@ -333,6 +333,16 @@ export class MessagesService {
       // API returns the real status code; engine send failures keep the existing
       // soft { success:false } contract.
       if (error instanceof HttpException) {
+        // Log BEFORE rethrowing. Everything above already marked the row
+        // `failed`, and `messages` has no error column while `metadata` stays
+        // null — so without this line a gate rejection leaves NO trace anywhere.
+        // In production that made "why did 7% of sends fail?" unanswerable: the
+        // failed rows were there, the logs were empty. The gate reason lives in
+        // the exception body (DAILY_LIMIT_REACHED, COLD_DAILY_LIMIT_REACHED,
+        // COLD_CIRCUIT_OPEN, REPEAT_SUPPRESSED), which is what makes it useful.
+        // message.id is a generated uuid and the body is our own object, so
+        // there is no untrusted text to sanitise here.
+        this.logger.warn(`Send gate rejected message ${message.id}: ${JSON.stringify(error.getResponse())}`);
         throw error;
       }
       this.logger.error(`Failed to send message: ${error.message}`);
