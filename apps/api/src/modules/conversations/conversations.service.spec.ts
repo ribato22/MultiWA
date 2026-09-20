@@ -27,7 +27,7 @@ vi.mock('@multiwa/database', () => ({
 vi.mock('../groups/groups.service', () => ({ GroupsService: class {} }));
 
 import { prisma } from '@multiwa/database';
-import { ConversationsService } from './conversations.service';
+import { ConversationsService, clampMessagePage, MAX_MESSAGE_PAGE } from './conversations.service';
 
 function makeService(groupsStub: any = { getById: vi.fn() }): ConversationsService {
   return new ConversationsService(groupsStub);
@@ -276,6 +276,55 @@ describe('ConversationsService', () => {
       );
       expect(res.messages.map((m: any) => m.id)).toEqual(['a', 'b']); // reversed to chronological
       expect(res.hasMore).toBe(true); // returned count === requested limit
+    });
+  });
+
+  // Message rows carry inline base64 media — one stored row has been seen at
+  // 39 MB — so an unbounded page is a heap-exhaustion vector, not a slow query.
+  // Fixing the conversation LIST left these two single-conversation endpoints
+  // open: `?messageLimit=100000` reopened the same hole.
+  describe('message page clamping', () => {
+    it('clamps, floors and coerces', () => {
+      expect(clampMessagePage(100000)).toBe(MAX_MESSAGE_PAGE);
+      expect(clampMessagePage('100000')).toBe(MAX_MESSAGE_PAGE); // query params arrive as strings
+      expect(clampMessagePage(10)).toBe(10);
+      expect(clampMessagePage('10')).toBe(10);
+      expect(clampMessagePage(10.9)).toBe(10);
+      expect(clampMessagePage(MAX_MESSAGE_PAGE)).toBe(MAX_MESSAGE_PAGE);
+    });
+
+    it('falls back to the default for missing or nonsense values', () => {
+      for (const bad of [undefined, null, 0, -5, NaN, 'abc', '']) {
+        expect(clampMessagePage(bad as any)).toBe(50);
+      }
+    });
+
+    it('findOne caps the included messages', async () => {
+      vi.mocked(prisma.conversation.findUnique).mockResolvedValue({
+        id: 'c1',
+        messages: [],
+        contact: null,
+      } as any);
+
+      await makeService().findOne('c1', 100000 as any);
+
+      expect(prisma.conversation.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            messages: expect.objectContaining({ take: MAX_MESSAGE_PAGE }),
+          }),
+        }),
+      );
+    });
+
+    it('getMessages caps its page', async () => {
+      vi.mocked(prisma.message.findMany).mockResolvedValue([] as any);
+
+      await makeService().getMessages('c1', { limit: 100000 });
+
+      expect(prisma.message.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: MAX_MESSAGE_PAGE }),
+      );
     });
   });
 });
