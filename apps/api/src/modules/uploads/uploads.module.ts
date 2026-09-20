@@ -4,6 +4,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UploadsController } from './uploads.controller';
+import { MediaFileController } from './media-file.controller';
 import { UploadsService } from './uploads.service';
 import { STORAGE_ADAPTER } from './storage.interface';
 import { LocalStorageAdapter } from './local-storage.adapter';
@@ -44,7 +45,10 @@ const StorageAdapterProvider = {
 
 @Module({
   imports: [ConfigModule],
-  controllers: [UploadsController],
+  // MediaFileController is separate because it must NOT carry UploadsController's
+  // class-level auth guard: whatsapp-web.js fetches the media URL with no
+  // credentials. See the comment at the top of that file.
+  controllers: [UploadsController, MediaFileController],
   providers: [StorageAdapterProvider, UploadsService],
   exports: [UploadsService, STORAGE_ADAPTER],
 })
