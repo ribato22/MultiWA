@@ -58,6 +58,64 @@ describe('extensionForMime', () => {
       expect(extensionForMime(mime)).toBe('bin');
     }
   });
+
+  // `.bin` is the right answer for a type the endpoint would REFUSE, and the wrong one
+  // for a type it ACCEPTS. UploadsController.getFileCategory() admits anything with an
+  // image/, video/ or audio/ prefix, not just its ALLOWED_MIMES list, and a type that is
+  // accepted but unmapped is stored as `.bin` — which MessageMedia.fromUrl() resolves to
+  // application/octet-stream and then, because that is truthy, never replaces with the
+  // response Content-Type (MessageMedia.js:69,118). The recipient gets a file rather than
+  // a picture, and on S3 the correct stored ContentType is discarded.
+  it.each([
+    ['image/heic', 'heic'], // an iPhone photo
+    ['image/heif', 'heif'],
+    ['image/avif', 'avif'],
+    ['image/bmp', 'bmp'],
+    ['image/tiff', 'tiff'],
+    ['video/3gpp', '3gp'],
+    ['video/x-matroska', 'mkv'],
+    ['audio/aac', 'aac'],
+    ['audio/mp4', 'm4a'],
+    ['audio/amr', 'amr'],
+    ['audio/flac', 'flac'],
+    ['audio/x-wav', 'wav'],
+    ['audio/mp3', 'mp3'],
+  ])('maps %s, which the endpoint accepts, to .%s rather than .bin', (mime, expected) => {
+    expect(extensionForMime(mime)).toBe(expected);
+  });
+
+  it('has no mapping that is itself an executable extension', () => {
+    const active = ['html', 'htm', 'xhtml', 'xht', 'svg', 'svgz', 'xml', 'xsl', 'xslt',
+                    'js', 'mjs', 'cjs', 'es', 'ecma', 'css', 'php', 'jsp', 'asp', 'sh'];
+    for (const mime of ['image/heic', 'video/3gpp', 'audio/flac', 'image/png', 'text/plain']) {
+      expect(active).not.toContain(extensionForMime(mime));
+    }
+  });
+});
+
+describe('getFileType', () => {
+  const service = new UploadsService({} as never);
+
+  // Normalised the same way extensionForMime is: the two classify the same upload for the
+  // same response, so an uppercase or parameterised type must not make them disagree.
+  it.each([
+    ['image/png', 'IMAGE'],
+    ['IMAGE/PNG', 'IMAGE'],
+    ['image/heic', 'IMAGE'],
+    ['audio/ogg; codecs=opus', 'AUDIO'],
+    ['VIDEO/MP4', 'VIDEO'],
+    ['application/pdf', 'DOCUMENT'],
+    ['', 'DOCUMENT'],
+  ])('classifies %s as %s', (mime, expected) => {
+    expect(service.getFileType(mime)).toBe(expected);
+  });
+
+  it('agrees with extensionForMime about what an upload is', () => {
+    for (const mime of ['IMAGE/PNG', 'audio/ogg; codecs=opus', 'image/heic']) {
+      expect(extensionForMime(mime)).not.toBe('bin');
+      expect(['IMAGE', 'VIDEO', 'AUDIO']).toContain(service.getFileType(mime));
+    }
+  });
 });
 
 describe('UploadsService key generation', () => {
