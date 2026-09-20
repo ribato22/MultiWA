@@ -56,9 +56,9 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "@nestjs/cli": "^12.0.0",
+    "@nestjs/cli": "^12.0.3",
     "@nestjs/schematics": "^11.0.0",
-    "@nestjs/testing": "^11.2.3",
+    "@nestjs/testing": "^11.2.5",
     "@swc/cli": "^0.8.1",
     "@swc/core": "^1.16.2",
     "@types/bcrypt": "^6.0.0",
