@@ -50,20 +50,27 @@ export class ConversationsService {
     const [conversations, total] = await Promise.all([
       prisma.conversation.findMany({
         where,
-        take: options.limit || 50,
+        take: Math.min(options.limit || 50, 100),
         skip: options.offset || 0,
         orderBy: { lastMessageAt: 'desc' },
         include: {
           _count: { select: { messages: true } },
           contact: { select: { name: true, phone: true } },
-          messages: {
-            take: 1,
-            orderBy: { timestamp: 'desc' },
-          },
         },
       }),
       prisma.conversation.count({ where }),
     ]);
+
+    // Not a nested `messages: { take: 1 }` include: Prisma 7 serves that on findMany
+    // by loading EVERY message of every listed conversation (inline base64 media
+    // included) and trimming in memory, which OOM-killed the api on a limit=500
+    // list. findFirst pushes LIMIT 1 into SQL.
+    const lastMessages = await Promise.all(conversations.map((c) =>
+      prisma.message.findFirst({
+        where: { conversationId: c.id },
+        orderBy: { timestamp: 'desc' },
+      }),
+    ));
 
     // For conversations without a contact, try to resolve names by JID phone number
     const unlinkedConvs = conversations.filter(c => !c.contact && c.jid?.includes('@s.whatsapp.net'));
@@ -113,7 +120,7 @@ export class ConversationsService {
     }
 
     return {
-      conversations: conversations.map((c) => {
+      conversations: conversations.map((c, i) => {
         const jidPhone = c.jid?.split('@')[0] || '';
         const isGroup = c.type === 'group' || c.jid?.includes('@g.us');
         const resolvedName = c.contact?.name || phoneToName[jidPhone] || null;
@@ -127,10 +134,9 @@ export class ConversationsService {
         return {
           ...c,
           messageCount: c._count.messages,
-          lastMessage: c.messages[0] || null,
+          lastMessage: lastMessages[i] || null,
           contactName: displayName,
           contactPhone: c.contact?.phone || (c.jid?.includes('@s.whatsapp.net') ? jidPhone : null),
-          messages: undefined,
           _count: undefined,
           contact: undefined,
         };

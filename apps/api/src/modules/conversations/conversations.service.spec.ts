@@ -17,7 +17,7 @@ vi.mock('@multiwa/database', () => ({
       update: vi.fn(),
     },
     contact: { findMany: vi.fn() },
-    message: { findUnique: vi.fn(), findMany: vi.fn() },
+    message: { findUnique: vi.fn(), findMany: vi.fn(), findFirst: vi.fn() },
   },
 }));
 
@@ -45,6 +45,7 @@ describe('ConversationsService', () => {
     vi.mocked(prisma.contact.findMany).mockReset();
     vi.mocked(prisma.message.findUnique).mockReset();
     vi.mocked(prisma.message.findMany).mockReset();
+    vi.mocked(prisma.message.findFirst).mockReset();
   });
 
   describe('getOrgUnreadCount (tenant scoping)', () => {
@@ -111,6 +112,46 @@ describe('ConversationsService', () => {
         where: { profileId: 'prof-1', type: 'group' },
       });
     });
+
+    it('clamps an oversized limit so one call cannot load an unbounded page', async () => {
+      vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([] as any);
+      vi.mocked(prisma.conversation.count).mockResolvedValueOnce(0 as any);
+
+      await makeService().findAll('prof-1', { limit: 500 });
+
+      expect(prisma.conversation.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 100 }));
+    });
+  });
+
+  describe('findAll (last message loading)', () => {
+    // Prisma 7 (JS query compiler + pg adapter) serves a nested `take` on a
+    // findMany relation by selecting EVERY child row of every listed parent and
+    // trimming in memory. Messages carry inline base64 media, so the list query
+    // must not include `messages`; each conversation's latest message is read with
+    // a single-row query instead (LIMIT reaches SQL for findFirst).
+    it('reads each last message with its own single-row query, never a nested relation page', async () => {
+      const base = { profileId: 'prof-1', type: 'user', name: 'x', unreadCount: 0, contact: null };
+      vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([
+        { ...base, id: 'c1', jid: 'a@lid', _count: { messages: 7 } },
+        { ...base, id: 'c2', jid: 'b@lid', _count: { messages: 2 } },
+      ] as any);
+      vi.mocked(prisma.conversation.count).mockResolvedValueOnce(2 as any);
+      vi.mocked(prisma.message.findFirst).mockImplementation((async (args: any) =>
+        ({ c1: { id: 'm-c1' }, c2: { id: 'm-c2' } } as any)[args.where.conversationId]) as any);
+
+      const { conversations } = await makeService().findAll('prof-1', {});
+
+      const listArgs = vi.mocked(prisma.conversation.findMany).mock.calls[0][0] as any;
+      expect(listArgs.include).not.toHaveProperty('messages');
+      expect(prisma.message.findFirst).toHaveBeenCalledWith({
+        where: { conversationId: 'c1' },
+        orderBy: { timestamp: 'desc' },
+      });
+      expect(conversations.map((c: any) => [c.id, c.lastMessage?.id])).toEqual([
+        ['c1', 'm-c1'],
+        ['c2', 'm-c2'],
+      ]);
+    });
   });
 
   describe('findAll (mapping / normalization)', () => {
@@ -124,10 +165,10 @@ describe('ConversationsService', () => {
         unreadCount: 3,
         _count: { messages: 5 },
         contact: { name: 'Bob', phone: '628999' },
-        messages: [{ id: 'm-last', body: 'hi' }],
       };
       vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([conv] as any);
       vi.mocked(prisma.conversation.count).mockResolvedValueOnce(1 as any);
+      vi.mocked(prisma.message.findFirst).mockResolvedValueOnce({ id: 'm-last', body: 'hi' } as any);
 
       const { conversations } = await makeService().findAll('prof-1', {});
       const row = conversations[0] as any;
@@ -155,7 +196,6 @@ describe('ConversationsService', () => {
         unreadCount: 0,
         _count: { messages: 0 },
         contact: null,
-        messages: [],
       };
       vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([conv] as any);
       vi.mocked(prisma.conversation.count).mockResolvedValueOnce(1 as any);
@@ -183,7 +223,6 @@ describe('ConversationsService', () => {
         unreadCount: 0,
         _count: { messages: 1 },
         contact: null,
-        messages: [{ id: 'g-last' }],
       };
       vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([conv] as any);
       vi.mocked(prisma.conversation.count).mockResolvedValueOnce(1 as any);
