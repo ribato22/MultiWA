@@ -1,8 +1,21 @@
 diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
-index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037af8efc976 100644
+index 540078a9d07b3df07ccd51b030556a72af4cf650..ef4bad3c2edb85d3855ab9fa427df52b90769208 100644
 --- a/src/util/Injected/Utils.js
 +++ b/src/util/Injected/Utils.js
-@@ -582,7 +582,7 @@ exports.LoadUtils = () => {
+@@ -470,8 +470,10 @@ exports.LoadUtils = () => {
+             isNewMsg: true,
+             type: 'chat',
+             ...ephemeralFields,
+-            ...mediaOptions,
+-            ...(mediaOptions.toJSON ? mediaOptions.toJSON() : {}),
++            ...window.WWebJS.omitModelInternals(mediaOptions),
++            ...(mediaOptions.toJSON
++                ? window.WWebJS.omitModelInternals(mediaOptions.toJSON())
++                : {}),
+             ...quotedMsgOptions,
+             ...locationOptions,
+             ...pollOptions,
+@@ -582,7 +584,7 @@ exports.LoadUtils = () => {
  
          return window
              .require('WAWebCollections')
@@ -11,7 +24,7 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037a
      };
  
      window.WWebJS.editMessage = async (msg, content, options = {}) => {
-@@ -625,7 +625,9 @@ exports.LoadUtils = () => {
+@@ -625,7 +627,9 @@ exports.LoadUtils = () => {
          await window
              .require('WAWebSendMessageEditAction')
              .sendMessageEdit(msg, content, internalOptions);
@@ -22,7 +35,7 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037a
      };
  
      window.WWebJS.toStickerData = async (mediaInfo) => {
-@@ -800,9 +802,32 @@ exports.LoadUtils = () => {
+@@ -800,9 +804,48 @@ exports.LoadUtils = () => {
          return mediaData;
      };
  
@@ -36,6 +49,22 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037a
 +     */
 +    window.WWebJS.getMsgKeyId = (key) =>
 +        key?._serialized ?? key?.$1 ?? undefined;
++
++    /**
++     * MultiWA patch: WhatsApp Web's MediaData is a model whose internal
++     * attributes are prefixed `__x_`. Spreading the model instance into the
++     * outgoing Msg copies `__x_id` across, and the send then throws
++     * "Data passed to getter must include an id property" — so EVERY
++     * image/video/document send fails while the API still answers 201.
++     *
++     * Only `__x_id` is dropped: it is the key that breaks the getter, and
++     * removing the whole `__x_` family risks taking something the send needs.
++     */
++    window.WWebJS.omitModelInternals = (obj) => {
++        if (!obj || typeof obj !== 'object') return obj;
++        const { __x_id, ...rest } = obj;
++        return rest;
++    };
 +
      window.WWebJS.getMessageModel = (message) => {
          const msg = message.serialize();
@@ -55,7 +84,7 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037a
          const { findLinks } = window.require('WALinkify');
  
          msg.isEphemeral = message.isEphemeral;
-@@ -919,10 +944,20 @@ exports.LoadUtils = () => {
+@@ -919,10 +962,20 @@ exports.LoadUtils = () => {
  
      window.WWebJS.getChats = async () => {
          const chats = window.require('WAWebCollections').Chat.getModelsArray();
@@ -80,7 +109,7 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037a
      };
  
      window.WWebJS.getChannels = async () => {
-@@ -950,21 +985,46 @@ exports.LoadUtils = () => {
+@@ -950,21 +1003,46 @@ exports.LoadUtils = () => {
          }
  
          if (chat.groupMetadata) {
@@ -140,7 +169,7 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..0cdb316abc5b8bc44aab8150ec97037a
          }
  
          if (chat.newsletterMetadata) {
-@@ -984,12 +1044,16 @@ exports.LoadUtils = () => {
+@@ -984,12 +1062,16 @@ exports.LoadUtils = () => {
              const lastMessage = chat.lastReceivedKey
                  ? window
                        .require('WAWebCollections')
