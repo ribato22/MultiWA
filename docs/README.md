@@ -42,6 +42,7 @@ Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp AP
 
 ### Releasing
 - [21 - Releasing & Distribution](./21-releasing-and-distribution.md) - Release flow, publishing SDKs and Docker images
+- [22 - Air-gapped Deploy](./22-air-gapped-deploy.md) - Deploying to a host with no registry access: build, verify, transfer, gate, roll back
 
 ---
 

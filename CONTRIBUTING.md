@@ -63,6 +63,13 @@ pass the Release Gate CI and receive a review before it can be merged.
 > First time contributing? `git clone` your fork, then follow
 > [Development Setup](#development-setup).
 
+**Deploying a fix?** Deploy an image built from a commit on `main`, never from a
+working tree. An image built from uncommitted changes works — which is what makes
+it dangerous: nobody can reproduce it, and the next deploy from `main` silently
+reverts it, with a green build and a healthy container to hide it. If a fix is
+urgent enough to hand-deploy, open the PR the same day. See
+[22 - Air-gapped Deploy](docs/22-air-gapped-deploy.md).
+
 ## Development Setup
 
 ```bash

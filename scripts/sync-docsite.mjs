@@ -52,6 +52,7 @@ const PAGES = [
   { src: '19-database-backup.md', dst: 'operations/database-backup.md', title: 'Database Backup', pos: 4 },
   { src: '20-examples.md', dst: 'guides/examples.md', title: 'Examples & Recipes', pos: 1 },
   { src: '21-releasing-and-distribution.md', dst: 'operations/releasing-and-distribution.md', title: 'Releasing & Distribution', pos: 6 },
+  { src: '22-air-gapped-deploy.md', dst: 'operations/air-gapped-deploy.md', title: 'Air-gapped Deploy', pos: 7 },
 ];
 
 function frontmatter(p) {

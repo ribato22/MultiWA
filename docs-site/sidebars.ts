@@ -66,6 +66,7 @@ const sidebars: SidebarsConfig = {
         'operations/demo-mode',
         'operations/database-backup',
         'operations/releasing-and-distribution',
+        'operations/air-gapped-deploy',
       ],
     },
   ],
