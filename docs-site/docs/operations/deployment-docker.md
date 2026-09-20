@@ -9,6 +9,11 @@ Production deployment with Docker and Docker Compose.
 
 The repository ships with a working `docker-compose.yml` at the project root that defines five services — `postgres`, `redis`, `api`, `admin`, and an optional `minio` plus `nginx` for the full stack. Use that file as the source of truth for ports, environment variables, and healthchecks; the snippets in this guide are illustrations only.
 
+> **Host with no registry access?** This guide assumes the host can pull images.
+> If yours cannot and you carry image tarballs across instead, see
+> [22 - Air-gapped Deploy](22-air-gapped-deploy.md) — it covers building,
+> verifying and gating that path, and the failure modes specific to it.
+
 ---
 
 ## Quick Deploy
