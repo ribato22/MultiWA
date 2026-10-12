@@ -46,6 +46,8 @@ import {
   Loader2,
   Gauge,
   Save,
+  Copy,
+  Hash,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -339,6 +341,24 @@ export default function ProfileDetailPage() {
       setLoading(false);
     }
   }, [profileId]);
+
+  // Until this button, the only way to get a profile's UUID was to copy it out of
+  // the address bar by hand.
+  const copyProfileId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast({ title: 'Profile ID copied' });
+    } catch {
+      // navigator.clipboard is undefined on a plain-HTTP origin and rejects when
+      // permission is denied. Say so instead of claiming it worked; the ID is
+      // rendered as selectable text, so copying by hand still works.
+      toast({
+        title: 'Could not copy',
+        description: 'Select the ID and copy it manually.',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -695,6 +715,26 @@ export default function ProfileDetailPage() {
               >
                 {fmtPhone(profile.phoneNumber)}
               </span>
+            </div>
+            <div className="flex items-center gap-2 mt-0.5 min-w-0">
+              <Hash className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span
+                className="font-mono text-xs text-slate-500 truncate select-all"
+                title={profile.id}
+              >
+                {profile.id}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => copyProfileId(profile.id)}
+                aria-label="Copy profile ID"
+                title="Copy profile ID"
+                className="h-6 w-6 shrink-0 text-slate-500 hover:bg-slate-800 hover:text-slate-100 cursor-pointer"
+              >
+                <Copy />
+              </Button>
             </div>
           </div>
           <StatusBadge status={profile.status} />
