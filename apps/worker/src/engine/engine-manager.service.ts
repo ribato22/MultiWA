@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, handleAutoRejectCall, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, handleAutoRejectCall, isSessionInvalidReason, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -682,11 +682,21 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         // Only clear session folder for actual session invalidation (logged out, expired)
         // Do NOT clear for temporary errors like 'Stream Errored' or 'Connection Failure'
         // as these may recover on reconnect
-        const sessionInvalidReasons = ['Session Expired', 'Logged Out', 'loggedOut'];
-        const isSessionInvalid = sessionInvalidReasons.some(r => reason.includes(r));
+        const isSessionInvalid = isSessionInvalidReason(reason);
         
         if (isSessionInvalid) {
           this.logger.warn(`Session invalidated for ${profileId}, clearing session folder for fresh QR`);
+          // Close the browser before deleting its profile dir, and drop the dead engine so
+          // nothing keeps running against a deleted directory. On a whatsapp-web.js LOGOUT
+          // its own event handler is still mid-flight here; the rejection it raises once
+          // the page is gone is absorbed by the process-level guard
+          // (installBrowserRejectionGuard) instead of crashing the process.
+          try {
+            await instance?.engine?.destroy?.();
+          } catch (e) {
+            this.logger.warn(`Error destroying engine after session invalidation: ${(e as Error).message}`);
+          }
+          this.engines.delete(profileId);
           try {
             const fs = await import('fs/promises');
             await fs.rm(sessionDir, { recursive: true, force: true });

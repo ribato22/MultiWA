@@ -18,3 +18,4 @@ export * from './wa-message-id';
 export * from './system-message';
 export * from './engine-type';
 export * from './inbound-message';
+export * from './engine-lifecycle';
