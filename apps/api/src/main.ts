@@ -7,6 +7,11 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as crypto from 'crypto';
 import { AppModule } from './app.module';
 import { configureApp } from './app.factory';
+import { installBrowserRejectionGuard } from '@multiwa/engine-runtime';
+
+// One profile's headless browser going away (e.g. a remote logout navigating the
+// page while its engine is torn down) must not kill every other session with it.
+installBrowserRejectionGuard((message) => console.warn(`⚠️  [process] ${message}`));
 
 // Fail fast on missing/weak security secrets so a production deploy can never
 // silently run with a forgeable JWT secret or an ephemeral encryption key.

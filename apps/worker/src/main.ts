@@ -6,6 +6,7 @@ import http from 'node:http';
 import { collectDefaultMetrics, Gauge, Registry } from 'prom-client';
 import pino from 'pino';
 import { createPrismaClient } from '@multiwa/database';
+import { installBrowserRejectionGuard } from '@multiwa/engine-runtime';
 import { NestFactory } from '@nestjs/core';
 import type { INestApplicationContext } from '@nestjs/common';
 import { WorkerEngineModule } from './engine/worker-engine.module';
@@ -32,6 +33,10 @@ const logger = pino(
         },
       },
 );
+
+// A profile's headless browser going away must not kill every other session
+// (relevant when this process hosts the engine, ENGINE_HOST=worker).
+installBrowserRejectionGuard((message) => logger.warn(message));
 
 const prisma = createPrismaClient();
 
