@@ -12,6 +12,8 @@ export interface EngineConfig {
     args?: string[];
   };
   onQR?: (qr: string) => void;
+  /** The QR was scanned (or a stored session accepted); 'ready' should follow shortly. */
+  onAuthenticated?: () => void;
   onReady?: (phone: string, pushName: string) => void;
   onDisconnected?: (reason: string) => void;
   onMessage?: (message: any) => void;

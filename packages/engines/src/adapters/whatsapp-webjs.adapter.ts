@@ -143,6 +143,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     this.client.on('authenticated', () => {
       console.log(`[WhatsApp-WebJS] Authenticated for profile ${this.config?.profileId}`);
       this.status.isAuthenticated = true;
+      this.config?.onAuthenticated?.();
     });
 
     // Disconnected

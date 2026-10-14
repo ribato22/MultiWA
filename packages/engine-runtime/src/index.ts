@@ -19,3 +19,4 @@ export * from './system-message';
 export * from './engine-type';
 export * from './inbound-message';
 export * from './engine-lifecycle';
+export * from './connect-watchdog';

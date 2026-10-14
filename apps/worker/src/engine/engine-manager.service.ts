@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, handleAutoRejectCall, isSessionInvalidReason, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, handleAutoRejectCall, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -40,15 +40,29 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   // Profiles whose one-off group-name reconciliation already ran this process.
   private reconciledGroups = new Set<string>();
 
-  // Ready-timeout watchdog: whatsapp-web.js can fire 'authenticated' but never
-  // 'ready' (upstream hang). Without this a profile sits at 'connecting' forever
-  // with no disconnect event to trigger the inline retry. If a profile doesn't
-  // reach 'connected' within the timeout, force a bounded reconnect so it
-  // self-heals. Mirrors the API EngineManagerService.
-  private readyTimers = new Map<string, NodeJS.Timeout>();
+  // Connect watchdog: whatsapp-web.js can fire 'authenticated' but never 'ready'
+  // (upstream hang), and a page can also stall before showing anything. Without this
+  // a profile sits at 'connecting' forever with no disconnect event to trigger the
+  // inline retry. If a profile makes no progress within the timeout, force a bounded
+  // reconnect so it self-heals. It is phase-aware (see ConnectWatchdog): a QR waiting
+  // for a human to scan is not a hang and gets its own, longer deadline. Mirrors the
+  // API EngineManagerService.
   private readyTimeoutRetries = new Map<string, number>();
   private readonly READY_TIMEOUT_MS = Number(process.env.READY_TIMEOUT_MS) || 120000;
   private readonly READY_TIMEOUT_MAX_RETRIES = Number(process.env.READY_TIMEOUT_MAX_RETRIES) || 3;
+  // How long a QR may sit unscanned before the engine is stopped (10 minutes by default).
+  private readonly QR_WAIT_TIMEOUT_MS = Number(process.env.QR_WAIT_TIMEOUT_MS) || 600000;
+  private readonly watchdog = new ConnectWatchdog({
+    startMs: this.READY_TIMEOUT_MS,
+    readyMs: this.READY_TIMEOUT_MS,
+    qrWaitMs: this.QR_WAIT_TIMEOUT_MS,
+    onStuck: (profileId, phase) =>
+      this.onReadyTimeout(profileId, phase).catch(err =>
+        this.logger.warn(`onReadyTimeout error for ${profileId}: ${(err as Error).message}`)),
+    onQrWaitExpired: (profileId) =>
+      this.onQrWaitExpired(profileId).catch(err =>
+        this.logger.warn(`QR-wait handler error for ${profileId}: ${(err as Error).message}`)),
+  });
 
   // Periodic reconnect sweep: safety net that reconnects profiles stuck
   // 'disconnected' but still holding a valid session (an outage that outlasted
@@ -203,20 +217,21 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   }
 
   private clearReadyTimer(profileId: string): void {
-    const t = this.readyTimers.get(profileId);
-    if (t) { clearTimeout(t); this.readyTimers.delete(profileId); }
+    this.watchdog.clear(profileId);
   }
 
-  // Fired when a profile authenticated but never reached 'connected' in time.
-  private async onReadyTimeout(profileId: string): Promise<void> {
-    this.readyTimers.delete(profileId);
+  // Fired when a profile made no progress in time: it never showed a QR or
+  // authenticated ('starting'), or authenticated but never reached 'connected'.
+  private async onReadyTimeout(profileId: string, phase: StuckPhase): Promise<void> {
     const inst = this.engines.get(profileId);
     if (!inst || inst.status === 'connected') return; // reached ready in time — nothing to do
     const retries = (this.readyTimeoutRetries.get(profileId) || 0) + 1;
     const max = this.READY_TIMEOUT_MAX_RETRIES;
     this.logger.warn(
-      `Profile ${profileId} authenticated but not online within ${this.READY_TIMEOUT_MS / 1000}s ` +
-      `(whatsapp-web.js ready-hang). Auto-recovery ${retries}/${max}.`,
+      (phase === 'authenticated'
+        ? `Profile ${profileId} authenticated but not online within ${this.READY_TIMEOUT_MS / 1000}s (whatsapp-web.js ready-hang).`
+        : `Profile ${profileId} showed neither a QR nor authentication within ${this.READY_TIMEOUT_MS / 1000}s (browser or page stuck).`) +
+      ` Auto-recovery ${retries}/${max}.`,
     );
     try { await inst.engine?.destroy?.(); } catch (e) { this.logger.warn(`destroy failed: ${(e as Error).message}`); }
     this.engines.delete(profileId);
@@ -240,6 +255,23 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     this.realtime.emitConnectionStatus(profileId, `reconnecting (${retries}/${max})`);
     this.connectProfile(profileId).catch(err =>
       this.logger.warn(`Ready-timeout reconnect failed for ${profileId}: ${(err as Error).message}`));
+  }
+
+  // Nobody scanned the QR in time. Not a failure: stop the engine so it stops cycling
+  // (a fresh QR needs a fresh Connect) and keep the reconnect sweep from relaunching a
+  // profile nobody is scanning. No notification or webhook — nothing went wrong.
+  private async onQrWaitExpired(profileId: string): Promise<void> {
+    const inst = this.engines.get(profileId);
+    if (!inst || inst.status === 'connected') return;
+    this.logger.log(
+      `QR for ${profileId} was not scanned within ${this.QR_WAIT_TIMEOUT_MS / 1000}s; stopping the engine. Press Connect for a new QR.`,
+    );
+    try { await inst.engine?.destroy?.(); } catch (e) { this.logger.warn(`destroy failed: ${(e as Error).message}`); }
+    this.engines.delete(profileId);
+    this.readyTimeoutRetries.delete(profileId);
+    this.manuallyDisconnected.add(profileId);
+    await prisma.profile.update({ where: { id: profileId }, data: { status: 'disconnected' } }).catch(() => {});
+    this.realtime.emitConnectionStatus(profileId, 'disconnected');
   }
 
   /**
@@ -485,7 +517,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   async onModuleDestroy() {
     // Stop the sweep and any pending ready-timeout watchdogs.
     if (this.reconnectSweepTimer) { clearInterval(this.reconnectSweepTimer); this.reconnectSweepTimer = null; }
-    for (const profileId of Array.from(this.readyTimers.keys())) this.clearReadyTimer(profileId);
+    this.watchdog.clearAll();
 
     // Cleanup all engines on shutdown
     for (const [profileId, instance] of this.engines) {
@@ -574,6 +606,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       sessionDir,
       onQR: async (qr: string) => {
         this.logger.log(`QR code received for profile ${profileId}`);
+        // A QR means the page loaded and WhatsApp is waiting for a human: not a hang.
+        this.watchdog.qrIssued(profileId);
         
         try {
           // Convert QR string to data URL for frontend <img> display
@@ -593,6 +627,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.realtime.emitQrUpdate(profileId, qr);
         }
       },
+      // The QR was scanned (or a stored session accepted): 'ready' must follow soon.
+      onAuthenticated: () => this.watchdog.authenticated(profileId),
       onReady: async (phone: string, pushName: string) => {
         this.logger.log(`Profile ${profileId} connected: ${phone} (${pushName})`);
 
@@ -891,14 +927,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         this.realtime.emitConnectionStatus(profileId, 'error');
       });
 
-      // Arm the ready-timeout watchdog. Cleared on 'ready' (onReady) or on a
-      // disconnect event (onDisconnected); fires only on a silent ready-hang
-      // where neither event ever arrives.
-      this.clearReadyTimer(profileId);
-      this.readyTimers.set(profileId, setTimeout(() => {
-        this.onReadyTimeout(profileId).catch(err =>
-          this.logger.warn(`onReadyTimeout error for ${profileId}: ${(err as Error).message}`));
-      }, this.READY_TIMEOUT_MS));
+      // Arm the connect watchdog. It moves on with the engine's progress (QR issued,
+      // authenticated) and is cleared on 'ready' (onReady) or on a disconnect event
+      // (onDisconnected); it fires only when the engine goes quiet.
+      this.watchdog.start(profileId);
 
       return { status: 'connecting', message: 'Scan QR code to connect' };
     } catch (error: any) {

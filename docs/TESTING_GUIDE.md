@@ -41,7 +41,7 @@ Testing checklist and status for all features.
 | QR code scanning → connect | ✅ Pass | |
 | Device info (phone number) | ✅ Fixed | Was: showed "No phone". Fix: profile field mapping `phoneNumber` → `phone` |
 | Session data display | ✅ Fixed | Was: raw JSON string. Fix: parsed `sessionData` to object |
-| **Reconnection (auto-retry)** | ✅ Improved | Auto-retry with exponential backoff (3 retries: 5s → 15s → 45s) for transient drops; a remote logout (`LOGOUT`, `Logged Out`) is not retried — the session is cleared and the profile needs a new QR scan. Also fixed: Chromium SingletonLock cleanup, removed `--single-process` flag, staggered startup |
+| **Reconnection (auto-retry)** | ✅ Improved | Auto-retry with exponential backoff (3 retries: 5s → 15s → 45s) for transient drops; a remote logout (`LOGOUT`, `Logged Out`) is not retried — the session is cleared and the profile needs a new QR scan. A QR left unscanned for 10 minutes (`QR_WAIT_TIMEOUT_MS`) stops the engine quietly instead of cycling; press Connect for a new one. Also fixed: Chromium SingletonLock cleanup, removed `--single-process` flag, staggered startup |
 | Disconnect/Reconnect button | ✅ Pass | |
 
 > **Note**: Reconnection on macOS development is inherently slower than Docker/Linux due to Puppeteer (Chromium) startup overhead. The 60s browser timeout and 240s protocol timeout in `whatsapp-webjs.adapter.ts` are normal for the library.
