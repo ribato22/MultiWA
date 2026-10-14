@@ -5,6 +5,11 @@ import { Logger } from '@nestjs/common';
 import type { ICacheAdapter } from '../cache.interface';
 import { MemoryCacheAdapter } from './memory-cache.adapter';
 
+/** Drop the `user:password@` part of a connection URL so it is safe to log. */
+export function redactUrlCredentials(url: string): string {
+  return url.replace(/\/\/[^/]*@/, '//***@');
+}
+
 /**
  * Redis cache adapter with automatic fallback to in-memory cache
  * if Redis is unavailable. Uses `ioredis` for connections.
@@ -39,7 +44,7 @@ export class RedisCacheAdapter implements ICacheAdapter {
 
       this.redis.on('connect', () => {
         this.isConnected = true;
-        this.logger.log(`Redis connected: ${this.redisUrl}`);
+        this.logger.log(`Redis connected: ${redactUrlCredentials(this.redisUrl)}`);
       });
 
       this.redis.on('error', (err: Error) => {
