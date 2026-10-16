@@ -48,6 +48,7 @@ import {
   Save,
   Copy,
   Hash,
+  X,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -313,7 +314,8 @@ export default function ProfileDetailPage() {
     return id;
   };
 
-  const fetchProfile = useCallback(async () => {
+  // Resolves to the profile the server returned, or null when it could not be read.
+  const fetchProfile = useCallback(async (): Promise<Profile | null> => {
     try {
       const token = localStorage.getItem('accessToken');
       const accountId = await getAccountId();
@@ -332,6 +334,7 @@ export default function ProfileDetailPage() {
           setConnecting(false);
           setErrorReason(null);
         }
+        return profileData;
       } else if (res.status === 404) {
         setProfile(null);
       }
@@ -340,6 +343,7 @@ export default function ProfileDetailPage() {
     } finally {
       setLoading(false);
     }
+    return null;
   }, [profileId]);
 
   // Until this button, the only way to get a profile's UUID was to copy it out of
@@ -375,6 +379,7 @@ export default function ProfileDetailPage() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (!res.ok) throw new Error(`Connect failed: ${res.status}`);
       const data = await res.json();
 
       if (data.qrCode) {
@@ -382,8 +387,11 @@ export default function ProfileDetailPage() {
         toast({ title: 'QR Code ready', description: 'Scan with WhatsApp to link' });
       } else if (data.status === 'connected') {
         toast({ title: 'Already connected' });
-        fetchProfile();
       }
+      // The server records 'connecting' before it answers. Once that status has been read
+      // back it owns the attempt (see isConnecting), so the local flag only has to bridge
+      // the click until then.
+      if (await fetchProfile()) setConnecting(false);
     } catch (error) {
       console.error('Failed to connect:', error);
       toast({ title: 'Connection failed', variant: 'destructive' });
@@ -391,7 +399,10 @@ export default function ProfileDetailPage() {
     }
   };
 
+  // Also the way out of a connection attempt: the server stops the engine and marks the
+  // profile disconnected, whether it was linked or still waiting for a scan.
   const handleDisconnect = async () => {
+    const wasAttempt = connecting || profile?.status?.toLowerCase() === 'connecting';
     setDisconnecting(true);
     try {
       const token = localStorage.getItem('accessToken');
@@ -405,7 +416,9 @@ export default function ProfileDetailPage() {
         },
       );
       if (res.ok) {
-        toast({ title: 'Profile disconnected' });
+        setConnecting(false);
+        setQrCode(null);
+        toast({ title: wasAttempt ? 'Connection cancelled' : 'Profile disconnected' });
         fetchProfile();
       }
     } catch (error) {
@@ -534,12 +547,15 @@ export default function ProfileDetailPage() {
     }
   };
 
-  // Auto-connect via ?action=connect URL flag
+  // Auto-connect via ?action=connect URL flag. Not when the server is already running an
+  // attempt: reloading this URL would otherwise restart it and throw away the QR in view.
   useEffect(() => {
+    const s = profile?.status?.toLowerCase();
     if (
       autoConnect &&
       profile &&
-      profile.status?.toLowerCase() !== 'connected' &&
+      s !== 'connected' &&
+      s !== 'connecting' &&
       !connecting &&
       connectionAttempts === 0
     ) {
@@ -547,26 +563,17 @@ export default function ProfileDetailPage() {
     }
   }, [autoConnect, profile, connecting, connectionAttempts]);
 
-  // Poll profile while waiting for QR scan (WebSocket primary, polling fallback)
+  // Poll the profile while an attempt is running (WebSocket primary, polling fallback).
+  // There is no timer here on purpose: the server ends an unscanned attempt itself and
+  // reports it as disconnected, so the page follows that instead of guessing a deadline.
   useEffect(() => {
-    if (!connecting) return;
-    if (profile?.status?.toLowerCase() === 'connected') return;
+    const s = profile?.status?.toLowerCase();
+    if (s === 'connected') return;
+    if (!connecting && s !== 'connecting') return;
     const interval = setInterval(() => {
       fetchProfile();
     }, 5000);
-    const timeout = setTimeout(() => {
-      setQrCode(null);
-      setConnecting(false);
-      toast({
-        title: 'QR Code expired',
-        description: 'Please refresh and try again',
-        variant: 'destructive',
-      });
-    }, 120000);
-    return () => {
-      clearInterval(interval);
-      clearTimeout(timeout);
-    };
+    return () => clearInterval(interval);
   }, [connecting, profile?.status, fetchProfile]);
 
   // ───────────────────── render ─────────────────────
@@ -617,7 +624,10 @@ export default function ProfileDetailPage() {
 
   const status = (profile.status || '').toLowerCase();
   const isConnected = status === 'connected';
-  const isConnecting = connecting && !isConnected;
+  // The server's status is the source of truth, not only this tab's click: after a reload,
+  // from a second admin's tab, or on a server-side retry nothing local is set, yet an
+  // attempt is still running and needs its QR panel and a way to cancel it.
+  const isConnecting = !isConnected && (connecting || status === 'connecting');
   const flowStep: 1 | 2 | 3 = isConnected ? 3 : qrCode ? 2 : 1;
 
   // Guardrail form: derived "unlimited" flag + dirty check (disables Save when unchanged).
@@ -827,18 +837,30 @@ export default function ProfileDetailPage() {
 
                 <p className="text-[11px] text-slate-500 mt-4 flex items-center justify-center gap-1.5">
                   <Clock className="w-3 h-3" />
-                  QR expires in about 2 minutes
+                  The code refreshes by itself. If it isn&apos;t scanned, the attempt stops on its own.
                 </p>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleConnect}
-                  className="mt-4 border-slate-700 text-slate-200 hover:bg-slate-800 hover:text-slate-100"
-                >
-                  <RefreshCw className="w-3.5 h-3.5 mr-2" />
-                  Refresh QR
-                </Button>
+                <div className="mt-4 flex items-center justify-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleConnect}
+                    className="border-slate-700 text-slate-200 hover:bg-slate-800 hover:text-slate-100"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 mr-2" />
+                    Refresh QR
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDisconnect}
+                    disabled={disconnecting}
+                    className="border-slate-700 text-slate-200 hover:bg-slate-800 hover:text-slate-100"
+                  >
+                    <X className="w-3.5 h-3.5 mr-2" aria-hidden="true" />
+                    Cancel
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
@@ -1191,10 +1213,10 @@ export default function ProfileDetailPage() {
         ) : (
           <Button
             onClick={handleConnect}
-            disabled={connecting}
+            disabled={isConnecting}
             className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium"
           >
-            {connecting ? (
+            {isConnecting ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
                 Connecting…

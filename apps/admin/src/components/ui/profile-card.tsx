@@ -3,7 +3,7 @@
 
 'use client';
 
-import { Plug, Power, Eye, Loader2 } from "lucide-react";
+import { Plug, Power, Eye, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -124,9 +124,15 @@ export function ProfileCard({
             Disconnect
           </Button>
         ) : (
-          <Button variant="outline" className="flex-1 gap-2" disabled>
-            <Loader2 className="w-4 h-4 mw-spin" aria-hidden="true" />
-            Connecting...
+          // Connecting: the badge above already says so. The way out is the same call as
+          // Disconnect (the server stops the engine and marks the profile disconnected).
+          <Button
+            variant="outline"
+            className="flex-1 gap-2 cursor-pointer"
+            onClick={() => onDisconnect?.(id)}
+          >
+            <X className="w-4 h-4" aria-hidden="true" />
+            Cancel
           </Button>
         )}
 
