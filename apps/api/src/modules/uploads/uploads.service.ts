@@ -15,19 +15,44 @@ import { STORAGE_ADAPTER, type IStorageAdapter } from './storage.interface';
  *
  * Deriving it from the already-validated MIME removes the caller's influence
  * entirely. Anything unrecognised becomes `.bin`, which no browser executes.
+ *
+ * The table therefore has to cover every type the upload endpoint ACCEPTS, not
+ * just the ones listed in its ALLOWED_MIMES: getFileCategory() also admits
+ * anything with an image/, video/ or audio/ prefix. A type that is accepted but
+ * missing here is stored as `.bin`, and `.bin` is not inert for the send path —
+ * MessageMedia.fromUrl() reads the mimetype from the URL's extension and only
+ * falls back to the response Content-Type when that lookup returns null
+ * (MessageMedia.js:69,118). `mime.getType('.bin')` is application/octet-stream,
+ * which is truthy, so the fallback never runs and the recipient gets a file
+ * instead of a picture. On the S3 backend that discards the correct
+ * ContentType the adapter stored on the object.
  */
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/gif': 'gif',
   'image/webp': 'webp',
+  // Phone cameras: an iPhone photo arrives as image/heic and was landing on .bin.
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'image/avif': 'avif',
+  'image/bmp': 'bmp',
+  'image/tiff': 'tiff',
   'video/mp4': 'mp4',
   'video/quicktime': 'mov',
   'video/webm': 'webm',
+  'video/3gpp': '3gp',
+  'video/x-matroska': 'mkv',
   'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
   'audio/ogg': 'ogg',
   'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
   'audio/webm': 'weba',
+  'audio/aac': 'aac',
+  'audio/mp4': 'm4a',
+  'audio/amr': 'amr',
+  'audio/flac': 'flac',
   'application/pdf': 'pdf',
   'application/msword': 'doc',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
@@ -102,9 +127,13 @@ export class UploadsService {
    * Determine file type from MIME type.
    */
   getFileType(mimeType: string): 'IMAGE' | 'VIDEO' | 'AUDIO' | 'DOCUMENT' {
-    if (mimeType.startsWith('image/')) return 'IMAGE';
-    if (mimeType.startsWith('video/')) return 'VIDEO';
-    if (mimeType.startsWith('audio/')) return 'AUDIO';
+    // Normalised exactly as extensionForMime() does. They classify the same upload
+    // for the same response, so if only one of them tolerates a parameter or an
+    // uppercase type the two disagree about what was just stored.
+    const mimeType_ = String(mimeType || '').split(';')[0].trim().toLowerCase();
+    if (mimeType_.startsWith('image/')) return 'IMAGE';
+    if (mimeType_.startsWith('video/')) return 'VIDEO';
+    if (mimeType_.startsWith('audio/')) return 'AUDIO';
     return 'DOCUMENT';
   }
 }

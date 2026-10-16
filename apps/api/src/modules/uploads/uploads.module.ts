@@ -20,7 +20,12 @@ const StorageAdapterProvider = {
   provide: STORAGE_ADAPTER,
   inject: [ConfigService],
   useFactory: (config: ConfigService) => {
-    const storageType = config.get('STORAGE_TYPE', 'local');
+    // `|| default` as well as the ConfigService default: that default only applies to a
+    // MISSING key, so STORAGE_TYPE= or STORAGE_PATH= (empty — a compose `${VAR}` that
+    // expands to nothing) survives it. An empty storage path is the dangerous one:
+    // LocalStorageAdapter does resolve(storagePath), and resolve('') is the process CWD,
+    // so uploads would be written into, and served out of, the application directory.
+    const storageType = config.get('STORAGE_TYPE', 'local') || 'local';
 
     if (storageType === 's3') {
       return new S3StorageAdapter({
@@ -34,7 +39,7 @@ const StorageAdapterProvider = {
     }
 
     // Default: local filesystem storage
-    const storagePath = config.get('STORAGE_PATH', './media');
+    const storagePath = config.get('STORAGE_PATH', './media') || './media';
     const apiPort = config.get('API_PORT', '3333');
     const apiHost = config.get('API_HOST', 'localhost');
     const baseUrl = config.get('API_BASE_URL', `http://${apiHost}:${apiPort}`);
