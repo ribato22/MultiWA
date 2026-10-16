@@ -124,6 +124,13 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
     // Ready
     this.client.on('ready', async () => {
+      // whatsapp-web.js registers its in-page `change:hasSynced` listener again on every
+      // inject(), which re-runs on each frame navigation (same-document ones included), and
+      // never removes the earlier one. A single sync therefore emits 'ready' N times (5-12
+      // seen in production), and each used to re-run onReady: N database writes and N
+      // "Profile Connected" notifications. A second 'ready' while we are already connected
+      // carries no news; a genuine drop surfaces as 'disconnected', which resets the status.
+      if (this.status.isConnected) return;
       console.log(`[WhatsApp-WebJS] Client ready for profile ${this.config?.profileId}`);
       
       const info = this.client?.info;
@@ -139,8 +146,9 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       this.config?.onReady?.(info?.wid?.user || '', info?.pushname || '');
     });
 
-    // Authenticated
+    // Authenticated (repeated for the same reason as 'ready')
     this.client.on('authenticated', () => {
+      if (this.status.isAuthenticated) return;
       console.log(`[WhatsApp-WebJS] Authenticated for profile ${this.config?.profileId}`);
       this.status.isAuthenticated = true;
       this.config?.onAuthenticated?.();
