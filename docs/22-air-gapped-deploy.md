@@ -93,6 +93,31 @@ Generate a checksum as soon as the file lands:
 sha256sum multiwa-api-<tag>.tar.gz > multiwa-api-<tag>.tar.gz.sha256
 ```
 
+### If the link to GitHub is slow: download a delta instead
+
+Two images built from the same Dockerfile differ by a few megabytes, and
+`scripts/image-delta.py` ships exactly that difference instead of the whole image.
+
+1. Keep the `.tar.gz` of every image you deploy: it is the **OLD** side of the next delta.
+   Export the build you are going to deploy with a longer `retention-days` (the default is 5).
+   Once the OLD artifact has expired the delta cannot be computed, and that one deploy needs a
+   full download.
+2. Build the new image with `export-image.yml`, then run `image-delta.yml` with the two run ids
+   (`old_run` = the image that is running, `new_run` = the image to deploy). It uploads a few tens
+   of MiB: `plan.json` plus one zstd patch per changed layer.
+3. Download that artifact and rebuild the new image next to your copy of OLD:
+
+   ```bash
+   python3 scripts/image-delta.py apply multiwa-api-<tag>.tar.gz delta/ multiwa-api-<tag>.tar
+   ```
+
+   `apply` refuses an OLD file that is not the one the delta was made from, and exits non-zero
+   unless the sha256 of the rebuilt tar equals the one recorded from the real artifact. The result
+   is a plain `docker save` tar (`docker load -i` takes it as it is); carry on with step 3.
+
+It needs `python3` and `zstd` 1.4 or newer. `python3 scripts/image-delta.py selftest` runs a round
+trip on two tiny fake images.
+
 ## 3. Transfer
 
 **`scp` can truncate a large file and still exit `0`.** On a slow or unstable
