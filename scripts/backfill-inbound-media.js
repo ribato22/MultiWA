@@ -80,6 +80,11 @@ function contentPatch(media, applyInboundMedia, maxBytes) {
   return patch;
 }
 
+/** The tab to drive: compare the parsed hostname, not a substring of the URL. */
+function isWhatsAppWeb(url) {
+  try { return new URL(url).hostname === 'web.whatsapp.com'; } catch { return false; }
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const tail = (id) => String(id).slice(-8);
 
@@ -134,7 +139,7 @@ async function main() {
         continue;
       }
       try {
-        const page = (await browser.pages()).find((p) => p.url().includes('web.whatsapp.com'));
+        const page = (await browser.pages()).find((p) => isWhatsAppWeb(p.url()));
         if (!page) { console.log(`  profile ${tail(profileId)}: no WhatsApp Web page, skipped`); totals.errors += list.length; continue; }
         for (const r of list) {
           try {
