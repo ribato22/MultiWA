@@ -110,6 +110,11 @@ describe('whatsapp-web.js inbound media download patch', () => {
 
   it('no longer rethrows the opaque in-page error', () => {
     const src = readFileSync(installedMessageJs()!, 'utf8');
-    expect(src).toMatch(/status === 404\) return undefined;(?:\s*\/\/[^\n]*)*\s*throw new Error\(/);
+    // Plain string search on purpose: a regex over the comment lines in between backtracks badly.
+    const at = src.indexOf('status === 404) return undefined;');
+    expect(at, 'the 404 branch of downloadMedia was not found — did whatsapp-web.js change?').toBeGreaterThan(-1);
+    const rest = src.slice(at, at + 400);
+    expect(rest, 'the catch should rethrow with the real name and message').toContain('throw new Error(');
+    expect(rest, 'a bare `throw e` loses the cause behind WhatsApp\'s minified `t: t`').not.toMatch(/\bthrow e;/);
   });
 });
