@@ -241,6 +241,24 @@ Before exposing the deployment to real users, confirm:
 | `pg_isready` fails | Postgres container unhealthy or wrong credentials | Check `docker logs multiwa-postgres`; common causes are `DB_PASSWORD` changed after the volume was initialized. |
 | `redis-cli ping` returns no PONG | Redis not started or different password | `docker logs multiwa-redis`; if you set a Redis password ensure `REDIS_URL` uses it. |
 | `curl http://localhost:3333/api/docs` returns 404 | Wrong port, or the API is still booting | Wait for `MultiWA Gateway API running` in the API logs; verify port mapping with `docker port multiwa-api`. |
+| Chat shows "Image not available"; the message has `hasMedia` but no `mimetype`; the log says `Failed to download media` | WhatsApp Web rejected the download (the `patches/whatsapp-web.js` patch forwards the declared mimetype for this) or the file was not available yet | Run an image that includes the patch, then recover the files WhatsApp still holds with `scripts/backfill-inbound-media.js` (below). |
+
+### Recovering inbound media that was saved without its file
+
+`scripts/backfill-inbound-media.js` downloads those files again through the running WhatsApp Web page and
+merges them into `messages.content`, the same way a live message is stored (5 MiB inline cap). It runs inside
+the api container, changes the database only with `--apply`, and never touches a row that already has media.
+It processes the oldest messages first, `--limit` at a time.
+
+```bash
+docker cp scripts/backfill-inbound-media.js multiwa-api:/tmp/
+docker exec multiwa-api node /tmp/backfill-inbound-media.js --since=2026-10-02              # counts only
+docker exec multiwa-api node /tmp/backfill-inbound-media.js --since=2026-10-02 --check      # is each message still in the page?
+docker exec multiwa-api node /tmp/backfill-inbound-media.js --since=2026-10-02 --apply --limit=50
+```
+
+Only messages that WhatsApp Web still holds can be recovered, and only while the file is still on WhatsApp's
+servers; the others are reported as unavailable and left alone.
 
 You can also use these as a quick sanity probe:
 
