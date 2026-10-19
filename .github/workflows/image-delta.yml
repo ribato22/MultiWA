@@ -1,0 +1,70 @@
+name: Image delta (air-gapped deploy over a slow link)
+
+# Computes a per-layer zstd delta between two images that export-image.yml produced, so a deploy
+# over a slow link downloads megabytes instead of the whole ~800 MB. See docs/22-air-gapped-deploy.md.
+#
+# OLD must be the exact artifact you already hold locally (the image that is running), and it must
+# still exist: export-image.yml keeps artifacts 5 days unless you raise `retention-days` there.
+
+on:
+  workflow_dispatch:
+    inputs:
+      old_run:
+        description: export-image run id of the image that is running now
+        type: string
+        required: true
+      new_run:
+        description: export-image run id of the image to deploy
+        type: string
+        required: true
+      service:
+        description: Service the two runs exported
+        type: choice
+        options: [api, worker, admin]
+        default: api
+      tag:
+        description: Image tag the two runs exported
+        type: string
+        default: wagw
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  delta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OLD_RUN: ${{ inputs.old_run }}
+      NEW_RUN: ${{ inputs.new_run }}
+      SERVICE: ${{ inputs.service }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the inputs
+        run: |
+          [[ "$OLD_RUN" =~ ^[0-9]+$ && "$NEW_RUN" =~ ^[0-9]+$ ]] || { echo "run ids must be numbers"; exit 1; }
+          [[ "$TAG" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "bad tag"; exit 1; }
+
+      - name: Fetch both artifacts
+        run: |
+          mkdir -p work/old work/new
+          gh run download "$OLD_RUN" -R "$GITHUB_REPOSITORY" -n "multiwa-image-$SERVICE-$TAG" -D work/old \
+            || { echo "::error::the OLD artifact is gone (export-image.yml keeps it 5 days by default): download the new image in full this time"; exit 1; }
+          gh run download "$NEW_RUN" -R "$GITHUB_REPOSITORY" -n "multiwa-image-$SERVICE-$TAG" -D work/new
+          zstd --version
+
+      - name: Build the delta
+        run: |
+          python3 scripts/image-delta.py make "work/old/multiwa-$SERVICE-$TAG.tar.gz" "work/new/multiwa-$SERVICE-$TAG.tar.gz" out
+          du -sh out
+          sha256sum "work/new/multiwa-$SERVICE-$TAG.tar.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-delta-${{ inputs.service }}-${{ inputs.tag }}
+          path: out/
+          retention-days: 3
