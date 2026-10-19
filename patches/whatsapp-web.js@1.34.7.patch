@@ -1,3 +1,30 @@
+diff --git a/src/structures/Message.js b/src/structures/Message.js
+index dd977e85b0c0c40d2625cd337264fc9ae3bed17b..6c1ca6ba736f23d50e82d5e672622ff5b2ee4262 100644
+--- a/src/structures/Message.js
++++ b/src/structures/Message.js
+@@ -566,6 +566,11 @@ class Message extends Base {
+                         mediaKey: msg.mediaKey,
+                         mediaKeyTimestamp: msg.mediaKeyTimestamp,
+                         type: msg.type,
++                        // MultiWA patch: forward the declared mimetype. WhatsApp Web's DownloadManager
++                        // now checks the decrypted file against it; without it the default
++                        // `application/octet-stream` makes every typed download (image, video, ...)
++                        // throw InvalidMediaFileType.
++                        mimetype: msg.mimetype,
+                         signal: new AbortController().signal,
+                         downloadQpl: mockQpl,
+                     });
+@@ -583,7 +588,9 @@ class Message extends Base {
+                 };
+             } catch (e) {
+                 if (e.status && e.status === 404) return undefined;
+-                throw e;
++                // MultiWA patch: WhatsApp's error classes are minified, so Puppeteer reports an
++                // opaque "t: t" and the cause is lost. Rethrow with the real name and message.
++                throw new Error(`${e && e.name}: ${e && e.message}`);
+             }
+         }, this.id._serialized);
+ 
 diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
 index 540078a9d07b3df07ccd51b030556a72af4cf650..ef4bad3c2edb85d3855ab9fa427df52b90769208 100644
 --- a/src/util/Injected/Utils.js
