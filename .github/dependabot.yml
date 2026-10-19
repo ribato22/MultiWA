@@ -16,8 +16,9 @@ version: 2
 #   `pnpm audit` high/critical backlog.
 #
 # Majors that must be migrated together (do each as one PR, then drop it from this list):
-#   - next + react + react-dom (+ @types/react, @types/react-dom): Next 15 requires
-#     React 19, so the admin can only cross either major as one tested migration.
+#   - react + react-dom (+ @types/react, @types/react-dom): React 19 is a deliberate
+#     migration. Next 15 itself runs on React 18 for this app (verified in #237), so the
+#     two no longer have to move together.
 #   - tailwindcss + tailwind-merge: Tailwind v4 is a full migration (new engine,
 #     CSS-first config, changed class semantics); tailwind-merge 3.x targets v4.
 #   - vitest + @vitest/coverage-v8: must move together and stay identical across
@@ -64,6 +65,26 @@ updates:
       # moves together in a hand-made PR; a fastify-only security patch is unusable
       # until Nest ships a matching platform-fastify anyway.
       - dependency-name: "fastify"
+      # pnpm.patchedDependencies: the patch file is named after the exact version
+      # (patches/bullmq@6.1.1.patch), so a bump needs the patch re-based by hand.
+      # Dependabot cannot do that and fails the whole update job with
+      # dependency_file_not_resolvable ("Error while updating bullmq in update group
+      # patchedDependencies"). Bump these two in a hand-made PR together with the patch.
+      - dependency-name: "bullmq"
+      - dependency-name: "whatsapp-web.js"
+
+  # The docs site is a separate npm project with its own package-lock.json. Version
+  # updates are off (limit 0); security updates still arrive, grouped into ONE PR.
+  - package-ecosystem: npm
+    directory: /docs-site
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
