@@ -9,6 +9,10 @@
 // exactly why a fastify-only Dependabot bump could not compile (PR #153). fastify is
 // ignored in .github/dependabot.yml for that reason; the pair moves together by hand.
 // This test fails the moment the two drift apart again.
+//
+// Nest 11 has no release that pins a fastify with the 2026 security fixes, so the root
+// package.json forces one with the override "@nestjs/platform-fastify>fastify" and
+// apps/api pins the same version. pnpm-overrides.spec.ts checks that the two are equal.
 
 import { readFileSync } from 'fs';
 import path from 'path';
