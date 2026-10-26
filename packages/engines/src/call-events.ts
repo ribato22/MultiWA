@@ -60,7 +60,11 @@ export function parseCallLogOutcome(raw: unknown): CallLogOutcome | null {
   return Object.prototype.hasOwnProperty.call(OUTCOME_BY_NAME, key) ? OUTCOME_BY_NAME[key] : null;
 }
 
-/** A whatsapp-web.js message of type `call_log`, normalized; null when it is not an incoming call with a final outcome. */
+/**
+ * A whatsapp-web.js message of type `call_log`, normalized. Null unless it is an incoming
+ * call with a final outcome, a caller JID, and an id or a plausible timestamp (an
+ * implausible timestamp is replaced by now).
+ */
 export function readCallLog(message: any): CallLogEntry | null {
   if (!message || message.type !== 'call_log' || message.fromMe) return null; // incoming calls only
   const data = message._data ?? {};
@@ -85,10 +89,10 @@ export function readCallLog(message: any): CallLogEntry | null {
 }
 
 /**
- * Baileys call update -> CallState. `terminate` means the call is over for any
- * reason (Baileys fires it after accept, reject, timeout or hang-up alike), so it
- * maps to `ended`, outcome unknown; only an offer that rings out unanswered arrives as
- * `timeout` (a caller hanging up early is a plain `terminate`).
+ * Baileys call update -> CallState. Baileys reports a `terminate` stanza with reason
+ * `timeout` (an offer that rang out unanswered) as `timeout`, and every other
+ * `terminate` (after accept, reject or a hang-up) as `terminate`, which therefore maps
+ * to `ended`, outcome unknown.
  * Any other status, including Baileys' catch-all `ringing` for stanzas it does not
  * classify, carries nothing new.
  */
