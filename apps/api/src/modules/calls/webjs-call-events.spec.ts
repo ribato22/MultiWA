@@ -77,12 +77,20 @@ describe('WhatsAppWebJsAdapter calls', () => {
 
   it('rejectCall rejects a ringing call and swallows the echo of its own end', async () => {
     const { adapter, client, config } = wire();
-    const reject = vi.fn().mockResolvedValue(undefined);
+    const reject = vi.fn(async () => { client.emit('multiwa_call_ended', { id: 'c1' }); });
     client.emit('call', { id: 'c1', from: '628111000111@c.us', reject });
     await adapter.rejectCall('c1');
     expect(reject).toHaveBeenCalledTimes(1);
-    client.emit('multiwa_call_ended', { id: 'c1' });
     expect(config.onCall.mock.calls.map((c: any[]) => c[0].state)).toEqual(['ringing']);
+  });
+
+  it('tracks at most 100 ringing calls, dropping the oldest', async () => {
+    const { adapter, client } = wire();
+    for (let i = 0; i <= 100; i++) {
+      client.emit('call', { id: `c${i}`, from: '628111000111@c.us', reject: vi.fn().mockResolvedValue(undefined) });
+    }
+    await expect(adapter.rejectCall('c0')).rejects.toThrow('Call is not ringing any more');
+    await expect(adapter.rejectCall('c100')).resolves.toBeUndefined();
   });
 
   it('rejectCall fails for a call that is not ringing, and keeps tracking a call whose reject failed', async () => {
@@ -143,6 +151,18 @@ describe('WhatsAppWebJsAdapter calls', () => {
     expect(config.onCallLog).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(2);
     for (const [line] of warn.mock.calls) expect(String(line)).not.toContain('628111000111');
+  });
+
+  it('warns about at most 20 distinct unreadable shapes', () => {
+    const { client } = wire();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    for (let i = 0; i < 30; i++) {
+      client.emit('message_create', {
+        type: 'call_log', id: { _serialized: `s${i}` }, from: '628111000111@c.us', fromMe: false,
+        timestamp: 1_790_000_000, _data: { [`field${i}`]: 1 },
+      });
+    }
+    expect(warn).toHaveBeenCalledTimes(20);
   });
 
   it('createCallLink returns the link, and fails loudly when not ready or WhatsApp gives none', async () => {

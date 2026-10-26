@@ -206,7 +206,7 @@ export interface IWhatsAppEngine {
   deleteForEveryone(chatId: string, messageId: string): Promise<void>;
 
   // Calls
-  /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). */
+  /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). Rejects when the call is not ringing any more. */
   rejectCall(callId: string): Promise<void>;
   /**
    * Create a WhatsApp call link (https://call.whatsapp.com/...). Resolves null only when

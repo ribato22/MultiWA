@@ -241,11 +241,11 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       if (!call?.id || call.fromMe || this.seenCalls.has(call.id)) return; // incoming calls, once each
       remember(this.seenCalls, call.id, MAX_REMEMBERED_IDS);
       this.calls.set(call.id, call);
-      if (this.calls.size > MAX_TRACKED_CALLS) {
+      while (this.calls.size > MAX_TRACKED_CALLS) {
         const oldest = this.calls.keys().next().value;
         if (oldest !== undefined) this.calls.delete(oldest);
       }
-      console.log(`[WhatsApp-WebJS] Call ${call.id} ringing for profile ${this.config?.profileId}`);
+      console.log(`[WhatsApp-WebJS] Call ${String(call.id).replace(/[\r\n]/g, '')} ringing for profile ${this.config?.profileId}`);
       this.config?.onCall?.({
         id: call.id,
         from: toJidString(call.from ?? call.peerJid),
@@ -264,7 +264,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       const call = id ? this.calls.get(id) : undefined;
       if (!call) return;
       this.calls.delete(id);
-      console.log(`[WhatsApp-WebJS] Call ${id} ended for profile ${this.config?.profileId}`);
+      console.log(`[WhatsApp-WebJS] Call ${String(id).replace(/[\r\n]/g, '')} ended for profile ${this.config?.profileId}`);
       this.config?.onCall?.({
         id,
         from: toJidString(call.from ?? call.peerJid),
