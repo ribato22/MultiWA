@@ -19,7 +19,15 @@ export interface EngineConfig {
   onMessage?: (message: any) => void;
   onMessageAck?: (messageId: string, status: string) => void;
   onCall?: (call: IncomingCall) => void;
+  /** A WhatsApp call-log message ("Missed voice call"): the call's final outcome. */
+  onCallLog?: (entry: CallLogEntry) => void;
 }
+
+/**
+ * What an engine reports about an incoming call. `ringing` is the offer; the others
+ * follow it. `ended` = it stopped being active and the engine cannot tell how.
+ */
+export type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
 
 /** Normalized incoming WhatsApp call, engine-agnostic. */
 export interface IncomingCall {
@@ -29,6 +37,21 @@ export interface IncomingCall {
   from: string;
   isVideo: boolean;
   isGroup: boolean;
+  /** Absent = 'ringing' (the offer). */
+  state?: CallState;
+}
+
+/** Final outcome carried by a WhatsApp call-log message. */
+export type CallLogOutcome = 'missed' | 'rejected' | 'answered_elsewhere';
+
+/** A call-log message, normalized. It has no call id: match it to a call by caller and time. */
+export interface CallLogEntry {
+  /** The call-log message id (dedupe key). */
+  messageId: string;
+  from: string;
+  isVideo: boolean;
+  outcome: CallLogOutcome;
+  timestamp: Date;
 }
 
 export interface SendMessageOptions {
@@ -175,6 +198,8 @@ export interface IWhatsAppEngine {
   // Calls
   /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). */
   rejectCall(callId: string): Promise<void>;
+  /** Create a WhatsApp call link (https://call.whatsapp.com/...). null = this engine cannot. */
+  createCallLink(type: 'voice' | 'video'): Promise<string | null>;
 
   // QR Code
   getQRCode(): Promise<string | null>;

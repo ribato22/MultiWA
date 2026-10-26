@@ -149,6 +149,10 @@ export class MockAdapter implements IWhatsAppEngine {
     console.log(`[Mock] Reject call ${callId}`);
   }
 
+  async createCallLink(type: 'voice' | 'video'): Promise<string | null> {
+    return `https://call.whatsapp.com/${type}/mock-${++this.messageCounter}`;
+  }
+
   async sendPoll(
     to: string,
     poll: PollOptions,

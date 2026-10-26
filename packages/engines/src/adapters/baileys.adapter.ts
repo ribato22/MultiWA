@@ -607,6 +607,11 @@ export class BaileysAdapter implements IWhatsAppEngine {
     this.callFrom.delete(callId);
   }
 
+  /** Baileys has no call-link API. */
+  async createCallLink(_type: 'voice' | 'video'): Promise<string | null> {
+    return null;
+  }
+
   async markAsRead(chatId: string, messageIds?: string[]): Promise<void> {
     try {
       if (!this.isReady() || !this.socket) return;

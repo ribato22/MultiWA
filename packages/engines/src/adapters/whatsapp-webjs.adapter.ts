@@ -233,6 +233,12 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     this.calls.delete(callId);
   }
 
+  async createCallLink(type: 'voice' | 'video'): Promise<string | null> {
+    if (!this.client) return null;
+    const link = await (this.client as any).createCallLink(new Date(), type);
+    return typeof link === 'string' && link.startsWith('https://') ? link : null;
+  }
+
   async connect(): Promise<void> {
     if (!this.client) {
       throw new Error('Client not initialized. Call initialize() first.');
