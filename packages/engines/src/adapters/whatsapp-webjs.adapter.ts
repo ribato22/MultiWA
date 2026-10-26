@@ -4,6 +4,7 @@
 import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
+import { readCallLog, toJidString } from '../call-events';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -48,6 +49,10 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   private qrCallbacks: ((qr: string) => void)[] = [];
   // Raw whatsapp-web.js Call objects, keyed by id, so rejectCall() can act on them.
   private calls = new Map<string, any>();
+  // Call-log message ids already reported (message_create can repeat on re-inject).
+  private seenCallLogs = new Set<string>();
+  // Shapes of call-log messages we could not read, warned about once each.
+  private warnedCallLogShapes = new Set<string>();
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -214,15 +219,47 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       this.config?.onMessageAck?.(ackId, statusMap[ack] || 'unknown');
     });
 
-    // Incoming voice/video call — surface it so the engine-manager can auto-reject.
+    // Incoming voice/video call (the offer). The patched whatsapp-web.js reports
+    // each call once (patches/whatsapp-web.js@1.34.7.patch).
     this.client.on('call', (call: any) => {
-      if (call?.id) this.calls.set(call.id, call);
+      if (!call?.id || call.fromMe) return; // incoming calls only
+      this.calls.set(call.id, call);
       this.config?.onCall?.({
-        id: call?.id,
-        from: call?.from || call?.peerJid || '',
+        id: call.id,
+        from: toJidString(call.from ?? call.peerJid),
+        isVideo: !!call.isVideo,
+        isGroup: !!call.isGroup,
+        state: 'ringing',
+      });
+    });
+
+    // MultiWA patch event: the call stopped being the active call. whatsapp-web.js
+    // cannot tell how it ended; the call-log message below carries the outcome.
+    this.client.on('multiwa_call_ended', (data: any) => {
+      const id = data?.id;
+      if (!id) return;
+      const call = this.calls.get(id);
+      this.calls.delete(id);
+      this.config?.onCall?.({
+        id,
+        from: toJidString(call?.from ?? call?.peerJid),
         isVideo: !!call?.isVideo,
         isGroup: !!call?.isGroup,
+        state: 'ended',
       });
+    });
+
+    // Call-log messages ("Missed voice call") arrive like any new message.
+    this.client.on('message_create', (message: any) => {
+      const entry = readCallLog(message);
+      if (!entry) {
+        if (message?.type === 'call_log') this.warnUnreadableCallLog(message);
+        return;
+      }
+      if (this.seenCallLogs.has(entry.messageId)) return;
+      if (this.seenCallLogs.size > 500) this.seenCallLogs.clear(); // ponytail: crude bound, an LRU if logs repeat after a clear
+      this.seenCallLogs.add(entry.messageId);
+      this.config?.onCallLog?.(entry);
     });
   }
 
@@ -241,6 +278,18 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       throw new Error('WhatsApp did not return a call link');
     }
     return link;
+  }
+
+  /**
+   * A call-log message that yields no entry is either not final yet (ONGOING) or a
+   * WhatsApp Web change of field names. Say so once per shape, never with content.
+   */
+  private warnUnreadableCallLog(message: any): void {
+    const data = message?._data ?? {};
+    const shape = JSON.stringify({ fromMe: !!message?.fromMe, keys: Object.keys(data).sort(), outcome: data.callOutcome ?? data.outcome ?? null });
+    if (this.warnedCallLogShapes.has(shape)) return;
+    this.warnedCallLogShapes.add(shape);
+    console.warn(`[WhatsApp-WebJS] call_log message without a readable final outcome: ${shape}`);
   }
 
   async connect(): Promise<void> {
