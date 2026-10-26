@@ -18,6 +18,7 @@ describe('parseCallLogOutcome', () => {
     [6, 'missed'], [7, 'missed'], [2, null], [5, null],
     ['MISSED', 'missed'], ['missed', 'missed'], ['Accepted Elsewhere', 'answered_elsewhere'],
     ['REJECTED', 'rejected'], ['4', 'answered_elsewhere'], ['ONGOING', null], ['bogus', null],
+    ['constructor', null], ['__proto__', null],
     [undefined, null],
   ])('%s -> %s', (raw, expected) => {
     expect(parseCallLogOutcome(raw)).toBe(expected);

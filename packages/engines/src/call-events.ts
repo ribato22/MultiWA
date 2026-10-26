@@ -55,7 +55,7 @@ export function parseCallLogOutcome(raw: unknown): CallLogOutcome | null {
   if (typeof raw !== 'string') return null;
   const key = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (/^\d+$/.test(key)) return OUTCOME_BY_NUMBER[Number(key)] ?? null;
-  return OUTCOME_BY_NAME[key] ?? null;
+  return Object.prototype.hasOwnProperty.call(OUTCOME_BY_NAME, key) ? OUTCOME_BY_NAME[key] : null;
 }
 
 /** A whatsapp-web.js message of type `call_log`, normalized; null when it is not an incoming call with a final outcome. */
