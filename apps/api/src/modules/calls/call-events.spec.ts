@@ -8,6 +8,7 @@ describe('toJidString', () => {
     expect(toJidString({ _serialized: '628111000111@c.us' })).toBe('628111000111@c.us');
     expect(toJidString({ $1: '1234567@lid' })).toBe('1234567@lid');
     expect(toJidString({ user: '628111000111', server: 'c.us' })).toBe('628111000111@c.us');
+    expect(toJidString({ user: '', server: 'c.us' })).toBe('');
     expect(toJidString(undefined)).toBe('');
   });
 });
@@ -22,6 +23,23 @@ describe('parseCallLogOutcome', () => {
     [undefined, null],
   ])('%s -> %s', (raw, expected) => {
     expect(parseCallLogOutcome(raw)).toBe(expected);
+  });
+});
+
+describe('parseCallLogOutcome agrees by number, NAME and name', () => {
+  it.each([
+    [0, 'CONNECTED', 'answered_elsewhere'],
+    [1, 'MISSED', 'missed'],
+    [2, 'FAILED', null],
+    [3, 'REJECTED', 'rejected'],
+    [4, 'ACCEPTED_ELSEWHERE', 'answered_elsewhere'],
+    [5, 'ONGOING', null],
+    [6, 'SILENCED_BY_DND', 'missed'],
+    [7, 'SILENCED_UNKNOWN_CALLER', 'missed'],
+  ] as const)('%i / %s -> %s', (num, name, expected) => {
+    expect(parseCallLogOutcome(num)).toBe(expected);
+    expect(parseCallLogOutcome(name)).toBe(expected);
+    expect(parseCallLogOutcome(name.toLowerCase())).toBe(expected);
   });
 });
 
@@ -51,16 +69,45 @@ describe('readCallLog', () => {
     expect(readCallLog({ ...base, _data: { callOutcome: 'ONGOING' } })).toBeNull();
     expect(readCallLog(null)).toBeNull();
   });
+
+  it('keeps CONNECTED (0): zero is a real outcome, not a missing one', () => {
+    expect(readCallLog({ ...base, _data: { callOutcome: 0 } })?.outcome).toBe('answered_elsewhere');
+  });
+
+  it('reads the fallback field names', () => {
+    expect(readCallLog({ ...base, _data: { outcome: 'REJECTED', isVideo: true } })).toMatchObject({ outcome: 'rejected', isVideo: true });
+    expect(readCallLog({ ...base, _data: { callOutcome: 'MISSED', callIsVideo: true } })?.isVideo).toBe(true);
+  });
+
+  it('accepts a Wid object as the caller', () => {
+    expect(readCallLog({ ...base, from: { _serialized: '628111000111@c.us' } })?.from).toBe('628111000111@c.us');
+  });
+
+  it('needs a caller and an outcome field', () => {
+    expect(readCallLog({ ...base, from: undefined })).toBeNull();
+    expect(readCallLog({ ...base, _data: undefined })).toBeNull();
+  });
+
+  it('builds a stable id from caller and time when the message has none, and gives up without either', () => {
+    expect(readCallLog({ ...base, id: undefined })?.messageId).toBe('call_log:628111000111@c.us:1790000000');
+    expect(readCallLog({ ...base, id: undefined, timestamp: undefined })).toBeNull();
+  });
+
+  it('falls back to now for a timestamp that is not plausible seconds', () => {
+    for (const timestamp of [Number.NaN, 0, -5, 1_790_000_000_000]) {
+      const entry = readCallLog({ ...base, timestamp });
+      expect(Math.abs(entry!.timestamp.getTime() - Date.now())).toBeLessThan(5_000);
+    }
+  });
 });
 
 describe('mapBaileysCallStatus', () => {
   it('maps every Baileys status', () => {
-    expect(mapBaileysCallStatus('offer', false)).toBe('ringing');
-    expect(mapBaileysCallStatus('accept', false)).toBe('accepted');
-    expect(mapBaileysCallStatus('reject', false)).toBe('rejected');
-    expect(mapBaileysCallStatus('timeout', false)).toBe('missed');
-    expect(mapBaileysCallStatus('terminate', false)).toBe('missed'); // hung up before anyone answered
-    expect(mapBaileysCallStatus('terminate', true)).toBe('ended');
-    expect(mapBaileysCallStatus('ringing', false)).toBeNull();       // Baileys' own outgoing-ring notice
+    expect(mapBaileysCallStatus('offer')).toBe('ringing');
+    expect(mapBaileysCallStatus('accept')).toBe('accepted');
+    expect(mapBaileysCallStatus('reject')).toBe('rejected');
+    expect(mapBaileysCallStatus('timeout')).toBe('missed');
+    expect(mapBaileysCallStatus('terminate')).toBe('ended'); // fired after accept, reject, timeout or hang-up alike
+    expect(mapBaileysCallStatus('ringing')).toBeNull();      // Baileys' catch-all for stanzas it does not classify
   });
 });
