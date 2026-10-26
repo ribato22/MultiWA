@@ -13,7 +13,8 @@ import type {
   LocationOptions,
   ContactOptions,
   PollOptions,
-  SendMessageOptions
+  SendMessageOptions,
+  CallLinkType
 } from '../types';
 
 /**
@@ -233,10 +234,13 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     this.calls.delete(callId);
   }
 
-  async createCallLink(type: 'voice' | 'video'): Promise<string | null> {
-    if (!this.client) return null;
-    const link = await (this.client as any).createCallLink(new Date(), type);
-    return typeof link === 'string' && link.startsWith('https://') ? link : null;
+  async createCallLink(type: CallLinkType): Promise<string | null> {
+    if (!this.isReady() || !this.client) throw new Error('Client not ready');
+    const link = await this.client.createCallLink(new Date(), type);
+    if (typeof link !== 'string' || !link.startsWith('https://')) {
+      throw new Error('WhatsApp did not return a call link');
+    }
+    return link;
   }
 
   async connect(): Promise<void> {

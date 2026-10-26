@@ -22,6 +22,7 @@ import type {
   ContactOptions,
   PollOptions,
   SendMessageOptions,
+  CallLinkType,
 } from '../types';
 
 
@@ -608,7 +609,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   }
 
   /** Baileys has no call-link API. */
-  async createCallLink(_type: 'voice' | 'video'): Promise<string | null> {
+  async createCallLink(_type: CallLinkType): Promise<string | null> {
     return null;
   }
 

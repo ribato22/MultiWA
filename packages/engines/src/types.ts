@@ -24,8 +24,12 @@ export interface EngineConfig {
 }
 
 /**
- * What an engine reports about an incoming call. `ringing` is the offer; the others
- * follow it. `ended` = it stopped being active and the engine cannot tell how.
+ * What an engine reports about an incoming call:
+ * - `ringing`: the incoming offer (Baileys calls it `offer`; Baileys' own `ringing` status is ignored)
+ * - `accepted`: answered on another device of this account (we never answer)
+ * - `rejected`: declined, by this account's phone or by us
+ * - `missed`: the caller gave up, or the offer timed out
+ * - `ended`: it stopped being the active call and the engine cannot tell how
  */
 export type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
 
@@ -53,6 +57,9 @@ export interface CallLogEntry {
   outcome: CallLogOutcome;
   timestamp: Date;
 }
+
+/** Kind of WhatsApp call link. */
+export type CallLinkType = 'voice' | 'video';
 
 export interface SendMessageOptions {
   quotedMessageId?: string;
@@ -198,8 +205,12 @@ export interface IWhatsAppEngine {
   // Calls
   /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). */
   rejectCall(callId: string): Promise<void>;
-  /** Create a WhatsApp call link (https://call.whatsapp.com/...). null = this engine cannot. */
-  createCallLink(type: 'voice' | 'video'): Promise<string | null>;
+  /**
+   * Create a WhatsApp call link (https://call.whatsapp.com/...). Resolves null only when
+   * this engine has no call-link API; rejects when the client is not ready or WhatsApp
+   * returns no link.
+   */
+  createCallLink(type: CallLinkType): Promise<string | null>;
 
   // QR Code
   getQRCode(): Promise<string | null>;

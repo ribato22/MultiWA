@@ -11,6 +11,7 @@ import type {
   ContactOptions,
   PollOptions,
   SendMessageOptions,
+  CallLinkType,
 } from '../types';
 
 /**
@@ -149,8 +150,10 @@ export class MockAdapter implements IWhatsAppEngine {
     console.log(`[Mock] Reject call ${callId}`);
   }
 
-  async createCallLink(type: 'voice' | 'video'): Promise<string | null> {
-    return `https://call.whatsapp.com/${type}/mock-${++this.messageCounter}`;
+  async createCallLink(type: CallLinkType): Promise<string | null> {
+    if (!this.isReady()) throw new Error('Client not ready');
+    console.log(`[Mock] Creating ${type} call link`);
+    return `https://call.whatsapp.com/${type}/mock-${Date.now()}`;
   }
 
   async sendPoll(
