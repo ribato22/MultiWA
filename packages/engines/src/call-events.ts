@@ -87,7 +87,8 @@ export function readCallLog(message: any): CallLogEntry | null {
 /**
  * Baileys call update -> CallState. `terminate` means the call is over for any
  * reason (Baileys fires it after accept, reject, timeout or hang-up alike), so it
- * maps to `ended`, outcome unknown; Baileys reports a caller giving up as `timeout`.
+ * maps to `ended`, outcome unknown; only an offer that rings out unanswered arrives as
+ * `timeout` (a caller hanging up early is a plain `terminate`).
  * Any other status, including Baileys' catch-all `ringing` for stanzas it does not
  * classify, carries nothing new.
  */

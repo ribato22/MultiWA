@@ -28,7 +28,7 @@ export interface EngineConfig {
  * - `ringing`: the incoming offer (Baileys calls it `offer`; Baileys' own `ringing` status is ignored)
  * - `accepted`: answered on another device of this account (we never answer)
  * - `rejected`: declined, by this account's phone or by us
- * - `missed`: the caller gave up, or the offer timed out
+ * - `missed`: the offer rang out unanswered (Baileys `timeout`, or a MISSED call log)
  * - `ended`: it stopped being the active call and the engine cannot tell how
  */
 export type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
