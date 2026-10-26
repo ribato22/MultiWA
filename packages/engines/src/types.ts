@@ -33,7 +33,10 @@ export interface EngineConfig {
  */
 export type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
 
-/** Normalized incoming WhatsApp call, engine-agnostic. */
+/**
+ * Normalized incoming WhatsApp call, engine-agnostic. `from`, `isVideo` and `isGroup` are
+ * reliable on `ringing`; on later states they are best-effort, so match a call by `id`.
+ */
 export interface IncomingCall {
   /** Engine call id, passed back to `rejectCall`. */
   id: string;

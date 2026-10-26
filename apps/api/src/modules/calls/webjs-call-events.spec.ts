@@ -1,6 +1,6 @@
 // WhatsAppWebJsAdapter call events. The Client is replaced by a bare emitter (same
 // harness as duplicate-ready-events.spec.ts), so nothing here starts a browser.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { WhatsAppWebJsAdapter } from '@multiwa/engines';
 
@@ -17,6 +17,10 @@ const wire = () => {
 describe('WhatsAppWebJsAdapter calls', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('reports an incoming call as ringing, with the caller JID as a string', () => {
@@ -38,6 +42,58 @@ describe('WhatsAppWebJsAdapter calls', () => {
     expect(config.onCall).toHaveBeenLastCalledWith({ id: 'c1', from: '628111000111@c.us', isVideo: false, isGroup: false, state: 'ended' });
   });
 
+  it('reports a call once however often whatsapp-web.js repeats it', () => {
+    const { client, config } = wire();
+    const call = { id: 'c1', from: '628111000111@c.us', isVideo: false, isGroup: false };
+    client.emit('call', call);
+    client.emit('call', call);
+    client.emit('multiwa_call_ended', { id: 'c1' });
+    client.emit('call', call); // a late repeat after the end is not a new call
+    expect(config.onCall.mock.calls.map((c: any[]) => c[0].state)).toEqual(['ringing', 'ended']);
+  });
+
+  it('reports ended once, and never for a call it did not report ringing', () => {
+    const { client, config } = wire();
+    client.emit('multiwa_call_ended', { id: 'unknown' });
+    client.emit('call', { id: 'mine', from: '628111000111@c.us', fromMe: true });
+    client.emit('multiwa_call_ended', { id: 'mine' });
+    client.emit('call', { id: 'c1', from: '628111000111@c.us' });
+    client.emit('multiwa_call_ended', { id: 'c1' });
+    client.emit('multiwa_call_ended', { id: 'c1' });
+    expect(config.onCall.mock.calls.map((c: any[]) => `${c[0].id}:${c[0].state}`)).toEqual(['c1:ringing', 'c1:ended']);
+  });
+
+  it('bounds what it remembers: forgets the oldest ids first, never everything at once', () => {
+    const { client, config } = wire();
+    const ring = (id: string) => client.emit('call', { id, from: '628111000111@c.us' });
+    for (let i = 0; i < 600; i++) {
+      ring(`c${i}`);
+      if (i > 0) ring(`c${i - 1}`); // the previous call is always still remembered: a repeat
+    }
+    expect(config.onCall).toHaveBeenCalledTimes(600);
+    ring('c0'); // the oldest fell out of the window, so it is reported again
+    expect(config.onCall).toHaveBeenCalledTimes(601);
+  });
+
+  it('rejectCall rejects a ringing call and swallows the echo of its own end', async () => {
+    const { adapter, client, config } = wire();
+    const reject = vi.fn().mockResolvedValue(undefined);
+    client.emit('call', { id: 'c1', from: '628111000111@c.us', reject });
+    await adapter.rejectCall('c1');
+    expect(reject).toHaveBeenCalledTimes(1);
+    client.emit('multiwa_call_ended', { id: 'c1' });
+    expect(config.onCall.mock.calls.map((c: any[]) => c[0].state)).toEqual(['ringing']);
+  });
+
+  it('rejectCall fails for a call that is not ringing, and keeps tracking a call whose reject failed', async () => {
+    const { adapter, client, config } = wire();
+    await expect(adapter.rejectCall('nope')).rejects.toThrow('Call is not ringing any more');
+    client.emit('call', { id: 'c1', from: '628111000111@c.us', reject: vi.fn().mockRejectedValue(new Error('page gone')) });
+    await expect(adapter.rejectCall('c1')).rejects.toThrow('page gone');
+    client.emit('multiwa_call_ended', { id: 'c1' });
+    expect(config.onCall.mock.calls.map((c: any[]) => c[0].state)).toEqual(['ringing', 'ended']);
+  });
+
   it('turns a call-log message into one call-log entry (repeats are dropped)', () => {
     const { client, config } = wire();
     const log = {
@@ -53,6 +109,18 @@ describe('WhatsAppWebJsAdapter calls', () => {
     });
   });
 
+  it('keeps the event emitter alive when the call-log handler throws', () => {
+    const { client, config } = wire();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    config.onCallLog.mockImplementation(() => { throw new Error('db down'); });
+    const log = {
+      type: 'call_log', id: { _serialized: 'false_628111000111@c.us_ABC' }, from: '628111000111@c.us',
+      fromMe: false, timestamp: 1_790_000_000, _data: { callOutcome: 'MISSED', isVideoCall: false },
+    };
+    expect(() => client.emit('message_create', log)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('db down'));
+  });
+
   it('warns once about a call-log message it cannot read', () => {
     const { client, config } = wire();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -62,6 +130,19 @@ describe('WhatsAppWebJsAdapter calls', () => {
     expect(config.onCallLog).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('"keys":["callResult"]');
+  });
+
+  it('warns again for a different unreadable shape, but not for own call logs or other messages, and never with identifiers', () => {
+    const { client, config } = wire();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const base = { type: 'call_log', id: { _serialized: 'x1' }, from: '628111000111@c.us', fromMe: false, timestamp: 1_790_000_000 };
+    client.emit('message_create', { ...base, _data: { callResult: 9 } });
+    client.emit('message_create', { ...base, id: { _serialized: 'x2' }, _data: { callOutcome: 'ONGOING' } });
+    client.emit('message_create', { ...base, id: { _serialized: 'x3' }, fromMe: true, _data: { callOutcome: 'MISSED' } });
+    client.emit('message_create', { type: 'chat', id: { _serialized: 'm1' }, from: '628111000111@c.us', body: 'hi', _data: {} });
+    expect(config.onCallLog).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(2);
+    for (const [line] of warn.mock.calls) expect(String(line)).not.toContain('628111000111');
   });
 
   it('createCallLink returns the link, and fails loudly when not ready or WhatsApp gives none', async () => {
