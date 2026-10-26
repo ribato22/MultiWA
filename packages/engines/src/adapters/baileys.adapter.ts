@@ -24,6 +24,7 @@ import type {
   SendMessageOptions,
   CallLinkType,
 } from '../types';
+import { mapBaileysCallStatus } from '../call-events';
 
 
 export class BaileysAdapter implements IWhatsAppEngine {
@@ -157,17 +158,21 @@ export class BaileysAdapter implements IWhatsAppEngine {
     const sock = this.socket;
     const isCurrent = () => this.socket === sock;
 
-    // Incoming voice/video call — surface the initial offer for auto-reject.
+    // Incoming voice/video call: every Baileys status of it (see mapBaileysCallStatus).
     this.socket.ev.on('call', (calls: any[]) => {
       if (!isCurrent()) return;
       for (const call of calls || []) {
-        if (call?.status && call.status !== 'offer') continue;
-        if (call?.id && call?.from) this.callFrom.set(call.id, call.from);
+        if (!call?.id || !call?.from) continue;
+        if (call.status === 'offer') this.callFrom.set(call.id, call.from);
+        const state = mapBaileysCallStatus(call.status);
+        if (!state) continue;
+        if (state === 'missed' || state === 'ended') this.callFrom.delete(call.id);
         this.config?.onCall?.({
-          id: call?.id,
-          from: call?.from || '',
-          isVideo: !!call?.isVideo,
-          isGroup: (call?.from || '').includes('@g.us'),
+          id: call.id,
+          from: call.from,
+          isVideo: !!call.isVideo,
+          isGroup: !!call.isGroup || String(call.from).includes('@g.us'),
+          state,
         });
       }
     });
@@ -602,9 +607,8 @@ export class BaileysAdapter implements IWhatsAppEngine {
 
   async rejectCall(callId: string): Promise<void> {
     const from = this.callFrom.get(callId);
-    if (this.socket && from) {
-      await this.socket.rejectCall(callId, from);
-    }
+    if (!this.socket || !from) throw new Error('Call is not ringing any more');
+    await this.socket.rejectCall(callId, from);
     this.callFrom.delete(callId);
   }
 
