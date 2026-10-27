@@ -75,6 +75,12 @@ export function ringTimeoutMs(): number {
   return Number.isFinite(n) && n > 0 ? n : 90_000;
 }
 
+/** How long an ended call waits for its call log before it is reported as unanswered (env CALL_LOG_GRACE_MS). */
+function callLogGraceMs(): number {
+  const n = Number(process.env.CALL_LOG_GRACE_MS);
+  return Number.isFinite(n) && n > 0 ? n : 60_000;
+}
+
 /**
  * Webhook / realtime payload. Deliberately neither an `id` nor a `messageId` key: the
  * webhook dispatchers name a delivery job `<webhook>-<event>-<payload.id ?? payload.messageId>`
@@ -121,21 +127,53 @@ async function findCall(profileId: string, waCallId: string): Promise<CallRecord
   return (await prisma.call.findUnique({ where: { profileId_waCallId: { profileId, waCallId } } })) as CallRecord | null;
 }
 
+/** One call of one profile: the key of its timer and of its running ringing step. */
+const callKey = (row: { profileId: string; waCallId: string }) => `${row.profileId}:${row.waCallId}`;
+
+// The ringing step of a call (find the caller, record the call, arm its ring timeout, auto-reject and reply)
+// runs for as long as the identity lookup and the reply take, while the engine keeps reporting the
+// same call: its end, its call log (10-15 ms after the end; tens of ms after our own reject), our own
+// reject echoed back, a repeated offer. Each of those waits here for the ringing step instead of
+// reading a row that does not exist yet, or one that does not say yet who rejected the call.
+// ponytail: per-process registry; the engine host owns all signals of a profile.
+const ringingInFlight = new Map<string, Promise<CallRecord | null>>();
+
+/** Wait for the ringing step of this call, if one is running. Its failure is its own caller's, not ours. */
+async function afterRinging(profileId: string, waCallId: string): Promise<void> {
+  await ringingInFlight.get(callKey({ profileId, waCallId }))?.catch(() => undefined);
+}
+
+/** Calls whose ringing step is running; the specs check that it always empties. */
+export const __callsInFlightForTests = (): number => ringingInFlight.size;
+
 /**
- * Handle one engine call signal. `ringing` creates the row (a repeated offer is a
- * no-op), arms the ring timeout and applies the profile's auto-reject; any other
- * state moves the stored outcome forward (nextOutcome).
+ * Handle one engine call signal. `ringing` creates the row, arms the ring timeout and applies the
+ * profile's auto-reject (a repeated offer joins the ringing step that is already running); any
+ * other state moves the stored outcome forward (nextOutcome), once that ringing step is over.
  */
 export async function handleEngineCall(call: IncomingCall, deps: CallEngineDeps): Promise<CallRecord | null> {
   if (!call?.id) return null;
   const state = call.state ?? 'ringing';
   if (state !== 'ringing') {
+    await afterRinging(deps.profileId, call.id);
     const stored = await findCall(deps.profileId, call.id);
     if (!stored) return null; // started before this process did
     const target = outcomeForState(state);
     return target ? applyCallOutcome(stored, target, deps, { rejectedBy: 'device' }) : stored;
   }
 
+  const key = callKey({ profileId: deps.profileId, waCallId: call.id });
+  const running = ringingInFlight.get(key);
+  if (running) return running; // a repeated offer must not reject the call a second time
+  const run: Promise<CallRecord | null> = handleRinging(call, deps).finally(() => {
+    if (ringingInFlight.get(key) === run) ringingInFlight.delete(key);
+  });
+  ringingInFlight.set(key, run);
+  return run;
+}
+
+/** The ringing step: record and announce the call, arm its ring timeout, settle the auto-reject. */
+async function handleRinging(call: IncomingCall, deps: CallEngineDeps): Promise<CallRecord | null> {
   const existing = await findCall(deps.profileId, call.id);
   if (existing) return existing;
 
@@ -224,6 +262,8 @@ async function maybeAutoReply(row: CallRecord, deps: CallEngineDeps): Promise<vo
  * stored outcome, so two signals racing (end event and call log) cannot move it
  * backwards, whichever lands first; on a lost race the row is re-read and the rule
  * applied again.
+ * A call that becomes `unknown` without `notifyUnknown` (it stopped ringing, as `ended` says) is
+ * notified as unanswered only if no call log has settled it CALL_LOG_GRACE_MS later.
  */
 export async function applyCallOutcome(
   row: CallRecord,
@@ -249,17 +289,19 @@ export async function applyCallOutcome(
   const event = row.outcome !== 'ringing' ? AppEvents.CALL.UPDATED : next === 'rejected' ? AppEvents.CALL.REJECTED : AppEvents.CALL.ENDED;
   publishCall(deps, event, updated);
   if (next === 'missed' || (next === 'unknown' && opts.notifyUnknown)) await notifyMissed(updated, deps);
+  else if (next === 'unknown') armLogGrace(updated, deps); // the call log usually settles it (and notifies) within moments
   return updated;
 }
 
 /**
  * A call-log message carries the final outcome of a call, and for whatsapp-web.js the id of
  * that call (`entry.callId`).
- * - With a call id, the call is looked up by it. A call that is not final yet (ringing /
- *   unknown) is refined; a final one (e.g. our own auto-reject, whose log follows) only gets
- *   the log remembered, with no new outcome, event or notification; an unknown one is
- *   recorded under that call id (the ringing was never seen: detection failed, the process
- *   restarted).
+ * - With a call id, the call is looked up by it, once its ringing step is over if one is still
+ *   running (the log can beat it by far: it follows our own reject within tens of ms, the
+ *   identity lookup takes 100+). A call that is not final yet (ringing / unknown) is refined; a
+ *   final one (e.g. our own auto-reject, whose log follows) only gets the log remembered, with
+ *   no new outcome, event or notification; an unknown one is recorded under that call id (the
+ *   ringing was never seen: detection failed, the process restarted).
  * - Without one (other engines, older builds) the latest incoming call from the same caller
  *   that started within CALL_LOG_MATCH_WINDOW_MS before the log is taken, whatever its
  *   outcome, unless that call already has a log of its own: then this log is another call,
@@ -279,6 +321,7 @@ export async function handleCallLog(entry: CallLogEntry, deps: CallEngineDeps): 
   if (seen) return null;
 
   if (entry.callId) {
+    await afterRinging(deps.profileId, entry.callId);
     const stored = await findCall(deps.profileId, entry.callId);
     if (stored) return attachCallLog(stored, entry, deps);
   }
@@ -377,27 +420,42 @@ export async function rejectCallByAgent(
   return applyCallOutcome(row, 'rejected', deps, { rejectedBy: 'agent' });
 }
 
-// ── ring timeout ───────────────────────────────────────────────────────────────────────
+// ── ring timeout and call-log grace ────────────────────────────────────────────────────
+// One timer per call, in one map: the ring timeout while it rings; once `ended` has moved it to
+// `unknown`, the grace period for its call log instead. Any later change of the call clears it
+// (applyCallOutcome), and either fires on a fresh read of the row.
 const ringTimers = new Map<string, NodeJS.Timeout>();
-const timerKey = (row: { profileId: string; waCallId: string }) => `${row.profileId}:${row.waCallId}`;
 
-function armRingTimeout(row: CallRecord, deps: CallDeps): void {
-  const key = timerKey(row);
+function armTimer(what: string, row: CallRecord, ms: number, deps: CallDeps, onFire: (fresh: CallRecord | null) => Promise<unknown>): void {
+  clearRingTimeout(row);
+  const key = callKey(row);
   const timer = setTimeout(async () => {
     ringTimers.delete(key);
     try {
-      const fresh = await findCall(row.profileId, row.waCallId);
-      if (fresh?.outcome === 'ringing') await applyCallOutcome(fresh, 'unknown', deps, { notifyUnknown: true });
+      await onFire(await findCall(row.profileId, row.waCallId));
     } catch (e) {
-      deps.logger?.warn?.(`ring timeout for call ${row.waCallId} failed: ${(e as Error).message}`);
+      deps.logger?.warn?.(`${what} for call ${row.waCallId} failed: ${(e as Error).message}`);
     }
-  }, ringTimeoutMs());
+  }, ms);
   timer.unref?.();
   ringTimers.set(key, timer);
 }
 
+function armRingTimeout(row: CallRecord, deps: CallDeps): void {
+  armTimer('ring timeout', row, ringTimeoutMs(), deps, async (fresh) => {
+    if (fresh?.outcome === 'ringing') await applyCallOutcome(fresh, 'unknown', deps, { notifyUnknown: true });
+  });
+}
+
+/** An ended call no call log has settled by the end of the grace period is reported as unanswered. */
+function armLogGrace(row: CallRecord, deps: CallDeps): void {
+  armTimer('call log grace', row, callLogGraceMs(), deps, async (fresh) => {
+    if (fresh?.outcome === 'unknown') await notifyMissed(fresh, deps);
+  });
+}
+
 function clearRingTimeout(row: { profileId: string; waCallId: string }): void {
-  const key = timerKey(row);
+  const key = callKey(row);
   const timer = ringTimers.get(key);
   if (timer) {
     clearTimeout(timer);
