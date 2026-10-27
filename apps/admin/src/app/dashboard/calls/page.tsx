@@ -46,6 +46,9 @@ export default function CallsPage() {
   // The socket handler reads the tab through this ref: a tab change must not reconnect the socket.
   const filterRef = useRef(filter);
   filterRef.current = filter;
+  // A tab or profile switch leaves the previous request in flight: only the latest request of each kind may touch the state.
+  const loadSeq = useRef(0);
+  const ringingSeq = useRef(0);
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [ringing, setRinging] = useState<CallRecord[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -72,8 +75,10 @@ export default function CallsPage() {
 
   const load = useCallback(async (cursor?: string) => {
     if (!profileId) return;
+    const seq = ++loadSeq.current;
     setLoading(true);
     const res = await api.getCalls(profileId, { ...filterQuery(filter), cursor });
+    if (seq !== loadSeq.current) return; // a newer load started (another tab, profile or page): this answer is stale
     setLoading(false);
     if (res.error || !res.data) {
       toast({ title: 'Could not load calls', description: res.error, variant: 'destructive' });
@@ -83,12 +88,25 @@ export default function CallsPage() {
     // A realtime update can insert a row that a later page returns again: skip the ids already listed.
     setCalls((prev) => (cursor ? [...prev, ...page.calls.filter((c) => !prev.some((x) => x.id === c.id))] : page.calls));
     setNextCursor(page.nextCursor);
-    if (!cursor) setRinging(page.calls.filter((c) => c.outcome === 'ringing'));
   }, [profileId, filter, toast]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The ringing strip belongs to the profile, not to the selected tab (Missed and Rejected never list a ringing call).
+  const loadRinging = useCallback(async () => {
+    if (!profileId) return;
+    const seq = ++ringingSeq.current;
+    const res = await api.getCalls(profileId, { outcome: 'ringing' });
+    if (seq !== ringingSeq.current || !res.data) return; // stale (the profile changed), or failed: keep what the socket showed
+    setRinging(res.data.calls);
+  }, [profileId]);
+
+  useEffect(() => {
+    setRinging([]); // a profile switch never shows the previous profile's calls
+    void loadRinging();
+  }, [loadRinging]);
 
   // Live: new calls ring in, outcomes and follow-ups update in place.
   useEffect(() => {
@@ -122,6 +140,7 @@ export default function CallsPage() {
     }
     toast({ title: success });
     void load();
+    void loadRinging(); // realtime is the primary path; this covers a call:update the socket missed
     return true;
   };
 
