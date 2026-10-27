@@ -118,3 +118,39 @@ describe('whatsapp-web.js inbound media download patch', () => {
     expect(rest, 'a bare `throw e` loses the cause behind WhatsApp\'s minified `t: t`').not.toMatch(/\bthrow e;/);
   });
 });
+
+// Incoming calls. Current WhatsApp Web sets WAWebCallCollection's `activeCall` instead
+// of filling its internal map, so whatsapp-web.js 1.34.7's map hook never fires and
+// `client.on('call')` stays silent; its reject stanza is ignored too
+// (wwebjs/whatsapp-web.js#201825, #201746). The patch listens to `change:activeCall`,
+// reports the end of a call (`multiwa_call_ended`) and rejects through the voip stack.
+const installedClientJs = () => installedFile(['src', 'Client.js'], 'onMultiwaCallEnded');
+const installedUtilsJsWithReject = () => installedFile(['src', 'util', 'Injected', 'Utils.js'], 'WAWebVoipStackInterface');
+
+describe('whatsapp-web.js call patch', () => {
+  it('the patch carries the activeCall listener, the end event and the voip-stack reject', () => {
+    const patch = readFileSync(PATCH_FILE, 'utf8');
+    expect(patch).toMatch(/^\+.*change:activeCall/m);
+    expect(patch).toMatch(/^\+.*onMultiwaCallEnded/m);
+    expect(patch).toMatch(/^\+.*WAWebVoipStackInterface/m);
+  });
+
+  it('is actually APPLIED to the installed Client.js', () => {
+    const file = installedClientJs();
+    expect(file, 'no installed whatsapp-web.js@1.34.7 found — run pnpm install').not.toBeNull();
+    const src = readFileSync(file!, 'utf8');
+    expect(src).toContain("WAWebCallCollection.on('change:activeCall'");
+    expect(src).toContain("exposeFunctionIfAbsent(this.pupPage, 'onMultiwaCallEnded'");
+    expect(src).toContain("this.emit('multiwa_call_ended'");
+  });
+
+  it('rejects through the voip stack before the old stanza', () => {
+    const src = readFileSync(installedUtilsJsWithReject()!, 'utf8');
+    const start = src.indexOf('window.WWebJS.rejectCall = async');
+    const end = src.indexOf('window.WWebJS.cropAndResizeImage', start);
+    expect(start).toBeGreaterThan(-1);
+    const body = src.slice(start, end);
+    expect(body.indexOf('WAWebVoipStackInterface')).toBeGreaterThan(-1);
+    expect(body.indexOf('WAWebVoipStackInterface')).toBeLessThan(body.indexOf('deprecatedCastStanza'));
+  });
+});
