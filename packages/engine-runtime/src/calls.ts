@@ -479,6 +479,14 @@ export async function closeStaleRingingCalls(at: Date = new Date()): Promise<num
 const ENGINE_CALL_GONE = /not ringing any more/i;
 
 /**
+ * How long an agent's reject may wait for the engine (the engine managers apply it with withTimeout). The call is
+ * held in callsInFlight meanwhile, and everything the engine reports about it waits: a stuck page (puppeteer's
+ * protocolTimeout is 240 s) must not hold it for minutes. Below the 30 s the REST layer waits for the reject
+ * (CallsService), so the call is let go before the agent is answered 504, not long after.
+ */
+export const AGENT_REJECT_TIMEOUT_MS = 25_000;
+
+/**
  * An agent pressed Reject on a ringing call. Errors start with a code the API maps to HTTP.
  * Registered as the step settling the call while the engine rejects it, so that what the engine reports
  * meanwhile (the echo of this reject, its call log) waits instead of recording the phone as the rejecter.

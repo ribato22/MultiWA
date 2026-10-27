@@ -27,6 +27,7 @@ import {
   CALL_FOLLOW_UPS,
   CALL_OUTCOMES,
   publishCall,
+  withTimeout,
   type CallFollowUp,
   type CallOutcome,
   type CallRecord,
@@ -35,6 +36,7 @@ import { EngineManagerService } from '../profiles/engine-manager.service';
 import { MessagesService } from '../messages/messages.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { CALLS_MAX_LIMIT } from './dto';
 
 export interface ListCallsQuery {
   profileId: string;
@@ -47,23 +49,15 @@ export interface ListCallsQuery {
 }
 
 const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 200;
 const CALL_INCLUDE = {
   assignedUser: { select: { id: true, name: true } },
   conversation: { select: { id: true, name: true } },
 } as const;
-// A stuck WhatsApp Web page would otherwise hold the request for puppeteer's 240 s protocol timeout.
+// A stuck WhatsApp Web page would otherwise hold the request for puppeteer's 240 s protocol timeout. The engine
+// managers give up on an agent's reject sooner (AGENT_REJECT_TIMEOUT_MS), so the runtime lets go of the call first.
 const CALL_ACTION_TIMEOUT_MS = 30_000;
 const NO_GROUP_ANSWER = 'Group calls cannot be answered from the queue';
 const NO_CALL_LINKS = 'Call links are not available on this engine';
-
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('ENGINE_TIMEOUT')), ms);
-  });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
-}
 
 @Injectable()
 export class CallsService {
@@ -87,7 +81,7 @@ export class CallsService {
     }
     const since = q.since ? new Date(q.since) : undefined;
     if (since && Number.isNaN(since.getTime())) throw new BadRequestException('since must be an ISO date');
-    const take = Math.min(Math.max(Number(q.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+    const take = Math.min(Math.max(Number(q.limit) || DEFAULT_LIMIT, 1), CALLS_MAX_LIMIT);
     const rows = await prisma.call.findMany({
       where: {
         profileId: q.profileId,

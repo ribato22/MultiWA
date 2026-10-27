@@ -3,7 +3,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsArray, IsObject, IsOptional, IsNotEmpty, IsUrl, IsBoolean, ArrayNotEmpty } from 'class-validator';
-import { AppEvents } from '@multiwa/core';
+import { AppEvents, type AppEventName } from '@multiwa/core';
 
 export class CreateWebhookDto {
   @ApiProperty({ example: 'profile-uuid' })
@@ -58,7 +58,9 @@ export class UpdateWebhookDto {
 }
 
 // Event types for documentation. Keys are bound to the canonical AppEvents
-// constants so this map and the event bus cannot drift apart.
+// constants, and `satisfies` makes the type check fail for an event that has no
+// entry here (or an entry that is no event), so this map and the event bus
+// cannot drift apart. `test` is the one name that is not an AppEvent.
 export const WebhookEvents = {
   // Message events
   [AppEvents.MESSAGE.RECEIVED]: 'Incoming message received',
@@ -81,7 +83,13 @@ export const WebhookEvents = {
   // Contact events
   [AppEvents.CONTACT.UPDATE]: 'Contact information updated',
 
+  // Call events
+  [AppEvents.CALL.RECEIVED]: 'Incoming call started ringing',
+  [AppEvents.CALL.REJECTED]: 'Incoming call rejected (automatically, by an agent, or on the phone)',
+  [AppEvents.CALL.ENDED]: 'Incoming call stopped ringing without being rejected (missed, or answered on another device)',
+  [AppEvents.CALL.UPDATED]: 'Call changed after it stopped ringing (late outcome, follow-up or assignee)',
+
   // Other
   test: 'Test webhook delivery',
-} as const;
+} as const satisfies Record<AppEventName | 'test', string>;
 

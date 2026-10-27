@@ -22,3 +22,4 @@ export * from './engine-lifecycle';
 export * from './connect-watchdog';
 export * from './call-state';
 export * from './jid';
+export * from './with-timeout';

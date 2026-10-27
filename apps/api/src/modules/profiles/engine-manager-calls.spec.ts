@@ -76,6 +76,7 @@ beforeEach(() => {
   runtime.rejectCallByAgent.mockReset();
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });
@@ -276,5 +277,47 @@ describe('EngineManagerService.rejectCallByAgent (what the REST reject calls)', 
     const err = new Error(`${code}: c1`);
     runtime.rejectCallByAgent.mockRejectedValue(err);
     await expect(svc.rejectCallByAgent(P, 'c1')).rejects.toBe(err);
+  });
+
+  // The runtime holds a call while its agent reject runs: whatever the engine reports about it meanwhile waits for
+  // it. A stuck page (puppeteer's protocolTimeout is 240 s) must not hold the call for minutes after the REST call
+  // has answered 504 at 30 s, so the manager bounds the engine's answer itself, below that.
+  describe('an engine that does not answer the reject', () => {
+    // The runtime calls deps.rejectCall and waits for it, as the real one does.
+    const runtimeAwaitsTheEngine = () =>
+      runtime.rejectCallByAgent.mockImplementation(async (_callId: string, deps: { rejectCall: (id: string) => Promise<void> }) => {
+        await deps.rejectCall(row.waCallId);
+        return row;
+      });
+
+    it('is given up after 25 s with ENGINE_TIMEOUT, so that the runtime lets go of the call', async () => {
+      vi.useFakeTimers();
+      const { svc, engine } = make();
+      engine.rejectCall.mockReturnValue(new Promise(() => undefined));
+      runtimeAwaitsTheEngine();
+      let settled: unknown = 'pending';
+      void svc.rejectCallByAgent(P, 'c1').then((v) => (settled = v), (e) => (settled = e));
+
+      await vi.advanceTimersByTimeAsync(24_999);
+      expect(settled).toBe('pending');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBeInstanceOf(Error); // 'pending' would mean the manager is still waiting for the stuck engine
+      expect((settled as Error).message).toBe('ENGINE_TIMEOUT: reject');
+    });
+
+    it('leaves no timer behind when the engine answers in time', async () => {
+      vi.useFakeTimers();
+      const { svc } = make();
+      runtimeAwaitsTheEngine();
+      await expect(svc.rejectCallByAgent(P, 'c1')).resolves.toMatchObject({ callId: 'c1' });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('keeps the engine\'s own error when it fails in time', async () => {
+      const { svc, engine } = make();
+      engine.rejectCall.mockRejectedValue(new Error('Call is not ringing any more'));
+      runtimeAwaitsTheEngine();
+      await expect(svc.rejectCallByAgent(P, 'c1')).rejects.toThrow('Call is not ringing any more');
+    });
   });
 });

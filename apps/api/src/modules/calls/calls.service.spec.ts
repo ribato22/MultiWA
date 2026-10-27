@@ -108,7 +108,7 @@ describe('CallsService.list', () => {
     await svc.list({ profileId: 'p1', followUp: 'open', from: '628111000111@s.whatsapp.net', since: '2026-10-26T00:00:00.000Z', limit: '9999' });
     expect(db.call.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
       where: { profileId: 'p1', followUp: 'open', fromJid: '628111000111@s.whatsapp.net', startedAt: { gte: new Date('2026-10-26T00:00:00.000Z') } },
-      take: 201,
+      take: 101,
     }));
     await svc.list({ profileId: 'p1', limit: 'many' });
     expect(db.call.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 51 }));

@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, handleEngineCall, handleCallLog, closeStaleRingingCalls, rejectCallByAgent as rejectCallByAgentShared, toCallPayload, type CallEngineDeps, type AutoRejectCallSettings, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, handleEngineCall, handleCallLog, closeStaleRingingCalls, rejectCallByAgent as rejectCallByAgentShared, AGENT_REJECT_TIMEOUT_MS, withTimeout, toCallPayload, type CallEngineDeps, type AutoRejectCallSettings, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1041,7 +1041,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
   async rejectCallByAgent(profileId: string, callId: string): Promise<Record<string, unknown>> {
     const engine = this.getEngine(profileId);
     if (!engine) throw new Error(`ENGINE_NOT_CONNECTED: profile ${profileId} is not connected`);
-    const row = await rejectCallByAgentShared(callId, { ...this.callDeps(profileId, null), rejectCall: (waCallId) => engine.rejectCall(waCallId) });
+    const row = await rejectCallByAgentShared(callId, {
+      ...this.callDeps(profileId, null),
+      // Bounded: the runtime holds the call while this runs, however long a stuck page takes (ENGINE_TIMEOUT maps to 504).
+      rejectCall: (waCallId) => withTimeout(engine.rejectCall(waCallId), AGENT_REJECT_TIMEOUT_MS, 'ENGINE_TIMEOUT: reject'),
+    });
     return toCallPayload(row);
   }
 
