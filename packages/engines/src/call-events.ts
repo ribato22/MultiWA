@@ -1,4 +1,4 @@
-// MultiWA Gateway - WhatsApp call event helpers (pure)
+// MultiWA Gateway - WhatsApp call event helpers
 // packages/engines/src/call-events.ts
 //
 // After a call WhatsApp writes a call-log message into the chat ("Missed voice call").

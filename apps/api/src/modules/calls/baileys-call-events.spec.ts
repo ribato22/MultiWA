@@ -3,7 +3,7 @@
 // nothing here connects to WhatsApp.
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { BaileysAdapter } from '@multiwa/engines';
+import { BaileysAdapter, MAX_REMEMBERED_IDS } from '@multiwa/engines';
 
 const CALLER = '628111000111@s.whatsapp.net';
 
@@ -24,11 +24,10 @@ const wire = () => {
 
 describe('BaileysAdapter.rejectCall', () => {
   it('rejects a call it saw offered, then forgets it', async () => {
-    const adapter = new BaileysAdapter() as any;
-    adapter.socket = { rejectCall: vi.fn().mockResolvedValue(undefined) };
-    adapter.callFrom.set('c1', '628111000111@s.whatsapp.net');
+    const { adapter, ev, socket } = wire();
+    ev.emit('call', [update('offer')]);
     await adapter.rejectCall('c1');
-    expect(adapter.socket.rejectCall).toHaveBeenCalledWith('c1', '628111000111@s.whatsapp.net');
+    expect(socket.rejectCall).toHaveBeenCalledWith('c1', CALLER);
     await expect(adapter.rejectCall('c1')).rejects.toThrow('Call is not ringing any more');
   });
 
@@ -138,14 +137,15 @@ describe('BaileysAdapter call updates', () => {
 
   it('bounds what it remembers: forgets the oldest offers first, never the newest', () => {
     const { ev, onCall } = wire();
-    for (let i = 0; i < 600; i++) ev.emit('call', [update('offer', { id: `c${i}` })]);
-    ev.emit('call', [update('offer', { id: 'c599' })]); // still remembered: a repeat
-    expect(onCall).toHaveBeenCalledTimes(600);
-    ev.emit('call', [update('offer', { id: 'c0' })]); // fell out of the window, so it is reported again
-    expect(onCall).toHaveBeenCalledTimes(601);
+    const total = MAX_REMEMBERED_IDS + 100;
+    for (let i = 0; i < total; i++) ev.emit('call', [update('offer', { id: `c${i}` })]);
+    ev.emit('call', [update('offer', { id: 'c100' })]); // the oldest still remembered: a repeat
+    expect(onCall).toHaveBeenCalledTimes(total);
+    ev.emit('call', [update('offer', { id: 'c99' })]); // fell out of the window, so it is reported again
+    expect(onCall).toHaveBeenCalledTimes(total + 1);
   });
 
-  it.each(['accept', 'reject'])('forgets a call once it was %sed: rejectCall no longer reaches the socket', async (status) => {
+  it.each(['accept', 'reject', 'timeout', 'terminate'])('forgets a call once it stops ringing (%s): rejectCall no longer reaches the socket', async (status) => {
     const { adapter, ev, socket } = wire();
     ev.emit('call', [update('offer')]);
     ev.emit('call', [update(status)]);

@@ -182,7 +182,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
           id: call.id,
           from,
           isVideo: !!call.isVideo,
-          isGroup: !!call.isGroup || from.includes('@g.us'),
+          isGroup: !!call.isGroup || String(from).includes('@g.us'),
           state,
         });
       }
