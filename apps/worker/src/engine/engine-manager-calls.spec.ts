@@ -106,13 +106,16 @@ describe('EngineManagerService.callDeps', () => {
   });
 
   // WorkerMessagesService.sendText never throws: a send the gate refused (daily cap, repeat suppression, cold circuit),
-  // an unknown profile or an engine error come back as { success: false }. The runtime claims the once-per-24h reply
-  // before sending and releases the claim only when sendText rejects, so a reply that was not sent must reject here.
+  // an unknown profile or an engine error come back as { success: false }, and a profile without an engine as
+  // { success: true, status: 'pending' } (nothing was sent). The runtime claims the once-per-24h reply before sending
+  // and releases the claim only when sendText rejects, so a reply that was not sent must reject here.
   it.each([
     [{ success: false, status: 'failed', error: 'REPEAT_SUPPRESSED' }, /REPEAT_SUPPRESSED/],
     [{ success: false, error: 'Profile not found' }, /Profile not found/],
     [{ success: false }, /not sent/],
-  ])('a reply the worker reports as failed (%j) rejects, so the runtime releases its claim', async (result, reason) => {
+    [{ success: true, messageId: 'm1', conversationId: 'conv-1', status: 'pending', warning: 'Profile not connected' }, /^reply not sent: Profile not connected$/],
+    [{ success: true, status: 'pending' }, /^reply not sent: unknown reason$/],
+  ])('a reply the worker reports as not sent (%j) rejects, so the runtime releases its claim', async (result, reason) => {
     const { svc, messages } = make();
     messages.sendText.mockResolvedValue(result);
     await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).rejects.toThrow(reason);

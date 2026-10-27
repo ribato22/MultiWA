@@ -25,6 +25,12 @@ import { CallsService } from './calls.service';
 const db = prisma as any;
 const START = new Date('2026-10-26T03:00:00.000Z');
 const LINK = 'https://call.whatsapp.com/voice/x';
+// What MessagesService.sendText really resolves (it does not throw on an engine failure; only the send gate's refusals
+// are thrown). `messageId` is the stored message's own id, `waMessageId` WhatsApp's.
+const SENT = { success: true, messageId: 'm1', conversationId: 'conv-1', waMessageId: 'wa-m1', status: 'sent' };
+const QUEUED = { success: true, messageId: 'm1', conversationId: 'conv-1', status: 'queued' }; // ENGINE_HOST=worker / durable send
+const FAILED = { success: false, messageId: 'm1', conversationId: 'conv-1', status: 'failed', error: 'Evaluation failed: boom' };
+const NOT_CONNECTED = { success: true, messageId: 'm1', conversationId: 'conv-1', status: 'pending', warning: 'Profile not connected, message queued' };
 const row = (over: Record<string, unknown> = {}): any => ({
   id: 'c1', profileId: 'p1', waCallId: 'wa-1', fromJid: '628111000111@s.whatsapp.net', isVideo: false, isGroup: false,
   direction: 'incoming', outcome: 'missed', rejectedBy: null, startedAt: START, endedAt: START, followUp: 'open',
@@ -34,7 +40,7 @@ const row = (over: Record<string, unknown> = {}): any => ({
 function make() {
   const engine = { createCallLink: vi.fn().mockResolvedValue(LINK) };
   const engineManager = { getEngine: vi.fn().mockReturnValue(engine), rejectCallByAgent: vi.fn().mockResolvedValue({ callId: 'c1' }) };
-  const messages = { sendText: vi.fn().mockResolvedValue({ id: 'm1' }) };
+  const messages = { sendText: vi.fn().mockResolvedValue(SENT) };
   const engineCommands = { rejectCall: vi.fn().mockResolvedValue({ callId: 'c1' }), createCallLink: vi.fn().mockResolvedValue(LINK) };
   const eventEmitter = { emit: vi.fn() };
   const realtime = { emitCallUpdate: vi.fn() };
@@ -269,7 +275,7 @@ describe('CallsService.reply', () => {
     const res = await t.svc.reply('c1');
     expect(t.messages.sendText).toHaveBeenCalledWith({ profileId: 'p1', to: '628111000111@s.whatsapp.net', text: 'Maaf tadi terlewat' });
     expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'c1' }, data: { followUp: 'in_progress' } }));
-    expect(res).toMatchObject({ call: { followUp: 'in_progress' }, message: { id: 'm1' } });
+    expect(res).toMatchObject({ call: { followUp: 'in_progress' }, message: SENT });
     expectAnnounced(t, { followUp: 'in_progress' });
   });
 
@@ -312,13 +318,44 @@ describe('CallsService.reply', () => {
     expectNothingAnnounced(t);
   });
 
+  // MessagesService.sendText does not throw when the engine fails: with ENGINE_HOST=api it RESOLVES
+  // { success: false, status: 'failed' } (an engine error or soft-fail) or { success: true, status: 'pending' } (the
+  // profile has no engine). A reply that did not go out must neither take the call up nor be announced.
+  it.each([
+    ['an engine error', FAILED, 502, 'Evaluation failed: boom'],
+    ['a failure that gives no reason', { success: false, messageId: 'm1', status: 'failed' }, 502, 'The message could not be sent'],
+    ['a soft failure without a status', { success: false, error: 'Profile not found' }, 502, 'Profile not found'],
+    ['a profile without an engine', NOT_CONNECTED, 409, 'Profile is not connected'],
+  ])('%s is not a reply, and the call is left alone', async (_what, result, status, message) => {
+    db.call.findUnique.mockResolvedValue(row());
+    db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
+    const t = make();
+    t.messages.sendText.mockResolvedValue(result);
+    const err = await t.svc.reply('c1', 'x').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect(err.getStatus()).toBe(status);
+    expect(err.message).toBe(message);
+    expect(db.call.update).not.toHaveBeenCalled();
+    expectNothingAnnounced(t);
+  });
+
+  // ENGINE_HOST=worker and DURABLE_SEND answer 'queued': accepted, the queue consumer sends it and owns its retries.
+  it('a reply that is only queued is accepted, and takes the call up', async () => {
+    db.call.findUnique.mockResolvedValue(row());
+    db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
+    const t = make();
+    t.messages.sendText.mockResolvedValue(QUEUED);
+    await expect(t.svc.reply('c1', 'x')).resolves.toMatchObject({ call: { followUp: 'in_progress' }, message: QUEUED });
+    expectAnnounced(t, { followUp: 'in_progress' });
+  });
+
   it('a listener that fails does not fail a reply that was sent, and is not silent about it', async () => {
     db.call.findUnique.mockResolvedValue(row());
     db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
     const t = make();
     const warn = vi.spyOn((t.svc as any).logger, 'warn').mockImplementation(() => undefined);
     t.eventEmitter.emit.mockImplementation(() => { throw new Error('listener blew up'); });
-    await expect(t.svc.reply('c1', 'x')).resolves.toMatchObject({ message: { id: 'm1' } });
+    await expect(t.svc.reply('c1', 'x')).resolves.toMatchObject({ message: SENT });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('listener blew up'));
     expect(t.realtime.emitCallUpdate).toHaveBeenCalledTimes(1);
   });
@@ -371,7 +408,7 @@ describe.each(MODES)('CallsService.sendCallLink (ENGINE_HOST=%s)', (mode) => {
       data: { followUp: 'in_progress', metadata: { callLinks: [{ type: 'voice', link: LINK, at: expect.any(String) }] } },
     }));
     expect(res.link).toBe(LINK);
-    expect(res).toMatchObject({ call: { followUp: 'in_progress' }, message: { id: 'm1' } });
+    expect(res).toMatchObject({ call: { followUp: 'in_progress' }, message: SENT });
     expectAnnounced(t, { followUp: 'in_progress' });
   });
 
@@ -468,6 +505,34 @@ describe.each(MODES)('CallsService.sendCallLink (ENGINE_HOST=%s)', (mode) => {
     await expect(t.svc.sendCallLink('c1', 'voice')).rejects.toBe(refusal);
     expect(db.call.update).not.toHaveBeenCalled();
     expectNothingAnnounced(t);
+  });
+
+  // The link was created, but the message that carries it did not go out: it must not be remembered as sent.
+  it.each([
+    ['an engine error', FAILED, 502, 'Evaluation failed: boom'],
+    ['a failure that gives no reason', { success: false, messageId: 'm1', status: 'failed' }, 502, 'The message could not be sent'],
+    ['a profile without an engine', NOT_CONNECTED, 409, 'Profile is not connected'],
+  ])('a link whose message failed (%s) is not remembered, and the call is left alone', async (_what, result, status, message) => {
+    db.call.findUnique.mockResolvedValue(row());
+    db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
+    const t = make();
+    t.messages.sendText.mockResolvedValue(result);
+    const err = await t.svc.sendCallLink('c1', 'voice').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect(err.getStatus()).toBe(status);
+    expect(err.message).toBe(message);
+    expect(db.call.update).not.toHaveBeenCalled();
+    expectNothingAnnounced(t);
+  });
+
+  it('a link that is only queued is accepted, remembered, and takes the call up', async () => {
+    db.call.findUnique.mockResolvedValue(row());
+    db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
+    const t = make();
+    t.messages.sendText.mockResolvedValue(QUEUED);
+    await expect(t.svc.sendCallLink('c1', 'voice')).resolves.toMatchObject({ link: LINK, message: QUEUED });
+    expect(db.call.update.mock.calls[0][0].data.metadata.callLinks).toHaveLength(1);
+    expectAnnounced(t, { followUp: 'in_progress' });
   });
 
   it('refuses group calls without asking the engine', async () => {

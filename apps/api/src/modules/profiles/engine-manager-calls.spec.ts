@@ -4,6 +4,7 @@
 // ringing; rejectCallByAgent is what the REST reject calls (the worker's has the same job for engine-commands).
 // The runtime itself is pinned by calls-runtime.spec.ts: here it only receives what the manager hands over.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { HttpException } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() } } }));
 vi.mock('../automation/rule-engine.service', () => ({ RuleEngineService: class {} }));
@@ -25,6 +26,8 @@ import { NotificationType } from '../notifications/notifications.service';
 
 const P = '1eb28399-5fe1-40ed-bd0a-39a4b8ad4858';
 const db = prisma as any;
+// What MessagesService.sendText really resolves: it does not throw on an engine failure, only on what the send gate refuses.
+const SENT = { success: true, messageId: 'm1', conversationId: 'conv-1', waMessageId: 'wa-m1', status: 'sent' };
 const runtime = {
   handleEngineCall: handleEngineCall as any,
   handleCallLog: handleCallLog as any,
@@ -34,7 +37,7 @@ const runtime = {
 
 function make() {
   const realtime = { emitCallUpdate: vi.fn() };
-  const messages = { sendText: vi.fn().mockResolvedValue({ id: 'm1' }) };
+  const messages = { sendText: vi.fn().mockResolvedValue(SENT) };
   const eventEmitter = { emit: vi.fn() };
   const svc = new EngineManagerService(realtime as any, {} as any, { createForOrg: vi.fn() } as any, eventEmitter as any, messages as any);
   const engine = { rejectCall: vi.fn().mockResolvedValue(undefined), resolveIdentity: vi.fn() };
@@ -86,6 +89,40 @@ describe('EngineManagerService.callDeps', () => {
     const { svc, messages } = make();
     await (svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi');
     expect(messages.sendText).toHaveBeenCalledWith({ profileId: P, to: '628111000111@s.whatsapp.net', text: 'hi' });
+  });
+
+  it('hands the result of a reply the service accepted back to the runtime', async () => {
+    const { svc } = make();
+    await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).resolves.toEqual(SENT);
+  });
+
+  it('a reply that is only queued (durable send) is accepted: the queue consumer delivers it', async () => {
+    const { svc, messages } = make();
+    const queued = { success: true, messageId: 'm2', conversationId: 'conv-1', status: 'queued' };
+    messages.sendText.mockResolvedValue(queued);
+    await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).resolves.toEqual(queued);
+  });
+
+  // MessagesService.sendText RESOLVES when the engine fails ({ success: false, status: 'failed' }) or the profile has no
+  // engine ({ success: true, status: 'pending' }); it throws only what the send gate refuses. The runtime claims the
+  // once-per-24h reply before sending and releases the claim only when sendText rejects, so a reply that was not sent
+  // must reject here, or a failed auto-reply would block the next one for 24 h.
+  it.each([
+    [{ success: false, messageId: 'm1', conversationId: 'conv-1', status: 'failed', error: 'Evaluation failed: boom' }, /^reply not sent: Evaluation failed: boom$/],
+    [{ success: false, status: 'failed' }, /^reply not sent: unknown reason$/],
+    [{ success: true, messageId: 'm1', conversationId: 'conv-1', status: 'pending', warning: 'Profile not connected, message queued' }, /^reply not sent: Profile not connected, message queued$/],
+    [{ success: true, status: 'pending' }, /^reply not sent: unknown reason$/],
+  ])('a reply the service reports as not sent (%j) rejects, so the runtime releases its claim', async (result, reason) => {
+    const { svc, messages } = make();
+    messages.sendText.mockResolvedValue(result);
+    await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).rejects.toThrow(reason);
+  });
+
+  it('lets what the send gate refuses through unchanged', async () => {
+    const { svc, messages } = make();
+    const refusal = new HttpException('Daily limit reached', 429);
+    messages.sendText.mockRejectedValue(refusal);
+    await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).rejects.toBe(refusal);
   });
 
   it('notifies with the CALL type and pushes realtime for the profile', async () => {

@@ -1077,7 +1077,17 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         await live.rejectCall(waCallId);
       },
       // The send-gated path (daily caps, repeat suppression, floor delay), never engine.sendText.
-      sendText: (to, text) => this.messagesService.sendText({ profileId, to, text }),
+      sendText: async (to, text) => {
+        const res: { success?: boolean; status?: string; error?: string; warning?: string } = await this.messagesService.sendText({ profileId, to, text });
+        // MessagesService.sendText throws only what the send gate refuses. An engine error comes back as
+        // { success: false, status: 'failed' } and a profile without an engine as { success: true, status: 'pending' }.
+        // The runtime releases its once-per-24h reply claim only when sendText rejects, so a reply that was not sent has
+        // to reject here (the worker's adapter does the same), or a failed auto-reply would block the next one for 24 h.
+        if (res.success === false || res.status === 'failed' || res.status === 'pending') {
+          throw new Error(`reply not sent: ${res.error ?? res.warning ?? 'unknown reason'}`);
+        }
+        return res;
+      },
       resolveIdentity: engine ? (jid) => engine.resolveIdentity(jid) : null,
       logger: { log: (m) => this.logger.log(m), warn: (m) => this.logger.warn(m) },
     };

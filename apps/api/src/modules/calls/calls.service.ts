@@ -145,7 +145,7 @@ export class CallsService {
     }
     if (!body) throw new BadRequestException('text is required: this profile has no default call reply');
     // The send-gated path: an incoming call opens the service window, so this is a reply, not a cold send.
-    const message = await this.messages.sendText({ profileId: row.profileId, to: row.fromJid, text: body });
+    const message = this.assertSent(await this.messages.sendText({ profileId: row.profileId, to: row.fromJid, text: body }));
     const call = await this.markInProgress(row.id);
     return { call, message };
   }
@@ -161,7 +161,9 @@ export class CallsService {
     });
     if (!link) throw new ConflictException(NO_CALL_LINKS); // null = an engine without a call-link API
     const intro = text?.trim();
-    const message = await this.messages.sendText({ profileId: row.profileId, to: row.fromJid, text: intro ? `${intro}\n${link}` : link });
+    const message = this.assertSent(
+      await this.messages.sendText({ profileId: row.profileId, to: row.fromJid, text: intro ? `${intro}\n${link}` : link }),
+    );
     // The send may have waited minutes in the gate, and the runtime writes this row's metadata too
     // (callLogMessageId): merge into what is stored now, not into the copy read at the start.
     const fresh = await this.get(row.id);
@@ -193,6 +195,19 @@ export class CallsService {
       : null;
     if (!user) throw new BadRequestException('assignedUserId must be an active user of this organization');
     return user.id;
+  }
+
+  /**
+   * MessagesService.sendText does not throw when the engine fails: with ENGINE_HOST=api it RESOLVES
+   * { success: false, status: 'failed', error } (an engine error or soft-fail) or { success: true, status: 'pending' }
+   * (the profile has no engine); only what the send gate refuses is thrown. A send that did not happen must not be
+   * reported as done, so this runs right after the send, before the call is touched or a link remembered.
+   * 'queued' (ENGINE_HOST=worker, durable send) is an accepted send: the queue consumer delivers it.
+   */
+  private assertSent<T extends { success?: boolean; status?: string; error?: string }>(res: T): T {
+    if (res.success === false || res.status === 'failed') throw new BadGatewayException(res.error ?? 'The message could not be sent');
+    if (res.status === 'pending') throw new ConflictException('Profile is not connected');
+    return res;
   }
 
   /** Answering a call takes it up: open -> in_progress, judged on the row as it is after the send (the gate may hold it for minutes). */
