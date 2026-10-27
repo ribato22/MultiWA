@@ -44,14 +44,15 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleConnection(client: Socket) {
     // Authenticate the socket in the handshake. An unauthenticated client must
     // never receive another tenant's pairing QR codes or messages.
-    const auth = await this.authenticate(client);
+    // Nest does not await this hook before it dispatches the client's messages,
+    // so handleJoin awaits the same promise.
+    client.data.auth = this.authenticate(client);
+    const auth = await client.data.auth;
     if (!auth) {
       this.logger.warn(`Rejected unauthenticated socket: ${client.id}`);
       client.disconnect(true);
       return;
     }
-    client.data.userId = auth.userId;
-    client.data.organizationId = auth.organizationId;
     this.logger.log(`Client connected to /ws: ${client.id} (org ${auth.organizationId})`);
   }
 
@@ -73,7 +74,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { profileId: string },
   ) {
     const { profileId } = data || ({} as any);
-    const organizationId = client.data?.organizationId;
+    const organizationId = (await client.data?.auth)?.organizationId;
 
     if (!organizationId || !profileId || !(await this.ownsProfile(profileId, organizationId))) {
       this.logger.warn(`Client ${client.id} denied join for profile ${profileId}`);
