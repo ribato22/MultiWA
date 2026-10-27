@@ -245,7 +245,7 @@ model Call {
 
   @@unique([profileId, waCallId])
   @@index([profileId, startedAt])
-  @@index([profileId, followUp])
+  @@index([profileId, followUp, startedAt])
   @@index([profileId, fromJid, startedAt])
   @@map("calls")
 }

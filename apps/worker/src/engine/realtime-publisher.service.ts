@@ -2,7 +2,7 @@
 // apps/worker/src/engine/realtime-publisher.service.ts
 //
 // The worker-side RealtimeEmitter: when ENGINE_HOST=worker the engine runs here,
-// so its realtime events (QR / connection / message / ack) are published to the
+// so its realtime events (QR / connection / message / ack / call) are published to the
 // Redis channel multiwa:realtime. The API's RealtimeBridgeService subscribes and
 // re-emits them through Socket.IO. See architecture/realtime-bridge-sop.md.
 

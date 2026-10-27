@@ -2,7 +2,7 @@
 // apps/api/src/modules/events/realtime-bridge.service.ts
 //
 // When ENGINE_HOST=worker the engine runs in apps/worker, which publishes QR /
-// connection / message / ack events to the Redis channel multiwa:realtime. This
+// connection / message / ack / call events to the Redis channel multiwa:realtime. This
 // service subscribes on a dedicated ioredis connection and re-emits them through
 // the Socket.IO EventsGateway so browser clients keep receiving realtime updates.
 // Idle (no Redis connection) when ENGINE_HOST=api. See architecture/engine-worker-migration-sop.md.
