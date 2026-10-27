@@ -30,10 +30,19 @@ jobs:
         env:
           SERVICE: ${{ inputs.service }}
           TAG: ${{ inputs.tag }}
+          # The admin bakes its public API URL into the client bundle at build time. That
+          # URL is a deployment detail, so it comes from the repository secret
+          # ADMIN_PUBLIC_API_URL (Settings > Secrets and variables > Actions), not from this
+          # public file. A secret is also masked in the run log.
+          ADMIN_PUBLIC_API_URL: ${{ secrets.ADMIN_PUBLIC_API_URL }}
         run: |
           ARGS=""
           if [ "$SERVICE" = "admin" ]; then
-            ARGS="--build-arg NEXT_PUBLIC_API_URL=https://wagw.plnbatam.com"
+            if [ -z "$ADMIN_PUBLIC_API_URL" ]; then
+              echo "::error::Set the repository secret ADMIN_PUBLIC_API_URL (the admin's public API URL, e.g. https://wa.example.com) before exporting the admin image."
+              exit 1
+            fi
+            ARGS="--build-arg NEXT_PUBLIC_API_URL=$ADMIN_PUBLIC_API_URL"
           fi
           docker build -f "docker/Dockerfile.$SERVICE" $ARGS -t "multiwa-$SERVICE:$TAG" .
 
