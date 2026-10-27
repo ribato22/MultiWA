@@ -39,9 +39,10 @@ function installedFile(relative: string[], marker: string): string | null {
     .filter((d) => d.startsWith('whatsapp-web.js@1.34.7'))
     .map((d) => path.join(pnpmDir, d, 'node_modules', 'whatsapp-web.js', ...relative))
     .filter((p) => existsSync(p));
-  // Stale hash dirs linger after a re-patch: the copy the lockfile pins is what counts.
-  const locked = LOCKED_HASH ? candidates.find((p) => p.includes(`patch_hash=${LOCKED_HASH}`)) : undefined;
-  if (locked) return locked;
+  // Stale hash dirs linger after a re-patch: the copy the lockfile pins is what counts. When it
+  // is not installed the answer is null ("run pnpm install"), never a stale copy that happens to pass.
+  if (LOCKED_HASH) return candidates.find((p) => p.includes(`patch_hash=${LOCKED_HASH}`)) ?? null;
+  // Only when the lockfile hash cannot be parsed: the first copy that carries the marker.
   const patched = candidates.find((p) => readFileSync(p, 'utf8').includes(marker));
   return patched ?? candidates[0] ?? null;
 }
@@ -172,16 +173,25 @@ const sliceBetween = (src: string, from: string, to: string): string => {
   return src.slice(a, b);
 };
 
-const callHook = () => {
+// `onThrowsOnce`: the first `collection.on(...)` throws, and the harness does NOT inject by itself,
+// so the test can watch that first injection fail (`inject()` runs the block in the same `window`).
+const callHook = (opts: { onThrowsOnce?: boolean } = {}) => {
   const block = sliceBetween(
     readFileSync(installedClientJs()!, 'utf8'),
     "const WAWebCallCollection = window.require('WAWebCallCollection');",
     "Chat.on('remove'",
   );
   const handlers: Record<string, Array<(...a: any[]) => void>> = {};
+  let failNextOn = !!opts.onThrowsOnce;
   const collection: any = {
     _map: new Map(),
-    on: (ev: string, fn: (...a: any[]) => void) => (handlers[ev] ||= []).push(fn),
+    on: (ev: string, fn: (...a: any[]) => void) => {
+      if (failNextOn) {
+        failNextOn = false;
+        throw new Error('listener registration failed');
+      }
+      return (handlers[ev] ||= []).push(fn);
+    },
     trigger: (ev: string, ...a: any[]) => handlers[ev]?.forEach((fn) => fn(...a)),
   };
   const reported: string[] = [];
@@ -191,9 +201,10 @@ const callHook = () => {
     onIncomingCall: (c: any) => reported.push(c.id),
     onMultiwaCallEnded: (d: any) => ended.push(d.id),
   };
-  new Function('window', block)(win);
+  const inject = () => new Function('window', block)(win);
+  if (!opts.onThrowsOnce) inject();
   const call = (id: string, state?: number) => ({ id, peerJid: { $1: `${id}@c.us` }, getState: () => state });
-  return { collection, handlers, reported, ended, win, call, activate: (c?: any) => collection.trigger('change:activeCall', c) };
+  return { collection, handlers, reported, ended, win, call, inject, activate: (c?: any) => collection.trigger('change:activeCall', c) };
 };
 
 describe('whatsapp-web.js call hook behaviour', () => {
@@ -216,31 +227,58 @@ describe('whatsapp-web.js call hook behaviour', () => {
     expect(h.ended).toEqual(['A', 'B']);
   });
 
+  it('ends a known call that comes back as a new object in state 0', () => {
+    const h = callHook();
+    h.activate(h.call('A', 3)); h.activate(h.call('A', 0));
+    expect(h.ended, 'state 0 ends the call by itself, without waiting for the slot to clear').toEqual(['A']);
+    h.activate(undefined);
+    expect({ r: h.reported, e: h.ended }, 'and the cleared slot does not end it a second time').toEqual({ r: ['A'], e: ['A'] });
+  });
+
   it('never lets a failing hook throw into WhatsApp (it runs inside setActiveCall and Map.set)', () => {
     const h = callHook();
+    // K is a KNOWN call from here on, so the next activation really asks the model for its state.
+    h.activate(h.call('K', 3));
+    expect(() => h.activate({ id: 'K', getState: () => { throw new Error('half-built model'); } })).not.toThrow();
+    expect(h.win._multiwaLastError, 'getState ran, threw, and left its trace on the page').toMatch(/half-built model/);
+
     h.win.onIncomingCall = () => { throw new TypeError('boom'); };
     expect(() => h.activate(h.call('A', 3))).not.toThrow();
-    expect(() => h.activate({ id: 'B', getState: () => { throw new Error('half-built model'); } })).not.toThrow();
+    expect(h.win._multiwaLastError, 'a swallowed error stays readable from the live page').toMatch(/boom/);
     expect(() => h.collection._map.set('k', h.call('M', 3))).not.toThrow();
     expect(h.collection._map.has('k'), 'WhatsApp must still record the call').toBe(true);
   });
 
-  it('registers one listener however often it is injected', () => {
+  it('registers one listener and wraps the map once however often it is injected', () => {
     const h = callHook();
-    const block = sliceBetween(readFileSync(installedClientJs()!, 'utf8'), "const WAWebCallCollection = window.require('WAWebCallCollection');", "Chat.on('remove'");
-    new Function('window', block)(h.win); new Function('window', block)(h.win);
+    const wrapped = h.collection._map.set;
+    expect(wrapped, 'the map fallback is installed').not.toBe(Map.prototype.set);
+    h.inject(); h.inject();
     expect(h.handlers['change:activeCall']).toHaveLength(1);
+    expect(h.collection._map.set, 're-injecting must not wrap the wrapper again').toBe(wrapped);
+  });
+
+  it('a first injection that fails in collection.on leaves the next one to register the listener', () => {
+    const h = callHook({ onThrowsOnce: true });
+    expect(() => h.inject()).toThrow('listener registration failed');
+    expect(h.handlers['change:activeCall'] ?? []).toHaveLength(0);
+    h.inject();
+    expect(h.handlers['change:activeCall'], 'the "registered" flag is set only after on() succeeded').toHaveLength(1);
+    h.activate(h.call('A', 3));
+    expect(h.reported).toEqual(['A']);
   });
 });
 
 describe('whatsapp-web.js rejectCall behaviour', () => {
-  const rejectCall = async (opts: { stack?: any; active?: any; requested?: string }) => {
+  // `voip`: the whole WAWebVoipStackInterface module (overrides `stack`); neither: the module does not exist.
+  const rejectCall = async (opts: { stack?: any; voip?: any; active?: any; requested?: string }) => {
     const src = readFileSync(installedUtilsJsWithReject()!, 'utf8');
     const fn = sliceBetween(src, 'window.WWebJS.rejectCall = async', 'window.WWebJS.cropAndResizeImage');
     const stanzas: unknown[] = [];
     const win: any = { WWebJS: {} };
     win.require = (name: string) => {
       if (name === 'WAWebVoipStackInterface') {
+        if (opts.voip) return opts.voip;
         if (!opts.stack) throw new Error('Requiring unknown module');
         return { getVoipStackInterface: async () => opts.stack };
       }
@@ -277,6 +315,19 @@ describe('whatsapp-web.js rejectCall behaviour', () => {
   it('still rejects when the active call cannot be read (fail open, never to the stanza)', async () => {
     const stack = { rejectCall: vi.fn().mockResolvedValue(undefined) };
     expect(await rejectCall({ stack, active: undefined })).toEqual({ result: 'ok', stanzas: [] });
+  });
+
+  it('a voip module whose stack cannot be fetched fails loudly, never via the stanza', async () => {
+    const voip = { getVoipStackInterface: vi.fn().mockRejectedValue(new Error('voip: stack unavailable')) };
+    expect(await rejectCall({ voip })).toEqual({ result: 'voip: stack unavailable', stanzas: [] });
+  });
+
+  it('a voip module without a usable stack fails loudly', async () => {
+    for (const stack of [null, {}]) {
+      const out = await rejectCall({ voip: { getVoipStackInterface: async () => stack } });
+      expect(out.result, `stack ${JSON.stringify(stack)}`).toMatch(/cannot reject calls/);
+      expect(out.stanzas, `stack ${JSON.stringify(stack)}`).toEqual([]);
+    }
   });
 
   it('falls back to the stanza only when the build has no voip stack', async () => {
