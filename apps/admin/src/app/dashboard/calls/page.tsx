@@ -59,6 +59,11 @@ export default function CallsPage() {
   const ringingSeq = useRef(0);
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [ringing, setRinging] = useState<CallRecord[]>([]);
+  // The socket handler asks these whether it has seen a call before.
+  const callsRef = useRef(calls);
+  callsRef.current = calls;
+  const ringingRef = useRef(ringing);
+  ringingRef.current = ringing;
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [members, setMembers] = useState<Member[]>([]);
@@ -145,13 +150,26 @@ export default function CallsPage() {
     });
     socket.on('call:update', (p: CallUpdatePayload) => {
       if (p.profileId !== profileId) return;
+      const seen = callsRef.current.some((c) => c.id === p.callId) || ringingRef.current.some((c) => c.id === p.callId);
       setCalls((prev) => upsertCall(prev, p, filterRef.current));
       setRinging((prev) => {
         const others = prev.filter((c) => c.id !== p.callId);
         return p.outcome === 'ringing' ? [fromPayload(p, prev.find((c) => c.id === p.callId)), ...others] : others;
       });
-      if (p.outcome === 'ringing') void loaders.current.loadRinging(); // the payload has no contact name: the fetched row does
-      else ringingSeq.current++; // the call ended: an answer read while it still rang is stale (auto-reject takes milliseconds) and must not bring it back
+      if (!seen) {
+        // The payload has no contact: the stored row of a call not shown yet has its chat (name, Open chat). Only those
+        // relations are taken over, by id and never inserted: outcome and follow-up stay what the socket said, so a
+        // call that ended meanwhile does not come back.
+        void api.getCall(p.callId).then(({ data: stored }) => {
+          if (!stored) return;
+          const withChat = (c: CallRecord): CallRecord =>
+            c.id !== p.callId ? c : { ...c, conversationId: stored.conversationId, conversation: stored.conversation, assignedUser: stored.assignedUserId === c.assignedUserId ? stored.assignedUser : c.assignedUser };
+          setCalls((prev) => prev.map(withChat));
+          setRinging((prev) => prev.map(withChat));
+        });
+      }
+      // A call ended: a strip refetch (after an action, on a reconnect) read while it still rang is stale (auto-reject takes milliseconds) and must not bring it back.
+      if (p.outcome !== 'ringing') ringingSeq.current++;
     });
     return () => {
       socket.disconnect();

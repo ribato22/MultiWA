@@ -560,6 +560,10 @@ class ApiClient {
     return this.request<{ calls: CallRecord[]; nextCursor: string | null }>(`/calls?${params}`);
   }
 
+  async getCall(id: string) {
+    return this.request<CallRecord>(`/calls/${id}`);
+  }
+
   // Org-wide count of calls still waiting for a follow-up (for the sidebar Calls badge).
   async getCallsOpenCount() {
     return this.request<{ count: number }>('/calls/open-count');

@@ -8,7 +8,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { api, Profile, Conversation, type CallRecord } from '@/lib/api';
-import { isCallEntry, mergeTimeline } from '@/lib/calls';
+import { fromPayload, isCallEntry, mergeTimeline, type CallUpdatePayload } from '@/lib/calls';
 import { CallTimelineRow } from '@/components/calls/call-timeline-row';
 import { formatRelative, formatFull, formatTime, formatDate, formatDateTime, formatDaySeparator, dayBucket } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
@@ -172,6 +172,8 @@ export default function ChatPage() {
   // Bumped each time a conversation is opened: the messages answer, the calls answer and a load-older
   // of a chat we already left are dropped, so none of them lands in the open one.
   const loadSeq = useRef(0);
+  // Set right before the calls answer of a load is stored: only that change scrolls to the end, not a live update of a row.
+  const scrollForCalls = useRef(false);
 
   const timeline = useMemo(() => mergeTimeline(messages, conversationCalls, olderInDb), [messages, conversationCalls, olderInDb]);
 
@@ -240,6 +242,11 @@ export default function ChatPage() {
           return msg;
         }));
       }
+    });
+
+    // A call of the open chat changes (it ends, is rejected...): its row follows. Rows are not added here: the load has them.
+    socket.on('call:update', (p: CallUpdatePayload) => {
+      setConversationCalls(prev => prev.map(c => (c.id === p.callId ? fromPayload(p, c) : c)));
     });
 
     // Real-time incoming messages
@@ -313,8 +320,11 @@ export default function ChatPage() {
     scrollToBottom();
   }, [newestKey]);
 
-  // The calls answer can add rows above the last message after the scroll above has started: scroll again.
+  // The calls answer can add rows above the last message after the scroll above has started: scroll again. Only for
+  // that answer (loadMessages flags it): a live update of a row must not pull someone reading the history down.
   useEffect(() => {
+    if (!scrollForCalls.current) return;
+    scrollForCalls.current = false;
     if (conversationCalls.length) scrollToBottom();
   }, [conversationCalls]);
 
@@ -387,7 +397,10 @@ export default function ChatPage() {
         // The conversation's own profile, not selectedProfile: after a profile switch the list can still be the old one.
         // ponytail: the newest 50 calls only, not refetched on load-older; refetch with since=<oldest message> if older periods need their calls
         const callsRes = await api.getCalls(conv.profileId, { from: conv.jid, limit: 50 });
-        if (seq === loadSeq.current) setConversationCalls(callsRes.data?.calls ?? []);
+        if (seq === loadSeq.current) {
+          scrollForCalls.current = true;
+          setConversationCalls(callsRes.data?.calls ?? []);
+        }
       }
     }
   };
