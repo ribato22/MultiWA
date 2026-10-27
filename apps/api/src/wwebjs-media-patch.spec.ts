@@ -139,6 +139,10 @@ describe('whatsapp-web.js inbound media download patch', () => {
 // whatsapp-web.js also never emits `message_create` for a call-log message ("Missed voice
 // call"): it adds one before WhatsApp marks it new. The patch forwards call logs itself
 // (`multiwa_call_log`), because that message carries the call's final outcome.
+// Two more things moved: `Client#createCallLink` asks for WAWebGenerateEventCallLink, which no
+// longer exists (WhatsApp's own "Create call link" is WAWebVoipCreateCallLink, in a lazily loaded
+// bundle), and `WAWebCallCollection` has no `activeCall` any more, so the reject guard reads the
+// id the call hook tracks (`window._multiwaCallId`) instead.
 const installedClientJs = () => installedFile(['src', 'Client.js'], 'onMultiwaCallEnded');
 const installedUtilsJsWithReject = () => installedFile(['src', 'util', 'Injected', 'Utils.js'], 'WAWebVoipStackInterface');
 
@@ -156,6 +160,15 @@ describe('whatsapp-web.js call patch', () => {
     expect(patch).toMatch(/^\+.*multiwa_call_log/m);
   });
 
+  it('the patch creates call links through WAWebVoipCreateCallLink and guards rejects on _multiwaCallId', () => {
+    const patch = readFileSync(PATCH_FILE, 'utf8');
+    expect(patch).toMatch(/^\+.*WAWebVoipCreateCallLink/m);
+    // _multiwaCallId is already in the call hook (Client.js): the reject guard is the Utils.js hunk.
+    const utils = patch.split(/^diff --git /m).find((part) => part.startsWith('a/src/util/Injected/Utils.js'));
+    expect(utils, 'Utils.js is no longer part of the patch').toBeDefined();
+    expect(utils).toMatch(/^\+.*window\._multiwaCallId/m);
+  });
+
   it('is actually APPLIED to the installed Client.js', () => {
     const file = installedClientJs();
     expect(file, 'no installed whatsapp-web.js@1.34.7 found — run pnpm install').not.toBeNull();
@@ -166,6 +179,8 @@ describe('whatsapp-web.js call patch', () => {
     expect(src).toContain("exposeFunctionIfAbsent(this.pupPage, 'onMultiwaCallLog'");
     expect(src).toContain("this.emit('multiwa_call_log'");
     expect(src).toContain("Msg.on('add', reportCallLog)");
+    expect(src).toContain("window.require('WAWebVoipCreateCallLink')");
+    expect(src).toContain("'WAWebVoipCreateCallLinksPopup.react'");
   });
 
   it('rejects through the voip stack before the old stanza', () => {
@@ -176,6 +191,15 @@ describe('whatsapp-web.js call patch', () => {
     const body = src.slice(start, end);
     expect(body.indexOf('WAWebVoipStackInterface')).toBeGreaterThan(-1);
     expect(body.indexOf('WAWebVoipStackInterface')).toBeLessThan(body.indexOf('deprecatedCastStanza'));
+  });
+
+  it('guards the reject on the id the call hook tracks: WAWebCallCollection has no activeCall any more', () => {
+    const src = readFileSync(installedUtilsJsWithReject()!, 'utf8');
+    const start = src.indexOf('window.WWebJS.rejectCall = async');
+    const body = src.slice(start, src.indexOf('window.WWebJS.cropAndResizeImage', start));
+    expect(body).toContain('window._multiwaCallId');
+    expect(body, 'reading activeCall always gave "unreadable", i.e. no guard at all').not.toContain('activeCall');
+    expect(body).not.toContain('WAWebCallCollection');
   });
 });
 
@@ -374,18 +398,20 @@ describe('whatsapp-web.js call-log forwarding behaviour', () => {
 
 describe('whatsapp-web.js rejectCall behaviour', () => {
   // `voip`: the whole WAWebVoipStackInterface module (overrides `stack`); neither: the module does not exist.
-  const rejectCall = async (opts: { stack?: any; voip?: any; active?: any; requested?: string }) => {
+  // `callId`: the id the call hook tracks on the page (`window._multiwaCallId`; null once the call ended, unset before any call).
+  // `required`: filled with the name of every module the function asks for.
+  const rejectCall = async (opts: { stack?: any; voip?: any; callId?: string | null; requested?: string; required?: string[] }) => {
     const src = readFileSync(installedUtilsJsWithReject()!, 'utf8');
     const fn = sliceBetween(src, 'window.WWebJS.rejectCall = async', 'window.WWebJS.cropAndResizeImage');
     const stanzas: unknown[] = [];
-    const win: any = { WWebJS: {} };
+    const win: any = { WWebJS: {}, _multiwaCallId: opts.callId };
     win.require = (name: string) => {
+      opts.required?.push(name);
       if (name === 'WAWebVoipStackInterface') {
         if (opts.voip) return opts.voip;
         if (!opts.stack) throw new Error('Requiring unknown module');
         return { getVoipStackInterface: async () => opts.stack };
       }
-      if (name === 'WAWebCallCollection') return { activeCall: opts.active };
       if (name === 'WAWap') return { wap: (...a: any[]) => a, generateId: () => 'id' };
       if (name === 'WADeprecatedSendIq') return { deprecatedCastStanza: async (s: unknown) => { stanzas.push(s); } };
       if (name === 'WAWebUserPrefsMeUser') return { getMaybeMePnUser: () => ({ _serialized: 'me@c.us' }) };
@@ -398,26 +424,37 @@ describe('whatsapp-web.js rejectCall behaviour', () => {
 
   it('uses the voip stack and not the stanza when the stack works', async () => {
     const stack = { rejectCall: vi.fn().mockResolvedValue(undefined) };
-    expect(await rejectCall({ stack, active: { id: 'A' } })).toEqual({ result: 'ok', stanzas: [] });
+    expect(await rejectCall({ stack, callId: 'A' })).toEqual({ result: 'ok', stanzas: [] });
     expect(stack.rejectCall).toHaveBeenCalledTimes(1);
   });
 
   it('lets a real voip failure reach the caller instead of "succeeding" through the stanza', async () => {
     const stack = { rejectCall: vi.fn().mockRejectedValue(new Error('voip: no active call')) };
-    expect(await rejectCall({ stack, active: { id: 'A' } })).toEqual({ result: 'voip: no active call', stanzas: [] });
+    expect(await rejectCall({ stack, callId: 'A' })).toEqual({ result: 'voip: no active call', stanzas: [] });
   });
 
   it('refuses to reject a different call than the one asked for (the stack takes no id)', async () => {
     const stack = { rejectCall: vi.fn() };
-    const out = await rejectCall({ stack, active: { id: 'B' }, requested: 'A' });
+    const out = await rejectCall({ stack, callId: 'B', requested: 'A' });
     expect(out.result).toMatch(/not the active call/);
     expect(stack.rejectCall).not.toHaveBeenCalled();
     expect(out.stanzas).toEqual([]);
   });
 
-  it('still rejects when the active call cannot be read (fail open, never to the stanza)', async () => {
+  it('goes ahead when the hook tracks no call (never reported one, or it already ended): fail open, never to the stanza', async () => {
+    for (const callId of [undefined, null]) {
+      const stack = { rejectCall: vi.fn().mockResolvedValue(undefined) };
+      expect(await rejectCall({ stack, callId }), `callId ${callId}`).toEqual({ result: 'ok', stanzas: [] });
+      expect(stack.rejectCall, `callId ${callId}`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('decides from the page\'s own tracking and never asks WhatsApp\'s call collection (it has no activeCall)', async () => {
     const stack = { rejectCall: vi.fn().mockResolvedValue(undefined) };
-    expect(await rejectCall({ stack, active: undefined })).toEqual({ result: 'ok', stanzas: [] });
+    const required: string[] = [];
+    await rejectCall({ stack, callId: 'A', required });
+    expect(required).toContain('WAWebVoipStackInterface'); // the harness does record what it was asked for
+    expect(required).not.toContain('WAWebCallCollection');
   });
 
   it('a voip module whose stack cannot be fetched fails loudly, never via the stanza', async () => {
@@ -437,5 +474,107 @@ describe('whatsapp-web.js rejectCall behaviour', () => {
     const out = await rejectCall({});
     expect(out.result).toBe('ok');
     expect(out.stanzas).toHaveLength(1);
+  });
+});
+
+// `Client#createCallLink`: the evaluate callback runs inside WhatsApp Web, so CI evaluates the INSTALLED callback
+// against a fake `window.require`. `WAWebGenerateEventCallLink` (what whatsapp-web.js asks for) is gone from current
+// WhatsApp Web; its own "Create call link" is `WAWebVoipCreateCallLink.createCallLink`, in a lazily loaded bundle that
+// `JSResourceForInteraction(...).load()` brings in (`requireLazy` does not). It rejects on a server nack.
+describe('whatsapp-web.js createCallLink behaviour', () => {
+  const callback = () => {
+    const src = readFileSync(installedClientJs()!, 'utf8');
+    const text = sliceBetween(src, 'async (startTimeTs, callType) => {', '\n            },\n            startTime,') + '\n}';
+    return (win: any): ((startTimeTs: number, callType: string) => Promise<string>) => new Function('window', `return (${text});`)(win);
+  };
+
+  // `present`: modules `require` knows right away. `lazy`: what the lazy bundle adds once loaded. `missing`: how require
+  // reports an unknown module: it throws, or (as `WAWebGenerateEventCallLink` does on a live page) gives undefined.
+  const run = async (opts: {
+    present?: Record<string, any>; lazy?: Record<string, any>; loadFails?: Error; missing?: 'throw' | 'undefined'; callType?: string;
+  }) => {
+    const modules: Record<string, any> = { ...opts.present };
+    const loaded: string[] = [];
+    const win: any = {
+      require: (name: string) => {
+        if (name === 'JSResourceForInteraction') {
+          return (resource: string) => ({
+            load: async () => {
+              loaded.push(resource);
+              if (opts.loadFails) throw opts.loadFails;
+              Object.assign(modules, opts.lazy);
+            },
+          });
+        }
+        if (name in modules) return modules[name];
+        if (opts.missing === 'undefined') return undefined;
+        throw new Error(`Requiring unknown module "${name}"`);
+      },
+    };
+    const outcome: { link?: string; error?: string } = await callback()(win)(1_790_000_000, opts.callType ?? 'voice').then(
+      (link) => ({ link }),
+      (error: Error) => ({ error: error.message }),
+    );
+    return { ...outcome, loaded };
+  };
+
+  const link = (impl: (arg: any) => any = async () => 'https://call.whatsapp.com/voice/token') => ({
+    WAWebVoipCreateCallLink: { createCallLink: vi.fn(impl) },
+  });
+
+  it.each([
+    ['voice', 'audio'],
+    ['video', 'video'],
+  ])('asks WhatsApp\'s own "Create call link" for a %s link (callType %s, no approval) and returns the link', async (type, callType) => {
+    const present = link(async () => `https://call.whatsapp.com/${type}/token`);
+    const out = await run({ present, callType: type });
+    expect(out).toEqual({ link: `https://call.whatsapp.com/${type}/token`, loaded: [] });
+    expect(present.WAWebVoipCreateCallLink.createCallLink).toHaveBeenCalledTimes(1);
+    expect(present.WAWebVoipCreateCallLink.createCallLink).toHaveBeenCalledWith({ callType, requireApproval: false });
+  });
+
+  it('loads the lazy bundle the way WhatsApp does when the module is not there yet, then uses it', async () => {
+    for (const missing of ['throw', 'undefined'] as const) {
+      const lazy = link();
+      const out = await run({ lazy, missing });
+      expect(out, missing).toEqual({ link: 'https://call.whatsapp.com/voice/token', loaded: ['WAWebVoipCreateCallLinksPopup.react'] });
+      expect(lazy.WAWebVoipCreateCallLink.createCallLink, missing).toHaveBeenCalledWith({ callType: 'audio', requireApproval: false });
+    }
+  });
+
+  it('falls back to the old WAWebGenerateEventCallLink when neither the module nor the bundle gives the new API', async () => {
+    const createEventCallLink = vi.fn(async () => 'https://call.whatsapp.com/video/old');
+    const present = { WAWebGenerateEventCallLink: { createEventCallLink } };
+    expect(await run({ present, callType: 'video' })).toEqual({ link: 'https://call.whatsapp.com/video/old', loaded: ['WAWebVoipCreateCallLinksPopup.react'] });
+    expect(createEventCallLink).toHaveBeenCalledWith(1_790_000_000, 'video');
+    // A module that exists without the function is not the new API either.
+    const odd = { WAWebVoipCreateCallLink: {}, ...present };
+    expect((await run({ present: odd })).link).toBe('https://call.whatsapp.com/video/old');
+  });
+
+  it('fails loudly when nothing can create a link (never a made-up one)', async () => {
+    const out = await run({ missing: 'undefined' });
+    expect(out).toHaveProperty('error');
+  });
+
+  it('lets a nack reach the caller: no fallback after the new API was asked and refused', async () => {
+    const nack = Object.assign(new Error('ServerStatusCodeError 500'), { name: 'ServerStatusCodeError' });
+    const createEventCallLink = vi.fn();
+    const present = { ...link(async () => { throw nack; }), WAWebGenerateEventCallLink: { createEventCallLink } };
+    const out = await run({ present });
+    expect(out).toEqual({ error: 'ServerStatusCodeError 500', loaded: [] });
+    expect(createEventCallLink).not.toHaveBeenCalled();
+  });
+
+  it('lets a failing bundle load reach the caller', async () => {
+    const out = await run({ lazy: link(), loadFails: new Error('Failed to fetch the bundle') });
+    expect(out).toEqual({ error: 'Failed to fetch the bundle', loaded: ['WAWebVoipCreateCallLinksPopup.react'] });
+  });
+
+  it('hands back an empty string when WhatsApp answers without a link (the adapter turns that into an error)', async () => {
+    for (const answer of [undefined, null]) {
+      const out = await run({ present: link(async () => answer) });
+      expect(out.link, String(answer)).toBe('');
+    }
   });
 });

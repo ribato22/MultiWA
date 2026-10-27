@@ -1,5 +1,5 @@
 diff --git a/src/Client.js b/src/Client.js
-index 800109ebf7720d5f0f29091518a8a25f7fd8e381..7db03be8928527bedce73e246f3a6178d802e57e 100644
+index 800109ebf7720d5f0f29091518a8a25f7fd8e381..114f7a970a164dcbb5628bf544e8a7da26ca4d00 100644
 --- a/src/Client.js
 +++ b/src/Client.js
 @@ -893,6 +893,23 @@ class Client extends EventEmitter {
@@ -147,6 +147,37 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..7db03be8928527bedce73e246f3a6178
              }
              Chat.on('remove', async (chat) => {
                  window.onRemoveChatEvent(
+@@ -3209,6 +3304,30 @@ class Client extends EventEmitter {
+ 
+         return await this.pupPage.evaluate(
+             async (startTimeTs, callType) => {
++                // MultiWA patch: current WhatsApp Web has no WAWebGenerateEventCallLink. Its
++                // own "Create call link" (Calls tab) lives in a lazily loaded bundle: load it
++                // the way WhatsApp does, then create a plain call link.
++                const load = () => {
++                    try {
++                        return window.require('WAWebVoipCreateCallLink');
++                    } catch (e) {
++                        return null;
++                    }
++                };
++                let mod = load();
++                if (!mod) {
++                    await window
++                        .require('JSResourceForInteraction')('WAWebVoipCreateCallLinksPopup.react')
++                        .load();
++                    mod = load();
++                }
++                if (mod && typeof mod.createCallLink === 'function') {
++                    const link = await mod.createCallLink({
++                        callType: callType === 'video' ? 'video' : 'audio',
++                        requireApproval: false,
++                    });
++                    return link ?? '';
++                }
+                 const response = await window
+                     .require('WAWebGenerateEventCallLink')
+                     .createEventCallLink(startTimeTs, callType);
 diff --git a/src/structures/Message.js b/src/structures/Message.js
 index dd977e85b0c0c40d2625cd337264fc9ae3bed17b..6c1ca6ba736f23d50e82d5e672622ff5b2ee4262 100644
 --- a/src/structures/Message.js
@@ -175,7 +206,7 @@ index dd977e85b0c0c40d2625cd337264fc9ae3bed17b..6c1ca6ba736f23d50e82d5e672622ff5
          }, this.id._serialized);
  
 diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
-index 540078a9d07b3df07ccd51b030556a72af4cf650..a2ef9c7383f1a069a7c2f5e1bd4fbafc43c3bfe3 100644
+index 540078a9d07b3df07ccd51b030556a72af4cf650..744743b8d785bccfbdcd83340da5c33fb51c9051 100644
 --- a/src/util/Injected/Utils.js
 +++ b/src/util/Injected/Utils.js
 @@ -470,8 +470,10 @@ exports.LoadUtils = () => {
@@ -364,7 +395,7 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..a2ef9c7383f1a069a7c2f5e1bd4fbafc
                            ])
                    )?.messages?.[0]
                  : null;
-@@ -1263,6 +1345,35 @@ exports.LoadUtils = () => {
+@@ -1263,6 +1345,30 @@ exports.LoadUtils = () => {
      };
  
      window.WWebJS.rejectCall = async (peerJid, id) => {
@@ -384,14 +415,9 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..a2ef9c7383f1a069a7c2f5e1bd4fbafc
 +                throw new Error('WhatsApp voip stack cannot reject calls');
 +            }
 +            // The stack takes no call id and rejects WhatsApp's ACTIVE call: never
-+            // reject another call than the one asked for. Unreadable: go ahead.
-+            let active = null;
-+            try {
-+                active = window.require('WAWebCallCollection').activeCall;
-+            } catch (e) {
-+                // ignore
-+            }
-+            if (active && active.id && active.id !== id) {
++            // reject another call than the one asked for (the call hook tracks it).
++            const active = window._multiwaCallId;
++            if (active && active !== id) {
 +                throw new Error('Call is not the active call');
 +            }
 +            await stack.rejectCall();
