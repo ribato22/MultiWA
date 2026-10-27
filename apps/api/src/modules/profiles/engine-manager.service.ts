@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, handleEngineCall, handleCallLog, closeStaleRingingCalls, type CallEngineDeps, type AutoRejectCallSettings, isSystemMessageType, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, handleEngineCall, handleCallLog, closeStaleRingingCalls, rejectCallByAgent as rejectCallByAgentShared, toCallPayload, type CallEngineDeps, type AutoRejectCallSettings, isSystemMessageType, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -1081,6 +1081,17 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       resolveIdentity: engine ? (jid) => engine.resolveIdentity(jid) : null,
       logger: { log: (m) => this.logger.log(m), warn: (m) => this.logger.warn(m) },
     };
+  }
+
+  /**
+   * An agent rejected a ringing call through the REST API (ENGINE_HOST=api). The worker's engine manager has the same
+   * method for the engine-commands 'reject-call'. Errors keep their runtime codes (CALL_NOT_FOUND, CALL_NOT_RINGING).
+   */
+  async rejectCallByAgent(profileId: string, callId: string): Promise<Record<string, unknown>> {
+    const engine = this.getEngine(profileId);
+    if (!engine) throw new Error(`ENGINE_NOT_CONNECTED: profile ${profileId} is not connected`);
+    const row = await rejectCallByAgentShared(callId, { ...this.callDeps(profileId, null), rejectCall: (waCallId) => engine.rejectCall(waCallId) });
+    return toCallPayload(row);
   }
 
   /**

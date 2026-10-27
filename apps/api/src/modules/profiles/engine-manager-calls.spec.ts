@@ -1,7 +1,8 @@
 // EngineManagerService and the calls runtime: callDeps binds the runtime to one profile (send-gated
 // replies, the CALL notification type, the call:update realtime push); the engine's call callbacks reach
 // the runtime in the order the engine reported them; the boot sweep closes calls the previous process left
-// ringing. The runtime itself is pinned by calls-runtime.spec.ts: here it only receives what the manager hands over.
+// ringing; rejectCallByAgent is what the REST reject calls (the worker's has the same job for engine-commands).
+// The runtime itself is pinned by calls-runtime.spec.ts: here it only receives what the manager hands over.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() } } }));
@@ -12,18 +13,24 @@ vi.mock('@multiwa/engine-runtime', async (importOriginal) => ({
   handleEngineCall: vi.fn(),
   handleCallLog: vi.fn(),
   closeStaleRingingCalls: vi.fn(),
+  rejectCallByAgent: vi.fn(),
 }));
 
 import { prisma } from '@multiwa/database';
 import { EngineFactory } from '@multiwa/engines';
 import type { EngineConfig } from '@multiwa/engines';
-import { handleEngineCall, handleCallLog, closeStaleRingingCalls } from '@multiwa/engine-runtime';
+import { handleEngineCall, handleCallLog, closeStaleRingingCalls, rejectCallByAgent, toCallPayload } from '@multiwa/engine-runtime';
 import { EngineManagerService } from './engine-manager.service';
 import { NotificationType } from '../notifications/notifications.service';
 
 const P = '1eb28399-5fe1-40ed-bd0a-39a4b8ad4858';
 const db = prisma as any;
-const runtime = { handleEngineCall: handleEngineCall as any, handleCallLog: handleCallLog as any, closeStaleRingingCalls: closeStaleRingingCalls as any };
+const runtime = {
+  handleEngineCall: handleEngineCall as any,
+  handleCallLog: handleCallLog as any,
+  closeStaleRingingCalls: closeStaleRingingCalls as any,
+  rejectCallByAgent: rejectCallByAgent as any,
+};
 
 function make() {
   const realtime = { emitCallUpdate: vi.fn() };
@@ -66,6 +73,7 @@ beforeEach(() => {
   runtime.handleEngineCall.mockReset().mockResolvedValue(null);
   runtime.handleCallLog.mockReset().mockResolvedValue(null);
   runtime.closeStaleRingingCalls.mockReset().mockResolvedValue(0);
+  runtime.rejectCallByAgent.mockReset();
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -219,5 +227,54 @@ describe('the boot sweep of calls left ringing', () => {
     vi.stubEnv('ENGINE_HOST', 'worker');
     await boot();
     expect(runtime.closeStaleRingingCalls).not.toHaveBeenCalled();
+  });
+});
+
+describe('EngineManagerService.rejectCallByAgent (what the REST reject calls)', () => {
+  const row: any = {
+    id: 'c1', profileId: P, waCallId: 'wa-1', fromJid: '628111000111@s.whatsapp.net', isVideo: false, isGroup: false,
+    direction: 'incoming', outcome: 'rejected', rejectedBy: 'agent', startedAt: new Date('2026-10-27T09:00:00Z'),
+    endedAt: new Date('2026-10-27T09:00:05Z'), followUp: 'open', assignedUserId: null,
+  };
+
+  it('rejects through the live engine and answers with the call payload', async () => {
+    const { svc, engine } = make();
+    runtime.rejectCallByAgent.mockImplementation(async (_callId: string, deps: { rejectCall: (id: string) => Promise<void> }) => {
+      await deps.rejectCall(row.waCallId);
+      return row;
+    });
+    const payload = await svc.rejectCallByAgent(P, 'c1');
+    expect(payload).toEqual(toCallPayload(row));
+    expect(payload).toMatchObject({ callId: 'c1', outcome: 'rejected', rejectedBy: 'agent' });
+    expect(runtime.rejectCallByAgent).toHaveBeenCalledWith('c1', expect.objectContaining({ profileId: P }));
+    expect(engine.rejectCall).toHaveBeenCalledWith('wa-1');
+  });
+
+  // The call.rejected it records reaches webhooks and realtime through this manager's callDeps.
+  it('hands the runtime this manager\'s own bus and realtime, so call.rejected is published like any engine event', async () => {
+    const { svc, eventEmitter, realtime } = make();
+    runtime.rejectCallByAgent.mockImplementation(async (_callId: string, deps: any) => {
+      deps.emit('call.rejected', { callId: 'c1' });
+      deps.emitRealtime({ callId: 'c1' });
+      return row;
+    });
+    await svc.rejectCallByAgent(P, 'c1');
+    expect(eventEmitter.emit).toHaveBeenCalledWith('call.rejected', { callId: 'c1' });
+    expect(realtime.emitCallUpdate).toHaveBeenCalledWith(P, { callId: 'c1' });
+  });
+
+  it('is ENGINE_NOT_CONNECTED without a live engine, and the runtime is never asked', async () => {
+    const { svc } = make();
+    (svc as any).engines.clear();
+    await expect(svc.rejectCallByAgent(P, 'c1')).rejects.toThrow(/^ENGINE_NOT_CONNECTED: profile .* is not connected$/);
+    expect(runtime.rejectCallByAgent).not.toHaveBeenCalled();
+  });
+
+  // The REST layer maps these by their text (404 / 409): they must come out exactly as the runtime threw them.
+  it.each(['CALL_NOT_FOUND', 'CALL_NOT_RINGING'])('%s from the runtime propagates unchanged', async (code) => {
+    const { svc } = make();
+    const err = new Error(`${code}: c1`);
+    runtime.rejectCallByAgent.mockRejectedValue(err);
+    await expect(svc.rejectCallByAgent(P, 'c1')).rejects.toBe(err);
   });
 });

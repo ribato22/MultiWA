@@ -4,8 +4,10 @@
 // When ENGINE_HOST=worker the engine (and event production) live here, so the
 // worker owns webhook dispatch: it subscribes to its local EventEmitter2 and
 // enqueues a BullMQ 'webhooks' delivery job per matching webhook. The worker's
-// WebhookProcessor performs the signed HTTP POST. The API dispatcher is
-// deactivated in this mode. Port of apps/api/.../webhook-dispatcher.service.ts.
+// WebhookProcessor performs the signed HTTP POST. The API dispatcher drops the
+// engine's events in this mode (no double enqueue) but stays active for the events
+// the API produces itself (API_ORIGINATED_EVENTS: call.updated from agent actions).
+// Port of apps/api/.../webhook-dispatcher.service.ts.
 
 import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
