@@ -221,6 +221,20 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `DELETE` | `/conversations/:id` | Delete conversation |
 | `DELETE` | `/conversations/:id/messages` | Clear messages in conversation |
 
+### Calls (`/calls`)
+
+Incoming WhatsApp calls, recorded per profile and published as the `call.received`, `call.rejected`, `call.ended` and `call.updated` [webhook events](./09-webhook-events.md).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/calls` | List calls of a profile, newest first (`profileId` required; filters `outcome`, `followUp`, `from` (caller JID or phone number, e.g. `628111000111`), `since` (ISO 8601 date); paging `limit` 1-100, `cursor`) |
+| `GET` | `/calls/open-count` | Open call follow-ups across the org |
+| `GET` | `/calls/:id` | Get a call |
+| `PATCH` | `/calls/:id` | Update the follow-up status (`open`, `in_progress`, `done`) or the assignee |
+| `POST` | `/calls/:id/reject` | Reject a call that is still ringing |
+| `POST` | `/calls/:id/reply` | Send a text to the caller (default: the profile's `callReplyMessage`) |
+| `POST` | `/calls/:id/call-link` | Create a WhatsApp call link (`voice` / `video`) and send it to the caller |
+
 ### Contacts (`/contacts`)
 
 | Method | Endpoint | Description |

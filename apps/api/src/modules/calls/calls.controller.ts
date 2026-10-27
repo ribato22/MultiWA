@@ -27,7 +27,8 @@ export class CallsController {
     return this.service.list(query);
   }
 
-  // NOTE: declared BEFORE @Get(':id') so the literal path is not captured by :id.
+  // NOTE: declared BEFORE the ':id' route so the literal path is not captured by it. (Keep the decorator
+  // syntax out of comments: scripts/check-api-contract.mjs reads every line, comments included.)
   @Get('open-count')
   @ApiOperation({ summary: 'Open call follow-ups across the organization' })
   openCount(@Request() req: any) {
