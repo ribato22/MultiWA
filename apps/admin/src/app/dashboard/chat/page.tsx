@@ -3,11 +3,13 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
-import { api, Profile, Conversation } from '@/lib/api';
+import { api, Profile, Conversation, type CallRecord } from '@/lib/api';
+import { isCallEntry, mergeTimeline } from '@/lib/calls';
+import { CallTimelineRow } from '@/components/calls/call-timeline-row';
 import { formatRelative, formatFull, formatTime, formatDate, formatDateTime, formatDaySeparator, dayBucket } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -138,8 +140,12 @@ export default function ChatPage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationCalls, setConversationCalls] = useState<CallRecord[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  // What the API says about older messages in the DB. Unlike hasMoreOlder (optimistic, keeps the
+  // "load older" button), this decides whether a call older than the first message is shown.
+  const [olderInDb, setOlderInDb] = useState(true);
   const [msgLimit, setMsgLimit] = useState(50);
   const [messageInput, setMessageInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -163,6 +169,10 @@ export default function ChatPage() {
   // The socket handlers are bound once per profile, so they read the open conversation here.
   const openConversationId = useRef<string | null>(null);
   openConversationId.current = selectedConversation?.id ?? null;
+  // The newest loadMessages wins: a slow calls answer for the chat we already left must not land in the open one.
+  const loadSeq = useRef(0);
+
+  const timeline = useMemo(() => mergeTimeline(messages, conversationCalls, olderInDb), [messages, conversationCalls, olderInDb]);
 
   // Emoji categories
   const emojiCategories: Record<string, { label: string; emojis: string[] }> = {
@@ -351,12 +361,23 @@ export default function ChatPage() {
     // WhatsApp may have deeper history than the DB snapshot).
     setHasMoreOlder(true);
     setMsgLimit(50);
+    const seq = ++loadSeq.current;
+    // Never show the previous conversation's calls, also when this load fails.
+    setConversationCalls([]);
     const res = await api.getMessages(conversationId);
     if (res.data) {
       // API returns { messages: [...], hasMore } or possibly an array
       const raw = res.data as any;
       const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
       setMessages(msgArray);
+      setOlderInDb(Array.isArray(raw) ? false : !!raw.hasMore);
+      const conv = conversations.find((c) => c.id === conversationId);
+      if (conv && selectedProfile) {
+        const callsRes = await api.getCalls(selectedProfile, { from: conv.jid, limit: 50 });
+        if (seq === loadSeq.current) setConversationCalls(callsRes.data?.calls ?? []);
+      } else {
+        setConversationCalls([]);
+      }
     }
   };
 
@@ -376,6 +397,7 @@ export default function ChatPage() {
         setMessages(data.messages || []);
         setMsgLimit(newLimit);
         setHasMoreOlder(!!data.hasMore);
+        setOlderInDb(!!data.hasMore);
         // Keep the viewport anchored where the user was after prepend.
         requestAnimationFrame(() => {
           const c = messagesContainerRef.current;
@@ -854,7 +876,7 @@ export default function ChatPage() {
                   </button>
                 </div>
               )}
-              {messages.length === 0 ? (
+              {timeline.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <div className="text-6xl mb-4">🔐</div>
@@ -862,8 +884,23 @@ export default function ChatPage() {
                   </div>
                 </div>
               ) : (
-                messages.map((msg, idx) => {
-                  const showDaySeparator = idx === 0 || dayBucket(msg.timestamp) !== dayBucket(messages[idx - 1]?.timestamp);
+                timeline.map((entry, idx) => {
+                  const showDaySeparator = idx === 0 || dayBucket(entry.timestamp) !== dayBucket(timeline[idx - 1]?.timestamp);
+                  if (isCallEntry(entry)) {
+                    return (
+                      <Fragment key={entry.id}>
+                        {showDaySeparator && (
+                          <div className="flex justify-center my-3">
+                            <span className="text-xs text-muted-foreground bg-secondary/60 px-3 py-1 rounded-full">
+                              {formatDaySeparator(entry.timestamp)}
+                            </span>
+                          </div>
+                        )}
+                        <CallTimelineRow call={entry.call} />
+                      </Fragment>
+                    );
+                  }
+                  const msg = entry;
                   return (
                   <Fragment key={`${msg.id}-${idx}`}>
                     {showDaySeparator && (
