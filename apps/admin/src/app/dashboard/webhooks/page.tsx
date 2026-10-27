@@ -17,6 +17,10 @@ import {
   Activity,
   Pause,
   Layers,
+  PhoneIncoming,
+  PhoneMissed,
+  PhoneOff,
+  RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 import { api, Profile, Webhook } from '@/lib/api';
@@ -64,6 +68,10 @@ const WEBHOOK_EVENTS: WebhookEvent[] = [
   { value: 'connection.update', label: 'Connection Update', Icon: Link2,         tone: 'text-amber-300' },
   { value: 'contact.created',   label: 'Contact Created',   Icon: UserPlus,      tone: 'text-rose-300' },
   { value: 'group.update',      label: 'Group Update',      Icon: Users,         tone: 'text-orange-300' },
+  { value: 'call.received',     label: 'Call Received',     Icon: PhoneIncoming, tone: 'text-sky-300' },
+  { value: 'call.ended',        label: 'Call Ended',        Icon: PhoneMissed,   tone: 'text-rose-300' },
+  { value: 'call.rejected',     label: 'Call Rejected',     Icon: PhoneOff,      tone: 'text-amber-300' },
+  { value: 'call.updated',      label: 'Call Updated',      Icon: RefreshCw,     tone: 'text-violet-300' },
 ];
 
 export default function WebhooksPage() {
