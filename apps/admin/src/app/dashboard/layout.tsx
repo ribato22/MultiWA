@@ -11,6 +11,7 @@ import {
   LayoutGrid,
   Smartphone,
   MessagesSquare,
+  PhoneIncoming,
   MessageSquare,
   Users,
   LayoutTemplate,
@@ -36,7 +37,9 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
+import { io, type Socket } from 'socket.io-client';
 import { api, Notification } from '@/lib/api';
+import { getSocketUrl } from '@/lib/socket';
 import { DemoBanner } from '@/components/demo-banner';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
@@ -46,6 +49,7 @@ const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',              Icon: LayoutGrid },
   { name: 'Profiles',     href: '/dashboard/profiles',     Icon: Smartphone },
   { name: 'Chat',         href: '/dashboard/chat',         Icon: MessagesSquare },
+  { name: 'Calls',        href: '/dashboard/calls',        Icon: PhoneIncoming },
   { name: 'Messages',     href: '/dashboard/messages',     Icon: MessageSquare },
   { name: 'Contacts',     href: '/dashboard/contacts',     Icon: Users },
   { name: 'Templates',    href: '/dashboard/templates',    Icon: LayoutTemplate },
@@ -103,6 +107,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Chat unread (org-wide) for the sidebar badge
   const [chatUnread, setChatUnread] = useState(0);
 
+  // Open call follow-ups (org-wide) for the sidebar Calls badge
+  const [callsOpen, setCallsOpen] = useState(0);
+
   // Account menu (top-right)
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userRef = useRef<HTMLDivElement>(null);
@@ -116,6 +123,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [router]);
 
+  const fetchCallsOpen = useCallback(async () => {
+    try {
+      const calls = await api.getCallsOpenCount();
+      if (calls.data) setCallsOpen(calls.data.count);
+    } catch {}
+  }, []);
+
   // Fetch unread count periodically
   const fetchUnreadCount = useCallback(async () => {
     try {
@@ -126,13 +140,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const chat = await api.getChatUnreadCount();
       if (chat.data) setChatUnread(chat.data.count);
     } catch {}
-  }, []);
+    await fetchCallsOpen();
+  }, [fetchCallsOpen]);
 
   useEffect(() => {
     fetchUnreadCount();
     const interval = setInterval(fetchUnreadCount, 15000); // every 15s
     return () => clearInterval(interval);
   }, [fetchUnreadCount]);
+
+  // A call:update (a call rings in, is answered, is marked done) refreshes the Calls badge at once; the poll above stays the fallback.
+  // The gateway pushes only to the rooms a socket joined, and there is no org-wide room, so join every profile.
+  // ponytail: the profiles known at mount; one added later is covered by the poll until the next reload.
+  useEffect(() => {
+    if (!user) return;
+    let stopped = false;
+    let socket: Socket | undefined;
+    api.getProfiles().then((res) => {
+      const profileIds = Array.isArray(res.data) ? res.data.map((p) => p.id) : [];
+      if (stopped || profileIds.length === 0) return;
+      socket = io(`${getSocketUrl()}/ws`, {
+        transports: ['websocket', 'polling'],
+        auth: (cb) => cb({ token: localStorage.getItem('accessToken') ?? undefined }),
+        reconnection: true,
+      });
+      socket.on('connect', () => profileIds.forEach((profileId) => socket?.emit('join', { profileId })));
+      socket.on('call:update', () => void fetchCallsOpen());
+    });
+    return () => {
+      stopped = true;
+      socket?.disconnect();
+    };
+  }, [user, fetchCallsOpen]);
 
   // Fetch notifications when dropdown opens
   const openNotifDropdown = async () => {
@@ -226,7 +265,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {menuItems.map((item) => {
               const Icon = item.Icon;
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
-              const badge = item.href === '/dashboard/chat' ? chatUnread : 0;
+              const badge = item.href === '/dashboard/chat' ? chatUnread : item.href === '/dashboard/calls' ? callsOpen : 0;
               const badgeLabel = badge > 99 ? '99+' : String(badge);
               return (
                 <Link
@@ -255,7 +294,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {sidebarOpen && badge > 0 && (
                     <span
                       className="ml-auto min-w-[20px] h-5 bg-destructive text-destructive-foreground text-[11px] font-bold rounded-full flex items-center justify-center px-1.5 tabular-nums"
-                      aria-label={`${badge} unread`}
+                      aria-label={item.href === '/dashboard/calls' ? `${badge} open` : `${badge} unread`}
                     >
                       {badgeLabel}
                     </span>
