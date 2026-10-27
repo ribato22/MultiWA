@@ -33,6 +33,13 @@ export class EngineCommandProcessor {
         return this.requireEngine(profileId).deleteForEveryone(job.data.chatId, job.data.messageId);
       case 'group-op':
         return this.handleGroupOp(profileId, job.data.op, job.data.params ?? {});
+      // Call commands. Errors are handed on as thrown: only their message reaches the API (the job's
+      // failedReason), which maps CALL_NOT_FOUND / CALL_NOT_RINGING / "not connected" to HTTP statuses.
+      case 'reject-call':
+        return this.engineManager.rejectCallByAgent(profileId, job.data.callId);
+      case 'create-call-link':
+        // null = the engine has no call-link API (Baileys 6.x); the API layer decides what that means.
+        return this.requireEngine(profileId).createCallLink(job.data.type);
       default:
         throw new Error(`Unknown engine command: ${job.name}`);
     }

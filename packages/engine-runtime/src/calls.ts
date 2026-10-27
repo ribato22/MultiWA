@@ -5,10 +5,9 @@
 // messages) into rows of the `calls` table and publishes every change to the app
 // bus (webhooks), realtime (Socket.IO) and, for missed calls, notifications. Used by
 // the api and worker engine-managers (whichever hosts the engine) and by the calls
-// REST module, so the rules live once (call-state.ts). Replaces auto-reject-call.ts
-// (removed once both engine-managers call handleEngineCall): the auto-reject is part
-// of the ringing step, is recorded on the row, and its reply goes through the
-// send-gated path at most once per caller per 24 h.
+// REST module, so the rules live once (call-state.ts). The auto-reject is part of the
+// ringing step, is recorded on the row, and its reply goes through the send-gated
+// path at most once per caller per 24 h.
 
 import { prisma } from '@multiwa/database';
 import { AppEvents } from '@multiwa/core';
@@ -63,7 +62,11 @@ export interface CallEngineDeps extends CallDeps {
    */
   settings: AutoRejectCallSettings | null | undefined | Promise<AutoRejectCallSettings | null | undefined>;
   rejectCall: (waCallId: string) => Promise<void>;
-  /** Send-gated text send (MessagesService.sendText on api, WorkerMessagesService.sendText on worker). */
+  /**
+   * Send-gated text send (MessagesService.sendText on api; on the worker WorkerMessagesService.sendText, adapted so
+   * that its { success: false } result rejects). It must REJECT when the reply was not sent: the once-per-24h claim
+   * on the call is released only then.
+   */
   sendText: (to: string, text: string) => Promise<unknown>;
   resolveIdentity?: IdentityResolver | null;
 }
