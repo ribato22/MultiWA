@@ -173,6 +173,8 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         isConnected: false,
         isAuthenticated: false,
       };
+      // The page that held the ringing calls is gone: none of them can be rejected or ended now.
+      this.calls.clear();
       this.config?.onDisconnected?.(reason);
     });
 

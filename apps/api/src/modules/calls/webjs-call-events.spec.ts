@@ -102,6 +102,19 @@ describe('WhatsAppWebJsAdapter calls', () => {
     expect(config.onCall.mock.calls.map((c: any[]) => c[0].state)).toEqual(['ringing', 'ended']);
   });
 
+  it('forgets its ringing calls when the page goes away, but still remembers it reported them', async () => {
+    const { adapter, client, config } = wire();
+    const reject = vi.fn().mockResolvedValue(undefined);
+    const call = { id: 'c1', from: '628111000111@c.us', reject };
+    client.emit('call', call);
+    client.emit('disconnected', 'NAVIGATION');
+    await expect(adapter.rejectCall('c1')).rejects.toThrow('Call is not ringing any more');
+    expect(reject).not.toHaveBeenCalled();
+    client.emit('multiwa_call_ended', { id: 'c1' });
+    client.emit('call', call); // a repeat after the reconnect is still not a new call
+    expect(config.onCall.mock.calls.map((c: any[]) => c[0].state)).toEqual(['ringing']);
+  });
+
   it('turns a call-log message into one call-log entry (repeats are dropped)', () => {
     const { client, config } = wire();
     const log = {

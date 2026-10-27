@@ -1,15 +1,16 @@
 diff --git a/src/Client.js b/src/Client.js
-index 800109ebf7720d5f0f29091518a8a25f7fd8e381..5b55a93eaf8a842f8afadd0d384a5cd9039509b9 100644
+index 800109ebf7720d5f0f29091518a8a25f7fd8e381..d8604b3f5ef2385f8310576274f20feb41d77edc 100644
 --- a/src/Client.js
 +++ b/src/Client.js
-@@ -893,6 +893,14 @@ class Client extends EventEmitter {
+@@ -893,6 +893,15 @@ class Client extends EventEmitter {
              this.emit(Events.INCOMING_CALL, cll);
          });
  
 +        await exposeFunctionIfAbsent(this.pupPage, 'onMultiwaCallEnded', (data) => {
 +            /**
-+             * MultiWA patch: the incoming call stopped being the active call
-+             * (answered elsewhere, rejected, missed or ended).
++             * MultiWA patch: the incoming call stopped being WhatsApp's active call
++             * (the slot was cleared or taken by another call, or it reached state 0).
++             * It cannot tell how the call ended; the call-log message does.
 +             */
 +            this.emit('multiwa_call_ended', data);
 +        });
@@ -17,7 +18,7 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..5b55a93eaf8a842f8afadd0d384a5cd9
          await exposeFunctionIfAbsent(
              this.pupPage,
              'onReaction',
-@@ -1074,26 +1082,62 @@ class Client extends EventEmitter {
+@@ -1074,26 +1083,89 @@ class Client extends EventEmitter {
                  WAWebCallCollection &&
                  typeof WAWebCallCollection.on === 'function'
              ) {
@@ -38,6 +39,30 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..5b55a93eaf8a842f8afadd0d384a5cd9
 +                        ? w
 +                        : (w && (w._serialized || w.$1)) ||
 +                          (w && w.user && w.server ? `${w.user}@${w.server}` : '');
++                // Nothing here may throw: WhatsApp runs these hooks inside setActiveCall
++                // and Map.set, and an exception would skip its own work behind them.
++                const safely = (fn) => {
++                    try {
++                        fn();
++                    } catch (e) {
++                        // ignore
++                    }
++                };
++                const stateOf = (call) => {
++                    try {
++                        return typeof call.getState === 'function'
++                            ? call.getState()
++                            : undefined;
++                    } catch (e) {
++                        return undefined;
++                    }
++                };
++                const endCall = (id) => {
++                    if (id && window._multiwaCallId === id) {
++                        window._multiwaCallId = null;
++                        window.onMultiwaCallEnded({ id });
++                    }
++                };
 +                const reportCall = (call) => {
 +                    if (!call || !call.id || window._multiwaCallId === call.id) {
 +                        return;
@@ -64,22 +89,22 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..5b55a93eaf8a842f8afadd0d384a5cd9
 -                    return originalMapSet(key, value);
                  };
 +                if (!window._multiwaCallListener) {
-+                    window._multiwaCallListener = true;
-+                    WAWebCallCollection.on('change:activeCall', (call) => {
-+                        const ended =
-+                            !call ||
-+                            (typeof call.getState === 'function' &&
-+                                call.getState() === 0);
-+                        if (!ended) {
++                    WAWebCallCollection.on('change:activeCall', (call) =>
++                        safely(() => {
++                            if (!call) {
++                                endCall(window._multiwaCallId);
++                                return;
++                            }
++                            if (!call.id) return;
++                            const known = window._multiwaCallId === call.id;
++                            // activeCall is one slot: a new call means the old one ended.
++                            if (!known) endCall(window._multiwaCallId);
++                            // Report first, as #201825 does: the state may not be set yet.
 +                            reportCall(call);
-+                            return;
-+                        }
-+                        const id = (call && call.id) || window._multiwaCallId;
-+                        if (id && window._multiwaCallId === id) {
-+                            window._multiwaCallId = null;
-+                            window.onMultiwaCallEnded({ id });
-+                        }
-+                    });
++                            if (known && stateOf(call) === 0) endCall(call.id);
++                        }),
++                    );
++                    window._multiwaCallListener = true;
 +                }
 +                // Fallback for WhatsApp Web builds that still fill the internal map.
 +                const mapKey = Object.keys(WAWebCallCollection).find(
@@ -87,12 +112,15 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..5b55a93eaf8a842f8afadd0d384a5cd9
 +                );
 +                if (mapKey) {
 +                    const internalCallMap = WAWebCallCollection[mapKey];
-+                    const originalMapSet =
-+                        internalCallMap.set.bind(internalCallMap);
-+                    internalCallMap.set = function (key, value) {
-+                        reportCall(value);
-+                        return originalMapSet(key, value);
-+                    };
++                    if (!internalCallMap._multiwaHooked) {
++                        const originalMapSet =
++                            internalCallMap.set.bind(internalCallMap);
++                        internalCallMap.set = function (key, value) {
++                            safely(() => reportCall(value));
++                            return originalMapSet(key, value);
++                        };
++                        internalCallMap._multiwaHooked = true;
++                    }
 +                }
              }
              Chat.on('remove', async (chat) => {
@@ -125,7 +153,7 @@ index dd977e85b0c0c40d2625cd337264fc9ae3bed17b..6c1ca6ba736f23d50e82d5e672622ff5
          }, this.id._serialized);
  
 diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
-index 540078a9d07b3df07ccd51b030556a72af4cf650..c604c1b95fcbd6d2bf176612518a466e063770d5 100644
+index 540078a9d07b3df07ccd51b030556a72af4cf650..b23e92e76553c15085349f6553133ed2c19b9bc2 100644
 --- a/src/util/Injected/Utils.js
 +++ b/src/util/Injected/Utils.js
 @@ -470,8 +470,10 @@ exports.LoadUtils = () => {
@@ -314,23 +342,35 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..c604c1b95fcbd6d2bf176612518a466e
                            ])
                    )?.messages?.[0]
                  : null;
-@@ -1263,6 +1345,20 @@ exports.LoadUtils = () => {
+@@ -1263,6 +1345,32 @@ exports.LoadUtils = () => {
      };
  
      window.WWebJS.rejectCall = async (peerJid, id) => {
 +        // MultiWA patch (from wwebjs/whatsapp-web.js#201825): current WhatsApp Web
 +        // ignores the hand-built reject stanza below; its voip stack rejects the
-+        // active call. The stanza stays as the fallback for older builds.
++        // active call. The stanza stays for older builds without that stack.
++        let stack = null;
 +        try {
-+            const stack = await window
++            stack = await window
 +                .require('WAWebVoipStackInterface')
 +                .getVoipStackInterface();
-+            if (stack && typeof stack.rejectCall === 'function') {
-+                await stack.rejectCall();
-+                return;
-+            }
 +        } catch (e) {
-+            // fall through to the stanza
++            // no voip stack module: an older build, use the stanza below
++        }
++        if (stack && typeof stack.rejectCall === 'function') {
++            // The stack takes no call id and rejects WhatsApp's ACTIVE call: never
++            // reject another call than the one asked for. Unreadable: go ahead.
++            let active = null;
++            try {
++                active = window.require('WAWebCallCollection').activeCall;
++            } catch (e) {
++                // ignore
++            }
++            if (active && active.id && active.id !== id) {
++                throw new Error('Call is not the active call');
++            }
++            await stack.rejectCall(); // a real failure reaches the caller
++            return;
 +        }
          let userId = window
              .require('WAWebUserPrefsMeUser')

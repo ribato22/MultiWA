@@ -21,7 +21,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import path from 'path';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const PATCH_FILE = path.join(REPO_ROOT, 'patches', 'whatsapp-web.js@1.34.7.patch');
@@ -152,5 +152,129 @@ describe('whatsapp-web.js call patch', () => {
     const body = src.slice(start, end);
     expect(body.indexOf('WAWebVoipStackInterface')).toBeGreaterThan(-1);
     expect(body.indexOf('WAWebVoipStackInterface')).toBeLessThan(body.indexOf('deprecatedCastStanza'));
+  });
+});
+
+// ---- Behaviour specs for the in-page call hook (append to apps/api/src/wwebjs-media-patch.spec.ts) ----
+// The block runs inside WhatsApp Web, so CI cannot start it; this evaluates the INSTALLED source against a
+// Backbone-style fake collection (trigger() has no try/catch, like WhatsApp's EventEmitter).
+const sliceBetween = (src: string, from: string, to: string): string => {
+  const a = src.indexOf(from);
+  const b = src.indexOf(to, a);
+  if (a < 0 || b < 0) throw new Error(`markers moved in the patched file: ${from} .. ${to}`);
+  return src.slice(a, b);
+};
+
+const callHook = () => {
+  const block = sliceBetween(
+    readFileSync(installedClientJs()!, 'utf8'),
+    "const WAWebCallCollection = window.require('WAWebCallCollection');",
+    "Chat.on('remove'",
+  );
+  const handlers: Record<string, Array<(...a: any[]) => void>> = {};
+  const collection: any = {
+    _map: new Map(),
+    on: (ev: string, fn: (...a: any[]) => void) => (handlers[ev] ||= []).push(fn),
+    trigger: (ev: string, ...a: any[]) => handlers[ev]?.forEach((fn) => fn(...a)),
+  };
+  const reported: string[] = [];
+  const ended: string[] = [];
+  const win: any = {
+    require: () => collection,
+    onIncomingCall: (c: any) => reported.push(c.id),
+    onMultiwaCallEnded: (d: any) => ended.push(d.id),
+  };
+  new Function('window', block)(win);
+  const call = (id: string, state?: number) => ({ id, peerJid: { $1: `${id}@c.us` }, getState: () => state });
+  return { collection, handlers, reported, ended, win, call, activate: (c?: any) => collection.trigger('change:activeCall', c) };
+};
+
+describe('whatsapp-web.js call hook behaviour', () => {
+  it('reports a call once and its end once', () => {
+    const h = callHook();
+    h.activate(h.call('A', 3)); h.activate(h.call('A', 3)); h.activate(undefined); h.activate(undefined);
+    expect({ r: h.reported, e: h.ended }).toEqual({ r: ['A'], e: ['A'] });
+  });
+
+  it('reports a call whose state is not applied yet (WhatsApp sets it right after setActiveCall returns)', () => {
+    const h = callHook();
+    h.activate(h.call('A', undefined));
+    h.activate(h.call('B', 0));
+    expect(h.reported).toEqual(['A', 'B']);
+  });
+
+  it('ends a call that another call displaced from the single active slot', () => {
+    const h = callHook();
+    h.activate(h.call('A', 3)); h.activate(h.call('B', 3)); h.activate(undefined);
+    expect(h.ended).toEqual(['A', 'B']);
+  });
+
+  it('never lets a failing hook throw into WhatsApp (it runs inside setActiveCall and Map.set)', () => {
+    const h = callHook();
+    h.win.onIncomingCall = () => { throw new TypeError('boom'); };
+    expect(() => h.activate(h.call('A', 3))).not.toThrow();
+    expect(() => h.activate({ id: 'B', getState: () => { throw new Error('half-built model'); } })).not.toThrow();
+    expect(() => h.collection._map.set('k', h.call('M', 3))).not.toThrow();
+    expect(h.collection._map.has('k'), 'WhatsApp must still record the call').toBe(true);
+  });
+
+  it('registers one listener however often it is injected', () => {
+    const h = callHook();
+    const block = sliceBetween(readFileSync(installedClientJs()!, 'utf8'), "const WAWebCallCollection = window.require('WAWebCallCollection');", "Chat.on('remove'");
+    new Function('window', block)(h.win); new Function('window', block)(h.win);
+    expect(h.handlers['change:activeCall']).toHaveLength(1);
+  });
+});
+
+describe('whatsapp-web.js rejectCall behaviour', () => {
+  const rejectCall = async (opts: { stack?: any; active?: any; requested?: string }) => {
+    const src = readFileSync(installedUtilsJsWithReject()!, 'utf8');
+    const fn = sliceBetween(src, 'window.WWebJS.rejectCall = async', 'window.WWebJS.cropAndResizeImage');
+    const stanzas: unknown[] = [];
+    const win: any = { WWebJS: {} };
+    win.require = (name: string) => {
+      if (name === 'WAWebVoipStackInterface') {
+        if (!opts.stack) throw new Error('Requiring unknown module');
+        return { getVoipStackInterface: async () => opts.stack };
+      }
+      if (name === 'WAWebCallCollection') return { activeCall: opts.active };
+      if (name === 'WAWap') return { wap: (...a: any[]) => a, generateId: () => 'id' };
+      if (name === 'WADeprecatedSendIq') return { deprecatedCastStanza: async (s: unknown) => { stanzas.push(s); } };
+      if (name === 'WAWebUserPrefsMeUser') return { getMaybeMePnUser: () => ({ _serialized: 'me@c.us' }) };
+      throw new Error(`unexpected module ${name}`);
+    };
+    new Function('window', fn)(win);
+    const result = await win.WWebJS.rejectCall('peer@c.us', opts.requested ?? 'A').then(() => 'ok', (e: Error) => e.message);
+    return { result, stanzas };
+  };
+
+  it('uses the voip stack and not the stanza when the stack works', async () => {
+    const stack = { rejectCall: vi.fn().mockResolvedValue(undefined) };
+    expect(await rejectCall({ stack, active: { id: 'A' } })).toEqual({ result: 'ok', stanzas: [] });
+    expect(stack.rejectCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a real voip failure reach the caller instead of "succeeding" through the stanza', async () => {
+    const stack = { rejectCall: vi.fn().mockRejectedValue(new Error('voip: no active call')) };
+    expect(await rejectCall({ stack, active: { id: 'A' } })).toEqual({ result: 'voip: no active call', stanzas: [] });
+  });
+
+  it('refuses to reject a different call than the one asked for (the stack takes no id)', async () => {
+    const stack = { rejectCall: vi.fn() };
+    const out = await rejectCall({ stack, active: { id: 'B' }, requested: 'A' });
+    expect(out.result).toMatch(/not the active call/);
+    expect(stack.rejectCall).not.toHaveBeenCalled();
+    expect(out.stanzas).toEqual([]);
+  });
+
+  it('still rejects when the active call cannot be read (fail open, never to the stanza)', async () => {
+    const stack = { rejectCall: vi.fn().mockResolvedValue(undefined) };
+    expect(await rejectCall({ stack, active: undefined })).toEqual({ result: 'ok', stanzas: [] });
+  });
+
+  it('falls back to the stanza only when the build has no voip stack', async () => {
+    const out = await rejectCall({});
+    expect(out.result).toBe('ok');
+    expect(out.stanzas).toHaveLength(1);
   });
 });
