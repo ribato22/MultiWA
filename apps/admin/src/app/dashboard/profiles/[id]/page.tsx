@@ -1174,6 +1174,7 @@ export default function ProfileDetailPage() {
           <Input
             id="callReplyMessage"
             type="text"
+            maxLength={4096}
             placeholder="Maaf, kami melewatkan panggilan Anda. Ada yang bisa kami bantu?"
             value={callReplyMessage}
             onChange={(e) => setCallReplyMessage(e.target.value)}

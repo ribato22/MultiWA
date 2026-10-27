@@ -304,9 +304,10 @@ export default function ChatPage() {
     }
   }, [selectedConversation?.id]);
 
+  // The timeline, not only the messages: calls arrive in a second request and can be the newest entry.
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [timeline]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
