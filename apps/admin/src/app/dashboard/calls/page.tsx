@@ -2,7 +2,7 @@
 // apps/admin/src/app/dashboard/calls/page.tsx
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { io } from 'socket.io-client';
 import {
@@ -13,7 +13,7 @@ import { api, type CallFollowUp, type CallRecord, type Profile } from '@/lib/api
 import { getSocketUrl } from '@/lib/socket';
 import { formatFull, formatRelative } from '@/lib/datetime';
 import {
-  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, callerLabel, filterQuery, fromPayload, upsertCall,
+  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, callerLabel, filterQuery, fromPayload, matchesFilter, upsertCall,
   type CallFilter, type CallUpdatePayload,
 } from '@/lib/calls';
 import { Button } from '@/components/ui/button';
@@ -28,8 +28,16 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/hooks/use-toast';
 
 type Member = { id: string; name: string; email: string; isActive: boolean };
-type DialogState = { kind: 'reply' | 'link' | 'assign'; call: CallRecord } | null;
+// `open: false` keeps the content while the dialog fades out.
+type DialogState = { kind: 'reply' | 'link' | 'assign'; call: CallRecord; open: boolean } | null;
 const UNASSIGNED = '__none__';
+// The send gate answers 429 with a code and no message.
+const GATE_REASON: Record<string, string> = {
+  REPEAT_SUPPRESSED: 'The same text was just sent to this caller.',
+  DAILY_LIMIT_REACHED: 'This profile has reached its daily message limit.',
+  COLD_DAILY_LIMIT_REACHED: 'This profile has reached its daily limit for new conversations.',
+  COLD_CIRCUIT_OPEN: 'Sending to new conversations is paused for this profile.',
+};
 
 function OutcomeIcon({ call }: { call: CallRecord }) {
   if (call.outcome === 'ringing') return <PhoneIncoming className="w-4 h-4 text-primary animate-pulse" aria-hidden="true" />;
@@ -58,20 +66,24 @@ export default function CallsPage() {
   const [text, setText] = useState('');
   const [linkType, setLinkType] = useState<'voice' | 'video'>('voice');
   const [assignee, setAssignee] = useState(UNASSIGNED);
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string[]>([]); // ids of the calls with an action in flight
+  const opener = useRef<HTMLElement | null>(null);
 
-  const profile = useMemo(() => profiles.find((p) => p.id === profileId), [profiles, profileId]);
   const memberName = useCallback((id: string | null) => (id ? members.find((m) => m.id === id)?.name ?? null : null), [members]);
 
   useEffect(() => {
     api.getProfiles().then((res) => {
+      if (res.error) toast({ title: 'Could not load profiles', description: res.error, variant: 'destructive' });
       const list = Array.isArray(res.data) ? res.data : [];
       setProfiles(list);
       setProfileId((current) => current || list[0]?.id || '');
       if (!list.length) setLoading(false);
     });
-    api.getUsers().then((res) => setMembers((res.data ?? []).filter((m) => m.isActive)));
-  }, []);
+    api.getUsers().then((res) => {
+      if (res.error) toast({ title: 'Could not load the team', description: res.error, variant: 'destructive' });
+      setMembers((res.data ?? []).filter((m) => m.isActive));
+    });
+  }, [toast]);
 
   const load = useCallback(async (cursor?: string) => {
     if (!profileId) return;
@@ -91,6 +103,8 @@ export default function CallsPage() {
   }, [profileId, filter, toast]);
 
   useEffect(() => {
+    setCalls([]); // a tab or profile switch never shows the previous list, nor pages on with its cursor
+    setNextCursor(null);
     void load();
   }, [load]);
 
@@ -108,6 +122,10 @@ export default function CallsPage() {
     void loadRinging();
   }, [loadRinging]);
 
+  // An action resolves after the user may have switched tab or profile: it reloads what is shown then, not at the click.
+  const loaders = useRef({ load, loadRinging });
+  loaders.current = { load, loadRinging };
+
   // Live: new calls ring in, outcomes and follow-ups update in place.
   useEffect(() => {
     if (!profileId) return;
@@ -116,7 +134,15 @@ export default function CallsPage() {
       auth: (cb) => cb({ token: typeof window !== 'undefined' ? localStorage.getItem('accessToken') ?? undefined : undefined }),
       reconnection: true,
     });
-    socket.on('connect', () => socket.emit('join', { profileId }));
+    let joined = false;
+    socket.on('connect', () => {
+      socket.emit('join', { profileId });
+      if (joined) { // a reconnect: what happened while the socket was down was never sent to it
+        void loaders.current.load();
+        void loaders.current.loadRinging();
+      }
+      joined = true;
+    });
     socket.on('call:update', (p: CallUpdatePayload) => {
       if (p.profileId !== profileId) return;
       setCalls((prev) => upsertCall(prev, p, filterRef.current));
@@ -124,35 +150,44 @@ export default function CallsPage() {
         const others = prev.filter((c) => c.id !== p.callId);
         return p.outcome === 'ringing' ? [fromPayload(p, prev.find((c) => c.id === p.callId)), ...others] : others;
       });
+      if (p.outcome === 'ringing') void loaders.current.loadRinging(); // the payload has no contact name: the fetched row does
     });
     return () => {
       socket.disconnect();
     };
   }, [profileId]);
 
-  const run = async (call: CallRecord, action: () => Promise<{ error?: string }>, success: string) => {
-    setBusy(call.id);
+  const run = async (call: CallRecord, action: () => Promise<{ error?: string; data?: CallRecord | { call: CallRecord } }>, success: string) => {
+    setBusy((b) => [...b, call.id]);
     const res = await action();
-    setBusy(null);
+    setBusy((b) => b.filter((id) => id !== call.id));
     if (res.error) {
-      toast({ title: 'Action failed', description: res.error, variant: 'destructive' });
+      toast({ title: 'Action failed', description: GATE_REASON[res.error] ?? res.error, variant: 'destructive' });
+      void loaders.current.load(); // a 409 often means the row or the strip is out of date
+      void loaders.current.loadRinging();
       return false;
     }
     toast({ title: success });
-    void load();
-    void loadRinging(); // realtime is the primary path; this covers a call:update the socket missed
+    // The answer is the stored row (relations included): apply it in place, so the pages already loaded stay.
+    const row = res.data && ('call' in res.data ? res.data.call : res.data);
+    if (row) setCalls((prev) => (matchesFilter(row, filterRef.current) ? prev.map((c) => (c.id === row.id ? row : c)) : prev.filter((c) => c.id !== row.id)));
+    void loaders.current.loadRinging(); // realtime is the primary path; this covers a call:update the socket missed
     return true;
   };
 
   const openDialog = (kind: 'reply' | 'link' | 'assign', call: CallRecord) => {
-    setText(kind === 'reply' ? String(profile?.settings?.callReplyMessage ?? '') : '');
+    opener.current = document.activeElement as HTMLElement | null;
+    const settings = profiles.find((p) => p.id === call.profileId)?.settings;
+    setText(kind === 'reply' ? String(settings?.callReplyMessage ?? '') : '');
     setLinkType(call.isVideo ? 'video' : 'voice');
     setAssignee(call.assignedUserId ?? UNASSIGNED);
-    setDialog({ kind, call });
+    setDialog({ kind, call, open: true });
   };
+  const closeDialog = () => setDialog((d) => d && { ...d, open: false });
 
   const submitDialog = async () => {
     if (!dialog) return;
+    const submitted = dialog;
     const { kind, call } = dialog;
     const ok =
       kind === 'reply'
@@ -160,8 +195,9 @@ export default function CallsPage() {
         : kind === 'link'
           ? await run(call, () => api.sendCallLink(call.id, linkType, text.trim() || undefined), 'Call link sent')
           : await run(call, () => api.updateCall(call.id, { assignedUserId: assignee === UNASSIGNED ? null : assignee }), 'Assignment saved');
-    if (ok) setDialog(null);
+    if (ok) setDialog((d) => (d === submitted ? { ...d, open: false } : d)); // not a dialog opened since
   };
+  const sending = !!dialog && busy.includes(dialog.call.id);
 
   const setFollowUp = (call: CallRecord, followUp: CallFollowUp) =>
     run(call, () => api.updateCall(call.id, { followUp }), followUp === 'done' ? 'Marked done' : 'Reopened');
@@ -197,8 +233,8 @@ export default function CallsPage() {
                     <p className="text-xs text-muted-foreground">Ringing · {call.isVideo ? 'video' : 'voice'} call</p>
                   </div>
                 </div>
-                <Button size="sm" variant="destructive" disabled={busy === call.id} onClick={() => run(call, () => api.rejectCall(call.id), 'Call rejected')}>
-                  {busy === call.id ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <PhoneOff className="w-4 h-4" aria-hidden="true" />}
+                <Button size="sm" variant="destructive" disabled={busy.includes(call.id)} onClick={() => run(call, () => api.rejectCall(call.id), 'Call rejected')}>
+                  {busy.includes(call.id) ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <PhoneOff className="w-4 h-4" aria-hidden="true" />}
                   <span className="ml-1.5">Reject</span>
                 </Button>
               </CardContent>
@@ -225,7 +261,7 @@ export default function CallsPage() {
         <ul className="space-y-2" aria-label="Calls">
           {calls.map((call) => {
             const assigned = memberName(call.assignedUserId) ?? call.assignedUser?.name ?? null;
-            const disabled = busy === call.id;
+            const disabled = busy.includes(call.id);
             return (
               <li key={call.id}>
                 <Card>
@@ -246,7 +282,7 @@ export default function CallsPage() {
                       <Badge variant="outline">{FOLLOW_UP_LABEL[call.followUp]}</Badge>
                       {call.conversationId && (
                         <Button asChild size="sm" variant="ghost">
-                          <Link href={`/dashboard/chat?conv=${call.conversationId}`} aria-label="Open chat">
+                          <Link href={`/dashboard/chat?profile=${call.profileId}&conv=${call.conversationId}`} aria-label={`Open chat with ${callerLabel(call)}`}>
                             <MessagesSquare className="w-4 h-4" aria-hidden="true" />
                           </Link>
                         </Button>
@@ -293,8 +329,8 @@ export default function CallsPage() {
         </div>
       )}
 
-      <Dialog open={!!dialog} onOpenChange={(open) => { if (!open) setDialog(null); }}>
-        <DialogContent>
+      <Dialog open={!!dialog?.open} onOpenChange={(open) => { if (!open) closeDialog(); }}>
+        <DialogContent onCloseAutoFocus={(e) => { e.preventDefault(); opener.current?.focus(); }}>
           <DialogHeader>
             <DialogTitle>{dialog?.kind === 'reply' ? 'Reply to caller' : dialog?.kind === 'link' ? 'Send a call link' : 'Assign call'}</DialogTitle>
             <DialogDescription>{dialog ? callerLabel(dialog.call) : ''}</DialogDescription>
@@ -323,6 +359,7 @@ export default function CallsPage() {
               <Textarea
                 aria-label="Message"
                 rows={4}
+                maxLength={4096}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 placeholder={dialog?.kind === 'link' ? 'Optional text sent with the link' : 'Message to the caller'}
@@ -335,9 +372,9 @@ export default function CallsPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialog(null)}>Cancel</Button>
-            <Button disabled={!!busy || (dialog?.kind === 'reply' && !text.trim())} onClick={submitDialog}>
-              {busy ? 'Sending…' : dialog?.kind === 'assign' ? 'Save' : 'Send'}
+            <Button variant="outline" onClick={closeDialog}>Cancel</Button>
+            <Button disabled={sending || (dialog?.kind === 'reply' && !text.trim())} onClick={submitDialog}>
+              {sending ? 'Sending…' : dialog?.kind === 'assign' ? 'Save' : 'Send'}
             </Button>
           </DialogFooter>
         </DialogContent>

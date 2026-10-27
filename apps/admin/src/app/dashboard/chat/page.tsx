@@ -307,7 +307,8 @@ export default function ChatPage() {
     if (res.data) {
       setProfiles(res.data);
       if (res.data.length > 0) {
-        setSelectedProfile(res.data[0].id);
+        const wanted = searchParams.get('profile');
+        setSelectedProfile(res.data.find((p) => p.id === wanted)?.id ?? res.data[0].id);
       }
     }
     setLoading(false);
