@@ -39,7 +39,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private currentQR: string | null = null;
   private qrCallbacks: ((qr: string) => void)[] = [];
   // Caller JID per call id — Baileys' rejectCall(id, from) needs both.
-  // ponytail: unbounded, but only offers that never get a follow-up stay; cap it if that ever grows.
+  // Unbounded on purpose: only offers that never get a follow-up stay here. Cap it if that ever grows.
   private callFrom = new Map<string, string>();
   // Ids already reported as ringing, so a repeated offer is not a new call (bounded).
   private seenCalls = new Set<string>();
