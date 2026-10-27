@@ -553,6 +553,7 @@ class ApiClient {
   }
 
   // Calls
+  // In `q`, `from` is the caller (a JID or phone number), not a date; the API's date filter is `since`.
   async getCalls(profileId: string, q: { outcome?: CallOutcome; followUp?: CallFollowUp; from?: string; limit?: number; cursor?: string } = {}) {
     const params = new URLSearchParams({ profileId });
     for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') params.set(k, String(v));

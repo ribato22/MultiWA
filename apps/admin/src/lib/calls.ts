@@ -41,9 +41,10 @@ export function matchesFilter(c: CallRecord, f: CallFilter): boolean {
 
 /** The chat name when known, else the number of the JID. Only a phone JID gets the `+`: an unresolved @lid or a group id is no number. */
 export function callerLabel(call: Pick<CallRecord, 'fromJid' | 'conversation'>): string {
-  const name = call.conversation?.name;
-  if (name && name !== call.fromJid) return name;
   const [local, domain] = call.fromJid.split('@');
+  const name = call.conversation?.name;
+  // A chat named after the JID or its bare digits (how the backend names a new chat) has no real name.
+  if (name && name.split('@')[0] !== local) return name;
   return /^\d+$/.test(local) && (domain === 's.whatsapp.net' || domain === 'c.us') ? `+${local}` : local;
 }
 
@@ -88,10 +89,10 @@ export function fromPayload(p: CallUpdatePayload, previous?: CallRecord): CallRe
 
 /**
  * Apply a realtime update to the list of one profile (newest `startedAt` first, like the API): replace the row,
- * add a new one at its place, drop one that left the filter. An update of another profile changes nothing.
+ * add a new one at its place, drop one that left the filter. The caller passes only the updates of that profile.
  */
-export function upsertCall(list: CallRecord[], p: CallUpdatePayload, f: CallFilter, profileId: string): CallRecord[] {
-  if (!p?.callId || p.profileId !== profileId) return list;
+export function upsertCall(list: CallRecord[], p: CallUpdatePayload, f: CallFilter): CallRecord[] {
+  if (!p?.callId) return list;
   const i = list.findIndex((c) => c.id === p.callId);
   const row = fromPayload(p, i >= 0 ? list[i] : undefined);
   const keep = matchesFilter(row, f);
@@ -119,9 +120,9 @@ export function isCallEntry(x: unknown): x is CallTimelineEntry {
   return !!x && typeof x === 'object' && (x as CallTimelineEntry).type === 'call' && 'call' in (x as object);
 }
 
-/** Merge calls into a time-ordered message list; calls older than the oldest loaded message are left out. */
-export function mergeTimeline<T extends { timestamp: string }>(messages: T[], calls: CallRecord[]): Array<T | CallTimelineEntry> {
-  const oldest = messages.length ? Date.parse(messages[0].timestamp) : -Infinity;
+/** Merge calls into a time-ordered message list; while `hasOlder` (older messages still unloaded), calls older than the oldest loaded message are left out. */
+export function mergeTimeline<T extends { timestamp: string }>(messages: T[], calls: CallRecord[], hasOlder = true): Array<T | CallTimelineEntry> {
+  const oldest = hasOlder && messages.length ? Date.parse(messages[0].timestamp) : -Infinity;
   const entries = calls
     .filter((c) => Date.parse(c.startedAt) >= oldest)
     .map((c): CallTimelineEntry => ({ id: `call:${c.id}`, type: 'call', timestamp: c.startedAt, call: c }))
