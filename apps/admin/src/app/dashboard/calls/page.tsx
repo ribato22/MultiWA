@@ -151,6 +151,7 @@ export default function CallsPage() {
         return p.outcome === 'ringing' ? [fromPayload(p, prev.find((c) => c.id === p.callId)), ...others] : others;
       });
       if (p.outcome === 'ringing') void loaders.current.loadRinging(); // the payload has no contact name: the fetched row does
+      else ringingSeq.current++; // the call ended: an answer read while it still rang is stale (auto-reject takes milliseconds) and must not bring it back
     });
     return () => {
       socket.disconnect();
