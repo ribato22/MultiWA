@@ -55,7 +55,13 @@ export interface CallDeps {
 }
 
 export interface CallEngineDeps extends CallDeps {
-  settings: AutoRejectCallSettings | null | undefined;
+  /**
+   * The profile's auto-reject settings, or the read of them still in progress. The ringing step awaits them
+   * itself, so the caller hands an offer over without awaiting anything first: handleEngineCall has to be
+   * called in the order the engine reported its calls (see callsInFlight). A promise must not reject: resolve
+   * it to null when the read fails, and the call is recorded without an auto-reject.
+   */
+  settings: AutoRejectCallSettings | null | undefined | Promise<AutoRejectCallSettings | null | undefined>;
   rejectCall: (waCallId: string) => Promise<void>;
   /** Send-gated text send (MessagesService.sendText on api, WorkerMessagesService.sendText on worker). */
   sendText: (to: string, text: string) => Promise<unknown>;
@@ -182,6 +188,9 @@ export const __callsInFlightForTests = (): number => callsInFlight.size;
  * Handle one engine call signal. `ringing` creates the row, arms the ring timeout and applies the
  * profile's auto-reject (a repeated offer joins the ringing step that is already running); any
  * other state moves the stored outcome forward (nextOutcome), once the call is recorded.
+ * Call it from the engine callback itself, in the order the engine reports, with nothing awaited
+ * before it (pass `deps.settings` as a promise): a signal finds the ringing step of its call only
+ * if the offer was handed over before it.
  */
 export async function handleEngineCall(call: IncomingCall, deps: CallEngineDeps): Promise<CallRecord | null> {
   if (!call?.id) return null;
@@ -202,10 +211,13 @@ export async function handleEngineCall(call: IncomingCall, deps: CallEngineDeps)
 
 /** The ringing step: reject, record and announce the call, arm its ring timeout, settle the auto-reject. */
 async function handleRinging(call: IncomingCall, deps: CallEngineDeps, recorded: () => void): Promise<CallRecord | null> {
+  // The settings may still be being read: that is the one wait before the reject, and it is taken here, inside
+  // the registered step, so the signals that follow the offer wait for the step instead of overtaking it.
+  const settings = await deps.settings;
   // A ringing call is time-critical, and neither the calls table (it may hang or be missing) nor the
   // identity lookup (a page round trip with no timeout) may delay the reject: start it first and settle
   // it on the row once that exists.
-  const rejection = deps.settings?.autoRejectCalls ? tryRejectCall(call.id, deps) : null;
+  const rejection = settings?.autoRejectCalls ? tryRejectCall(call.id, deps) : null;
 
   // An offer replayed for a call we already know (after a restart) is rejected again: harmless, the engine
   // says "not ringing any more" if it let the call go. Nothing is recorded then, so nothing waits for it.
@@ -240,7 +252,7 @@ async function handleRinging(call: IncomingCall, deps: CallEngineDeps, recorded:
   }
   publishCall(deps, AppEvents.CALL.RECEIVED, row);
   armRingTimeout(row, deps);
-  return rejection ? settleAutoReject(row, await rejection, deps, recorded) : row;
+  return rejection ? settleAutoReject(row, await rejection, settings?.autoRejectCallMessage, deps, recorded) : row;
 }
 
 /** Reject on the engine. A failure (the caller hung up first, the page is gone) is logged, never thrown. */
@@ -259,14 +271,20 @@ async function tryRejectCall(waCallId: string, deps: CallEngineDeps): Promise<bo
  * reject worked; the reply follows the attempt either way, since a caller who hung up before we
  * could reject still deserves it. The call is recorded once the outcome is, before the reply.
  */
-async function settleAutoReject(row: CallRecord, rejected: boolean, deps: CallEngineDeps, recorded: () => void): Promise<CallRecord> {
+async function settleAutoReject(
+  row: CallRecord,
+  rejected: boolean,
+  message: string | undefined,
+  deps: CallEngineDeps,
+  recorded: () => void,
+): Promise<CallRecord> {
   let current = row;
   if (rejected) {
     deps.logger?.log?.(`Auto-rejected call ${row.waCallId} from ${row.fromJid}`);
     current = await applyCallOutcome(row, 'rejected', deps, { rejectedBy: 'auto' });
   }
   recorded();
-  await maybeAutoReply(current, deps);
+  await maybeAutoReply(current, message, deps);
   return current;
 }
 
@@ -275,8 +293,8 @@ async function settleAutoReject(row: CallRecord, rejected: boolean, deps: CallEn
  * Never throws: the call is recorded by now, and a database blip must not fail the ringing step. A reply
  * that cannot be claimed is not sent (better none than two).
  */
-async function maybeAutoReply(row: CallRecord, deps: CallEngineDeps): Promise<void> {
-  const text = deps.settings?.autoRejectCallMessage?.trim();
+async function maybeAutoReply(row: CallRecord, message: string | undefined, deps: CallEngineDeps): Promise<void> {
+  const text = message?.trim();
   if (!text || row.isGroup) return;
   const now = clock(deps);
   try {

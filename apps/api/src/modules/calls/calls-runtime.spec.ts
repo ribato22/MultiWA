@@ -168,6 +168,28 @@ describe('auto-reject', () => {
     expect(d.sendText).toHaveBeenCalledWith('628111000111@s.whatsapp.net', 'Maaf, panggilan tidak dilayani.');
   });
 
+  // The engine-manager hands the settings over as the promise of a database read, so that the offer reaches the
+  // runtime in callback order (see 'signals of a call whose ringing step is still running').
+  it('settings handed over as a promise are read inside the ringing step: the call is rejected and answered all the same', async () => {
+    const stored = fakeCalls();
+    const d = deps({ settings: Promise.resolve(settings) });
+    await handleEngineCall(ringing(), d);
+    expect(d.rejectCall).toHaveBeenCalledWith('wa-1');
+    expect(stored()).toMatchObject({ outcome: 'rejected', rejectedBy: 'auto' });
+    expect(d.sendText).toHaveBeenCalledTimes(1);
+    expect(d.sendText).toHaveBeenCalledWith('628111000111@s.whatsapp.net', 'Maaf, panggilan tidak dilayani.');
+  });
+
+  it('settings that resolve to nothing (a read that failed) reject nothing and answer nothing, but the call is recorded', async () => {
+    const stored = fakeCalls();
+    const d = deps({ settings: Promise.resolve(null) });
+    await handleEngineCall(ringing(), d);
+    expect(d.rejectCall).not.toHaveBeenCalled();
+    expect(d.sendText).not.toHaveBeenCalled();
+    expect(stored()).toMatchObject({ outcome: 'ringing' });
+    expect(events(d)).toEqual([AppEvents.CALL.RECEIVED]);
+  });
+
   it('does not reply again to a caller answered in the last 24 h', async () => {
     db.call.findFirst.mockResolvedValue({ id: 'older' });
     const d = deps({ settings });
@@ -750,6 +772,42 @@ describe('signals of a call whose ringing step is still running', () => {
     await Promise.all([ring, end]);
 
     expect(stored()).toMatchObject({ fromJid: phoneJid, outcome: 'unknown' });
+    expect(events(d)).toEqual([AppEvents.CALL.RECEIVED, AppEvents.CALL.ENDED]);
+  });
+
+  // The engine-manager does not await the profile's settings before handing an offer over: it passes the read
+  // as a promise, so that the ringing step is registered in the order the engine reported the call.
+  it('a state that arrives while the settings are still being read waits for the ringing step: applied after the auto-reject, neither dropped nor taken for the phone', async () => {
+    const stored = fakeCalls();
+    const read = deferred<typeof settings>();
+    const d = deps({ settings: read.promise });
+    const ring = handleEngineCall(ringing(), d);
+    const end = handleEngineCall(ringing({ state: 'ended' }), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.rejectCall).not.toHaveBeenCalled(); // nothing is decided before the settings are known...
+    expect(db.call.findUnique).not.toHaveBeenCalled(); // ...and the end did not go looking for a row that is not there yet
+    read.resolve(settings);
+    await Promise.all([ring, end]);
+
+    expect(d.rejectCall).toHaveBeenCalledTimes(1);
+    expect(stored()).toMatchObject({ outcome: 'rejected', rejectedBy: 'auto' });
+    expect(db.call.updateMany).toHaveBeenCalledTimes(1);
+    expect(events(d)).toEqual([AppEvents.CALL.RECEIVED, AppEvents.CALL.REJECTED]);
+    expect(d.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('the same without an auto-reject: the end is applied once the settings are in and the call is recorded, not dropped as a call never seen', async () => {
+    const stored = fakeCalls();
+    const read = deferred<Record<string, never>>();
+    const d = deps({ settings: read.promise });
+    const ring = handleEngineCall(ringing(), d);
+    const end = handleEngineCall(ringing({ state: 'ended' }), d);
+    await vi.advanceTimersByTimeAsync(0);
+    read.resolve({});
+    await Promise.all([ring, end]);
+
+    expect(d.rejectCall).not.toHaveBeenCalled();
+    expect(stored()).toMatchObject({ outcome: 'unknown' });
     expect(events(d)).toEqual([AppEvents.CALL.RECEIVED, AppEvents.CALL.ENDED]);
   });
 
