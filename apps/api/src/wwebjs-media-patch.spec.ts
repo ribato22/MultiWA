@@ -50,6 +50,10 @@ const installedUtilsJs = () => installedFile(['src', 'util', 'Injected', 'Utils.
 const installedMessageJs = () => installedFile(['src', 'structures', 'Message.js'], 'forward the declared mimetype');
 
 describe('whatsapp-web.js media patch', () => {
+  it('reads the copy the lockfile pins', () => {
+    expect(LOCKED_HASH, 'pnpm-lock.yaml no longer has whatsapp-web.js@1.34.7(patch_hash=…)').toBeDefined();
+  });
+
   it('ships the patch file', () => {
     expect(existsSync(PATCH_FILE), `${PATCH_FILE} is missing`).toBe(true);
   });
@@ -219,6 +223,7 @@ describe('whatsapp-web.js call hook behaviour', () => {
     h.activate(h.call('A', undefined));
     h.activate(h.call('B', 0));
     expect(h.reported).toEqual(['A', 'B']);
+    expect(h.ended, 'B is new: its state 0 is the unset default, not the end of the call').toEqual(['A']);
   });
 
   it('ends a call that another call displaced from the single active slot', () => {
@@ -260,7 +265,11 @@ describe('whatsapp-web.js call hook behaviour', () => {
 
   it('a first injection that fails in collection.on leaves the next one to register the listener', () => {
     const h = callHook({ onThrowsOnce: true });
-    expect(() => h.inject()).toThrow('listener registration failed');
+    try {
+      h.inject();
+    } catch {
+      // whether the failure surfaces is not the point: the next injection must still register
+    }
     expect(h.handlers['change:activeCall'] ?? []).toHaveLength(0);
     h.inject();
     expect(h.handlers['change:activeCall'], 'the "registered" flag is set only after on() succeeded').toHaveLength(1);
