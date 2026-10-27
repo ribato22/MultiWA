@@ -20,7 +20,7 @@ export class UpdateOrganizationDto {
 }
 
 export class AddMemberDto {
-  @ApiProperty({ example: 'agent@plnbatam.com' })
+  @ApiProperty({ example: 'agent@example.com' })
   @IsEmail()
   email: string;
 
