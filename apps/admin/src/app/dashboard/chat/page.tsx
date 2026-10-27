@@ -169,7 +169,8 @@ export default function ChatPage() {
   // The socket handlers are bound once per profile, so they read the open conversation here.
   const openConversationId = useRef<string | null>(null);
   openConversationId.current = selectedConversation?.id ?? null;
-  // The newest loadMessages wins: a slow calls answer for the chat we already left must not land in the open one.
+  // Bumped each time a conversation is opened: the messages answer, the calls answer and a load-older
+  // of a chat we already left are dropped, so none of them lands in the open one.
   const loadSeq = useRef(0);
 
   const timeline = useMemo(() => mergeTimeline(messages, conversationCalls, olderInDb), [messages, conversationCalls, olderInDb]);
@@ -304,10 +305,18 @@ export default function ChatPage() {
     }
   }, [selectedConversation?.id]);
 
-  // The timeline, not only the messages: calls arrive in a second request and can be the newest entry.
+  // Scroll only when the newest entry changes: opening a chat, a new message, or a call arriving (in a second
+  // request) that ends the chat. Not on every timeline change: a load-older prepend keeps its own anchor and an
+  // ack update must not pull someone reading the history down.
+  const newestKey = timeline[timeline.length - 1]?.id ?? '';
   useEffect(() => {
     scrollToBottom();
-  }, [timeline]);
+  }, [newestKey]);
+
+  // The calls answer can add rows above the last message after the scroll above has started: scroll again.
+  useEffect(() => {
+    if (conversationCalls.length) scrollToBottom();
+  }, [conversationCalls]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -374,11 +383,11 @@ export default function ChatPage() {
       setMessages(msgArray);
       setOlderInDb(Array.isArray(raw) ? false : !!raw.hasMore);
       const conv = conversations.find((c) => c.id === conversationId);
-      if (conv && selectedProfile) {
-        const callsRes = await api.getCalls(selectedProfile, { from: conv.jid, limit: 50 });
+      if (conv) {
+        // The conversation's own profile, not selectedProfile: after a profile switch the list can still be the old one.
+        // ponytail: the newest 50 calls only, not refetched on load-older; refetch with since=<oldest message> if older periods need their calls
+        const callsRes = await api.getCalls(conv.profileId, { from: conv.jid, limit: 50 });
         if (seq === loadSeq.current) setConversationCalls(callsRes.data?.calls ?? []);
-      } else {
-        setConversationCalls([]);
       }
     }
   };
@@ -386,6 +395,7 @@ export default function ChatPage() {
   // On-demand "load older": pull deeper history from WhatsApp, persist it, prepend
   // to the view while preserving scroll position.
   const handleLoadOlder = async () => {
+    const seq = loadSeq.current;
     if (!selectedConversation || loadingOlder) return;
     setLoadingOlder(true);
     const container = messagesContainerRef.current;
@@ -394,6 +404,7 @@ export default function ChatPage() {
     const newLimit = msgLimit + 50;
     try {
       const res = await api.loadOlderMessages(selectedConversation.id, newLimit);
+      if (seq !== loadSeq.current) return; // another conversation was opened meanwhile
       if (res.data) {
         const data = res.data as any;
         setMessages(data.messages || []);
@@ -692,6 +703,9 @@ export default function ChatPage() {
     );
   }
 
+  // A message's key uses its index among the messages only, so a call row landing before it does not remount it.
+  let msgIdx = 0;
+
   return (
     <div className="h-[calc(100vh-120px)] flex bg-card rounded-2xl border border-border overflow-hidden">
       {/* Conversation Sidebar */}
@@ -904,7 +918,7 @@ export default function ChatPage() {
                   }
                   const msg = entry;
                   return (
-                  <Fragment key={`${msg.id}-${idx}`}>
+                  <Fragment key={`${msg.id}-${msgIdx++}`}>
                     {showDaySeparator && (
                       <div className="flex justify-center my-3">
                         <span className="text-xs text-muted-foreground bg-secondary/60 px-3 py-1 rounded-full">
