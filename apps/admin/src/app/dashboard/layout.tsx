@@ -37,9 +37,7 @@ import {
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
-import { io, type Socket } from 'socket.io-client';
 import { api, Notification } from '@/lib/api';
-import { getSocketUrl } from '@/lib/socket';
 import { DemoBanner } from '@/components/demo-banner';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
@@ -123,13 +121,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
   }, [router]);
 
-  const fetchCallsOpen = useCallback(async () => {
-    try {
-      const calls = await api.getCallsOpenCount();
-      if (calls.data) setCallsOpen(calls.data.count);
-    } catch {}
-  }, []);
-
   // Fetch unread count periodically
   const fetchUnreadCount = useCallback(async () => {
     try {
@@ -140,38 +131,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       const chat = await api.getChatUnreadCount();
       if (chat.data) setChatUnread(chat.data.count);
     } catch {}
-    await fetchCallsOpen();
-  }, [fetchCallsOpen]);
+    try {
+      const calls = await api.getCallsOpenCount();
+      if (calls.data) setCallsOpen(calls.data.count);
+    } catch {}
+  }, []);
 
   useEffect(() => {
     fetchUnreadCount();
     const interval = setInterval(fetchUnreadCount, 15000); // every 15s
     return () => clearInterval(interval);
   }, [fetchUnreadCount]);
-
-  // A call:update (a call rings in, is answered, is marked done) refreshes the Calls badge at once; the poll above stays the fallback.
-  // The gateway pushes only to the rooms a socket joined, and there is no org-wide room, so join every profile.
-  // ponytail: the profiles known at mount; one added later is covered by the poll until the next reload.
-  useEffect(() => {
-    if (!user) return;
-    let stopped = false;
-    let socket: Socket | undefined;
-    api.getProfiles().then((res) => {
-      const profileIds = Array.isArray(res.data) ? res.data.map((p) => p.id) : [];
-      if (stopped || profileIds.length === 0) return;
-      socket = io(`${getSocketUrl()}/ws`, {
-        transports: ['websocket', 'polling'],
-        auth: (cb) => cb({ token: localStorage.getItem('accessToken') ?? undefined }),
-        reconnection: true,
-      });
-      socket.on('connect', () => profileIds.forEach((profileId) => socket?.emit('join', { profileId })));
-      socket.on('call:update', () => void fetchCallsOpen());
-    });
-    return () => {
-      stopped = true;
-      socket?.disconnect();
-    };
-  }, [user, fetchCallsOpen]);
 
   // Fetch notifications when dropdown opens
   const openNotifDropdown = async () => {
