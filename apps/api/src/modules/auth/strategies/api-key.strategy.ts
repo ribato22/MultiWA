@@ -44,6 +44,11 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       throw new UnauthorizedException('API key expired');
     }
 
+    // A deactivated user's keys stop working, as their JWT sessions do (jwt.strategy.ts).
+    if (!key.user || !key.user.isActive) {
+      throw new UnauthorizedException('Invalid API key');
+    }
+
     // Update last used (throttled — avoid a DB write per request)
     const now = new Date();
     if (!key.lastUsedAt || now.getTime() - key.lastUsedAt.getTime() > LAST_USED_THROTTLE_MS) {
