@@ -624,7 +624,7 @@ export class BaileysAdapter implements IWhatsAppEngine {
     this.callFrom.delete(callId);
   }
 
-  /** Baileys has no call-link API. */
+  /** Baileys 6.17 (the pinned version) has no call-link API; 7.x adds `createCallLink`. */
   async createCallLink(_type: CallLinkType): Promise<string | null> {
     return null;
   }

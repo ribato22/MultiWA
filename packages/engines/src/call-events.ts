@@ -54,7 +54,7 @@ export function toJidString(value: unknown): string {
   return '';
 }
 
-/** undefined = not an outcome we know; null = a known outcome that is not final (Ongoing, Failed). */
+/** undefined = not an outcome we know; null = a known outcome without a usable final result (Ongoing, Failed). */
 function lookupOutcome(raw: unknown): CallLogOutcome | null | undefined {
   if (typeof raw === 'number') return OUTCOME_BY_NUMBER[raw];
   if (typeof raw !== 'string') return undefined;
@@ -72,7 +72,7 @@ function rawOutcomeOf(message: any): unknown {
   return OUTCOME_FIELDS.map((f) => data[f]).find((v) => v !== undefined && v !== null);
 }
 
-/** Raw call outcome (enum number, its name in any case, or a numeric string) -> ours; null = not final / unknown. */
+/** Raw call outcome (enum number, its name in any case, or a numeric string) -> ours; null = no usable final outcome / unknown. */
 export function parseCallLogOutcome(raw: unknown): CallLogOutcome | null {
   return lookupOutcome(raw) ?? null;
 }

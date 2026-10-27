@@ -1,4 +1,4 @@
-// whatsapp-web.js media-send patch guard.
+// whatsapp-web.js patch guard: media send and download, and incoming calls (see the call section).
 //
 // WhatsApp Web's MediaData is a model whose internal attributes are prefixed
 // `__x_`. `Utils.js` builds the outgoing Msg by spreading that model directly,
@@ -133,8 +133,8 @@ describe('whatsapp-web.js inbound media download patch', () => {
   });
 });
 
-// Incoming calls. Current WhatsApp Web sets WAWebCallCollection's `activeCall` instead
-// of filling its internal map, so whatsapp-web.js 1.34.7's map hook never fires and
+// Incoming calls. Current WhatsApp Web announces a call through WAWebCallCollection's
+// `change:activeCall` event (with the call) instead of filling its internal map, so whatsapp-web.js 1.34.7's map hook never fires and
 // `client.on('call')` stays silent; its reject stanza is ignored too
 // (wwebjs/whatsapp-web.js#201825, #201746). The patch listens to `change:activeCall`,
 // reports the end of a call (`multiwa_call_ended`) and rejects through the voip stack.
@@ -143,7 +143,7 @@ describe('whatsapp-web.js inbound media download patch', () => {
 // (`multiwa_call_log`), because that message carries the call's final outcome.
 // Two more things moved: `Client#createCallLink` asks for WAWebGenerateEventCallLink, which no
 // longer exists (WhatsApp's own "Create call link" is WAWebVoipCreateCallLink, in a lazily loaded
-// bundle), and `WAWebCallCollection` has no `activeCall` any more, so the reject guard reads the
+// bundle), and `WAWebCallCollection` exposes no readable `activeCall`, so the reject guard reads the
 // id the call hook tracks (`window._multiwaCallId`) instead.
 const installedClientJs = () => installedFile(['src', 'Client.js'], 'onMultiwaCallEnded');
 const installedUtilsJsWithReject = () => installedFile(['src', 'util', 'Injected', 'Utils.js'], 'WAWebVoipStackInterface');

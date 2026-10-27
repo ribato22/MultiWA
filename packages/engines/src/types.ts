@@ -24,11 +24,12 @@ export interface EngineConfig {
 }
 
 /**
- * What an engine reports about an incoming call:
+ * What an engine reports about an incoming call. whatsapp-web.js reports only `ringing` and
+ * `ended` (the outcome comes as a call log, see `onCallLog`); Baileys reports all five and no call logs.
  * - `ringing`: the incoming offer (Baileys calls it `offer`; Baileys' own `ringing` status is ignored)
- * - `accepted`: answered on another device of this account (we never answer)
- * - `rejected`: declined, by this account's phone or by us
- * - `missed`: the offer rang out unanswered (Baileys `timeout`, or a MISSED call log)
+ * - `accepted`: Baileys: answered on another device of this account (we never answer)
+ * - `rejected`: Baileys: declined, by this account's phone or by us
+ * - `missed`: Baileys: the offer rang out unanswered (`timeout`)
  * - `ended`: it stopped being the active call and the engine cannot tell how
  */
 export type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
