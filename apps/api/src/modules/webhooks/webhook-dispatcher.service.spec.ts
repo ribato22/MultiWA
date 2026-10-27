@@ -70,3 +70,22 @@ describe('WebhookDispatcherService', () => {
     expect(queue.add.mock.calls[0][2].jobId).toBeUndefined();
   });
 });
+
+describe('WebhookDispatcherService with ENGINE_HOST=worker', () => {
+  it('still dispatches the events the API produces itself (call.updated), nothing else', () => {
+    process.env.ENGINE_HOST = 'worker';
+    try {
+      let handler: (event: string, payload: unknown) => void = () => undefined;
+      const emitter = { onAny: (fn: any) => { handler = fn; } };
+      const svc = new WebhookDispatcherService(emitter as any, { add: vi.fn() } as any);
+      const dispatch = vi.spyOn(svc as any, 'dispatch').mockResolvedValue(undefined);
+      svc.onModuleInit();
+      handler(AppEvents.MESSAGE.RECEIVED, { profileId: 'p1' });
+      handler(AppEvents.CALL.UPDATED, { profileId: 'p1', callId: 'c1' });
+      expect(dispatch).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledWith(AppEvents.CALL.UPDATED, { profileId: 'p1', callId: 'c1' });
+    } finally {
+      delete process.env.ENGINE_HOST;
+    }
+  });
+});
