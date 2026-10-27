@@ -1,6 +1,6 @@
 // Pure call helpers of @multiwa/engines: JID strings, call-log outcomes, Baileys statuses.
 import { describe, it, expect } from 'vitest';
-import { toJidString, parseCallLogOutcome, readCallLog, mapBaileysCallStatus } from '@multiwa/engines';
+import { toJidString, parseCallLogOutcome, readCallLog, isPendingCallLog, mapBaileysCallStatus } from '@multiwa/engines';
 
 describe('toJidString', () => {
   it('accepts every shape WhatsApp Web hands over', () => {
@@ -22,6 +22,16 @@ describe('parseCallLogOutcome', () => {
     ['constructor', null], ['__proto__', null],
     [undefined, null],
   ])('%s -> %s', (raw, expected) => {
+    expect(parseCallLogOutcome(raw)).toBe(expected);
+  });
+
+  // The names a live WhatsApp Web 2.3000.10518155xx puts in `callOutcome` (PascalCase).
+  it.each([
+    ['Missed', 'missed'], ['Rejected', 'rejected'], ['Ongoing', null],
+    ['AcceptedElsewhere', 'answered_elsewhere'],
+    ['Completed', 'answered_elsewhere'], // older synced logs say Completed for a call that was answered
+    ['SilencedByDnd', 'missed'], ['SilencedUnknownCaller', 'missed'], ['Failed', null], ['Connected', 'answered_elsewhere'],
+  ])('%s (as WhatsApp Web names it) -> %s', (raw, expected) => {
     expect(parseCallLogOutcome(raw)).toBe(expected);
   });
 });
@@ -63,6 +73,39 @@ describe('readCallLog', () => {
     });
   });
 
+  it('carries the engine call id when the message id ends in it (verified on live calls)', () => {
+    const entry = readCallLog({ ...base, id: { _serialized: 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDE' } });
+    expect(entry?.callId).toBe('00A9D2BADD351F56B87282EBA95ABCDE');
+    expect(entry?.messageId, 'the dedupe key stays the whole message id').toBe('false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDE');
+  });
+
+  it.each([
+    ['an id without a hex suffix', 'false_628111000111@c.us_ABC'],
+    ['a suffix that is hex but too short', 'false_123456@lid_00A9D2BADD35'],
+    ['a suffix that is too long', `false_123456@lid_${'A'.repeat(65)}`],
+    ['a suffix that is not hex', 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDG'],
+    ['a participant JID behind the call id', 'false_123456@g.us_00A9D2BADD351F56B87282EBA95ABCDE_555@lid'],
+    ['an id with no underscore at all', '00A9D2BADD351F56B87282EBA95ABCDE'],
+  ])('has no callId for %s', (_what, serialized) => {
+    const entry = readCallLog({ ...base, id: { _serialized: serialized } });
+    expect(entry).not.toBeNull();
+    expect(entry!.callId).toBeUndefined();
+    expect('callId' in entry!, 'omitted, not set to undefined').toBe(false);
+  });
+
+  it('accepts a lower-case call id too', () => {
+    expect(readCallLog({ ...base, id: { _serialized: 'false_1@lid_00a9d2badd351f56b87282eba95abcde' } })?.callId).toBe('00a9d2badd351f56b87282eba95abcde');
+  });
+
+  it('has no callId when it had to build the message id itself', () => {
+    expect(readCallLog({ ...base, id: undefined })?.callId).toBeUndefined();
+  });
+
+  it('reads the shape a live WhatsApp Web gives (outcome by name, isVideoCall flag)', () => {
+    expect(readCallLog({ ...base, _data: { callOutcome: 'Missed', isVideoCall: true } })).toMatchObject({ isVideo: true, outcome: 'missed' });
+    expect(readCallLog({ ...base, _data: { callOutcome: 'AcceptedElsewhere', isVideoCall: false } })).toMatchObject({ isVideo: false, outcome: 'answered_elsewhere' });
+  });
+
   it('ignores other message types, own calls and logs without a final outcome', () => {
     expect(readCallLog({ ...base, type: 'chat' })).toBeNull();
     expect(readCallLog({ ...base, fromMe: true })).toBeNull();
@@ -98,6 +141,42 @@ describe('readCallLog', () => {
       const entry = readCallLog({ ...base, timestamp });
       expect(Math.abs(entry!.timestamp.getTime() - Date.now())).toBeLessThan(5_000);
     }
+  });
+});
+
+describe('isPendingCallLog', () => {
+  const log = (callOutcome: unknown, extra: Record<string, unknown> = {}) => ({
+    type: 'call_log', id: { _serialized: 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDE' }, from: '123456@lid',
+    fromMe: false, timestamp: 1_790_000_000, _data: { callOutcome, isVideoCall: false }, ...extra,
+  });
+
+  it.each(['Ongoing', 'ONGOING', 'ongoing', 5, '5', 'failed', 'Failed', 2])('%s: a known outcome that is not final yet', (raw) => {
+    expect(isPendingCallLog(log(raw))).toBe(true);
+    expect(readCallLog(log(raw)), 'and it is exactly what readCallLog gives no entry for').toBeNull();
+  });
+
+  it.each(['Missed', 'Rejected', 'AcceptedElsewhere', 'Completed', 1, 3, 4, 0])('%s: final, so not pending', (raw) => {
+    expect(isPendingCallLog(log(raw))).toBe(false);
+  });
+
+  it('an outcome it does not know is not pending (that is a shape to warn about)', () => {
+    expect(isPendingCallLog(log('SomethingNew'))).toBe(false);
+    expect(isPendingCallLog(log(99))).toBe(false);
+    expect(isPendingCallLog(log('constructor'))).toBe(false);
+    expect(isPendingCallLog(log(undefined))).toBe(false);
+    expect(isPendingCallLog({ ...log('Ongoing'), _data: undefined })).toBe(false);
+  });
+
+  it('only an incoming call log can be pending', () => {
+    expect(isPendingCallLog(log('Ongoing', { fromMe: true }))).toBe(false);
+    expect(isPendingCallLog(log('Ongoing', { type: 'chat' }))).toBe(false);
+    expect(isPendingCallLog(null)).toBe(false);
+    expect(isPendingCallLog(undefined)).toBe(false);
+  });
+
+  it('reads the same outcome field readCallLog reads (the first one present)', () => {
+    expect(isPendingCallLog({ ...log(undefined), _data: { outcome: 'ONGOING' } })).toBe(true);
+    expect(isPendingCallLog({ ...log(undefined), _data: { callOutcome: 'Missed', outcome: 'ONGOING' } })).toBe(false);
   });
 });
 

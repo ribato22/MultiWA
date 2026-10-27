@@ -158,8 +158,9 @@ describe('WhatsAppWebJsAdapter calls', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const base = { type: 'call_log', id: { _serialized: 'x1' }, from: '628111000111@c.us', fromMe: false, timestamp: 1_790_000_000 };
     client.emit('message_create', { ...base, _data: { callResult: 9 } });
-    client.emit('message_create', { ...base, id: { _serialized: 'x2' }, _data: { callOutcome: 'ONGOING' } });
+    client.emit('message_create', { ...base, id: { _serialized: 'x2' }, _data: { callOutcome: 'SomethingNew' } });
     client.emit('message_create', { ...base, id: { _serialized: 'x3' }, fromMe: true, _data: { callOutcome: 'MISSED' } });
+    client.emit('message_create', { ...base, id: { _serialized: 'x4' }, _data: { callOutcome: 'ONGOING' } }); // pending is normal, not a shape to warn about
     client.emit('message_create', { type: 'chat', id: { _serialized: 'm1' }, from: '628111000111@c.us', body: 'hi', _data: {} });
     expect(config.onCallLog).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(2);
@@ -176,6 +177,93 @@ describe('WhatsAppWebJsAdapter calls', () => {
       });
     }
     expect(warn).toHaveBeenCalledTimes(20);
+  });
+
+  // The patch's `multiwa_call_log` event: whatsapp-web.js never emits `message_create` for a call
+  // log, so the patch forwards each new one when it is added AND on every change. Every live call
+  // starts as `Ongoing` and only later turns into Missed / Rejected / AcceptedElsewhere.
+  describe('multiwa_call_log', () => {
+    const CALL_ID = '00A9D2BADD351F56B87282EBA95ABCDE';
+    const callLog = (callOutcome: unknown, extra: Record<string, unknown> = {}) => ({
+      type: 'call_log', id: { _serialized: `false_123456@lid_${CALL_ID}` }, from: '123456@lid', fromMe: false,
+      timestamp: 1_790_000_000, _data: { callOutcome, isVideoCall: true }, ...extra,
+    });
+
+    it('turns a final outcome into one call-log entry that carries the call id', () => {
+      const { client, config } = wire();
+      client.emit('multiwa_call_log', callLog('Missed'));
+      expect(config.onCallLog).toHaveBeenCalledTimes(1);
+      expect(config.onCallLog).toHaveBeenCalledWith({
+        messageId: `false_123456@lid_${CALL_ID}`, callId: CALL_ID, from: '123456@lid', isVideo: true,
+        outcome: 'missed', timestamp: new Date(1_790_000_000 * 1000),
+      });
+    });
+
+    it('reports the same final outcome once however often WhatsApp repeats it (each change fires twice)', () => {
+      const { client, config } = wire();
+      client.emit('multiwa_call_log', callLog('Missed'));
+      client.emit('multiwa_call_log', callLog('Missed'));
+      expect(config.onCallLog).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays silent about a pending (Ongoing) log: nothing reported, nothing warned', () => {
+      const { client, config } = wire();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      for (const outcome of ['Ongoing', 'ONGOING', 5, 'Failed']) client.emit('multiwa_call_log', callLog(outcome));
+      expect(config.onCallLog).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('warns once about an outcome it does not know, and reports nothing', () => {
+      const { client, config } = wire();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      client.emit('multiwa_call_log', callLog('SomethingNew'));
+      client.emit('multiwa_call_log', callLog('SomethingNew'));
+      expect(config.onCallLog).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).not.toContain('123456');
+    });
+
+    it('does not remember a pending log, so its final change still gets through (Ongoing, then Missed: one entry, missed)', () => {
+      const { client, config } = wire();
+      client.emit('multiwa_call_log', callLog('Ongoing'));
+      client.emit('multiwa_call_log', callLog('Ongoing'));
+      client.emit('multiwa_call_log', callLog('Missed'));
+      client.emit('multiwa_call_log', callLog('Missed'));
+      expect(config.onCallLog).toHaveBeenCalledTimes(1);
+      expect(config.onCallLog.mock.calls[0][0]).toMatchObject({ callId: CALL_ID, outcome: 'missed' });
+    });
+
+    it('reports a rejected and an answered-elsewhere call too', () => {
+      const { client, config } = wire();
+      client.emit('multiwa_call_log', callLog('Rejected', { id: { _serialized: 'false_123456@lid_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' } }));
+      client.emit('multiwa_call_log', callLog('AcceptedElsewhere', { id: { _serialized: 'false_123456@lid_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' } }));
+      expect(config.onCallLog.mock.calls.map((c: any[]) => c[0].outcome)).toEqual(['rejected', 'answered_elsewhere']);
+    });
+
+    it('ignores the account\'s own calls and other message types', () => {
+      const { client, config } = wire();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      client.emit('multiwa_call_log', callLog('Missed', { fromMe: true }));
+      client.emit('multiwa_call_log', callLog('Missed', { type: 'chat' }));
+      expect(config.onCallLog).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('shares its dedupe with message_create, so a build that emits both reports the call once', () => {
+      const { client, config } = wire();
+      client.emit('message_create', callLog('Missed'));
+      client.emit('multiwa_call_log', callLog('Missed'));
+      expect(config.onCallLog).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the event emitter alive when the call-log handler throws', () => {
+      const { client, config } = wire();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      config.onCallLog.mockImplementation(() => { throw new Error('db down'); });
+      expect(() => client.emit('multiwa_call_log', callLog('Missed'))).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('db down'));
+    });
   });
 
   it('createCallLink returns the link, and fails loudly when not ready or WhatsApp gives none', async () => {

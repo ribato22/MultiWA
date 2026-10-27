@@ -4,7 +4,7 @@
 import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
-import { readCallLog, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
+import { readCallLog, isPendingCallLog, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -266,22 +266,35 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       });
     });
 
-    // Call-log messages ("Missed voice call") arrive like any new message.
-    this.client.on('message_create', (message: any) => {
-      if (message?.type !== 'call_log') return;
-      const entry = readCallLog(message);
-      if (!entry) {
-        if (!message.fromMe) this.warnUnreadableCallLog(message); // own outgoing calls are ignored on purpose
-        return;
-      }
-      if (this.seenCallLogs.has(entry.messageId)) return;
-      remember(this.seenCallLogs, entry.messageId, MAX_REMEMBERED_IDS);
-      try {
-        this.config?.onCallLog?.(entry);
-      } catch (e) {
-        console.warn(`[WhatsApp-WebJS] onCallLog handler failed: ${(e as Error).message}`);
-      }
-    });
+    // Call-log messages ("Missed voice call"). whatsapp-web.js 1.34.7 never emits `message_create`
+    // for them (it drops a message that is not new when it is added, and a call log is added
+    // before WhatsApp marks it new), so the patch forwards them as `multiwa_call_log`: on add
+    // and on every change, as the outcome goes Ongoing -> Missed / Rejected / AcceptedElsewhere.
+    // `message_create` stays for builds that do emit them. Both share one handler and one dedupe.
+    this.client.on('message_create', (message: any) => this.handleCallLogMessage(message));
+    this.client.on('multiwa_call_log', (message: any) => this.handleCallLogMessage(message));
+  }
+
+  /**
+   * One call-log message, from either event. Reported once per message, when its outcome is
+   * final. A pending log (Ongoing) is normal, so it is neither warned about nor remembered:
+   * its change to the final outcome must still get through.
+   */
+  private handleCallLogMessage(message: any): void {
+    if (message?.type !== 'call_log') return;
+    const entry = readCallLog(message);
+    if (!entry) {
+      // Own outgoing calls are ignored on purpose, and so is a log that is merely not final yet.
+      if (!message.fromMe && !isPendingCallLog(message)) this.warnUnreadableCallLog(message);
+      return;
+    }
+    if (this.seenCallLogs.has(entry.messageId)) return;
+    remember(this.seenCallLogs, entry.messageId, MAX_REMEMBERED_IDS);
+    try {
+      this.config?.onCallLog?.(entry);
+    } catch (e) {
+      console.warn(`[WhatsApp-WebJS] onCallLog handler failed: ${(e as Error).message}`);
+    }
   }
 
   async rejectCall(callId: string): Promise<void> {
@@ -307,9 +320,9 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   }
 
   /**
-   * An incoming call's call-log message that yields no entry is not final yet (ONGOING,
-   * FAILED), has no caller, or WhatsApp Web renamed its fields. Say so once per shape (at
-   * most MAX_WARNED_SHAPES), never with content.
+   * An incoming call's call-log message that yields no entry and is not merely pending
+   * (ONGOING, FAILED) has no caller, or WhatsApp Web renamed its fields or outcomes. Say so
+   * once per shape (at most MAX_WARNED_SHAPES), never with content.
    */
   private warnUnreadableCallLog(message: any): void {
     const data = message?._data ?? {};

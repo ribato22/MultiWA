@@ -136,6 +136,9 @@ describe('whatsapp-web.js inbound media download patch', () => {
 // `client.on('call')` stays silent; its reject stanza is ignored too
 // (wwebjs/whatsapp-web.js#201825, #201746). The patch listens to `change:activeCall`,
 // reports the end of a call (`multiwa_call_ended`) and rejects through the voip stack.
+// whatsapp-web.js also never emits `message_create` for a call-log message ("Missed voice
+// call"): it adds one before WhatsApp marks it new. The patch forwards call logs itself
+// (`multiwa_call_log`), because that message carries the call's final outcome.
 const installedClientJs = () => installedFile(['src', 'Client.js'], 'onMultiwaCallEnded');
 const installedUtilsJsWithReject = () => installedFile(['src', 'util', 'Injected', 'Utils.js'], 'WAWebVoipStackInterface');
 
@@ -147,6 +150,12 @@ describe('whatsapp-web.js call patch', () => {
     expect(patch).toMatch(/^\+.*WAWebVoipStackInterface/m);
   });
 
+  it('the patch forwards call-log messages', () => {
+    const patch = readFileSync(PATCH_FILE, 'utf8');
+    expect(patch).toMatch(/^\+.*onMultiwaCallLog/m);
+    expect(patch).toMatch(/^\+.*multiwa_call_log/m);
+  });
+
   it('is actually APPLIED to the installed Client.js', () => {
     const file = installedClientJs();
     expect(file, 'no installed whatsapp-web.js@1.34.7 found — run pnpm install').not.toBeNull();
@@ -154,6 +163,9 @@ describe('whatsapp-web.js call patch', () => {
     expect(src).toContain("WAWebCallCollection.on('change:activeCall'");
     expect(src).toContain("exposeFunctionIfAbsent(this.pupPage, 'onMultiwaCallEnded'");
     expect(src).toContain("this.emit('multiwa_call_ended'");
+    expect(src).toContain("exposeFunctionIfAbsent(this.pupPage, 'onMultiwaCallLog'");
+    expect(src).toContain("this.emit('multiwa_call_log'");
+    expect(src).toContain("Msg.on('add', reportCallLog)");
   });
 
   it('rejects through the voip stack before the old stanza', () => {
@@ -179,7 +191,9 @@ const sliceBetween = (src: string, from: string, to: string): string => {
 
 // `onThrowsOnce`: the first `collection.on(...)` throws, and the harness does NOT inject by itself,
 // so the test can watch that first injection fail (`inject()` runs the block in the same `window`).
-const callHook = (opts: { onThrowsOnce?: boolean } = {}) => {
+// `noCollection`: a build without WAWebCallCollection (the call hook is skipped, the rest of the block still runs).
+// The block also hangs the call-log listener on `Msg`, a free variable of the evaluate callback: a tiny emitter here.
+const callHook = (opts: { onThrowsOnce?: boolean; noCollection?: boolean } = {}) => {
   const block = sliceBetween(
     readFileSync(installedClientJs()!, 'utf8'),
     "const WAWebCallCollection = window.require('WAWebCallCollection');",
@@ -198,17 +212,25 @@ const callHook = (opts: { onThrowsOnce?: boolean } = {}) => {
     },
     trigger: (ev: string, ...a: any[]) => handlers[ev]?.forEach((fn) => fn(...a)),
   };
+  const msgHandlers: Record<string, Array<(...a: any[]) => void>> = {};
+  const Msg = {
+    on: (ev: string, fn: (...a: any[]) => void) => (msgHandlers[ev] ||= []).push(fn),
+    trigger: (ev: string, ...a: any[]) => msgHandlers[ev]?.forEach((fn) => fn(...a)),
+  };
   const reported: string[] = [];
   const ended: string[] = [];
+  const callLogs: any[] = [];
   const win: any = {
-    require: () => collection,
+    require: () => (opts.noCollection ? undefined : collection),
     onIncomingCall: (c: any) => reported.push(c.id),
     onMultiwaCallEnded: (d: any) => ended.push(d.id),
+    onMultiwaCallLog: (m: any) => callLogs.push(m),
+    WWebJS: { getMessageModel: (m: any) => ({ ...m }) }, // the real one serializes the model; a copy keeps each snapshot apart
   };
-  const inject = () => new Function('window', block)(win);
+  const inject = () => new Function('window', 'Msg', block)(win, Msg);
   if (!opts.onThrowsOnce) inject();
   const call = (id: string, state?: number) => ({ id, peerJid: { $1: `${id}@c.us` }, getState: () => state });
-  return { collection, handlers, reported, ended, win, call, inject, activate: (c?: any) => collection.trigger('change:activeCall', c) };
+  return { collection, handlers, reported, ended, win, call, inject, activate: (c?: any) => collection.trigger('change:activeCall', c), Msg, msgHandlers, callLogs };
 };
 
 describe('whatsapp-web.js call hook behaviour', () => {
@@ -275,6 +297,78 @@ describe('whatsapp-web.js call hook behaviour', () => {
     expect(h.handlers['change:activeCall'], 'the "registered" flag is set only after on() succeeded').toHaveLength(1);
     h.activate(h.call('A', 3));
     expect(h.reported).toEqual(['A']);
+  });
+});
+
+// A live call log is ADDED with `isNewMsg` unset and outcome Ongoing, CHANGES to `isNewMsg: true` (still Ongoing),
+// and a few ms after the call's slot clears changes to the final outcome; every change fires twice. History
+// replays (about 230 events on connect) keep `isNewMsg` unset and must stay out, or old calls would be acted on.
+describe('whatsapp-web.js call-log forwarding behaviour', () => {
+  const callLog = (extra: Record<string, unknown> = {}) => ({
+    id: 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDE', type: 'call_log', callOutcome: 'Ongoing', isNewMsg: true, ...extra,
+  });
+
+  it('forwards a new call log when it is added and again on every change', () => {
+    const h = callHook();
+    const msg = callLog();
+    h.Msg.trigger('add', msg);
+    msg.callOutcome = 'Missed';
+    h.Msg.trigger('change', msg);
+    h.Msg.trigger('change', msg); // WhatsApp fires each change twice; the adapter dedupes
+    expect(h.callLogs.map((m) => m.callOutcome)).toEqual(['Ongoing', 'Missed', 'Missed']);
+    expect(h.callLogs[0]).toMatchObject({ id: msg.id, type: 'call_log' });
+  });
+
+  it('follows a live call: added unmarked, marked new, then its final outcome', () => {
+    const h = callHook();
+    const msg: any = callLog({ isNewMsg: undefined });
+    h.Msg.trigger('add', msg);
+    expect(h.callLogs, 'added with isNewMsg unset: not forwarded yet').toEqual([]);
+    msg.isNewMsg = true;
+    h.Msg.trigger('change', msg);
+    msg.callOutcome = 'Rejected';
+    h.Msg.trigger('change', msg);
+    expect(h.callLogs.map((m) => m.callOutcome)).toEqual(['Ongoing', 'Rejected']);
+  });
+
+  it('leaves out history replays (isNewMsg not true) and messages that are not call logs', () => {
+    const h = callHook();
+    h.Msg.trigger('add', callLog({ isNewMsg: undefined }));
+    h.Msg.trigger('add', callLog({ isNewMsg: false }));
+    h.Msg.trigger('change', callLog({ isNewMsg: 1 })); // only a real `true` counts
+    h.Msg.trigger('add', callLog({ type: 'chat' }));
+    h.Msg.trigger('change', callLog({ type: 'chat' }));
+    h.Msg.trigger('add', undefined);
+    h.Msg.trigger('change', null);
+    expect(h.callLogs).toEqual([]);
+  });
+
+  it('never lets a failing page function throw into WhatsApp, and keeps the error readable', () => {
+    const h = callHook();
+    h.win.onMultiwaCallLog = () => { throw new TypeError('the node side is gone'); };
+    expect(() => h.Msg.trigger('add', callLog())).not.toThrow();
+    expect(h.win._multiwaLastError).toMatch(/the node side is gone/);
+
+    h.win._multiwaLastError = undefined;
+    h.win.WWebJS.getMessageModel = () => { throw new Error('half-built model'); };
+    expect(() => h.Msg.trigger('change', callLog())).not.toThrow();
+    expect(h.win._multiwaLastError).toMatch(/half-built model/);
+  });
+
+  it('registers one add and one change listener however often it is injected', () => {
+    const h = callHook();
+    h.inject(); h.inject();
+    expect(h.msgHandlers.add).toHaveLength(1);
+    expect(h.msgHandlers.change).toHaveLength(1);
+    h.Msg.trigger('add', callLog());
+    expect(h.callLogs, 'one listener, one forward').toHaveLength(1);
+  });
+
+  it('still registers on a build without the call collection', () => {
+    const h = callHook({ noCollection: true });
+    expect(h.handlers['change:activeCall'] ?? []).toHaveLength(0);
+    h.Msg.trigger('add', callLog());
+    expect(h.callLogs).toHaveLength(1);
   });
 });
 

@@ -51,10 +51,12 @@ export interface IncomingCall {
 /** Final outcome carried by a WhatsApp call-log message. */
 export type CallLogOutcome = 'missed' | 'rejected' | 'answered_elsewhere';
 
-/** A call-log message, normalized. It has no call id: match it to a call by caller and time. */
+/** A call-log message, normalized. Match it to a call by `callId` when present, otherwise by caller and time. */
 export interface CallLogEntry {
   /** The call-log message id (dedupe key). */
   messageId: string;
+  /** The engine call id this log belongs to, when WhatsApp's message id carries it (whatsapp-web.js: `<fromMe>_<peer>_<callId>`). Match a call by it before falling back to caller and time. */
+  callId?: string;
   from: string;
   isVideo: boolean;
   outcome: CallLogOutcome;

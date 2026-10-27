@@ -5,7 +5,8 @@
 // Its outcome is the authoritative end of the call: whatsapp-web.js' live call events
 // only say that the call stopped ringing, not whether it was answered on the phone.
 // Outcome values follow WAProto's Message.CallLogMessage.CallOutcome; WhatsApp Web may
-// expose them as the enum number or as its name, so both are accepted.
+// expose them as the enum number or as its name (in any case, PascalCase on current
+// builds), so all are accepted.
 
 import { resolveWaMessageId } from '@multiwa/core';
 import type { CallLogEntry, CallLogOutcome, CallState } from './types';
@@ -30,11 +31,13 @@ const OUTCOME_BY_NAME: Record<string, CallLogOutcome | null> = {
   ongoing: null,
   silenced_by_dnd: 'missed',
   silenced_unknown_caller: 'missed',
+  completed: 'answered_elsewhere', // older synced logs say Completed for a call that was answered
 };
 
-// UNVERIFIED until the live probe (Milestone 0): names guessed from WAProto's
-// CallLogMessage. Confirm against a real call_log `_data`, extend when WhatsApp
-// renames them. The first outcome field present wins; any true video field wins.
+// Verified on a live WhatsApp Web 2.3000.10518155xx (2026-10-27): `callOutcome` holds the
+// outcome's name (Ongoing / Missed / Rejected / AcceptedElsewhere / Completed) and
+// `isVideoCall` the flag. Extend when WhatsApp renames them. The first outcome field
+// present wins; any true video field wins.
 const OUTCOME_FIELDS = ['callOutcome', 'outcome'];
 const VIDEO_FIELDS = ['isVideoCall', 'isVideo', 'callIsVideo'];
 
@@ -50,26 +53,57 @@ export function toJidString(value: unknown): string {
   return '';
 }
 
+/** undefined = not an outcome we know; null = a known outcome that is not final (Ongoing, Failed). */
+function lookupOutcome(raw: unknown): CallLogOutcome | null | undefined {
+  if (typeof raw === 'number') return OUTCOME_BY_NUMBER[raw];
+  if (typeof raw !== 'string') return undefined;
+  // camelCase first (AcceptedElsewhere -> accepted_elsewhere). No nested quantifiers: no ReDoS.
+  const key = raw.trim().replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().replace(/[\s-]+/g, '_');
+  if (/^\d+$/.test(key)) return OUTCOME_BY_NUMBER[Number(key)];
+  // Own keys only: a plain-object lookup returns Object for 'constructor'.
+  return Object.prototype.hasOwnProperty.call(OUTCOME_BY_NAME, key) ? OUTCOME_BY_NAME[key] : undefined;
+}
+
+/** The raw outcome of a call-log message: the first outcome field that is present. */
+function rawOutcomeOf(message: any): unknown {
+  const data = message?._data ?? {};
+  return OUTCOME_FIELDS.map((f) => data[f]).find((v) => v !== undefined && v !== null);
+}
+
 /** Raw call outcome (enum number, its name in any case, or a numeric string) -> ours; null = not final / unknown. */
 export function parseCallLogOutcome(raw: unknown): CallLogOutcome | null {
-  if (typeof raw === 'number') return OUTCOME_BY_NUMBER[raw] ?? null;
-  if (typeof raw !== 'string') return null;
-  const key = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (/^\d+$/.test(key)) return OUTCOME_BY_NUMBER[Number(key)] ?? null;
-  // Own keys only: a plain-object lookup returns Object for 'constructor'.
-  return Object.prototype.hasOwnProperty.call(OUTCOME_BY_NAME, key) ? OUTCOME_BY_NAME[key] : null;
+  return lookupOutcome(raw) ?? null;
+}
+
+/**
+ * An incoming call-log message whose outcome is one we know but that is not final yet
+ * (Ongoing, Failed). Every live call starts as Ongoing, so this is normal, not a shape to
+ * warn about; `readCallLog` gives no entry for it until the outcome changes.
+ */
+export function isPendingCallLog(message: any): boolean {
+  if (!message || message.type !== 'call_log' || message.fromMe) return false;
+  return lookupOutcome(rawOutcomeOf(message)) === null;
+}
+
+// A call log's message id is `<fromMe>_<peer>_<CALLID>`, CALLID being the engine's own call id
+// (32 upper-case hex characters, verified on live calls). Anything else after the last `_`
+// (a participant JID, a short token) is not one.
+const CALL_ID = /^[0-9A-Fa-f]{16,64}$/;
+
+function callIdOf(messageId: string): string | undefined {
+  const last = messageId.slice(messageId.lastIndexOf('_') + 1);
+  return last !== messageId && CALL_ID.test(last) ? last : undefined;
 }
 
 /**
  * A whatsapp-web.js message of type `call_log`, normalized. Null unless it is an incoming
  * call with a final outcome, a caller JID, and an id or a plausible timestamp (an
- * implausible timestamp is replaced by now).
+ * implausible timestamp is replaced by now). `callId` is set when the message id carries it.
  */
 export function readCallLog(message: any): CallLogEntry | null {
   if (!message || message.type !== 'call_log' || message.fromMe) return null; // incoming calls only
   const data = message._data ?? {};
-  const rawOutcome = OUTCOME_FIELDS.map((f) => data[f]).find((v) => v !== undefined && v !== null);
-  const outcome = parseCallLogOutcome(rawOutcome);
+  const outcome = parseCallLogOutcome(rawOutcomeOf(message));
   if (!outcome) return null;
   const from = toJidString(message.from);
   if (!from) return null;
@@ -79,8 +113,10 @@ export function readCallLog(message: any): CallLogEntry | null {
   const id = resolveWaMessageId(message);
   if (!id && !validTs) return null; // no stable dedupe key
   const seconds = validTs ? ts : Math.floor(Date.now() / 1000);
+  const callId = id ? callIdOf(id) : undefined;
   return {
     messageId: id ?? `call_log:${from}:${seconds}`,
+    ...(callId ? { callId } : {}),
     from,
     isVideo: VIDEO_FIELDS.some((f) => data[f] === true),
     outcome,

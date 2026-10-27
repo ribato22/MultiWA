@@ -1,8 +1,8 @@
 diff --git a/src/Client.js b/src/Client.js
-index 800109ebf7720d5f0f29091518a8a25f7fd8e381..00246bf4c654df6369bb96ff364416932e19c1f0 100644
+index 800109ebf7720d5f0f29091518a8a25f7fd8e381..7db03be8928527bedce73e246f3a6178d802e57e 100644
 --- a/src/Client.js
 +++ b/src/Client.js
-@@ -893,6 +893,15 @@ class Client extends EventEmitter {
+@@ -893,6 +893,23 @@ class Client extends EventEmitter {
              this.emit(Events.INCOMING_CALL, cll);
          });
  
@@ -15,21 +15,21 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..00246bf4c654df6369bb96ff36441693
 +            this.emit('multiwa_call_ended', data);
 +        });
 +
++        await exposeFunctionIfAbsent(this.pupPage, 'onMultiwaCallLog', (msg) => {
++            /**
++             * MultiWA patch: a new call-log message ("Missed voice call") was added or
++             * changed. Its outcome goes Ongoing -> Missed / Rejected / AcceptedElsewhere.
++             */
++            this.emit('multiwa_call_log', new Message(this, msg));
++        });
++
          await exposeFunctionIfAbsent(
              this.pupPage,
              'onReaction',
-@@ -1074,26 +1083,86 @@ class Client extends EventEmitter {
+@@ -1074,26 +1091,104 @@ class Client extends EventEmitter {
                  WAWebCallCollection &&
                  typeof WAWebCallCollection.on === 'function'
              ) {
--                const mapKey = Object.keys(WAWebCallCollection).find(
--                    (k) => WAWebCallCollection[k] instanceof Map,
--                );
--                const internalCallMap = WAWebCallCollection[mapKey];
--                const originalMapSet =
--                    internalCallMap.set.bind(internalCallMap);
--
--                internalCallMap.set = function (key, value) {
 +                // MultiWA patch (adapted from wwebjs/whatsapp-web.js#201825): current
 +                // WhatsApp Web sets the collection's `activeCall` instead of adding
 +                // calls to its internal map, so the map hook alone never fires.
@@ -59,15 +59,7 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..00246bf4c654df6369bb96ff36441693
 +                        return;
 +                    }
 +                    window._multiwaCallId = call.id;
-                     window.onIncomingCall({
--                        id: value.id,
--                        peerJid: value.peerJid,
--                        isVideo: value.isVideo,
--                        isGroup: value.isGroup,
--                        canHandleLocally: value.canHandleLocally,
--                        outgoing: value.outgoing,
--                        webClientShouldHandle: value.webClientShouldHandle,
--                        participants: value.participants,
++                    window.onIncomingCall({
 +                        id: call.id,
 +                        peerJid: toJid(call.peerJid),
 +                        isVideo: call.isVideo,
@@ -76,9 +68,8 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..00246bf4c654df6369bb96ff36441693
 +                        outgoing: call.outgoing,
 +                        webClientShouldHandle: call.webClientShouldHandle,
 +                        participants: call.participants,
-                     });
--                    return originalMapSet(key, value);
-                 };
++                    });
++                };
 +                if (!window._multiwaCallListener) {
 +                    WAWebCallCollection.on('change:activeCall', (call) =>
 +                        safely(() => {
@@ -104,9 +95,25 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..00246bf4c654df6369bb96ff36441693
 +                    window._multiwaCallListener = true;
 +                }
 +                // Fallback for WhatsApp Web builds that still fill the internal map.
-+                const mapKey = Object.keys(WAWebCallCollection).find(
-+                    (k) => WAWebCallCollection[k] instanceof Map,
-+                );
+                 const mapKey = Object.keys(WAWebCallCollection).find(
+                     (k) => WAWebCallCollection[k] instanceof Map,
+                 );
+-                const internalCallMap = WAWebCallCollection[mapKey];
+-                const originalMapSet =
+-                    internalCallMap.set.bind(internalCallMap);
+-
+-                internalCallMap.set = function (key, value) {
+-                    window.onIncomingCall({
+-                        id: value.id,
+-                        peerJid: value.peerJid,
+-                        isVideo: value.isVideo,
+-                        isGroup: value.isGroup,
+-                        canHandleLocally: value.canHandleLocally,
+-                        outgoing: value.outgoing,
+-                        webClientShouldHandle: value.webClientShouldHandle,
+-                        participants: value.participants,
+-                    });
+-                    return originalMapSet(key, value);
 +                if (mapKey) {
 +                    const internalCallMap = WAWebCallCollection[mapKey];
 +                    if (!internalCallMap._multiwaHooked) {
@@ -119,6 +126,24 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..00246bf4c654df6369bb96ff36441693
 +                        internalCallMap._multiwaHooked = true;
 +                    }
 +                }
++            }
++            // MultiWA patch: forward call-log messages. WhatsApp adds them before it marks
++            // them new and fills in the outcome later, so the 'add' hook below never sees
++            // them. Forward each new one on add and on every change; the adapter keeps the
++            // final outcome once per message. History replays (isNewMsg unset) stay out.
++            if (!window._multiwaCallLogListener) {
++                const reportCallLog = (msg) => {
++                    try {
++                        if (msg && msg.type === 'call_log' && msg.isNewMsg === true) {
++                            window.onMultiwaCallLog(window.WWebJS.getMessageModel(msg));
++                        }
++                    } catch (e) {
++                        window._multiwaLastError = String((e && e.message) || e);
++                    }
+                 };
++                Msg.on('add', reportCallLog);
++                Msg.on('change', reportCallLog);
++                window._multiwaCallLogListener = true;
              }
              Chat.on('remove', async (chat) => {
                  window.onRemoveChatEvent(
