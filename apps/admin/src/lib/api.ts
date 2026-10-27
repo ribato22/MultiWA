@@ -547,6 +547,13 @@ class ApiClient {
     );
   }
 
+  // One conversation, shaped like a row of the list. The row of the API names the chat in `contact` (the list
+  // computes `contactName`) and comes with its messages: one is enough, they can carry inline media.
+  async getConversation(id: string) {
+    const res = await this.request<Conversation & { contact?: { name: string | null } | null }>(`/conversations/${id}?messageLimit=1`);
+    return res.data ? { ...res, data: { ...res.data, contactName: res.data.contact?.name ?? undefined } } : res;
+  }
+
   // Org-wide total unread message count (for the sidebar Chat badge).
   async getChatUnreadCount() {
     return this.request<{ count: number }>('/conversations/unread-count');

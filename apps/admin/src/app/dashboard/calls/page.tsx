@@ -43,7 +43,7 @@ function OutcomeIcon({ call }: { call: CallRecord }) {
   if (call.outcome === 'ringing') return <PhoneIncoming className="w-4 h-4 text-primary animate-pulse" aria-hidden="true" />;
   if (call.outcome === 'rejected') return <PhoneOff className="w-4 h-4 text-amber-400" aria-hidden="true" />;
   if (call.outcome === 'answered_elsewhere') return <Phone className="w-4 h-4 text-emerald-400" aria-hidden="true" />;
-  return <PhoneMissed className="w-4 h-4 text-red-400" aria-hidden="true" />;
+  return <PhoneMissed className={`w-4 h-4 ${call.outcome === 'unknown' ? 'text-muted-foreground' : 'text-red-400'}`} aria-hidden="true" />;
 }
 
 export default function CallsPage() {

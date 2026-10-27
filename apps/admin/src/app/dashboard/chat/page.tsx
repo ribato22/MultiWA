@@ -138,6 +138,7 @@ export default function ChatPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoaded, setConversationsLoaded] = useState(false); // the list has been asked for once (it may have failed)
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationCalls, setConversationCalls] = useState<CallRecord[]>([]);
@@ -194,13 +195,24 @@ export default function ChatPage() {
   // URL → state sync. On mount or URL change, hydrate selected conversation.
   useEffect(() => {
     const convId = searchParams.get('conv');
-    if (!convId) return;
+    if (!convId || selectedConversation?.id === convId) return;
     const found = conversations.find(c => c.id === convId);
-    if (found && (!selectedConversation || selectedConversation.id !== convId)) {
+    if (found) {
       setSelectedConversation(found);
       setMobileView('messages');
+      return;
     }
-  }, [searchParams, conversations]);
+    if (!conversationsLoaded) return;
+    // Not among the profile's latest conversations (all the list holds): ask for it.
+    let stale = false;
+    api.getConversation(convId).then(({ data: conv }) => {
+      // Only the open profile's: a message sent from here goes out through the open profile.
+      if (stale || !conv || conv.profileId !== selectedProfile) return;
+      setSelectedConversation(conv);
+      setMobileView('messages');
+    });
+    return () => { stale = true; };
+  }, [searchParams, conversations, conversationsLoaded, selectedProfile]);
 
   // WebSocket connection for real-time message status updates
   useEffect(() => {
@@ -299,7 +311,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (selectedConversation) {
-      loadMessages(selectedConversation.id);
+      loadMessages(selectedConversation);
       // Mark as read when opening a conversation
       if (selectedConversation.unreadCount > 0) {
         api.markAsRead(selectedConversation.id).catch(() => {});
@@ -374,9 +386,10 @@ export default function ChatPage() {
       }
       setConversations(Array.from(jidMap.values()));
     }
+    setConversationsLoaded(true);
   };
 
-  const loadMessages = async (conversationId: string) => {
+  const loadMessages = async (conv: Conversation) => {
     // Reset load-older state for the newly opened conversation (optimistic: assume
     // WhatsApp may have deeper history than the DB snapshot).
     setHasMoreOlder(true);
@@ -384,7 +397,7 @@ export default function ChatPage() {
     const seq = ++loadSeq.current;
     // Never show the previous conversation's calls, also when this load fails.
     setConversationCalls([]);
-    const res = await api.getMessages(conversationId);
+    const res = await api.getMessages(conv.id);
     if (seq !== loadSeq.current) return; // another conversation was opened meanwhile
     if (res.data) {
       // API returns { messages: [...], hasMore } or possibly an array
@@ -392,15 +405,12 @@ export default function ChatPage() {
       const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
       setMessages(msgArray);
       setOlderInDb(Array.isArray(raw) ? false : !!raw.hasMore);
-      const conv = conversations.find((c) => c.id === conversationId);
-      if (conv) {
-        // The conversation's own profile, not selectedProfile: after a profile switch the list can still be the old one.
-        // ponytail: the newest 50 calls only, not refetched on load-older; refetch with since=<oldest message> if older periods need their calls
-        const callsRes = await api.getCalls(conv.profileId, { from: conv.jid, limit: 50 });
-        if (seq === loadSeq.current) {
-          scrollForCalls.current = true;
-          setConversationCalls(callsRes.data?.calls ?? []);
-        }
+      // The conversation's own profile, not selectedProfile: after a profile switch the open conversation can still be the old one's.
+      // ponytail: the newest 50 calls only, not refetched on load-older; refetch with since=<oldest message> if older periods need their calls
+      const callsRes = await api.getCalls(conv.profileId, { from: conv.jid, limit: 50 });
+      if (seq === loadSeq.current) {
+        scrollForCalls.current = true;
+        setConversationCalls(callsRes.data?.calls ?? []);
       }
     }
   };
@@ -614,6 +624,7 @@ export default function ChatPage() {
     setMobileView('messages');
     const params = new URLSearchParams(window.location.search);
     params.set('conv', conv.id);
+    params.set('profile', conv.profileId); // a reload opens this chat's profile, not the one the link named
     router.replace(`/dashboard/chat?${params.toString()}`, { scroll: false });
   }, [router]);
 
