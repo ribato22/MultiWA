@@ -26,6 +26,11 @@ import { describe, it, expect, vi } from 'vitest';
 const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const PATCH_FILE = path.join(REPO_ROOT, 'patches', 'whatsapp-web.js@1.34.7.patch');
 
+// The patch hash the lockfile pins: pnpm installs the package under a directory named after it.
+const LOCKED_HASH = /whatsapp-web\.js@1\.34\.7\(patch_hash=([a-z0-9]+)\)/.exec(
+  readFileSync(path.join(REPO_ROOT, 'pnpm-lock.yaml'), 'utf8'),
+)?.[1];
+
 /** An installed source file, found through pnpm's peer-hash directory name. */
 function installedFile(relative: string[], marker: string): string | null {
   const pnpmDir = path.join(REPO_ROOT, 'node_modules', '.pnpm');
@@ -34,7 +39,9 @@ function installedFile(relative: string[], marker: string): string | null {
     .filter((d) => d.startsWith('whatsapp-web.js@1.34.7'))
     .map((d) => path.join(pnpmDir, d, 'node_modules', 'whatsapp-web.js', ...relative))
     .filter((p) => existsSync(p));
-  // A stale hash dir can linger after a re-patch; the patched one is what counts.
+  // Stale hash dirs linger after a re-patch: the copy the lockfile pins is what counts.
+  const locked = LOCKED_HASH ? candidates.find((p) => p.includes(`patch_hash=${LOCKED_HASH}`)) : undefined;
+  if (locked) return locked;
   const patched = candidates.find((p) => readFileSync(p, 'utf8').includes(marker));
   return patched ?? candidates[0] ?? null;
 }
@@ -155,7 +162,7 @@ describe('whatsapp-web.js call patch', () => {
   });
 });
 
-// ---- Behaviour specs for the in-page call hook (append to apps/api/src/wwebjs-media-patch.spec.ts) ----
+// ---- Behaviour specs for the in-page call hook and rejectCall ----
 // The block runs inside WhatsApp Web, so CI cannot start it; this evaluates the INSTALLED source against a
 // Backbone-style fake collection (trigger() has no try/catch, like WhatsApp's EventEmitter).
 const sliceBetween = (src: string, from: string, to: string): string => {
