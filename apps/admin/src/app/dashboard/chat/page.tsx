@@ -160,6 +160,9 @@ export default function ChatPage() {
   const attachRef = useRef<HTMLInputElement>(null);
   const lastTypingSentRef = useRef<number>(0);
   const socketRef = useRef<Socket | null>(null);
+  // The socket handlers are bound once per profile, so they read the open conversation here.
+  const openConversationId = useRef<string | null>(null);
+  openConversationId.current = selectedConversation?.id ?? null;
 
   // Emoji categories
   const emojiCategories: Record<string, { label: string; emojis: string[] }> = {
@@ -237,11 +240,14 @@ export default function ChatPage() {
       const msgDirection = msg.direction || data.direction;
       
       if (msgProfileId === selectedProfile && msgDirection === 'incoming') {
-        setMessages(prev => {
-          // Avoid duplicates
-          if (prev.some(m => m.id === msg.id || (m.messageId && msg.messageId && m.messageId === msg.messageId))) return prev;
-          return [...prev, msg as Message];
-        });
+        // Only into the open chat: a message of another conversation of this profile must not appear here.
+        if (msg.conversationId === openConversationId.current) {
+          setMessages(prev => {
+            // Avoid duplicates
+            if (prev.some(m => m.id === msg.id || (m.messageId && msg.messageId && m.messageId === msg.messageId))) return prev;
+            return [...prev, msg as Message];
+          });
+        }
         // Refresh conversations to update last message
         loadConversations().then(() => {
           // If this message belongs to the currently open conversation, 
