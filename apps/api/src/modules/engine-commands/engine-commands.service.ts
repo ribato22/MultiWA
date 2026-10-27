@@ -3,7 +3,7 @@
 //
 // When ENGINE_HOST=worker, the engine runs in apps/worker. The API delegates
 // engine operations over the BullMQ 'engine-commands' queue. Result-bearing
-// commands (connect/disconnect/status/group/contacts) use request/reply via
+// commands (connect/disconnect/status/group/contacts/call) use request/reply via
 // QueueEvents.waitUntilFinished; presence/read/delete are fire-and-forget.
 // See architecture/engine-worker-migration-sop.md.
 
@@ -30,6 +30,7 @@ const TIMEOUTS = {
   status: 5_000,
   group: 45_000,
   contacts: 60_000,
+  call: 20_000,
 } as const;
 
 @Injectable()
@@ -72,6 +73,12 @@ export class EngineCommandsService implements OnModuleInit, OnModuleDestroy {
   }
   contactsSync(profileId: string) {
     return this.request('contacts-sync', { profileId }, TIMEOUTS.contacts);
+  }
+  rejectCall(profileId: string, callId: string) {
+    return this.request('reject-call', { profileId, callId }, TIMEOUTS.call);
+  }
+  createCallLink(profileId: string, type: 'voice' | 'video') {
+    return this.request<string | null>('create-call-link', { profileId, type }, TIMEOUTS.call);
   }
 
   // ---- fire-and-forget commands ----

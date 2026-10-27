@@ -57,4 +57,12 @@ describe('EngineCommandsService', () => {
     const { svc } = makeService({ ready: false });
     await expect(svc.connectProfile('p1')).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
+
+  it('rejectCall and createCallLink are request/reply commands', async () => {
+    await s.svc.rejectCall('p1', 'c1');
+    expect(s.queue.add).toHaveBeenCalledWith('reject-call', { profileId: 'p1', callId: 'c1' }, expect.objectContaining({ attempts: 1 }));
+    await s.svc.createCallLink('p1', 'video');
+    expect(s.queue.add).toHaveBeenCalledWith('create-call-link', { profileId: 'p1', type: 'video' }, expect.objectContaining({ attempts: 1 }));
+    expect(s.waitUntilFinished).toHaveBeenCalledTimes(2);
+  });
 });
