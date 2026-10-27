@@ -551,7 +551,7 @@ export default function ProfileDetailPage() {
           coldDailyLimit: parsedCold,
           serviceWindowHours: parsedWindow ?? 24,
           autoRejectCalls,
-          autoRejectCallMessage: autoRejectCallMessage.trim() || undefined,
+          autoRejectCallMessage: autoRejectCallMessage.trim(),
           callReplyMessage: callReplyMessage.trim(),
           quietAlarmHours: parsedQuietHours,
           quietAlarmNotify: quietRecipients,
@@ -692,8 +692,8 @@ export default function ProfileDetailPage() {
     jitterMs !== (profile.messageDelayJitterMs ?? 0) ||
     warmupEnabled !== (profile.warmupEnabled ?? false) ||
     autoRejectCalls !== (profile.settings?.autoRejectCalls ?? false) ||
-    autoRejectCallMessage !== (profile.settings?.autoRejectCallMessage ?? '') ||
-    callReplyMessage !== (profile.settings?.callReplyMessage ?? '') ||
+    autoRejectCallMessage.trim() !== (profile.settings?.autoRejectCallMessage ?? '') ||
+    callReplyMessage.trim() !== (profile.settings?.callReplyMessage ?? '') ||
     (quietAlarmHours.trim() ? Number(quietAlarmHours) : null) !== (profile.settings?.quietAlarmHours ?? null) ||
     splitRecipients(quietAlarmNotify).join(',') !== (profile.settings?.quietAlarmNotify ?? []).join(',') ||
     (warmupStartN ?? null) !== (profile.warmupStartPerDay ?? null) ||

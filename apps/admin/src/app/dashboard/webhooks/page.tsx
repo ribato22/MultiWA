@@ -73,6 +73,8 @@ const WEBHOOK_EVENTS: WebhookEvent[] = [
   { value: 'call.rejected',     label: 'Call Rejected',     Icon: PhoneOff,      tone: 'text-amber-300' },
   { value: 'call.updated',      label: 'Call Updated',      Icon: RefreshCw,     tone: 'text-violet-300' },
 ];
+// Compares the listed events only: a webhook made through the API can subscribe to events this list lacks.
+const hasAllListed = (events: string[]) => WEBHOOK_EVENTS.every((e) => events.includes(e.value));
 
 export default function WebhooksPage() {
   const { toast } = useToast();
@@ -239,12 +241,13 @@ export default function WebhooksPage() {
     }));
   };
 
+  // Select adds the listed events, Deselect removes only them: events the list lacks stay subscribed.
   const selectAllEvents = () => {
     setFormData(prev => ({
       ...prev,
-      events: prev.events.length === WEBHOOK_EVENTS.length 
-        ? [] 
-        : WEBHOOK_EVENTS.map(e => e.value),
+      events: hasAllListed(prev.events)
+        ? prev.events.filter(v => !WEBHOOK_EVENTS.some(e => e.value === v))
+        : [...prev.events, ...WEBHOOK_EVENTS.map(e => e.value).filter(v => !prev.events.includes(v))],
     }));
   };
 
@@ -489,7 +492,7 @@ export default function WebhooksPage() {
                   onClick={selectAllEvents}
                   className="text-xs cursor-pointer"
                 >
-                  {formData.events.length === WEBHOOK_EVENTS.length ? 'Deselect All' : 'Select All'}
+                  {hasAllListed(formData.events) ? 'Deselect All' : 'Select All'}
                 </Button>
               </div>
 
