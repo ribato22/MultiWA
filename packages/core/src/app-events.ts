@@ -33,6 +33,12 @@ export const AppEvents = {
   CONTACT: {
     UPDATE: 'contact.update',
   },
+  CALL: {
+    RECEIVED: 'call.received',
+    REJECTED: 'call.rejected',
+    ENDED: 'call.ended',
+    UPDATED: 'call.updated',
+  },
 } as const;
 
 // Recursively extract the leaf string-literal values (the event names).

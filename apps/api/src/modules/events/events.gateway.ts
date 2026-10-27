@@ -229,4 +229,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   emitMessageAck(profileId: string, messageId: string, status: string) {
     this.server.to(`profile:${profileId}`).emit('message:ack', { profileId, messageId, status });
   }
+
+  // Emit a call change (ringing, rejected, ended, follow-up/assignee updated)
+  emitCallUpdate(profileId: string, call: Record<string, unknown>) {
+    this.server.to(`profile:${profileId}`).emit('call:update', call);
+  }
 }

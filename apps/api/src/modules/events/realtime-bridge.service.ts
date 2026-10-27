@@ -85,6 +85,9 @@ export class RealtimeBridgeService implements OnModuleInit, OnModuleDestroy {
       case 'message:ack':
         this.eventsGateway.emitMessageAck(msg.profileId, msg.payload.messageId, msg.payload.status);
         break;
+      case 'call:update':
+        this.eventsGateway.emitCallUpdate(msg.profileId, msg.payload);
+        break;
       case 'heartbeat':
         this.lastHeartbeat = msg.payload.ts;
         break;

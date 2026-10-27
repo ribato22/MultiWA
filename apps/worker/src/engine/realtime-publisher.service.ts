@@ -43,6 +43,9 @@ export class RealtimePublisherService implements RealtimeEmitter, OnModuleInit, 
   emitMessageAck(profileId: string, messageId: string, status: string): void {
     this.send({ type: 'message:ack', profileId, payload: { messageId, status } });
   }
+  emitCallUpdate(profileId: string, call: Record<string, unknown>): void {
+    this.send({ type: 'call:update', profileId, payload: call });
+  }
 
   private send(msg: RealtimeMessage): void {
     // Fire-and-forget: never let a publish error disrupt the engine callback.
