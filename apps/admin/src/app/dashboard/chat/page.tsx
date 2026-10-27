@@ -366,6 +366,7 @@ export default function ChatPage() {
     // Never show the previous conversation's calls, also when this load fails.
     setConversationCalls([]);
     const res = await api.getMessages(conversationId);
+    if (seq !== loadSeq.current) return; // another conversation was opened meanwhile
     if (res.data) {
       // API returns { messages: [...], hasMore } or possibly an array
       const raw = res.data as any;
