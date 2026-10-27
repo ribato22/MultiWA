@@ -63,7 +63,9 @@ export interface CallEngineDeps extends CallDeps {
 }
 
 export const AUTO_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
-// A call answered on the phone gets its call log when the conversation ends, possibly long after it rang.
+// Only for a call log WITHOUT a call id, which is matched to the latest call of its caller instead: how long
+// before the log that call may have started. Not sized for a call answered on the phone: a live probe showed
+// the engine reports it (AcceptedElsewhere) the moment the phone answers, not when the conversation ends.
 export const CALL_LOG_MATCH_WINDOW_MS = 2 * 60 * 60 * 1000;
 const CALL_LOG_CLOCK_SLACK_MS = 30 * 1000;
 const CALL_LOG_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -127,59 +129,88 @@ async function findCall(profileId: string, waCallId: string): Promise<CallRecord
   return (await prisma.call.findUnique({ where: { profileId_waCallId: { profileId, waCallId } } })) as CallRecord | null;
 }
 
-/** One call of one profile: the key of its timer and of its running ringing step. */
-const callKey = (row: { profileId: string; waCallId: string }) => `${row.profileId}:${row.waCallId}`;
-
-// The ringing step of a call (find the caller, record the call, arm its ring timeout, auto-reject and reply)
-// runs for as long as the identity lookup and the reply take, while the engine keeps reporting the
-// same call: its end, its call log (10-15 ms after the end; tens of ms after our own reject), our own
-// reject echoed back, a repeated offer. Each of those waits here for the ringing step instead of
-// reading a row that does not exist yet, or one that does not say yet who rejected the call.
-// ponytail: per-process registry; the engine host owns all signals of a profile.
-const ringingInFlight = new Map<string, Promise<CallRecord | null>>();
-
-/** Wait for the ringing step of this call, if one is running. Its failure is its own caller's, not ours. */
-async function afterRinging(profileId: string, waCallId: string): Promise<void> {
-  await ringingInFlight.get(callKey({ profileId, waCallId }))?.catch(() => undefined);
+async function findCallById(id: string): Promise<CallRecord | null> {
+  return (await prisma.call.findUnique({ where: { id } })) as CallRecord | null;
 }
 
-/** Calls whose ringing step is running; the specs check that it always empties. */
-export const __callsInFlightForTests = (): number => ringingInFlight.size;
+/** One call of one profile: the key of its timer and of the step settling it. */
+const callKey = (row: { profileId: string; waCallId: string }) => `${row.profileId}:${row.waCallId}`;
+
+// The step that settles a call (its ringing step: find the caller, record the call, arm its ring timeout,
+// auto-reject and reply; or an agent's reject) runs for as long as the identity lookup and the engine take,
+// while the engine keeps reporting the same call: its end, its call log (10-15 ms after the end; tens of ms
+// after our own reject), our own reject echoed back, a repeated offer. Each of those waits here until the
+// call is RECORDED (its row exists and says who rejected it) instead of reading a row that does not exist
+// yet, or relabelling the one we are rejecting. They do not wait for the reply that follows: it goes through
+// the send gate (a 1.5 s floor, minutes behind a campaign) and tells them nothing. Only a repeated offer
+// joins the whole step, so it can neither reject nor record the call a second time.
+// ponytail: per-process registry; the engine host owns all signals of a profile.
+interface CallStep {
+  profileId: string;
+  /** Settles once the call is recorded, or when the step ends, whichever comes first. Never rejects. */
+  recorded: Promise<void>;
+  /** The whole step, reply included. */
+  done: Promise<CallRecord | null>;
+}
+const callsInFlight = new Map<string, CallStep>();
+
+/** Run `step` as the one settling this call. It calls `recorded()` as soon as the row says what happened. */
+function trackStep<T extends CallRecord | null>(
+  call: { profileId: string; waCallId: string },
+  step: (recorded: () => void) => Promise<T>,
+): Promise<T> {
+  const key = callKey(call);
+  let markRecorded!: () => void;
+  const recorded = new Promise<void>((resolve) => { markRecorded = resolve; });
+  const done: Promise<T> = step(markRecorded).finally(() => {
+    markRecorded(); // a step that fails or ends without a call to record releases its waiters too
+    if (callsInFlight.get(key)?.done === done) callsInFlight.delete(key);
+  });
+  callsInFlight.set(key, { profileId: call.profileId, recorded, done });
+  return done;
+}
+
+/** Wait until this call is recorded, if a step is settling it. The step's failure is its own caller's, not ours. */
+async function untilRecorded(profileId: string, waCallId: string): Promise<void> {
+  await callsInFlight.get(callKey({ profileId, waCallId }))?.recorded;
+}
+
+/** Calls being settled by a step; the specs check that it always empties. */
+export const __callsInFlightForTests = (): number => callsInFlight.size;
 
 /**
  * Handle one engine call signal. `ringing` creates the row, arms the ring timeout and applies the
  * profile's auto-reject (a repeated offer joins the ringing step that is already running); any
- * other state moves the stored outcome forward (nextOutcome), once that ringing step is over.
+ * other state moves the stored outcome forward (nextOutcome), once the call is recorded.
  */
 export async function handleEngineCall(call: IncomingCall, deps: CallEngineDeps): Promise<CallRecord | null> {
   if (!call?.id) return null;
   const state = call.state ?? 'ringing';
   if (state !== 'ringing') {
-    await afterRinging(deps.profileId, call.id);
+    await untilRecorded(deps.profileId, call.id);
     const stored = await findCall(deps.profileId, call.id);
     if (!stored) return null; // started before this process did
     const target = outcomeForState(state);
     return target ? applyCallOutcome(stored, target, deps, { rejectedBy: 'device' }) : stored;
   }
 
-  const key = callKey({ profileId: deps.profileId, waCallId: call.id });
-  const running = ringingInFlight.get(key);
-  if (running) return running; // a repeated offer must not reject the call a second time
-  const run: Promise<CallRecord | null> = handleRinging(call, deps).finally(() => {
-    if (ringingInFlight.get(key) === run) ringingInFlight.delete(key);
-  });
-  ringingInFlight.set(key, run);
-  return run;
+  const ring = { profileId: deps.profileId, waCallId: call.id };
+  const running = callsInFlight.get(callKey(ring));
+  if (running) return running.done; // a repeated offer must not reject the call a second time
+  return trackStep(ring, (recorded) => handleRinging(call, deps, recorded));
 }
 
-/** The ringing step: record and announce the call, arm its ring timeout, settle the auto-reject. */
-async function handleRinging(call: IncomingCall, deps: CallEngineDeps): Promise<CallRecord | null> {
+/** The ringing step: reject, record and announce the call, arm its ring timeout, settle the auto-reject. */
+async function handleRinging(call: IncomingCall, deps: CallEngineDeps, recorded: () => void): Promise<CallRecord | null> {
+  // A ringing call is time-critical, and neither the calls table (it may hang or be missing) nor the
+  // identity lookup (a page round trip with no timeout) may delay the reject: start it first and settle
+  // it on the row once that exists.
+  const rejection = deps.settings?.autoRejectCalls ? tryRejectCall(call.id, deps) : null;
+
+  // An offer replayed for a call we already know (after a restart) is rejected again: harmless, the engine
+  // says "not ringing any more" if it let the call go. Nothing is recorded then, so nothing waits for it.
   const existing = await findCall(deps.profileId, call.id);
   if (existing) return existing;
-
-  // A ringing call is time-critical and the identity lookup below is a page round trip with no
-  // timeout: start the reject first and settle it on the row once that exists.
-  const rejection = deps.settings?.autoRejectCalls ? tryRejectCall(call.id, deps) : null;
 
   const { jid, lidJid } = await resolveChatJid(call.from ?? '', deps.resolveIdentity, (e) =>
     deps.logger?.warn?.(`LID resolve failed for ${call.from}: ${e.message}`),
@@ -209,7 +240,7 @@ async function handleRinging(call: IncomingCall, deps: CallEngineDeps): Promise<
   }
   publishCall(deps, AppEvents.CALL.RECEIVED, row);
   armRingTimeout(row, deps);
-  return rejection ? settleAutoReject(row, await rejection, deps) : row;
+  return rejection ? settleAutoReject(row, await rejection, deps, recorded) : row;
 }
 
 /** Reject on the engine. A failure (the caller hung up first, the page is gone) is logged, never thrown. */
@@ -226,34 +257,46 @@ async function tryRejectCall(waCallId: string, deps: CallEngineDeps): Promise<bo
 /**
  * Record the result of the auto-reject. The call becomes `rejected` (by `auto`) only when the
  * reject worked; the reply follows the attempt either way, since a caller who hung up before we
- * could reject still deserves it.
+ * could reject still deserves it. The call is recorded once the outcome is, before the reply.
  */
-async function settleAutoReject(row: CallRecord, rejected: boolean, deps: CallEngineDeps): Promise<CallRecord> {
+async function settleAutoReject(row: CallRecord, rejected: boolean, deps: CallEngineDeps, recorded: () => void): Promise<CallRecord> {
   let current = row;
   if (rejected) {
     deps.logger?.log?.(`Auto-rejected call ${row.waCallId} from ${row.fromJid}`);
     current = await applyCallOutcome(row, 'rejected', deps, { rejectedBy: 'auto' });
   }
+  recorded();
   await maybeAutoReply(current, deps);
   return current;
 }
 
-/** One reply per caller per AUTO_REPLY_WINDOW_MS, claimed before sending so a quick redial cannot reply twice. */
+/**
+ * One reply per caller per AUTO_REPLY_WINDOW_MS, claimed before sending so a quick redial cannot reply twice.
+ * Never throws: the call is recorded by now, and a database blip must not fail the ringing step. A reply
+ * that cannot be claimed is not sent (better none than two).
+ */
 async function maybeAutoReply(row: CallRecord, deps: CallEngineDeps): Promise<void> {
   const text = deps.settings?.autoRejectCallMessage?.trim();
   if (!text || row.isGroup) return;
   const now = clock(deps);
-  const recent = await prisma.call.findFirst({
-    where: { profileId: row.profileId, fromJid: row.fromJid, autoReplySentAt: { gte: new Date(now.getTime() - AUTO_REPLY_WINDOW_MS) } },
-    select: { id: true },
-  });
-  if (recent) return;
-  await prisma.call.update({ where: { id: row.id }, data: { autoReplySentAt: now } });
+  try {
+    const recent = await prisma.call.findFirst({
+      where: { profileId: row.profileId, fromJid: row.fromJid, autoReplySentAt: { gte: new Date(now.getTime() - AUTO_REPLY_WINDOW_MS) } },
+      select: { id: true },
+    });
+    if (recent) return;
+    await prisma.call.update({ where: { id: row.id }, data: { autoReplySentAt: now } });
+  } catch (e) {
+    deps.logger?.warn?.(`auto-reject reply for call ${row.waCallId} skipped: ${(e as Error).message}`);
+    return;
+  }
   try {
     await deps.sendText(row.fromJid, text);
   } catch (e) {
-    await prisma.call.update({ where: { id: row.id }, data: { autoReplySentAt: null } }).catch(() => undefined);
     deps.logger?.warn?.(`auto-reject reply failed: ${(e as Error).message}`);
+    await prisma.call.update({ where: { id: row.id }, data: { autoReplySentAt: null } }).catch((err) =>
+      deps.logger?.warn?.(`auto-reject reply of call ${row.waCallId} could not be released: ${(err as Error).message}`),
+    );
   }
 }
 
@@ -281,7 +324,7 @@ export async function applyCallOutcome(
   if (next === 'rejected') data.rejectedBy = opts.rejectedBy ?? 'device';
   const res = await prisma.call.updateMany({ where: { id: row.id, outcome: row.outcome }, data });
   if (res.count === 0) {
-    const fresh = (await prisma.call.findUnique({ where: { id: row.id } })) as CallRecord | null;
+    const fresh = await findCallById(row.id);
     return fresh ? applyCallOutcome(fresh, target, deps, opts) : row;
   }
   clearRingTimeout(row);
@@ -296,8 +339,8 @@ export async function applyCallOutcome(
 /**
  * A call-log message carries the final outcome of a call, and for whatsapp-web.js the id of
  * that call (`entry.callId`).
- * - With a call id, the call is looked up by it, once its ringing step is over if one is still
- *   running (the log can beat it by far: it follows our own reject within tens of ms, the
+ * - With a call id, the call is looked up by it, once the call is recorded if its ringing step is
+ *   still running (the log can beat it by far: it follows our own reject within tens of ms, the
  *   identity lookup takes 100+). A call that is not final yet (ringing / unknown) is refined; a
  *   final one (e.g. our own auto-reject, whose log follows) only gets the log remembered, with
  *   no new outcome, event or notification; an unknown one is recorded under that call id (the
@@ -305,7 +348,8 @@ export async function applyCallOutcome(
  * - Without one (other engines, older builds) the latest incoming call from the same caller
  *   that started within CALL_LOG_MATCH_WINDOW_MS before the log is taken, whatever its
  *   outcome, unless that call already has a log of its own: then this log is another call,
- *   recorded as `log:<messageId>`.
+ *   recorded as `log:<messageId>`. Nothing says which call the log is about, so it waits until
+ *   every call of the profile that is being settled is recorded, to find the row it belongs to.
  * A row created here never triggers the auto-reply (owner decision D8 cannot be met from a
  * log: whatsapp-web.js gets no signal at all for a call that rang while the device was
  * offline, and Baileys' offline offers arrive as `ringing`, the normal path).
@@ -321,9 +365,11 @@ export async function handleCallLog(entry: CallLogEntry, deps: CallEngineDeps): 
   if (seen) return null;
 
   if (entry.callId) {
-    await afterRinging(deps.profileId, entry.callId);
+    await untilRecorded(deps.profileId, entry.callId);
     const stored = await findCall(deps.profileId, entry.callId);
     if (stored) return attachCallLog(stored, entry, deps);
+  } else {
+    await Promise.all([...callsInFlight.values()].filter((step) => step.profileId === deps.profileId).map((step) => step.recorded));
   }
 
   const { jid, lidJid } = await resolveChatJid(entry.from ?? '', deps.resolveIdentity, (e) =>
@@ -408,16 +454,37 @@ export async function closeStaleRingingCalls(at: Date = new Date()): Promise<num
   return res.count;
 }
 
-/** An agent pressed Reject on a ringing call. Errors start with a code the API maps to HTTP. */
+/** What the engine adapters throw from `rejectCall` for a call they no longer hold (it ended, was answered or rejected). */
+const ENGINE_CALL_GONE = /not ringing any more/i;
+
+/**
+ * An agent pressed Reject on a ringing call. Errors start with a code the API maps to HTTP.
+ * Registered as the step settling the call while the engine rejects it, so that what the engine reports
+ * meanwhile (the echo of this reject, its call log) waits instead of recording the phone as the rejecter.
+ */
 export async function rejectCallByAgent(
   callId: string,
   deps: CallDeps & { rejectCall: (waCallId: string) => Promise<void> },
 ): Promise<CallRecord> {
-  const row = (await prisma.call.findUnique({ where: { id: callId } })) as CallRecord | null;
+  let row = await findCallById(callId);
+  if (row?.profileId === deps.profileId && callsInFlight.has(callKey(row))) {
+    // The ringing step is still settling this call (it may be rejecting it itself): let it finish, then judge the call as it stands.
+    await untilRecorded(row.profileId, row.waCallId);
+    row = await findCallById(callId);
+  }
   if (!row || row.profileId !== deps.profileId) throw new Error(`CALL_NOT_FOUND: ${callId}`);
   if (row.outcome !== 'ringing') throw new Error(`CALL_NOT_RINGING: ${callId}`);
-  await deps.rejectCall(row.waCallId);
-  return applyCallOutcome(row, 'rejected', deps, { rejectedBy: 'agent' });
+  const ringing = row;
+  return trackStep(ringing, async () => {
+    try {
+      await deps.rejectCall(ringing.waCallId);
+    } catch (e) {
+      // The call is gone whatever the row says yet: the signals that ended it are queued behind this very step.
+      if (ENGINE_CALL_GONE.test((e as Error).message)) throw new Error(`CALL_NOT_RINGING: ${callId}`);
+      throw e;
+    }
+    return applyCallOutcome(ringing, 'rejected', deps, { rejectedBy: 'agent' });
+  });
 }
 
 // ── ring timeout and call-log grace ────────────────────────────────────────────────────
@@ -473,12 +540,13 @@ async function notifyMissed(row: CallRecord, deps: CallDeps): Promise<void> {
   const last = lastNotified.get(key);
   if (last !== undefined && now - last < NOTIFY_THROTTLE_MS) return;
   if (lastNotified.size > 5000) lastNotified.clear();
-  lastNotified.set(key, now);
+  lastNotified.set(key, now); // claimed before sending, so a second signal while this one is on its way does not notify again
   const kind = row.isVideo ? 'video' : 'voice';
   const title = row.outcome === 'missed' ? `📞 Missed ${kind} call` : `📞 Unanswered ${kind} call?`;
   try {
     await deps.notify(title, `From ${row.fromJid.split('@')[0]}`, { callId: row.id, profileId: row.profileId, from: row.fromJid });
   } catch (e) {
+    lastNotified.delete(key); // released: a failed notification must not hide the next one for ten minutes
     deps.logger?.warn?.(`call notification failed: ${(e as Error).message}`);
   }
 }

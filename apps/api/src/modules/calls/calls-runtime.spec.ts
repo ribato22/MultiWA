@@ -43,17 +43,30 @@ const ringing = (over: Record<string, unknown> = {}): any => ({ id: 'wa-1', from
 const events = (d: any) => d.emit.mock.calls.map((c: any[]) => c[0]);
 const uniqueViolation = () => Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
 
+// A test that fails before it resolves its deferreds would leave their calls registered, and the registry
+// outlives the test: every later test of the file would wait for those calls. afterEach lets them go.
+const unresolved = new Set<() => void>();
 const deferred = <T = void>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => { resolve = r; });
+  unresolved.add(() => resolve(undefined as T));
   return { promise, resolve };
 };
 
 // An in-memory `calls` table, for the specs in which a row has to appear and change between reads.
-// Returns a getter for the stored row (null until it is created).
-function fakeCalls(): () => any {
-  let stored: any = null;
+// Starts empty, or with `initial`. Returns a getter for the stored row (null until it is created).
+function fakeCalls(initial: any = null): () => any {
+  let stored: any = initial;
   const copy = () => (stored ? { ...stored } : null);
+  db.call.findFirst.mockImplementation(async ({ where }: any) => {
+    if (!stored) return null;
+    if (where.metadata) return stored.metadata?.callLogMessageId === where.metadata.equals ? copy() : null; // the replay guard
+    if (where.fromJid?.in) { // a call log without a call id: the caller's call within the time window
+      const { gte, lte } = where.startedAt;
+      return where.fromJid.in.includes(stored.fromJid) && stored.startedAt >= gte && stored.startedAt <= lte ? copy() : null;
+    }
+    return null; // the lookup of an earlier reply: nobody was answered before
+  });
   db.call.findUnique.mockImplementation(async ({ where }: any) => {
     const byCallId = where.profileId_waCallId;
     const hit = byCallId ? stored?.profileId === byCallId.profileId && stored?.waCallId === byCallId.waCallId : stored?.id === where.id;
@@ -85,7 +98,10 @@ beforeEach(() => {
   db.call.updateMany.mockReset().mockResolvedValue({ count: 1 });
   db.conversation.findFirst.mockReset().mockResolvedValue(null);
 });
-afterEach(() => {
+afterEach(async () => {
+  unresolved.forEach((release) => release());
+  unresolved.clear();
+  await vi.advanceTimersByTimeAsync(0);
   vi.unstubAllEnvs();
   vi.useRealTimers();
   // whatever a test did, no call may stay registered as being processed
@@ -233,11 +249,81 @@ describe('auto-reject', () => {
     expect(d.sendText).not.toHaveBeenCalled();
   });
 
-  it('a repeated offer is not rejected again', async () => {
+  it('rejects before it reads the calls table: a table that hangs does not delay the reject', async () => {
+    const table = deferred<null>();
+    db.call.findUnique.mockReturnValue(table.promise);
+    const d = deps({ settings });
+    const run = handleEngineCall(ringing(), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(db.call.findUnique).toHaveBeenCalledTimes(1); // stuck on the read...
+    expect(d.rejectCall).toHaveBeenCalledWith('wa-1'); // ...and the reject is out already
+    table.resolve(null);
+    await run;
+  });
+
+  it('rejects before it reads the calls table: a table that is missing does not stop the reject', async () => {
+    db.call.findUnique.mockRejectedValue(new Error('relation "calls" does not exist'));
+    const d = deps({ settings });
+    await expect(handleEngineCall(ringing(), d)).rejects.toThrow('relation "calls" does not exist');
+    expect(d.rejectCall).toHaveBeenCalledWith('wa-1');
+  });
+
+  it('an offer replayed for a call that is already recorded (after a restart) is rejected again; nothing is recorded, announced or answered twice', async () => {
     db.call.findUnique.mockResolvedValue(row());
     const d = deps({ settings });
-    await handleEngineCall(ringing(), d);
-    expect(d.rejectCall).not.toHaveBeenCalled();
+    await expect(handleEngineCall(ringing(), d)).resolves.toMatchObject({ id: 'row-1' });
+    expect(d.rejectCall).toHaveBeenCalledTimes(1);
+    expect(d.rejectCall).toHaveBeenCalledWith('wa-1');
+    expect(db.call.create).not.toHaveBeenCalled();
+    expect(d.emit).not.toHaveBeenCalled();
+    expect(d.sendText).not.toHaveBeenCalled();
+  });
+
+  it('that second reject is harmless when the engine has let the call go: logged, not thrown', async () => {
+    db.call.findUnique.mockResolvedValue(row({ outcome: 'rejected', rejectedBy: 'auto', endedAt: NOW }));
+    const d = deps({ settings, rejectCall: vi.fn().mockRejectedValue(new Error('Call is not ringing any more')) });
+    await expect(handleEngineCall(ringing(), d)).resolves.toMatchObject({ outcome: 'rejected', rejectedBy: 'auto' });
+    await vi.advanceTimersByTimeAsync(0); // nothing waits for the reject of a replayed offer
+    expect(d.rejectCall).toHaveBeenCalledTimes(1);
+    expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining('Call is not ringing any more'));
+    expect(d.emit).not.toHaveBeenCalled();
+  });
+
+  it('a replayed offer does not hold the signals of its call behind its own reject, which can take as long as the engine does', async () => {
+    const stored = fakeCalls(row());
+    const engine = deferred();
+    const d = deps({ settings, rejectCall: vi.fn().mockReturnValue(engine.promise) });
+    const replay = handleEngineCall(ringing(), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.rejectCall).toHaveBeenCalledTimes(1);
+
+    const end = handleEngineCall(ringing({ state: 'ended' }), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored()).toMatchObject({ outcome: 'unknown' }); // nothing was recorded for the replay: nothing to wait for
+
+    engine.resolve();
+    await Promise.all([replay, end]);
+  });
+
+  // The call is recorded and rejected by now: a database blip while the reply is prepared must not turn into a failed ringing step.
+  it.each([
+    ['looking up earlier replies', 'findFirst'],
+    ['claiming the reply', 'update'],
+  ])('a database error while %s skips the reply and fails nothing', async (_step, method) => {
+    db.call[method].mockRejectedValue(new Error('db blip'));
+    const d = deps({ settings });
+    await expect(handleEngineCall(ringing(), d)).resolves.toMatchObject({ outcome: 'rejected', rejectedBy: 'auto' });
+    expect(d.sendText).not.toHaveBeenCalled();
+    expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining('db blip'));
+    expect(events(d)).toEqual([AppEvents.CALL.RECEIVED, AppEvents.CALL.REJECTED]);
+  });
+
+  it('a reply that fails, with a claim that cannot be released either, is logged twice and fails nothing', async () => {
+    db.call.update.mockResolvedValueOnce(row()).mockRejectedValue(new Error('db blip')); // the claim works, the release does not
+    const d = deps({ settings, sendText: vi.fn().mockRejectedValue(new Error('429')) });
+    await expect(handleEngineCall(ringing(), d)).resolves.toMatchObject({ outcome: 'rejected' });
+    expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining('429'));
+    expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining('db blip'));
   });
 });
 
@@ -577,8 +663,9 @@ describe('ended and the call log racing', () => {
 // The engine reports the end of a call and its call log within milliseconds of each other, our own
 // reject is echoed back just as fast, and the ringing step of the call is meanwhile looking up the
 // caller (a page round trip, often 100+ ms for an @lid) or sending the reply. Every signal of a call
-// has to wait for its ringing step; otherwise it reads a row that does not exist yet, or one that
-// does not say who rejected, and the ringing step is left with a row it did not make.
+// has to wait until the call is recorded (its row exists and says who rejected it); otherwise it reads a
+// row that does not exist yet, or one that does not say who rejected, and the ringing step is left with a
+// row it did not make. The reply is not part of that: it goes through the send gate and can take minutes.
 describe('signals of a call whose ringing step is still running', () => {
   const settings = { autoRejectCalls: true, autoRejectCallMessage: 'Maaf' };
   const lid = '1234567@lid';
@@ -689,6 +776,63 @@ describe('signals of a call whose ringing step is still running', () => {
     expect(db.call.create).toHaveBeenCalledWith({ data: expect.objectContaining({ waCallId: 'wa-2' }) }); // done while wa-1 is still pending
     lookup.resolve({ phoneJid });
     await ring;
+  });
+
+  it('a slow reply holds nobody back: the end of the call and its call log are recorded and notified while the reply is still being sent', async () => {
+    const stored = fakeCalls();
+    const reply = deferred();
+    const caller = '628200000021@c.us'; // a missed call notifies, once per caller
+    // the caller hung up before we could reject: the row stays ringing, and the reply sits in the send gate
+    const rejectCall = vi.fn().mockRejectedValue(new Error('Call is not ringing any more'));
+    const d = deps({ settings, rejectCall, sendText: vi.fn().mockReturnValue(reply.promise) });
+    const ring = handleEngineCall(ringing({ from: caller }), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.sendText).toHaveBeenCalledTimes(1);
+    expect(stored()).toMatchObject({ outcome: 'ringing' });
+
+    const end = handleEngineCall(ringing({ from: caller, state: 'ended' }), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored()).toMatchObject({ outcome: 'unknown' }); // not held behind the reply
+
+    const log = handleCallLog(logOf({ from: caller, outcome: 'missed' }), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored()).toMatchObject({ outcome: 'missed', metadata: { callLogMessageId: 'log-1' } });
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(d.notify.mock.calls[0][0]).toMatch(/Missed voice call/);
+    expect(events(d)).toEqual([AppEvents.CALL.RECEIVED, AppEvents.CALL.ENDED, AppEvents.CALL.UPDATED]);
+
+    reply.resolve();
+    await Promise.all([ring, end, log]);
+    expect(d.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  describe('a call log without a call id (other engines, older builds)', () => {
+    it('waits for every call of its profile that is still being recorded, then refines the one it finds by caller and time', async () => {
+      const stored = fakeCalls();
+      const { lookup, resolveIdentity } = slowLookup();
+      const d = deps({ resolveIdentity });
+      const ring = handleEngineCall(ringing({ from: lid }), d);
+      await vi.advanceTimersByTimeAsync(0);
+      const log = handleCallLog(logOf({ callId: undefined, outcome: 'missed' }), d); // nothing to say which call it is
+      await vi.advanceTimersByTimeAsync(0);
+      expect(db.call.create).not.toHaveBeenCalled(); // it does not make a `log:` row of its own for a call about to be recorded
+      lookup.resolve({ phoneJid });
+      await Promise.all([ring, log]);
+
+      expect(db.call.create).toHaveBeenCalledTimes(1);
+      expect(stored()).toMatchObject({ waCallId: 'wa-1', fromJid: phoneJid, outcome: 'missed', metadata: { lidJid: lid, callLogMessageId: 'log-1' } });
+      expect(events(d)).toEqual([AppEvents.CALL.RECEIVED, AppEvents.CALL.ENDED]);
+    });
+
+    it('does not wait for the calls of another profile', async () => {
+      const { lookup, resolveIdentity } = slowLookup();
+      const ring = handleEngineCall(ringing({ from: lid }), deps({ profileId: 'p2', resolveIdentity }));
+      await vi.advanceTimersByTimeAsync(0);
+      await handleCallLog(logOf({ callId: undefined, from: '628200000022@c.us', outcome: 'missed' }), deps());
+      expect(db.call.create).toHaveBeenCalledWith({ data: expect.objectContaining({ profileId: 'p1', waCallId: 'log:log-1' }) }); // done while p2's call is pending
+      lookup.resolve({ phoneJid });
+      await ring;
+    });
   });
 });
 
@@ -836,6 +980,174 @@ describe('rejectCallByAgent', () => {
     await expect(rejectCallByAgent('row-1', deps())).rejects.toThrow(/^CALL_NOT_RINGING/);
     db.call.findUnique.mockResolvedValue(row({ profileId: 'p2' }));
     await expect(rejectCallByAgent('row-1', deps())).rejects.toThrow(/^CALL_NOT_FOUND/);
+  });
+
+  // The engine reports a reject within milliseconds of performing it: Baileys echoes a `rejected` state,
+  // whatsapp-web.js adds a Rejected call log. Either can reach us before the reject we asked for has come
+  // back, and must not be taken for the phone's.
+  describe('while the engine is still rejecting', () => {
+    const during = async (signal: (d: any) => Promise<unknown>) => {
+      const stored = fakeCalls(row());
+      const engine = deferred();
+      const d = deps({ rejectCall: vi.fn().mockReturnValue(engine.promise) });
+      const reject = rejectCallByAgent('row-1', d);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(d.rejectCall).toHaveBeenCalledWith('wa-1');
+
+      const reported = signal(d);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stored()).toMatchObject({ outcome: 'ringing' }); // it waits instead of relabelling the call
+
+      engine.resolve();
+      await Promise.all([reject, reported]);
+      expect(stored()).toMatchObject({ outcome: 'rejected', rejectedBy: 'agent' });
+      expect(db.call.updateMany).toHaveBeenCalledTimes(1);
+      expect(events(d)).toEqual([AppEvents.CALL.REJECTED]);
+    };
+
+    it("Baileys' rejected echo is not taken for the phone", () => during((d) => handleEngineCall(ringing({ state: 'rejected' }), d)));
+
+    it('the Rejected call log is not taken for the phone', () =>
+      during((d) => handleCallLog({
+        messageId: 'log-1', callId: 'wa-1', from: '628111000111@c.us', isVideo: false, outcome: 'rejected', timestamp: new Date(NOW.getTime() - 5_000),
+      }, d)));
+  });
+
+  it('waits for the ringing step that is still settling the call, then judges it as it stands: already rejected, by the auto-reject', async () => {
+    const stored = fakeCalls();
+    const auto = deferred();
+    const d = deps({ settings: { autoRejectCalls: true }, rejectCall: vi.fn().mockReturnValue(auto.promise) });
+    const ring = handleEngineCall(ringing(), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored()).toMatchObject({ outcome: 'ringing' }); // announced; its auto-reject is on the way
+
+    const agent = rejectCallByAgent('row-1', d);
+    const refused = expect(agent).rejects.toThrow(/^CALL_NOT_RINGING: row-1$/);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.rejectCall).toHaveBeenCalledTimes(1); // the agent does not ask the engine behind the ringing step's back
+
+    auto.resolve();
+    await Promise.all([ring, refused]);
+    expect(d.rejectCall).toHaveBeenCalledTimes(1);
+    expect(stored()).toMatchObject({ outcome: 'rejected', rejectedBy: 'auto' });
+  });
+
+  it('is not held behind the reply of a ringing step that has recorded the call and is only replying', async () => {
+    const stored = fakeCalls();
+    const reply = deferred();
+    // the auto-reject failed (the page hiccuped) and the reply sits in the send gate; the agent's reject works
+    const rejectCall = vi.fn().mockRejectedValueOnce(new Error('page gone')).mockResolvedValue(undefined);
+    const d = deps({ settings: { autoRejectCalls: true, autoRejectCallMessage: 'Maaf' }, rejectCall, sendText: vi.fn().mockReturnValue(reply.promise) });
+    const ring = handleEngineCall(ringing(), d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.sendText).toHaveBeenCalledTimes(1);
+    expect(stored()).toMatchObject({ outcome: 'ringing' });
+
+    const agent = rejectCallByAgent('row-1', d);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored()).toMatchObject({ outcome: 'rejected', rejectedBy: 'agent' });
+
+    reply.resolve();
+    await Promise.all([ring, agent]);
+  });
+
+  it('leaves the call ringing and passes the engine error on when the engine cannot reject', async () => {
+    db.call.findUnique.mockResolvedValue(row());
+    const d = deps({ rejectCall: vi.fn().mockRejectedValue(new Error('page crashed')) });
+    await expect(rejectCallByAgent('row-1', d)).rejects.toThrow('page crashed');
+    expect(db.call.updateMany).not.toHaveBeenCalled();
+    expect(d.emit).not.toHaveBeenCalled();
+  });
+
+  it('reports a call the engine no longer holds as CALL_NOT_RINGING (the REST layer answers 409, not 500) and leaves the row to the signals that follow', async () => {
+    db.call.findUnique.mockResolvedValue(row());
+    const d = deps({ rejectCall: vi.fn().mockRejectedValue(new Error('Call is not ringing any more')) });
+    await expect(rejectCallByAgent('row-1', d)).rejects.toThrow(/^CALL_NOT_RINGING: row-1$/);
+    expect(db.call.updateMany).not.toHaveBeenCalled();
+    expect(d.emit).not.toHaveBeenCalled();
+  });
+});
+
+describe('missed-call notifications', () => {
+  // The throttle is per process, profile and caller: each test has callers of its own.
+  const missed = (n: number, d: any, waCallId = 'wa-1') => {
+    const number = `62830000003${n}`;
+    db.call.findUnique.mockResolvedValue(row({ waCallId, fromJid: `${number}@s.whatsapp.net` }));
+    return handleEngineCall(ringing({ id: waCallId, from: `${number}@c.us`, state: 'missed' }), d);
+  };
+
+  it('two calls of one caller within ten minutes are one notification; one after that, or from another caller, notifies again', async () => {
+    let at = NOW;
+    const d = deps({ now: () => at });
+    await missed(1, d, 'wa-1');
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    at = new Date(NOW.getTime() + 9 * 60_000);
+    await missed(1, d, 'wa-2');
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    await missed(2, d, 'wa-3');
+    expect(d.notify).toHaveBeenCalledTimes(2);
+    at = new Date(NOW.getTime() + 11 * 60_000);
+    await missed(1, d, 'wa-4');
+    expect(d.notify).toHaveBeenCalledTimes(3);
+  });
+
+  it('"Unanswered?" at the end of the grace period, then the Missed log after all: one notification, not two', async () => {
+    const stored = fakeCalls();
+    const caller = '628300000041@c.us';
+    const d = deps();
+    await handleEngineCall(ringing({ from: caller }), d);
+    await handleEngineCall(ringing({ from: caller, state: 'ended' }), d);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(d.notify.mock.calls[0][0]).toMatch(/Unanswered voice call\?/);
+
+    await handleCallLog({ messageId: 'log-1', callId: 'wa-1', from: caller, isVideo: false, outcome: 'missed', timestamp: new Date(NOW.getTime() - 5_000) }, d);
+    expect(stored()).toMatchObject({ outcome: 'missed' }); // the call is settled...
+    expect(d.notify).toHaveBeenCalledTimes(1); // ...but the caller was told already
+  });
+
+  it('a second signal of the same caller while a notification is on its way does not send another', async () => {
+    const sending = deferred();
+    const d = deps({ notify: vi.fn().mockReturnValue(sending.promise) });
+    const first = missed(3, d, 'wa-1');
+    await vi.advanceTimersByTimeAsync(0);
+    const second = missed(3, d, 'wa-2');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    sending.resolve();
+    await Promise.all([first, second]);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a notification that failed does not hide the next one for ten minutes', async () => {
+    const d = deps({ notify: vi.fn().mockRejectedValueOnce(new Error('push down')).mockResolvedValue(undefined) });
+    await missed(4, d, 'wa-1');
+    await missed(4, d, 'wa-2');
+    expect(d.notify).toHaveBeenCalledTimes(2);
+  });
+
+  describe('collaborators that fail never fail the runtime', () => {
+    it.each([
+      ['rejects', 5, () => vi.fn().mockRejectedValue(new Error('push down'))],
+      ['throws', 6, () => vi.fn(() => { throw new Error('push down'); })],
+    ])('a notify that %s: the signal still completes, and the failure is logged', async (_how, n, makeNotify) => {
+      const d = deps({ notify: makeNotify() });
+      await expect(missed(n, d)).resolves.toMatchObject({ outcome: 'missed' });
+      expect(d.notify).toHaveBeenCalledTimes(1);
+      expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining('push down'));
+    });
+
+    it.each([
+      ['emit', { emit: vi.fn(() => { throw new Error('bus down'); }) }, 'emitRealtime'],
+      ['emitRealtime', { emitRealtime: vi.fn(() => { throw new Error('bus down'); }) }, 'emit'],
+    ])('a %s that throws: the call is still recorded and updated, and the other channel still hears it', async (_which, broken, other) => {
+      const d = deps(broken);
+      await expect(handleEngineCall(ringing(), d)).resolves.toMatchObject({ id: 'row-1' });
+      db.call.findUnique.mockResolvedValue(row());
+      await expect(handleEngineCall(ringing({ state: 'ended' }), d)).resolves.toMatchObject({ outcome: 'unknown' });
+      expect(d[other]).toHaveBeenCalledTimes(2); // the ringing and the end
+      expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining('bus down'));
+    });
   });
 });
 
