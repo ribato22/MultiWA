@@ -32,6 +32,7 @@ export interface Profile {
     avatar?: string;
   };
   messageCount?: number;
+  settings?: Record<string, any>;
   createdAt: string;
   updatedAt: string;
 }
@@ -131,6 +132,28 @@ export interface Conversation {
     direction?: string;
   };
   lastMessageAt: string;
+}
+
+export type CallOutcome = 'ringing' | 'missed' | 'rejected' | 'answered_elsewhere' | 'unknown';
+export type CallFollowUp = 'open' | 'in_progress' | 'done';
+
+export interface CallRecord {
+  id: string;
+  profileId: string;
+  waCallId: string;
+  fromJid: string;
+  isVideo: boolean;
+  isGroup: boolean;
+  direction: string;
+  outcome: CallOutcome;
+  rejectedBy: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  followUp: CallFollowUp;
+  assignedUserId: string | null;
+  conversationId: string | null;
+  assignedUser: { id: string; name: string } | null;
+  conversation: { id: string; name: string | null } | null;
 }
 
 // Result of POST /notifications/push/test — the endpoint returns per-endpoint
@@ -527,6 +550,34 @@ class ApiClient {
   // Org-wide total unread message count (for the sidebar Chat badge).
   async getChatUnreadCount() {
     return this.request<{ count: number }>('/conversations/unread-count');
+  }
+
+  // Calls
+  async getCalls(profileId: string, q: { outcome?: CallOutcome; followUp?: CallFollowUp; from?: string; limit?: number; cursor?: string } = {}) {
+    const params = new URLSearchParams({ profileId });
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') params.set(k, String(v));
+    return this.request<{ calls: CallRecord[]; nextCursor: string | null }>(`/calls?${params}`);
+  }
+
+  // Org-wide count of calls still waiting for a follow-up (for the sidebar Calls badge).
+  async getCallsOpenCount() {
+    return this.request<{ count: number }>('/calls/open-count');
+  }
+
+  async updateCall(id: string, data: { followUp?: CallFollowUp; assignedUserId?: string | null }) {
+    return this.request<CallRecord>(`/calls/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
+  async rejectCall(id: string) {
+    return this.request<CallRecord>(`/calls/${id}/reject`, { method: 'POST' });
+  }
+
+  async replyToCall(id: string, text?: string) {
+    return this.request<{ call: CallRecord; message: unknown }>(`/calls/${id}/reply`, { method: 'POST', body: JSON.stringify(text ? { text } : {}) });
+  }
+
+  async sendCallLink(id: string, type: 'voice' | 'video', text?: string) {
+    return this.request<{ call: CallRecord; message: unknown; link: string }>(`/calls/${id}/call-link`, { method: 'POST', body: JSON.stringify(text ? { type, text } : { type }) });
   }
 
   async getMessages(conversationId: string) {
