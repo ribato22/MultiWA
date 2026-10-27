@@ -55,7 +55,11 @@ export type CallLogOutcome = 'missed' | 'rejected' | 'answered_elsewhere';
 export interface CallLogEntry {
   /** The call-log message id (dedupe key). */
   messageId: string;
-  /** The engine call id this log belongs to, when WhatsApp's message id carries it (whatsapp-web.js: `<fromMe>_<peer>_<callId>`). Match a call by it before falling back to caller and time. */
+  /**
+   * The engine call id this log belongs to, when WhatsApp's message id carries it (whatsapp-web.js:
+   * `<fromMe>_<peer>_<callId>[_<participant>]`, the participant field being there in group logs only).
+   * Match a call by it before falling back to caller and time.
+   */
   callId?: string;
   from: string;
   isVideo: boolean;
@@ -211,9 +215,9 @@ export interface IWhatsAppEngine {
   /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). Rejects when the call is not ringing any more. */
   rejectCall(callId: string): Promise<void>;
   /**
-   * Create a WhatsApp call link (https://call.whatsapp.com/...). Resolves null only when
-   * this engine has no call-link API; rejects when the client is not ready or WhatsApp
-   * returns no link.
+   * Create a WhatsApp call link (https://call.whatsapp.com/...). It is a plain call link:
+   * anyone who has it can join, without approval. Resolves null only when this engine has
+   * no call-link API; rejects when the client is not ready or WhatsApp returns no link.
    */
   createCallLink(type: CallLinkType): Promise<string | null>;
 

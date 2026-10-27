@@ -2,7 +2,11 @@
 // harness as duplicate-ready-events.spec.ts), so nothing here starts a browser.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { WhatsAppWebJsAdapter } from '@multiwa/engines';
+
+const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..', '..');
 
 const wire = () => {
   const adapter = new WhatsAppWebJsAdapter() as any;
@@ -160,7 +164,7 @@ describe('WhatsAppWebJsAdapter calls', () => {
     client.emit('message_create', { ...base, _data: { callResult: 9 } });
     client.emit('message_create', { ...base, id: { _serialized: 'x2' }, _data: { callOutcome: 'SomethingNew' } });
     client.emit('message_create', { ...base, id: { _serialized: 'x3' }, fromMe: true, _data: { callOutcome: 'MISSED' } });
-    client.emit('message_create', { ...base, id: { _serialized: 'x4' }, _data: { callOutcome: 'ONGOING' } }); // pending is normal, not a shape to warn about
+    client.emit('message_create', { ...base, id: { _serialized: 'x4' }, _data: { callOutcome: 'ONGOING' } }); // no final outcome yet is normal, not a shape to warn about
     client.emit('message_create', { type: 'chat', id: { _serialized: 'm1' }, from: '628111000111@c.us', body: 'hi', _data: {} });
     expect(config.onCallLog).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(2);
@@ -206,7 +210,7 @@ describe('WhatsAppWebJsAdapter calls', () => {
       expect(config.onCallLog).toHaveBeenCalledTimes(1);
     });
 
-    it('stays silent about a pending (Ongoing) log: nothing reported, nothing warned', () => {
+    it('stays silent about a log without a final result (Ongoing, Failed): nothing reported, nothing warned', () => {
       const { client, config } = wire();
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       for (const outcome of ['Ongoing', 'ONGOING', 5, 'Failed']) client.emit('multiwa_call_log', callLog(outcome));
@@ -224,7 +228,7 @@ describe('WhatsAppWebJsAdapter calls', () => {
       expect(String(warn.mock.calls[0][0])).not.toContain('123456');
     });
 
-    it('does not remember a pending log, so its final change still gets through (Ongoing, then Missed: one entry, missed)', () => {
+    it('does not remember a log without a result, so its final change still gets through (Ongoing, then Missed: one entry, missed)', () => {
       const { client, config } = wire();
       client.emit('multiwa_call_log', callLog('Ongoing'));
       client.emit('multiwa_call_log', callLog('Ongoing'));
@@ -263,6 +267,44 @@ describe('WhatsAppWebJsAdapter calls', () => {
       config.onCallLog.mockImplementation(() => { throw new Error('db down'); });
       expect(() => client.emit('multiwa_call_log', callLog('Missed'))).not.toThrow();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('db down'));
+    });
+  });
+
+  // A call and its call log are two events from two sources (the call hook and the call-log message), joined only by
+  // the call id. Real whatsapp-web.js Message objects, built from the shape a live WhatsApp Web gave: the log's id
+  // carries (as its third field) the id the ringing call was reported under, however the call went.
+  describe('a call and its call log, joined on the call id', () => {
+    const { Message } = createRequire(path.join(REPO_ROOT, 'packages/engines/package.json'))('whatsapp-web.js');
+    const callLogMessage = (callId: string, callOutcome: string) => new Message({}, {
+      id: { fromMe: false, remote: '1234567@lid', id: callId, _serialized: `false_1234567@lid_${callId}` },
+      type: 'call_log',
+      from: { server: 'lid', user: '1234567', _serialized: '1234567@lid' },
+      to: { server: 'lid', user: '1234567', _serialized: '1234567@lid' },
+      t: 1793051495, callOutcome, isVideoCall: false, callDuration: 0,
+    });
+
+    // WhatsApp fires every change twice; MultiWA's own reject is echoed back as an `ended` it must not report.
+    it.each([
+      ['A: nobody answers', '00A9D2BADD351F56B87282EBA95ABCDE', 'Missed', 'missed', false],
+      ['B: answered on the phone', '3EB0C767D82CD7F2A5E14B9F6A03D1C4', 'AcceptedElsewhere', 'answered_elsewhere', false],
+      ['C: declined on the phone', '7F2E91B4A0C5D68E13F9A24B7C0D5E86', 'Rejected', 'rejected', false],
+      ['D: rejected by MultiWA through rejectCall', 'C4D9A07E5B213F68E9A1D0C27B54F3A9', 'Rejected', 'rejected', true],
+    ])('%s: one call-log entry, for the call that rang', async (_scenario, X, finalOutcome, outcome, rejectedByUs) => {
+      const { adapter, client, config } = wire();
+      client.emit('call', { id: X, from: '1234567@lid', isVideo: false, isGroup: false, reject: vi.fn().mockResolvedValue(undefined) });
+      client.emit('multiwa_call_log', callLogMessage(X, 'Ongoing'));
+      client.emit('multiwa_call_log', callLogMessage(X, 'Ongoing'));
+      if (rejectedByUs) await adapter.rejectCall(X);
+      client.emit('multiwa_call_ended', { id: X });
+      client.emit('multiwa_call_log', callLogMessage(X, finalOutcome));
+      client.emit('multiwa_call_log', callLogMessage(X, finalOutcome));
+
+      expect(config.onCall.mock.calls.map(([c]: any[]) => c.state)).toEqual(rejectedByUs ? ['ringing'] : ['ringing', 'ended']);
+      const ringing = config.onCall.mock.calls[0][0];
+      expect(config.onCallLog).toHaveBeenCalledTimes(1);
+      const [entry] = config.onCallLog.mock.calls[0];
+      expect(entry.callId, 'the log joins the call that rang').toBe(ringing.id);
+      expect(entry).toMatchObject({ callId: X, from: '1234567@lid', isVideo: false, outcome });
     });
   });
 

@@ -22,15 +22,16 @@ const OUTCOME_BY_NUMBER: Record<number, CallLogOutcome | null> = {
   7: 'missed',             // SILENCED_UNKNOWN_CALLER
 };
 
+// Keyed by name in lower case without separators (see lookupOutcome).
 const OUTCOME_BY_NAME: Record<string, CallLogOutcome | null> = {
   connected: 'answered_elsewhere',
   missed: 'missed',
   failed: null,
   rejected: 'rejected',
-  accepted_elsewhere: 'answered_elsewhere',
+  acceptedelsewhere: 'answered_elsewhere',
   ongoing: null,
-  silenced_by_dnd: 'missed',
-  silenced_unknown_caller: 'missed',
+  silencedbydnd: 'missed',
+  silencedunknowncaller: 'missed',
   completed: 'answered_elsewhere', // older synced logs say Completed for a call that was answered
 };
 
@@ -57,8 +58,9 @@ export function toJidString(value: unknown): string {
 function lookupOutcome(raw: unknown): CallLogOutcome | null | undefined {
   if (typeof raw === 'number') return OUTCOME_BY_NUMBER[raw];
   if (typeof raw !== 'string') return undefined;
-  // camelCase first (AcceptedElsewhere -> accepted_elsewhere). No nested quantifiers: no ReDoS.
-  const key = raw.trim().replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().replace(/[\s-]+/g, '_');
+  // Case and separators do not matter (AcceptedElsewhere, ACCEPTED_ELSEWHERE, "Accepted Elsewhere"). One
+  // flat character class, no nested quantifiers: no ReDoS.
+  const key = raw.trim().toLowerCase().replace(/[\s_-]+/g, '');
   if (/^\d+$/.test(key)) return OUTCOME_BY_NUMBER[Number(key)];
   // Own keys only: a plain-object lookup returns Object for 'constructor'.
   return Object.prototype.hasOwnProperty.call(OUTCOME_BY_NAME, key) ? OUTCOME_BY_NAME[key] : undefined;
@@ -75,25 +77,21 @@ export function parseCallLogOutcome(raw: unknown): CallLogOutcome | null {
   return lookupOutcome(raw) ?? null;
 }
 
-/**
- * An incoming call-log message whose outcome is one we know but that is not final yet
- * (Ongoing, Failed). Every live call starts as Ongoing, so this is normal, not a shape to
- * warn about; `readCallLog` gives no entry for it until the outcome changes.
- */
-export function isPendingCallLog(message: any): boolean {
+/** An incoming call log whose outcome is known but gives no final result (Ongoing, Failed): normal, so not worth a warning. */
+export function isCallLogWithoutOutcome(message: any): boolean {
   if (!message || message.type !== 'call_log' || message.fromMe) return false;
   return lookupOutcome(rawOutcomeOf(message)) === null;
 }
 
-// A call log's message id is `<fromMe>_<peer>_<CALLID>`, CALLID being the engine's own call id
-// (32 upper-case hex characters, verified on live calls). Anything else after the last `_`
-// (a participant JID, a short token) is not one.
-const CALL_ID = /^[0-9A-Fa-f]{16,64}$/;
-
-function callIdOf(messageId: string): string | undefined {
-  const last = messageId.slice(messageId.lastIndexOf('_') + 1);
-  return last !== messageId && CALL_ID.test(last) ? last : undefined;
-}
+// A call log's message id is `<fromMe>_<peer>_<callId>[_<participant>|_out]` (a group log adds the
+// participant, an own call `_out`). The call id is the engine's own call id: the THIRD field, always
+// 32 upper-case hex characters in the 163 live ids checked. Strictly positional, so a participant JID
+// or any later field is never taken for it.
+const CALL_ID = /^[0-9A-F]{32}$/;
+const callIdOf = (id: string): string | undefined => {
+  const f = id.split('_')[2];
+  return f && CALL_ID.test(f) ? f : undefined;
+};
 
 /**
  * A whatsapp-web.js message of type `call_log`, normalized. Null unless it is an incoming
@@ -105,7 +103,8 @@ export function readCallLog(message: any): CallLogEntry | null {
   const data = message._data ?? {};
   const outcome = parseCallLogOutcome(rawOutcomeOf(message));
   if (!outcome) return null;
-  const from = toJidString(message.from);
+  // Message only keeps a Wid's `_serialized` as `from`; a Wid with just `$1` leaves it undefined.
+  const from = toJidString(message.from) || toJidString(data.from);
   if (!from) return null;
   const ts = message.timestamp;
   // Seconds since the epoch; anything else (NaN, 0, milliseconds) is not trusted.

@@ -4,7 +4,7 @@
 import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
-import { readCallLog, isPendingCallLog, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
+import { readCallLog, isCallLogWithoutOutcome, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -277,15 +277,15 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
   /**
    * One call-log message, from either event. Reported once per message, when its outcome is
-   * final. A pending log (Ongoing) is normal, so it is neither warned about nor remembered:
-   * its change to the final outcome must still get through.
+   * final. A log without a final result (Ongoing, Failed) is normal, so it is neither warned
+   * about nor remembered: its change to the final outcome must still get through.
    */
   private handleCallLogMessage(message: any): void {
     if (message?.type !== 'call_log') return;
     const entry = readCallLog(message);
     if (!entry) {
-      // Own outgoing calls are ignored on purpose, and so is a log that is merely not final yet.
-      if (!message.fromMe && !isPendingCallLog(message)) this.warnUnreadableCallLog(message);
+      // Own outgoing calls are ignored on purpose, and so is a log that gives no final result (Ongoing, Failed).
+      if (!message.fromMe && !isCallLogWithoutOutcome(message)) this.warnUnreadableCallLog(message);
       return;
     }
     if (this.seenCallLogs.has(entry.messageId)) return;
@@ -320,8 +320,8 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   }
 
   /**
-   * An incoming call's call-log message that yields no entry and is not merely pending
-   * (ONGOING, FAILED) has no caller, or WhatsApp Web renamed its fields or outcomes. Say so
+   * An incoming call's call-log message that yields no entry and is not merely without a
+   * final result (Ongoing, Failed) has no caller, or WhatsApp Web renamed its fields or outcomes. Say so
    * once per shape (at most MAX_WARNED_SHAPES), never with content.
    */
   private warnUnreadableCallLog(message: any): void {

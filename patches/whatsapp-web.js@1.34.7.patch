@@ -1,8 +1,8 @@
 diff --git a/src/Client.js b/src/Client.js
-index 800109ebf7720d5f0f29091518a8a25f7fd8e381..114f7a970a164dcbb5628bf544e8a7da26ca4d00 100644
+index 800109ebf7720d5f0f29091518a8a25f7fd8e381..e04971b6c73ac37b20dd7b3fa899a3fe44a618dd 100644
 --- a/src/Client.js
 +++ b/src/Client.js
-@@ -893,6 +893,23 @@ class Client extends EventEmitter {
+@@ -893,6 +893,30 @@ class Client extends EventEmitter {
              this.emit(Events.INCOMING_CALL, cll);
          });
  
@@ -20,13 +20,20 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..114f7a970a164dcbb5628bf544e8a7da
 +             * MultiWA patch: a new call-log message ("Missed voice call") was added or
 +             * changed. Its outcome goes Ongoing -> Missed / Rejected / AcceptedElsewhere.
 +             */
-+            this.emit('multiwa_call_log', new Message(this, msg));
++            try {
++                this.emit('multiwa_call_log', new Message(this, msg));
++            } catch (e) {
++                console.warn(
++                    '[whatsapp-web.js patch] call-log message dropped:',
++                    e && e.message,
++                );
++            }
 +        });
 +
          await exposeFunctionIfAbsent(
              this.pupPage,
              'onReaction',
-@@ -1074,26 +1091,104 @@ class Client extends EventEmitter {
+@@ -1074,26 +1098,104 @@ class Client extends EventEmitter {
                  WAWebCallCollection &&
                  typeof WAWebCallCollection.on === 'function'
              ) {
@@ -147,37 +154,84 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..114f7a970a164dcbb5628bf544e8a7da
              }
              Chat.on('remove', async (chat) => {
                  window.onRemoveChatEvent(
-@@ -3209,6 +3304,30 @@ class Client extends EventEmitter {
+@@ -3209,10 +3311,73 @@ class Client extends EventEmitter {
  
          return await this.pupPage.evaluate(
              async (startTimeTs, callType) => {
+-                const response = await window
+-                    .require('WAWebGenerateEventCallLink')
+-                    .createEventCallLink(startTimeTs, callType);
+-                return response ?? '';
 +                // MultiWA patch: current WhatsApp Web has no WAWebGenerateEventCallLink. Its
 +                // own "Create call link" (Calls tab) lives in a lazily loaded bundle: load it
-+                // the way WhatsApp does, then create a plain call link.
-+                const load = () => {
++                // the way WhatsApp does, then create a plain call link. Only getting at the
++                // modules may fail quietly (the old API is the fallback): once WhatsApp has
++                // been asked, its answer, a nack included, reaches the caller. Nothing waits
++                // forever either, or evaluate would hang until protocolTimeout.
++                const TIMEOUT_MS = 25000;
++                const withTimeout = (promise, ms, what) => {
++                    let timer;
++                    return Promise.race([
++                        promise,
++                        new Promise((_, reject) => {
++                            timer = setTimeout(
++                                () => reject(new Error(what + ' timed out')),
++                                ms,
++                            );
++                        }),
++                    ]).finally(() => clearTimeout(timer));
++                };
++                const acquire = (name) => {
 +                    try {
-+                        return window.require('WAWebVoipCreateCallLink');
++                        return window.require(name);
 +                    } catch (e) {
 +                        return null;
 +                    }
 +                };
-+                let mod = load();
++                let mod = acquire('WAWebVoipCreateCallLink');
++                let loadError = null;
 +                if (!mod) {
-+                    await window
-+                        .require('JSResourceForInteraction')('WAWebVoipCreateCallLinksPopup.react')
-+                        .load();
-+                    mod = load();
++                    try {
++                        await withTimeout(
++                            window
++                                .require('JSResourceForInteraction')(
++                                    'WAWebVoipCreateCallLinksPopup.react',
++                                )
++                                .load(),
++                            TIMEOUT_MS,
++                            'Loading the call-link bundle',
++                        );
++                    } catch (e) {
++                        loadError = e;
++                    }
++                    mod = acquire('WAWebVoipCreateCallLink');
 +                }
 +                if (mod && typeof mod.createCallLink === 'function') {
-+                    const link = await mod.createCallLink({
-+                        callType: callType === 'video' ? 'video' : 'audio',
-+                        requireApproval: false,
-+                    });
++                    const link = await withTimeout(
++                        mod.createCallLink({
++                            callType: callType === 'video' ? 'video' : 'audio',
++                            requireApproval: false,
++                        }),
++                        TIMEOUT_MS,
++                        'Creating the call link',
++                    );
 +                    return link ?? '';
 +                }
-                 const response = await window
-                     .require('WAWebGenerateEventCallLink')
-                     .createEventCallLink(startTimeTs, callType);
++                const legacy = acquire('WAWebGenerateEventCallLink');
++                if (legacy && typeof legacy.createEventCallLink === 'function') {
++                    const response = await withTimeout(
++                        legacy.createEventCallLink(startTimeTs, callType),
++                        TIMEOUT_MS,
++                        'Creating the event call link',
++                    );
++                    return response ?? '';
++                }
++                throw (
++                    loadError || new Error('WhatsApp Web has no call-link API')
++                );
+             },
+             startTime,
+             callType,
 diff --git a/src/structures/Message.js b/src/structures/Message.js
 index dd977e85b0c0c40d2625cd337264fc9ae3bed17b..6c1ca6ba736f23d50e82d5e672622ff5b2ee4262 100644
 --- a/src/structures/Message.js

@@ -1,6 +1,10 @@
 // Pure call helpers of @multiwa/engines: JID strings, call-log outcomes, Baileys statuses.
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { toJidString, parseCallLogOutcome, readCallLog, isPendingCallLog, mapBaileysCallStatus } from '@multiwa/engines';
+import { toJidString, parseCallLogOutcome, readCallLog, isCallLogWithoutOutcome, mapBaileysCallStatus } from '@multiwa/engines';
+
+const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..', '..');
 
 describe('toJidString', () => {
   it('accepts every shape WhatsApp Web hands over', () => {
@@ -18,6 +22,7 @@ describe('parseCallLogOutcome', () => {
     [1, 'missed'], [3, 'rejected'], [4, 'answered_elsewhere'], [0, 'answered_elsewhere'],
     [6, 'missed'], [7, 'missed'], [2, null], [5, null],
     ['MISSED', 'missed'], ['missed', 'missed'], ['Accepted Elsewhere', 'answered_elsewhere'],
+    ['accepted-elsewhere', 'answered_elsewhere'], ['MiSsEd', 'missed'], // mid-word capitals are not word breaks
     ['REJECTED', 'rejected'], ['4', 'answered_elsewhere'], ['ONGOING', null], ['bogus', null],
     ['constructor', null], ['__proto__', null],
     [undefined, null],
@@ -73,28 +78,33 @@ describe('readCallLog', () => {
     });
   });
 
-  it('carries the engine call id when the message id ends in it (verified on live calls)', () => {
-    const entry = readCallLog({ ...base, id: { _serialized: 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDE' } });
-    expect(entry?.callId).toBe('00A9D2BADD351F56B87282EBA95ABCDE');
-    expect(entry?.messageId, 'the dedupe key stays the whole message id').toBe('false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDE');
+  // The call id is the THIRD `_`-separated field, whatever follows it: every live id (163 checked) is
+  // `<fromMe>_<peer>_<CALLID>[_<participant>|_out]`, and the call id is always 32 upper-case hex characters.
+  const CALL_ID = '00A9D2BADD351F56B87282EBA95ABCDE';
+  it.each([
+    ['an incoming call', `false_1234567@lid_${CALL_ID}`],
+    ['an own call', `true_1234567@lid_${CALL_ID}`],
+    ['a group call, where a participant follows the call id', `false_1203630000@g.us_${CALL_ID}_628111000111@c.us`],
+    ['an own call with the `_out` suffix', `true_628111000111@c.us_${CALL_ID}_out`],
+  ])('reads the call id from its field in %s', (_what, serialized) => {
+    const entry = readCallLog({ ...base, id: { _serialized: serialized } });
+    expect(entry?.callId).toBe(CALL_ID);
+    expect(entry?.messageId, 'the dedupe key stays the whole message id').toBe(serialized);
   });
 
   it.each([
     ['an id without a hex suffix', 'false_628111000111@c.us_ABC'],
-    ['a suffix that is hex but too short', 'false_123456@lid_00A9D2BADD35'],
-    ['a suffix that is too long', `false_123456@lid_${'A'.repeat(65)}`],
-    ['a suffix that is not hex', 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDG'],
-    ['a participant JID behind the call id', 'false_123456@g.us_00A9D2BADD351F56B87282EBA95ABCDE_555@lid'],
-    ['an id with no underscore at all', '00A9D2BADD351F56B87282EBA95ABCDE'],
+    ['a field that is hex but too short', 'false_123456@lid_00A9D2BADD35'],
+    ['a field that is too long', `false_123456@lid_${'A'.repeat(65)}`],
+    ['a field that is not hex', 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDG'],
+    ['a lower-case field (live call ids are upper-case)', `false_123456@lid_${CALL_ID.toLowerCase()}`],
+    ['a hex field that is not the third', `false_1203630000@g.us_555@lid_${CALL_ID}`],
+    ['an id with no underscore at all', CALL_ID],
   ])('has no callId for %s', (_what, serialized) => {
     const entry = readCallLog({ ...base, id: { _serialized: serialized } });
     expect(entry).not.toBeNull();
     expect(entry!.callId).toBeUndefined();
     expect('callId' in entry!, 'omitted, not set to undefined').toBe(false);
-  });
-
-  it('accepts a lower-case call id too', () => {
-    expect(readCallLog({ ...base, id: { _serialized: 'false_1@lid_00a9d2badd351f56b87282eba95abcde' } })?.callId).toBe('00a9d2badd351f56b87282eba95abcde');
   });
 
   it('has no callId when it had to build the message id itself', () => {
@@ -126,6 +136,13 @@ describe('readCallLog', () => {
     expect(readCallLog({ ...base, from: { _serialized: '628111000111@c.us' } })?.from).toBe('628111000111@c.us');
   });
 
+  it('reads the caller from the raw message data when the message has none (Message only keeps a Wid\'s `_serialized`)', () => {
+    const raw = (from: unknown) => ({ ...base, from: undefined, _data: { ...base._data, from } });
+    expect(readCallLog(raw({ user: '1234567', server: 'lid', $1: '1234567@lid' }))?.from).toBe('1234567@lid');
+    expect(readCallLog(raw('628111000111@c.us'))?.from).toBe('628111000111@c.us');
+    expect(readCallLog(raw(undefined)), 'no caller anywhere').toBeNull();
+  });
+
   it('needs a caller and an outcome field', () => {
     expect(readCallLog({ ...base, from: undefined })).toBeNull();
     expect(readCallLog({ ...base, _data: undefined })).toBeNull();
@@ -144,39 +161,70 @@ describe('readCallLog', () => {
   });
 });
 
-describe('isPendingCallLog', () => {
+// The real thing: the installed (patched) whatsapp-web.js Message class, built from the payload a live
+// WhatsApp Web gave (probed 2026-10-27, ids shortened). Hand-made fakes can drift from what Message keeps.
+describe('readCallLog on a real whatsapp-web.js Message', () => {
+  const { Message } = createRequire(path.join(REPO_ROOT, 'packages/engines/package.json'))('whatsapp-web.js');
+  const CALL_ID = '00A9D2BADD351F56B87282EBA95ABCDE';
+  const payload = {
+    id: { fromMe: false, remote: '1234567@lid', id: CALL_ID, _serialized: `false_1234567@lid_${CALL_ID}` },
+    type: 'call_log',
+    from: { server: 'lid', user: '1234567', _serialized: '1234567@lid' },
+    to: { server: 'lid', user: '1234567', _serialized: '1234567@lid' },
+    t: 1793051495,
+    callOutcome: 'Missed',
+    isVideoCall: false,
+    callDuration: 0,
+  };
+  const expected = {
+    messageId: `false_1234567@lid_${CALL_ID}`, callId: CALL_ID, from: '1234567@lid',
+    isVideo: false, outcome: 'missed', timestamp: new Date(1793051495 * 1000),
+  };
+
+  it('reads a live payload: message id, call id, caller, outcome, time', () => {
+    expect(readCallLog(new Message({}, payload))).toEqual(expected);
+  });
+
+  it('still finds the caller when the Wid has only `$1` (Message sets `from` from `_serialized` alone)', () => {
+    const message = new Message({}, { ...payload, from: { server: 'lid', user: '1234567', $1: '1234567@lid' } });
+    expect(message.from, 'the premise: Message itself drops it').toBeUndefined();
+    expect(readCallLog(message)).toEqual(expected);
+  });
+});
+
+describe('isCallLogWithoutOutcome', () => {
   const log = (callOutcome: unknown, extra: Record<string, unknown> = {}) => ({
     type: 'call_log', id: { _serialized: 'false_123456@lid_00A9D2BADD351F56B87282EBA95ABCDE' }, from: '123456@lid',
     fromMe: false, timestamp: 1_790_000_000, _data: { callOutcome, isVideoCall: false }, ...extra,
   });
 
-  it.each(['Ongoing', 'ONGOING', 'ongoing', 5, '5', 'failed', 'Failed', 2])('%s: a known outcome that is not final yet', (raw) => {
-    expect(isPendingCallLog(log(raw))).toBe(true);
+  it.each(['Ongoing', 'ONGOING', 'ongoing', 5, '5', 'failed', 'Failed', 2])('%s: a known outcome that gives no final result', (raw) => {
+    expect(isCallLogWithoutOutcome(log(raw))).toBe(true);
     expect(readCallLog(log(raw)), 'and it is exactly what readCallLog gives no entry for').toBeNull();
   });
 
-  it.each(['Missed', 'Rejected', 'AcceptedElsewhere', 'Completed', 1, 3, 4, 0])('%s: final, so not pending', (raw) => {
-    expect(isPendingCallLog(log(raw))).toBe(false);
+  it.each(['Missed', 'Rejected', 'AcceptedElsewhere', 'Completed', 1, 3, 4, 0])('%s: final, so it has an outcome', (raw) => {
+    expect(isCallLogWithoutOutcome(log(raw))).toBe(false);
   });
 
-  it('an outcome it does not know is not pending (that is a shape to warn about)', () => {
-    expect(isPendingCallLog(log('SomethingNew'))).toBe(false);
-    expect(isPendingCallLog(log(99))).toBe(false);
-    expect(isPendingCallLog(log('constructor'))).toBe(false);
-    expect(isPendingCallLog(log(undefined))).toBe(false);
-    expect(isPendingCallLog({ ...log('Ongoing'), _data: undefined })).toBe(false);
+  it('an outcome it does not know is not a known one without a result (that is a shape to warn about)', () => {
+    expect(isCallLogWithoutOutcome(log('SomethingNew'))).toBe(false);
+    expect(isCallLogWithoutOutcome(log(99))).toBe(false);
+    expect(isCallLogWithoutOutcome(log('constructor'))).toBe(false);
+    expect(isCallLogWithoutOutcome(log(undefined))).toBe(false);
+    expect(isCallLogWithoutOutcome({ ...log('Ongoing'), _data: undefined })).toBe(false);
   });
 
-  it('only an incoming call log can be pending', () => {
-    expect(isPendingCallLog(log('Ongoing', { fromMe: true }))).toBe(false);
-    expect(isPendingCallLog(log('Ongoing', { type: 'chat' }))).toBe(false);
-    expect(isPendingCallLog(null)).toBe(false);
-    expect(isPendingCallLog(undefined)).toBe(false);
+  it('only an incoming call log counts', () => {
+    expect(isCallLogWithoutOutcome(log('Ongoing', { fromMe: true }))).toBe(false);
+    expect(isCallLogWithoutOutcome(log('Ongoing', { type: 'chat' }))).toBe(false);
+    expect(isCallLogWithoutOutcome(null)).toBe(false);
+    expect(isCallLogWithoutOutcome(undefined)).toBe(false);
   });
 
   it('reads the same outcome field readCallLog reads (the first one present)', () => {
-    expect(isPendingCallLog({ ...log(undefined), _data: { outcome: 'ONGOING' } })).toBe(true);
-    expect(isPendingCallLog({ ...log(undefined), _data: { callOutcome: 'Missed', outcome: 'ONGOING' } })).toBe(false);
+    expect(isCallLogWithoutOutcome({ ...log(undefined), _data: { outcome: 'ONGOING' } })).toBe(true);
+    expect(isCallLogWithoutOutcome({ ...log(undefined), _data: { callOutcome: 'Missed', outcome: 'ONGOING' } })).toBe(false);
   });
 });
 
