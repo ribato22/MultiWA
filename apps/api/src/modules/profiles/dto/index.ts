@@ -70,6 +70,11 @@ export class UpdateProfileDto {
   @IsString()
   autoRejectCallMessage?: string;
 
+  @ApiPropertyOptional({ description: 'Default text when an agent replies to a missed call from the Calls queue. Blank = none.' })
+  @IsOptional()
+  @IsString()
+  callReplyMessage?: string;
+
   @ApiPropertyOptional({
     example: 2,
     nullable: true,
