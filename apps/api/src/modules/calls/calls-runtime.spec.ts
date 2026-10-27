@@ -78,7 +78,12 @@ function fakeCalls(initial: any = null): () => any {
     return copy();
   });
   db.call.updateMany.mockImplementation(async ({ where, data }: any) => {
-    if (stored?.id !== where.id || stored.outcome !== where.outcome) return { count: 0 };
+    // a settle (this call, if it still has the outcome it was read with), or the boot sweep (any call with that outcome,
+    // those that began before a cutoff when it has one)
+    const hit = where.id === undefined
+      ? stored?.outcome === where.outcome && (!where.startedAt?.lt || stored.startedAt < where.startedAt.lt)
+      : stored?.id === where.id && stored.outcome === where.outcome;
+    if (!hit) return { count: 0 };
     stored = { ...stored, ...data };
     return { count: 1 };
   });
@@ -977,13 +982,34 @@ describe('timers and sweeps', () => {
     expect(d.notify).not.toHaveBeenCalled();
   });
 
-  it('the boot sweep closes rows left ringing', async () => {
+  // No age condition: the ring timers died with the process, and a call that was ringing when it went down is younger than
+  // the ring timeout when the next one boots, so a cutoff would leave it ringing forever.
+  it('the boot sweep closes every row left ringing, whatever its age', async () => {
     db.call.updateMany.mockResolvedValue({ count: 2 });
     await expect(closeStaleRingingCalls(NOW)).resolves.toBe(2);
     expect(db.call.updateMany).toHaveBeenCalledWith({
-      where: { outcome: 'ringing', startedAt: { lt: new Date(NOW.getTime() - 90_000) } },
+      where: { outcome: 'ringing' },
       data: { outcome: 'unknown', endedAt: NOW },
     });
+  });
+
+  // `unknown` is not final (nextOutcome): the call log of the call, which the phone syncs once the engine is back, still
+  // says what happened. Nothing else could settle this call: the restarted engine does not know it (an agent's Reject is
+  // answered "not ringing any more").
+  it('the boot sweep closes a call that began ringing moments before the restart, and its call log still settles it', async () => {
+    const stored = fakeCalls(row({ fromJid: '628777000777@s.whatsapp.net', startedAt: new Date(NOW.getTime() - 10_000) })); // ringing for 10 s, under the 90 s timeout
+    await expect(closeStaleRingingCalls(NOW)).resolves.toBe(1);
+    expect(stored()).toMatchObject({ outcome: 'unknown', endedAt: NOW });
+
+    const d = deps();
+    await handleCallLog(
+      { messageId: 'log-1', callId: 'wa-1', from: '628777000777@c.us', isVideo: false, outcome: 'missed', timestamp: new Date(NOW.getTime() - 5_000) } as any,
+      d,
+    );
+    expect(stored()).toMatchObject({ outcome: 'missed', endedAt: NOW });
+    expect(events(d)).toEqual([AppEvents.CALL.UPDATED]);
+    expect(d.notify).toHaveBeenCalledTimes(1);
+    expect(d.notify.mock.calls[0][0]).toMatch(/Missed voice call/);
   });
 });
 

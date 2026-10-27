@@ -488,10 +488,18 @@ async function attachCallLog(row: CallRecord, entry: CallLogEntry, deps: CallDep
   return { ...settled, metadata };
 }
 
-/** Boot sweep: a restart loses the ring timers, so calls left ringing are closed as `unknown`. */
+/**
+ * Boot sweep: a restart loses the ring timers, so EVERY call still ringing is closed as `unknown`, whatever its age. A call
+ * that was ringing when the process went down is younger than the ring timeout when the next one boots, with no timer to
+ * close it, and nothing else would: the engines keep their ringing calls in memory too, so a restarted engine cannot reject
+ * it (an agent's Reject is answered "not ringing any more"). `unknown` is not final (nextOutcome): the call log that follows
+ * still refines it into missed, rejected or answered_elsewhere.
+ * Run it once on the engine host at boot, before its engines connect: it has no age to tell a call of the previous process
+ * from one that rings after it.
+ */
 export async function closeStaleRingingCalls(at: Date = new Date()): Promise<number> {
   const res = await prisma.call.updateMany({
-    where: { outcome: 'ringing', startedAt: { lt: new Date(at.getTime() - ringTimeoutMs()) } },
+    where: { outcome: 'ringing' },
     data: { outcome: 'unknown', endedAt: at },
   });
   return res.count;
