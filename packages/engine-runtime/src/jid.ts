@@ -14,13 +14,16 @@ export interface ResolvedChatJid {
   name?: string;
 }
 
+/**
+ * The JID a chat is stored under. Pass the engine's resolver bound
+ * (`engine.resolveIdentity.bind(engine)`); unresolved means `jid === lidJid`.
+ */
 export async function resolveChatJid(
   raw: string,
-  isGroup: boolean,
-  resolveIdentity?: IdentityResolver | null,
-  onError?: (err: Error) => void,
+  resolveIdentity: IdentityResolver | null | undefined,
+  onError: (err: Error) => void,
 ): Promise<ResolvedChatJid> {
-  if (isGroup) return { jid: raw, lidJid: null };
+  if (raw.includes('@g.us')) return { jid: raw, lidJid: null };
   let jid = raw.replace('@c.us', '@s.whatsapp.net');
   if (!jid.includes('@lid')) return { jid, lidJid: null };
   const lidJid = jid;
@@ -31,7 +34,7 @@ export async function resolveChatJid(
       if (ident?.phoneJid) jid = ident.phoneJid;
       if (ident?.name) name = ident.name;
     } catch (err) {
-      onError?.(err as Error);
+      onError(err as Error);
     }
   }
   return name ? { jid, lidJid, name } : { jid, lidJid };
