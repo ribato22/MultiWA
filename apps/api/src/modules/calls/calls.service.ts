@@ -11,6 +11,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   GatewayTimeoutException,
   HttpException,
   Inject,
@@ -26,6 +27,7 @@ import { AppEvents, REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import {
   CALL_FOLLOW_UPS,
   CALL_OUTCOMES,
+  findConversationId,
   publishCall,
   withTimeout,
   type CallFollowUp,
@@ -54,7 +56,9 @@ const CALL_INCLUDE = {
   conversation: { select: { id: true, name: true } },
 } as const;
 // A stuck WhatsApp Web page would otherwise hold the request for puppeteer's 240 s protocol timeout. The engine
-// managers give up on an agent's reject sooner (AGENT_REJECT_TIMEOUT_MS), so the runtime lets go of the call first.
+// managers give up on an agent's reject first (AGENT_REJECT_TIMEOUT_MS, 25 s), so the runtime lets go of the call before
+// this limit in both engine modes: with ENGINE_HOST=worker their timeout comes back as the failure of the command, which
+// EngineCommandsService waits for 28 s.
 const CALL_ACTION_TIMEOUT_MS = 30_000;
 const NO_GROUP_ANSWER = 'Group calls cannot be answered from the queue';
 const NO_CALL_LINKS = 'Call links are not available on this engine';
@@ -82,6 +86,11 @@ export class CallsService {
     const since = q.since ? new Date(q.since) : undefined;
     if (since && Number.isNaN(since.getTime())) throw new BadRequestException('since must be an ISO date');
     const take = Math.min(Math.max(Number(q.limit) || DEFAULT_LIMIT, 1), CALLS_MAX_LIMIT);
+    if (q.cursor) {
+      // Prisma positions a page on any call it is given: one of another profile would skip a row without a word.
+      const known = await prisma.call.findFirst({ where: { id: q.cursor, profileId: q.profileId }, select: { id: true } });
+      if (!known) throw new BadRequestException('Invalid cursor');
+    }
     const rows = await prisma.call.findMany({
       where: {
         profileId: q.profileId,
@@ -113,12 +122,13 @@ export class CallsService {
       if (!CALL_FOLLOW_UPS.includes(dto.followUp as CallFollowUp)) {
         throw new BadRequestException(`followUp must be one of: ${CALL_FOLLOW_UPS.join(', ')}`);
       }
-      data.followUp = dto.followUp;
+      if (dto.followUp !== row.followUp) data.followUp = dto.followUp;
     }
     if (dto.assignedUserId !== undefined) {
-      data.assignedUserId = dto.assignedUserId ? await this.assignableUser(row.profileId, dto.assignedUserId) : null;
+      const assignee = dto.assignedUserId || null;
+      if (assignee !== row.assignedUserId) data.assignedUserId = assignee ? await this.assignableUser(row.profileId, assignee) : null;
     }
-    if (Object.keys(data).length === 0) return row;
+    if (Object.keys(data).length === 0) return row; // nothing differs: no write and no call.updated
     const updated = await prisma.call.update({ where: { id }, data, include: CALL_INCLUDE });
     this.publishUpdate(updated);
     return updated;
@@ -175,6 +185,7 @@ export class CallsService {
       data: {
         metadata: { ...metadata, callLinks: [...callLinks, { type, link, at: new Date().toISOString() }] },
         ...(opens ? { followUp: 'in_progress' } : {}),
+        ...(await this.conversationLink(fresh)),
       },
       include: CALL_INCLUDE,
     });
@@ -183,6 +194,8 @@ export class CallsService {
   }
 
   async openCount(organizationId: string) {
+    // Prisma reads `organizationId: undefined` as "no filter": without one this would count the calls of every tenant.
+    if (!organizationId) throw new ForbiddenException('Missing organization context');
     const count = await prisma.call.count({ where: { followUp: 'open', profile: { workspace: { organizationId } } } });
     return { count };
   }
@@ -210,13 +223,33 @@ export class CallsService {
     return res;
   }
 
-  /** Answering a call takes it up: open -> in_progress, judged on the row as it is after the send (the gate may hold it for minutes). */
+  /**
+   * Answering a call takes it up: open -> in_progress, judged on the row as it is after the send (the gate may hold it for
+   * minutes). The same update links the conversation the reply opened, when the call has none. Only the follow-up is announced.
+   */
   private async markInProgress(id: string) {
     const fresh = await this.get(id);
-    if (fresh.followUp !== 'open') return fresh;
-    const updated = await prisma.call.update({ where: { id }, data: { followUp: 'in_progress' }, include: CALL_INCLUDE });
-    this.publishUpdate(updated);
+    const opens = fresh.followUp === 'open';
+    const link = await this.conversationLink(fresh);
+    if (!opens && !link.conversationId) return fresh;
+    const updated = await prisma.call.update({ where: { id }, data: { ...(opens ? { followUp: 'in_progress' } : {}), ...link }, include: CALL_INCLUDE });
+    if (opens) this.publishUpdate(updated);
     return updated;
+  }
+
+  /**
+   * A call is recorded before the first message to its caller exists, so the row of a first-time caller has no
+   * conversation; the message an agent sends opens it. Best effort, never throws: the message is sent by now.
+   */
+  private async conversationLink(row: { id: string; profileId: string; fromJid: string; conversationId: string | null }): Promise<{ conversationId?: string }> {
+    if (row.conversationId) return {};
+    try {
+      const conversationId = await findConversationId(row.profileId, row.fromJid);
+      return conversationId ? { conversationId } : {};
+    } catch (e) {
+      this.logger.warn(`call ${row.id} was not linked to its conversation: ${(e as Error).message}`);
+      return {};
+    }
   }
 
   /** Work on the engine host, bounded in time, its failures told apart as HTTP errors. */
@@ -259,6 +292,7 @@ export class CallsService {
     if (says('ENGINE_NOT_CONNECTED', 'not connected', 'not ready', 'no live engine')) return new ConflictException('Profile is not connected');
     if (says('ENGINE_TIMEOUT', 'timed out')) return new GatewayTimeoutException('WhatsApp did not answer in time');
     if (says('did not return a call link')) return new BadGatewayException('WhatsApp did not return a call link');
+    // The patched whatsapp-web.js throws "WhatsApp Web has no call-link API" when the page has neither call-link module.
     if (says('no call-link API')) return new ConflictException(NO_CALL_LINKS);
     return e as Error; // unknown errors become a plain 500 (Nest does not echo their text)
   }

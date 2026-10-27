@@ -6,13 +6,17 @@ import { ApiBearerAuth, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagg
 import { CallsService } from './calls.service';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
 
 @ApiTags('Calls')
 @Controller('calls')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+// Like MessagesController: the scope check sits between authentication and the tenant lookup. Only the two routes
+// that send a message to the caller ask an API key for a scope; reject and the reads, like the conversations routes, do not.
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -61,6 +65,7 @@ export class CallsController {
   }
 
   @Post(':id/reply')
+  @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Send a text to the caller (send-gated)' })
   @ApiNotFound('Call')
@@ -70,6 +75,7 @@ export class CallsController {
   }
 
   @Post(':id/call-link')
+  @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Create a WhatsApp call link and send it to the caller' })
   @ApiNotFound('Call')

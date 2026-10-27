@@ -65,7 +65,11 @@ export class UpdateProfileDto {
   @IsBoolean()
   autoRejectCalls?: boolean;
 
-  @ApiPropertyOptional({ description: 'Optional message sent to the caller after auto-rejecting a call. Blank = reject silently.' })
+  @ApiPropertyOptional({
+    description:
+      'Optional message sent to the caller after auto-rejecting a call, also when the reject itself failed because the caller had already hung up. ' +
+      'Sent at most once per caller per 24 hours, through the send gate (so it can be delayed or refused). Blank = reject silently.',
+  })
   @IsOptional()
   @IsString()
   autoRejectCallMessage?: string;

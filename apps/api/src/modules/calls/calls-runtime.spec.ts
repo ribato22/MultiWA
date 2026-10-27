@@ -349,6 +349,63 @@ describe('auto-reject', () => {
   });
 });
 
+// A call is recorded before the first message to its caller exists, so the row of a first-time caller has no
+// conversation. The auto-reply opens one: once it is sent, the row is linked to it (best effort).
+describe('auto-reply: the conversation it opens', () => {
+  const settings = { autoRejectCalls: true, autoRejectCallMessage: 'Maaf' };
+  const FROM = '628111000111@s.whatsapp.net';
+
+  it('links the call to the conversation of a first-time caller once the reply is sent', async () => {
+    db.conversation.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'conv-9' }); // none when it rang, one after the reply
+    const order: string[] = [];
+    db.call.update.mockImplementation(async ({ data }: any) => { order.push(Object.keys(data)[0]); return row(data); });
+    const d = deps({ settings, sendText: vi.fn().mockImplementation(async () => { order.push('send'); }) });
+    await handleEngineCall(ringing(), d);
+    expect(db.conversation.findFirst).toHaveBeenLastCalledWith({ where: { profileId: 'p1', jid: FROM }, select: { id: true } });
+    expect(db.call.update).toHaveBeenLastCalledWith({ where: { id: 'row-1' }, data: { conversationId: 'conv-9' } });
+    expect(order).toEqual(['autoReplySentAt', 'send', 'conversationId']); // claim, send, then link
+  });
+
+  it('looks nothing up for a caller the call was recorded with a conversation for', async () => {
+    db.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    const d = deps({ settings });
+    await handleEngineCall(ringing(), d);
+    expect(db.conversation.findFirst).toHaveBeenCalledTimes(1); // only when the call was recorded
+    expect(d.sendText).toHaveBeenCalledTimes(1);
+    expect(db.call.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ conversationId: expect.anything() }) }));
+  });
+
+  it('leaves the link unset when there is still no conversation', async () => {
+    const d = deps({ settings });
+    await handleEngineCall(ringing(), d);
+    expect(db.conversation.findFirst).toHaveBeenCalledTimes(2);
+    expect(db.call.update).toHaveBeenCalledTimes(1); // the claim, nothing else
+  });
+
+  it('a reply that was not sent links nothing', async () => {
+    db.conversation.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ id: 'conv-9' });
+    const d = deps({ settings, sendText: vi.fn().mockRejectedValue(new Error('429')) });
+    await handleEngineCall(ringing(), d);
+    expect(db.conversation.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.call.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: { conversationId: 'conv-9' } }));
+  });
+
+  it.each([
+    ['the lookup', () => db.conversation.findFirst.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('db blip'))],
+    ['the update', () => {
+      db.conversation.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'conv-9' });
+      db.call.update.mockResolvedValueOnce(row()).mockRejectedValueOnce(new Error('db blip')); // the claim works, the link does not
+    }],
+  ])('%s failing is a warning: the call stays answered and the claim stays', async (_what, arrange) => {
+    arrange();
+    const d = deps({ settings });
+    await expect(handleEngineCall(ringing(), d)).resolves.toMatchObject({ outcome: 'rejected', rejectedBy: 'auto' });
+    expect(d.sendText).toHaveBeenCalledTimes(1);
+    expect(d.logger.warn).toHaveBeenCalledWith(expect.stringContaining('db blip'));
+    expect(db.call.update).not.toHaveBeenCalledWith({ where: { id: 'row-1' }, data: { autoReplySentAt: null } }); // not released: the reply went out
+  });
+});
+
 describe('later states', () => {
   it('ended -> unknown, without a notification (the call log usually follows)', async () => {
     db.call.findUnique.mockResolvedValue(row());
@@ -499,7 +556,7 @@ describe('call-log messages', () => {
       });
     });
 
-    it('never trigger the auto-reply: a call that rang while offline cannot be answered from its log (D8)', async () => {
+    it('never trigger the auto-reply: a call that rang while offline cannot be answered from its log', async () => {
       const d = deps({ settings: { autoRejectCalls: true, autoRejectCallMessage: 'Maaf' } });
       await handleCallLog(entry({ callId: 'CALL3', from: '628178000178@c.us' }), d);
       expect(db.call.create).toHaveBeenCalledTimes(1);

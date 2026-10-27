@@ -14,6 +14,8 @@ vi.mock('../messages/messages.service', () => ({ MessagesService: class {} }));
 import { TENANT_CHECK, type TenantCheck } from '../../common/tenant/require-tenant.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { API_KEY_SCOPE } from '../auth/decorators/require-scope.decorator';
 import { CallsController } from './calls.controller';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './dto';
 
@@ -32,9 +34,21 @@ const ROUTES: Array<[string, RequestMethod, string, TenantCheck[] | null]> = [
 ];
 
 describe('CallsController routes', () => {
-  it('is behind authentication and the tenant guard', () => {
-    expect(Reflect.getMetadata(GUARDS_METADATA, CallsController)).toEqual([JwtOrApiKeyGuard, TenantGuard]);
+  it('is behind authentication, the API-key scope check and the tenant guard, in that order', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, CallsController)).toEqual([JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard]);
     expect(Reflect.getMetadata(PATH_METADATA, CallsController)).toBe('calls');
+  });
+
+  // The two routes that send a message to the caller need what every other send route needs (MessagesController:
+  // the `messages:write` scope the admin UI issues as "Send Messages"). Reject and the reads are not sends: like
+  // the conversations routes they ask nothing of an API key's scopes.
+  it('asks an API key for messages:write on the routes that send a message, and for nothing on the others', () => {
+    const scopes = Object.fromEntries(ROUTES.map(([name]) => [name, Reflect.getMetadata(API_KEY_SCOPE, proto[name])]));
+    expect(scopes).toEqual({
+      list: undefined, openCount: undefined, get: undefined, update: undefined, reject: undefined,
+      reply: ['messages:write'], callLink: ['messages:write'],
+    });
+    expect(Reflect.getMetadata(API_KEY_SCOPE, CallsController)).toBeUndefined();
   });
 
   it('serves exactly these seven routes', () => {

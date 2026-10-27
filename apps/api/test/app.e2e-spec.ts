@@ -9,6 +9,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { prisma } from '@multiwa/database';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.factory';
 import { EngineManagerService } from '../src/modules/profiles/engine-manager.service';
@@ -434,6 +435,74 @@ describe('API (e2e)', () => {
       // B cannot list A's profile's webhooks either.
       const bList = await authGet(app, `/api/v1/webhooks?profileId=${profileIdA}`, tokenB);
       expect([403, 404]).toContain(bList.statusCode);
+    });
+  });
+
+  // Calls are recorded by the engine runtime and no endpoint creates one, so the rows are seeded through Prisma. What is
+  // under test is the HTTP -> TenantGuard -> CallsService -> Prisma path that keeps a call inside its organization.
+  describe('calls (profile-scoped, cross-org isolation)', () => {
+    const FROM = '628111000111@s.whatsapp.net';
+
+    // A mock-engine profile of the token's organization, made the way the webhook test makes one.
+    async function profileOf(token: string): Promise<string> {
+      const accountId: string = (await authGet(app, '/api/v1/accounts', token)).json()[0].id;
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/v1/accounts/${accountId}/profiles`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { displayName: 'e2e-calls', engine: 'mock' },
+      });
+      expect([200, 201]).toContain(res.statusCode);
+      return res.json().id;
+    }
+    // A missed call is recorded with an open follow-up.
+    const missedCall = (profileId: string, waCallId: string) =>
+      prisma.call.create({ data: { profileId, waCallId, fromJid: FROM, outcome: 'missed', endedAt: new Date() } });
+
+    it("blocks cross-org access to another org's calls, and open-count counts only its own organization", async () => {
+      const stamp = Date.now();
+      const tokenA = await register(app, `calls_a_${stamp}@test.local`);
+      const tokenB = await register(app, `calls_b_${stamp}@test.local`);
+      const profileA = await profileOf(tokenA);
+      const profileB = await profileOf(tokenB);
+      const callA = await missedCall(profileA, `e2e-${stamp}-a1`);
+      const callB = await missedCall(profileB, `e2e-${stamp}-b1`);
+      await missedCall(profileB, `e2e-${stamp}-b2`);
+
+      // The owner reads its call, and finds it in the list of its profile.
+      const ownRead = await authGet(app, `/api/v1/calls/${callA.id}`, tokenA);
+      expect(ownRead.statusCode).toBe(200);
+      expect(ownRead.json().fromJid).toBe(FROM);
+      const ownList = await authGet(app, `/api/v1/calls?profileId=${profileA}`, tokenA);
+      expect(ownList.statusCode).toBe(200);
+      expect((ownList.json().calls as any[]).map((c) => c.id)).toEqual([callA.id]);
+
+      // Another org's user reaches neither (TenantGuard: a call through its profile, a profile through its workspace).
+      const crossRead = await authGet(app, `/api/v1/calls/${callA.id}`, tokenB);
+      expect(crossRead.statusCode).toBe(403);
+      const crossList = await authGet(app, `/api/v1/calls?profileId=${profileA}`, tokenB);
+      expect(crossList.statusCode).toBe(403);
+
+      // A page cursor is a call of the listed profile: a call of another organization is refused, not silently skipped.
+      const foreignCursor = await authGet(app, `/api/v1/calls?profileId=${profileA}&cursor=${callB.id}`, tokenA);
+      expect(foreignCursor.statusCode).toBe(400);
+      const ownCursor = await authGet(app, `/api/v1/calls?profileId=${profileA}&cursor=${callA.id}`, tokenA);
+      expect(ownCursor.statusCode).toBe(200);
+      expect(ownCursor.json().calls).toEqual([]); // the page after the only call
+
+      // ...nor changes it: the blocked write leaves the follow-up as it was.
+      const crossWrite = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/calls/${callA.id}`,
+        headers: { authorization: `Bearer ${tokenB}` },
+        payload: { followUp: 'done' },
+      });
+      expect(crossWrite.statusCode).toBe(403);
+      expect((await authGet(app, `/api/v1/calls/${callA.id}`, tokenA)).json().followUp).toBe('open');
+
+      // open-count has no tenant check of its own: it counts the organization of the caller and nothing else.
+      expect((await authGet(app, '/api/v1/calls/open-count', tokenA)).json()).toEqual({ count: 1 });
+      expect((await authGet(app, '/api/v1/calls/open-count', tokenB)).json()).toEqual({ count: 2 });
     });
   });
 });

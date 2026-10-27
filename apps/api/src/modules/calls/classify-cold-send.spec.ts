@@ -1,5 +1,5 @@
 // classifyColdSend: a send is `service` (not cold) when the recipient messaged us OR
-// called us within serviceWindowHours (owner decision D6).
+// called us within serviceWindowHours.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({

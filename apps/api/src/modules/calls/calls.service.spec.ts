@@ -4,13 +4,14 @@
 // send-gated MessagesService. What the API changes itself is announced as call.updated.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  BadGatewayException, BadRequestException, ConflictException, GatewayTimeoutException, HttpException,
+  BadGatewayException, BadRequestException, ConflictException, ForbiddenException, GatewayTimeoutException, HttpException,
   NotFoundException, ServiceUnavailableException, UnprocessableEntityException,
 } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({
   prisma: {
-    call: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn(), count: vi.fn() },
+    call: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), count: vi.fn() },
+    conversation: { findFirst: vi.fn() },
     profile: { findUnique: vi.fn() },
     user: { findFirst: vi.fn() },
   },
@@ -77,6 +78,7 @@ const linkTarget = (t: Ctx, mode: Mode) => (mode === 'worker' ? t.engineCommands
 
 beforeEach(() => {
   for (const m of Object.values(db.call)) (m as any).mockReset();
+  db.conversation.findFirst.mockReset();
   db.profile.findUnique.mockReset();
   db.user.findFirst.mockReset();
 });
@@ -87,6 +89,7 @@ afterEach(() => {
 
 describe('CallsService.list', () => {
   it('filters, orders newest first and pages with a cursor', async () => {
+    db.call.findFirst.mockResolvedValue({ id: 'z' });
     db.call.findMany.mockResolvedValue([row({ id: 'a' }), row({ id: 'b' }), row({ id: 'c' })]);
     const { svc } = make();
     const res = await svc.list({ profileId: 'p1', outcome: 'missed', limit: 2, cursor: 'z' });
@@ -96,6 +99,19 @@ describe('CallsService.list', () => {
     }));
     expect(res.calls.map((c: any) => c.id)).toEqual(['a', 'b']);
     expect(res.nextCursor).toBe('b');
+    expect(db.call.findFirst).toHaveBeenCalledWith({ where: { id: 'z', profileId: 'p1' }, select: { id: true } });
+  });
+
+  // A cursor is the id of a call of THIS profile. Prisma would also position the page on a call of another profile (or
+  // organization), silently skipping a row and giving away where that call sits in the order.
+  it('resolves the cursor within the profile, and answers 400 for one that is not a call of it', async () => {
+    db.call.findFirst.mockResolvedValue(null);
+    const { svc } = make();
+    const err = await svc.list({ profileId: 'p1', cursor: 'a-call-of-another-profile' }).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.message).toBe('Invalid cursor');
+    expect(db.call.findFirst).toHaveBeenCalledWith({ where: { id: 'a-call-of-another-profile', profileId: 'p1' }, select: { id: true } });
+    expect(db.call.findMany).not.toHaveBeenCalled();
   });
 
   it('has no next cursor on the last page, and starts from the top without one', async () => {
@@ -106,6 +122,7 @@ describe('CallsService.list', () => {
     expect(args).toMatchObject({ where: { profileId: 'p1' }, take: 51 });
     expect(args).not.toHaveProperty('cursor');
     expect(args).not.toHaveProperty('skip');
+    expect(db.call.findFirst).not.toHaveBeenCalled(); // nothing to resolve without a cursor
   });
 
   it('passes follow-up, caller and since on, and keeps the page size within bounds', async () => {
@@ -177,6 +194,33 @@ describe('CallsService.update', () => {
     await expect(t.svc.update('c1', {})).resolves.toMatchObject({ id: 'c1' });
     expect(db.call.update).not.toHaveBeenCalled();
     expectNothingAnnounced(t);
+  });
+
+  // A PATCH that asks for what the call already is changes nothing: no write, no call.updated, no lookup of the assignee.
+  it.each([
+    ['the follow-up it has', { followUp: 'open' }, {}],
+    ['the assignee it has', { assignedUserId: 'u2' }, { assignedUserId: 'u2' }],
+    ['no assignee when it has none', { assignedUserId: null }, {}],
+    ['both', { followUp: 'in_progress', assignedUserId: 'u2' }, { followUp: 'in_progress', assignedUserId: 'u2' }],
+  ])('asking for %s writes and announces nothing, and answers with the call as it is', async (_what, dto, stored) => {
+    const current = row(stored);
+    db.call.findUnique.mockResolvedValue(current);
+    const t = make();
+    await expect(t.svc.update('c1', dto)).resolves.toBe(current);
+    expect(db.user.findFirst).not.toHaveBeenCalled();
+    expect(db.call.update).not.toHaveBeenCalled();
+    expectNothingAnnounced(t);
+  });
+
+  it('writes only what differs from the call as it is', async () => {
+    db.call.findUnique.mockResolvedValue(row({ followUp: 'open' }));
+    db.profile.findUnique.mockResolvedValue({ workspace: { organizationId: 'o1' } });
+    db.user.findFirst.mockResolvedValue({ id: 'u2' });
+    db.call.update.mockResolvedValue(row({ assignedUserId: 'u2' }));
+    const t = make();
+    await t.svc.update('c1', { followUp: 'open', assignedUserId: 'u2' });
+    expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'c1' }, data: { assignedUserId: 'u2' } }));
+    expectAnnounced(t, { assignedUserId: 'u2' });
   });
 
   it('refuses a user of another organization and an unknown follow-up', async () => {
@@ -360,6 +404,71 @@ describe('CallsService.reply', () => {
     expect(t.realtime.emitCallUpdate).toHaveBeenCalledTimes(1);
   });
 
+  // A call is recorded before the first message to its caller exists, so the row of a first-time caller has no
+  // conversation. The reply that opens one links it, in the same update that takes the call up.
+  describe('links the conversation the reply opened', () => {
+    const FROM = '628111000111@s.whatsapp.net';
+
+    it('in the same update as the follow-up', async () => {
+      db.call.findUnique.mockResolvedValue(row());
+      db.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+      db.call.update.mockResolvedValue(row({ followUp: 'in_progress', conversationId: 'conv-1' }));
+      const t = make();
+      await t.svc.reply('c1', 'x');
+      expect(db.conversation.findFirst).toHaveBeenCalledWith({ where: { profileId: 'p1', jid: FROM }, select: { id: true } });
+      expect(db.call.update).toHaveBeenCalledTimes(1);
+      expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'c1' }, data: { followUp: 'in_progress', conversationId: 'conv-1' } }));
+      expectAnnounced(t, { followUp: 'in_progress' });
+    });
+
+    it('even when the follow-up is already past open, announcing nothing (the payload has no conversation)', async () => {
+      db.call.findUnique.mockResolvedValue(row({ followUp: 'done' }));
+      db.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+      db.call.update.mockResolvedValue(row({ followUp: 'done', conversationId: 'conv-1' }));
+      const t = make();
+      const res = await t.svc.reply('c1', 'x');
+      expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ data: { conversationId: 'conv-1' } }));
+      expect(res.call).toMatchObject({ followUp: 'done', conversationId: 'conv-1' });
+      expectNothingAnnounced(t);
+    });
+
+    it('not for a call that has its conversation already: nothing is looked up', async () => {
+      db.call.findUnique.mockResolvedValue(row({ conversationId: 'conv-0' }));
+      db.call.update.mockResolvedValue(row({ followUp: 'in_progress', conversationId: 'conv-0' }));
+      await make().svc.reply('c1', 'x');
+      expect(db.conversation.findFirst).not.toHaveBeenCalled();
+      expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ data: { followUp: 'in_progress' } }));
+    });
+
+    it('and leaves the link unset when there is no conversation', async () => {
+      db.call.findUnique.mockResolvedValue(row());
+      db.conversation.findFirst.mockResolvedValue(null);
+      db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
+      await make().svc.reply('c1', 'x');
+      expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ data: { followUp: 'in_progress' } }));
+    });
+
+    it('a lookup that fails does not fail a reply that was sent, and is not silent about it', async () => {
+      db.call.findUnique.mockResolvedValue(row());
+      db.conversation.findFirst.mockRejectedValue(new Error('db blip'));
+      db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
+      const t = make();
+      const warn = vi.spyOn((t.svc as any).logger, 'warn').mockImplementation(() => undefined);
+      await expect(t.svc.reply('c1', 'x')).resolves.toMatchObject({ call: { followUp: 'in_progress' }, message: SENT });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('db blip'));
+      expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ data: { followUp: 'in_progress' } }));
+    });
+
+    it('a reply that was not sent links nothing', async () => {
+      db.call.findUnique.mockResolvedValue(row());
+      const t = make();
+      t.messages.sendText.mockResolvedValue(FAILED);
+      await expect(t.svc.reply('c1', 'x')).rejects.toBeInstanceOf(BadGatewayException);
+      expect(db.conversation.findFirst).not.toHaveBeenCalled();
+      expect(db.call.update).not.toHaveBeenCalled();
+    });
+  });
+
   it('refuses group calls and an empty reply, sending nothing', async () => {
     db.call.findUnique.mockResolvedValue(row({ isGroup: true }));
     const group = make();
@@ -447,6 +556,33 @@ describe.each(MODES)('CallsService.sendCallLink (ENGINE_HOST=%s)', (mode) => {
     const arg = db.call.update.mock.calls[0][0];
     expect(arg.data).toEqual({ metadata: { callLinks: [{ type: 'voice', link: LINK, at: expect.any(String) }] } });
     expectNothingAnnounced(t);
+  });
+
+  it('links the conversation the message opened, in the same update that remembers the link', async () => {
+    db.call.findUnique.mockResolvedValue(row());
+    db.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    db.call.update.mockResolvedValue(row({ followUp: 'in_progress', conversationId: 'conv-1' }));
+    const t = make();
+    await t.svc.sendCallLink('c1', 'voice');
+    expect(db.conversation.findFirst).toHaveBeenCalledWith({ where: { profileId: 'p1', jid: '628111000111@s.whatsapp.net' }, select: { id: true } });
+    expect(db.call.update).toHaveBeenCalledTimes(1);
+    expect(db.call.update.mock.calls[0][0].data).toMatchObject({ followUp: 'in_progress', conversationId: 'conv-1' });
+  });
+
+  it('does not look the conversation up when the call has it, and does not fail when the lookup fails', async () => {
+    db.call.findUnique.mockResolvedValue(row({ conversationId: 'conv-0' }));
+    db.call.update.mockResolvedValue(row({ conversationId: 'conv-0' }));
+    await make().svc.sendCallLink('c1', 'voice');
+    expect(db.conversation.findFirst).not.toHaveBeenCalled();
+    expect(db.call.update.mock.calls[0][0].data).not.toHaveProperty('conversationId');
+
+    db.call.findUnique.mockResolvedValue(row());
+    db.conversation.findFirst.mockRejectedValue(new Error('db blip'));
+    const t = make();
+    const warn = vi.spyOn((t.svc as any).logger, 'warn').mockImplementation(() => undefined);
+    await expect(t.svc.sendCallLink('c1', 'voice')).resolves.toMatchObject({ link: LINK });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('db blip'));
+    expect(db.call.update.mock.calls[1][0].data).not.toHaveProperty('conversationId');
   });
 
   it('does not undo a follow-up that was closed while the link waited in the send gate', async () => {
@@ -574,7 +710,7 @@ describe('CallsService.mapCallError', () => {
     ['no live engine for profile p1', 409, 'Profile is not connected'],
     ['ENGINE_TIMEOUT', 504, 'WhatsApp did not answer in time'],
     ['Creating the call link timed out', 504, 'WhatsApp did not answer in time'],
-    ['Job wait create-call-link timed out before finishing, no finish notification arrived after 20000ms (id=create-call-link-p1-1)', 504, 'WhatsApp did not answer in time'],
+    ['Job wait create-call-link timed out before finishing, no finish notification arrived after 28000ms (id=create-call-link-p1-1793098112905-3b241101-e2bb-4255-8caf-4136c566a962)', 504, 'WhatsApp did not answer in time'],
     ['WhatsApp did not return a call link', 502, 'WhatsApp did not return a call link'],
     ['WhatsApp Web has no call-link API', 409, 'Call links are not available on this engine'],
   ])('%s -> %i', (message, status, text) => {
@@ -609,5 +745,11 @@ describe('CallsService.openCount', () => {
     db.call.count.mockResolvedValue(4);
     await expect(make().svc.openCount('o1')).resolves.toEqual({ count: 4 });
     expect(db.call.count).toHaveBeenCalledWith({ where: { followUp: 'open', profile: { workspace: { organizationId: 'o1' } } } });
+  });
+
+  // Prisma reads `organizationId: undefined` as "no filter": without an organization it would count every tenant's calls.
+  it.each([undefined, null, ''])('is forbidden without an organization (%j), and counts nothing', async (organizationId) => {
+    await expect(make().svc.openCount(organizationId as any)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(db.call.count).not.toHaveBeenCalled();
   });
 });

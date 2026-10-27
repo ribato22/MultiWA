@@ -143,6 +143,15 @@ async function findCallById(id: string): Promise<CallRecord | null> {
   return (await prisma.call.findUnique({ where: { id } })) as CallRecord | null;
 }
 
+/**
+ * The conversation with a caller, if there is one. A call is recorded before the first message to its caller exists, so
+ * the row of a first-time caller has none; the reply that opens it links it afterwards (linkConversation, CallsService).
+ */
+export async function findConversationId(profileId: string, jid: string): Promise<string | null> {
+  const conversation = await prisma.conversation.findFirst({ where: { profileId, jid }, select: { id: true } });
+  return conversation?.id ?? null;
+}
+
 /** One call of one profile: the key of its timer and of the step settling it. */
 const callKey = (row: { profileId: string; waCallId: string }) => `${row.profileId}:${row.waCallId}`;
 
@@ -154,7 +163,7 @@ const callKey = (row: { profileId: string; waCallId: string }) => `${row.profile
 // yet, or relabelling the one we are rejecting. They do not wait for the reply that follows: it goes through
 // the send gate (a 1.5 s floor, minutes behind a campaign) and tells them nothing. Only a repeated offer
 // joins the whole step, so it can neither reject nor record the call a second time.
-// ponytail: per-process registry; the engine host owns all signals of a profile.
+// A per-process registry: the engine host owns all signals of a profile.
 interface CallStep {
   profileId: string;
   /** Settles once the call is recorded, or when the step ends, whichever comes first. Never rejects. */
@@ -235,7 +244,7 @@ async function handleRinging(call: IncomingCall, deps: CallEngineDeps, recorded:
     deps.logger?.warn?.(`call ${call.id} has no caller: not recorded`);
     return null;
   }
-  const conversation = await prisma.conversation.findFirst({ where: { profileId: deps.profileId, jid }, select: { id: true } });
+  const conversationId = await findConversationId(deps.profileId, jid);
   let row: CallRecord;
   try {
     row = (await prisma.call.create({
@@ -246,7 +255,7 @@ async function handleRinging(call: IncomingCall, deps: CallEngineDeps, recorded:
         isVideo: call.isVideo,
         isGroup: call.isGroup,
         startedAt: clock(deps),
-        conversationId: conversation?.id ?? null,
+        conversationId,
         metadata: lidJid ? { lidJid } : {},
       },
     })) as CallRecord;
@@ -319,6 +328,18 @@ async function maybeAutoReply(row: CallRecord, message: string | undefined, deps
     await prisma.call.update({ where: { id: row.id }, data: { autoReplySentAt: null } }).catch((err) =>
       deps.logger?.warn?.(`auto-reject reply of call ${row.waCallId} could not be released: ${(err as Error).message}`),
     );
+    return;
+  }
+  if (!row.conversationId) await linkConversation(row, deps); // the reply opened the conversation of a first-time caller
+}
+
+/** Link a call to the conversation its caller has by now. Best effort, never throws: the call is recorded and answered. */
+async function linkConversation(row: CallRecord, deps: CallDeps): Promise<void> {
+  try {
+    const conversationId = await findConversationId(row.profileId, row.fromJid);
+    if (conversationId) await prisma.call.update({ where: { id: row.id }, data: { conversationId } });
+  } catch (e) {
+    deps.logger?.warn?.(`call ${row.waCallId} was not linked to its conversation: ${(e as Error).message}`);
   }
 }
 
@@ -372,9 +393,9 @@ export async function applyCallOutcome(
  *   outcome, unless that call already has a log of its own: then this log is another call,
  *   recorded as `log:<messageId>`. Nothing says which call the log is about, so it waits until
  *   every call of the profile that is being settled is recorded, to find the row it belongs to.
- * A row created here never triggers the auto-reply (owner decision D8 cannot be met from a
- * log: whatsapp-web.js gets no signal at all for a call that rang while the device was
- * offline, and Baileys' offline offers arrive as `ringing`, the normal path).
+ * A row created here never triggers the auto-reply: a call that rang while the device was
+ * offline cannot be answered from its log (whatsapp-web.js gets no signal at all for such a
+ * call, and Baileys' offline offers arrive as `ringing`, the normal path).
  */
 export async function handleCallLog(entry: CallLogEntry, deps: CallEngineDeps): Promise<CallRecord | null> {
   const now = clock(deps);
@@ -423,7 +444,7 @@ export async function handleCallLog(entry: CallLogEntry, deps: CallEngineDeps): 
     if (await findCall(deps.profileId, waCallId)) return null;
   }
 
-  const conversation = await prisma.conversation.findFirst({ where: { profileId: deps.profileId, jid }, select: { id: true } });
+  const conversationId = await findConversationId(deps.profileId, jid);
   let row: CallRecord;
   try {
     row = (await prisma.call.create({
@@ -438,7 +459,7 @@ export async function handleCallLog(entry: CallLogEntry, deps: CallEngineDeps): 
         outcome: entry.outcome,
         rejectedBy: entry.outcome === 'rejected' ? 'device' : null,
         followUp: followUpAfter(entry.outcome, 'open'),
-        conversationId: conversation?.id ?? null,
+        conversationId,
         metadata: lidJid
           ? { source: 'call_log', callLogMessageId: entry.messageId, lidJid }
           : { source: 'call_log', callLogMessageId: entry.messageId },
@@ -482,8 +503,10 @@ const ENGINE_CALL_GONE = /not ringing any more/i;
 /**
  * How long an agent's reject may wait for the engine (the engine managers apply it with withTimeout). The call is
  * held in callsInFlight meanwhile, and everything the engine reports about it waits: a stuck page (puppeteer's
- * protocolTimeout is 240 s) must not hold it for minutes. Below the 30 s the REST layer waits for the reject
- * (CallsService), so the call is let go before the agent is answered 504, not long after.
+ * protocolTimeout is 240 s) must not hold it for minutes. Below what the API waits for it, so the call is let go
+ * before the agent is answered 504, not long after: 28 s for the worker's answer with ENGINE_HOST=worker
+ * (EngineCommandsService), and 30 s for the whole request in both modes (CallsService). The worker's command lock
+ * (40 s) is above all of them.
  */
 export const AGENT_REJECT_TIMEOUT_MS = 25_000;
 
@@ -561,7 +584,7 @@ function clearRingTimeout(row: { profileId: string; waCallId: string }): void {
 }
 
 // ── notifications ──────────────────────────────────────────────────────────────────────
-// ponytail: per-process throttle; good enough for one engine host, move to Redis if hosts multiply.
+// A per-process throttle: good enough for one engine host, move to Redis if hosts multiply.
 const lastNotified = new Map<string, number>();
 
 async function notifyMissed(row: CallRecord, deps: CallDeps): Promise<void> {

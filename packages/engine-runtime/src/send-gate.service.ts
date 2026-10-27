@@ -139,7 +139,7 @@ export async function classifyColdSend(
     select: { timestamp: true },
   });
   if (lastInbound && lastInbound.timestamp >= since) return false;
-  // An incoming call opens the window too: the caller reached out first (owner decision D6).
+  // An incoming call opens the window too: the caller reached out first.
   // A failing lookup (for example a missing `calls` table) must never break the send itself.
   try {
     const recentCall = await prisma.call.findFirst({
