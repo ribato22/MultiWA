@@ -2,7 +2,7 @@
 // apps/api/src/modules/profiles/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min, Max, IsArray, ArrayMaxSize, Matches } from 'class-validator';
+import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min, Max, MaxLength, IsArray, ArrayMaxSize, Matches } from 'class-validator';
 import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
 
 export enum EngineType {
@@ -77,6 +77,7 @@ export class UpdateProfileDto {
   @ApiPropertyOptional({ description: 'Default text when an agent replies to a missed call from the Calls queue. Blank = none.' })
   @IsOptional()
   @IsString()
+  @MaxLength(4096)
   callReplyMessage?: string;
 
   @ApiPropertyOptional({
