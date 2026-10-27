@@ -86,11 +86,12 @@ export class CallsService {
     const since = q.since ? new Date(q.since) : undefined;
     if (since && Number.isNaN(since.getTime())) throw new BadRequestException('since must be an ISO date');
     const take = Math.min(Math.max(Number(q.limit) || DEFAULT_LIMIT, 1), CALLS_MAX_LIMIT);
-    if (q.cursor) {
-      // Prisma positions a page on any call it is given: one of another profile would skip a row without a word.
-      const known = await prisma.call.findFirst({ where: { id: q.cursor, profileId: q.profileId }, select: { id: true } });
-      if (!known) throw new BadRequestException('Invalid cursor');
-    }
+    // The cursor is the last call of the previous page: a call of THIS profile (one of another would give away where that call
+    // sits in the order), looked up apart from the filters, which it may have stopped matching (Done on followUp=open).
+    const known = q.cursor
+      ? await prisma.call.findFirst({ where: { id: q.cursor, profileId: q.profileId }, select: { id: true, startedAt: true } })
+      : null;
+    if (q.cursor && !known) throw new BadRequestException('Invalid cursor');
     const rows = await prisma.call.findMany({
       where: {
         profileId: q.profileId,
@@ -98,10 +99,13 @@ export class CallsService {
         ...(q.followUp ? { followUp: q.followUp } : {}),
         ...(q.from ? { fromJid: q.from } : {}),
         ...(since ? { startedAt: { gte: since } } : {}),
+        // Keyset paging: the calls after the cursor in (startedAt, id) order, as the orderBy below sorts them. Not Prisma's `cursor`
+        // + `skip: 1`: that starts at the cursor's position but skips one row whether or not the cursor row still matches the
+        // filters, so it dropped a real call of the next page. Through AND, so it cannot overwrite `since`.
+        ...(known ? { AND: [{ OR: [{ startedAt: { lt: known.startedAt } }, { startedAt: known.startedAt, id: { lt: known.id } }] }] } : {}),
       },
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
       take: take + 1,
-      ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
       include: CALL_INCLUDE,
     });
     const hasMore = rows.length > take;

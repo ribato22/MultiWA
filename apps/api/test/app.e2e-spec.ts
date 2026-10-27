@@ -456,8 +456,8 @@ describe('API (e2e)', () => {
       return res.json().id;
     }
     // A missed call is recorded with an open follow-up.
-    const missedCall = (profileId: string, waCallId: string) =>
-      prisma.call.create({ data: { profileId, waCallId, fromJid: FROM, outcome: 'missed', endedAt: new Date() } });
+    const missedCall = (profileId: string, waCallId: string, startedAt?: Date) =>
+      prisma.call.create({ data: { profileId, waCallId, fromJid: FROM, outcome: 'missed', endedAt: new Date(), ...(startedAt ? { startedAt } : {}) } });
 
     it("blocks cross-org access to another org's calls, and open-count counts only its own organization", async () => {
       const stamp = Date.now();
@@ -503,6 +503,42 @@ describe('API (e2e)', () => {
       // open-count has no tenant check of its own: it counts the organization of the caller and nothing else.
       expect((await authGet(app, '/api/v1/calls/open-count', tokenA)).json()).toEqual({ count: 1 });
       expect((await authGet(app, '/api/v1/calls/open-count', tokenB)).json()).toEqual({ count: 2 });
+    });
+
+    // "Load more" on a filtered list: the call an agent loaded last may stop matching the filter before the next page is
+    // asked for. The page starts from that call's position, so it must not lose a call of its own (Prisma's cursor + skip: 1
+    // dropped one row whether or not the cursor row still matched the filter).
+    it('pages a filtered list past a cursor call that no longer matches the filter, skipping none', async () => {
+      const stamp = Date.now();
+      const token = await register(app, `calls_page_${stamp}@test.local`);
+      const profileId = await profileOf(token);
+      // three open calls, a second apart: newest first they are c, b, a
+      const [a, b, c] = await Promise.all([0, 1, 2].map((i) => missedCall(profileId, `e2e-${stamp}-p${i}`, new Date(stamp - 10_000 + i * 1_000))));
+      const ids = (res: { json: () => { calls: Array<{ id: string }> } }) => res.json().calls.map((call) => call.id);
+      const open = `/api/v1/calls?profileId=${profileId}&followUp=open&limit=1`;
+
+      const first = await authGet(app, open, token);
+      expect(first.statusCode).toBe(200);
+      expect(ids(first)).toEqual([c.id]);
+      expect(first.json().nextCursor).toBe(c.id);
+
+      // The agent marks the call they loaded last Done, then clicks "Load more": it is not in the open list any more.
+      const done = await app.inject({
+        method: 'PATCH',
+        url: `/api/v1/calls/${c.id}`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { followUp: 'done' },
+      });
+      expect(done.statusCode).toBe(200);
+
+      const second = await authGet(app, `${open}&cursor=${c.id}`, token);
+      expect(second.statusCode).toBe(200);
+      expect(ids(second)).toEqual([b.id]); // the next call, not the one after it
+      expect(second.json().nextCursor).toBe(b.id);
+
+      const third = await authGet(app, `${open}&cursor=${b.id}`, token);
+      expect(ids(third)).toEqual([a.id]);
+      expect(third.json().nextCursor).toBeNull();
     });
   });
 });

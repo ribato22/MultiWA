@@ -88,29 +88,56 @@ afterEach(() => {
 });
 
 describe('CallsService.list', () => {
+  // The position of a cursor call; `after` is what the page must start behind, in (startedAt desc, id desc) order.
+  const CURSOR_AT = new Date('2026-10-26T02:00:00.000Z');
+  const after = { OR: [{ startedAt: { lt: CURSOR_AT } }, { startedAt: CURSOR_AT, id: { lt: 'z' } }] };
+
   it('filters, orders newest first and pages with a cursor', async () => {
-    db.call.findFirst.mockResolvedValue({ id: 'z' });
+    db.call.findFirst.mockResolvedValue({ id: 'z', startedAt: CURSOR_AT });
     db.call.findMany.mockResolvedValue([row({ id: 'a' }), row({ id: 'b' }), row({ id: 'c' })]);
     const { svc } = make();
     const res = await svc.list({ profileId: 'p1', outcome: 'missed', limit: 2, cursor: 'z' });
     expect(db.call.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { profileId: 'p1', outcome: 'missed' }, take: 3, cursor: { id: 'z' }, skip: 1,
+      where: { profileId: 'p1', outcome: 'missed', AND: [after] }, take: 3,
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
     }));
     expect(res.calls.map((c: any) => c.id)).toEqual(['a', 'b']);
     expect(res.nextCursor).toBe('b');
-    expect(db.call.findFirst).toHaveBeenCalledWith({ where: { id: 'z', profileId: 'p1' }, select: { id: true } });
+    expect(db.call.findFirst).toHaveBeenCalledWith({ where: { id: 'z', profileId: 'p1' }, select: { id: true, startedAt: true } });
   });
 
-  // A cursor is the id of a call of THIS profile. Prisma would also position the page on a call of another profile (or
-  // organization), silently skipping a row and giving away where that call sits in the order.
+  // "Load more" must not depend on the cursor row still matching the filter: on followUp=open an agent may have marked
+  // the last loaded call Done by then. Prisma's `cursor` + `skip: 1` lets the page start at the cursor's position but
+  // drops one row regardless of whether the cursor row matches, so a real call of the next page was skipped silently.
+  it('pages by keyset, from the position of the cursor call: no Prisma cursor, no skip', async () => {
+    db.call.findFirst.mockResolvedValue({ id: 'z', startedAt: CURSOR_AT });
+    db.call.findMany.mockResolvedValue([]);
+    await make().svc.list({ profileId: 'p1', followUp: 'open', cursor: 'z' });
+    const args = db.call.findMany.mock.calls[0][0];
+    expect(args.where).toEqual({ profileId: 'p1', followUp: 'open', AND: [after] });
+    expect(args).not.toHaveProperty('cursor');
+    expect(args).not.toHaveProperty('skip');
+  });
+
+  it('keeps `since` and the keyset condition side by side: neither overwrites the other', async () => {
+    db.call.findFirst.mockResolvedValue({ id: 'z', startedAt: CURSOR_AT });
+    db.call.findMany.mockResolvedValue([]);
+    const since = '2026-10-26T00:00:00.000Z';
+    await make().svc.list({ profileId: 'p1', since, cursor: 'z' });
+    expect(db.call.findMany.mock.calls[0][0].where).toEqual({
+      profileId: 'p1', startedAt: { gte: new Date(since) }, AND: [after],
+    });
+  });
+
+  // A cursor is the id of a call of THIS profile. Its position would otherwise be taken from a call of another profile (or
+  // organization), giving away where that call sits in the order.
   it('resolves the cursor within the profile, and answers 400 for one that is not a call of it', async () => {
     db.call.findFirst.mockResolvedValue(null);
     const { svc } = make();
     const err = await svc.list({ profileId: 'p1', cursor: 'a-call-of-another-profile' }).catch((e) => e);
     expect(err).toBeInstanceOf(BadRequestException);
     expect(err.message).toBe('Invalid cursor');
-    expect(db.call.findFirst).toHaveBeenCalledWith({ where: { id: 'a-call-of-another-profile', profileId: 'p1' }, select: { id: true } });
+    expect(db.call.findFirst).toHaveBeenCalledWith({ where: { id: 'a-call-of-another-profile', profileId: 'p1' }, select: { id: true, startedAt: true } });
     expect(db.call.findMany).not.toHaveBeenCalled();
   });
 
