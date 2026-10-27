@@ -4,7 +4,7 @@
 import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
-import { readCallLog, toJidString } from '../call-events';
+import { readCallLog, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -36,18 +36,8 @@ export const ACK_STATUS_MAP: Record<number, string> = {
   4: 'played',
 };
 
-/** Add to a bounded set, evicting the oldest entry first. */
-function remember(set: Set<string>, key: string, max: number): void {
-  if (set.size >= max) {
-    const oldest = set.values().next().value;
-    if (oldest !== undefined) set.delete(oldest);
-  }
-  set.add(key);
-}
-
-// Calls still ringing that we keep a handle on (for rejectCall), and dedupe windows.
+// Caps: ringing calls we keep a handle on (for rejectCall), and distinct unreadable call-log shapes we warn about.
 const MAX_TRACKED_CALLS = 100;
-const MAX_REMEMBERED_IDS = 500;
 const MAX_WARNED_SHAPES = 20;
 
 export class WhatsAppWebJsAdapter implements IWhatsAppEngine {

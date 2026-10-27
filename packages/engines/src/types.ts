@@ -40,7 +40,7 @@ export type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended'
 export interface IncomingCall {
   /** Engine call id, passed back to `rejectCall`. */
   id: string;
-  /** Caller JID (e.g. `628xxx@c.us`). */
+  /** Caller JID as the engine reports it (`…@c.us`, `…@s.whatsapp.net` or `…@lid`); may be empty on a later state. */
   from: string;
   isVideo: boolean;
   isGroup: boolean;

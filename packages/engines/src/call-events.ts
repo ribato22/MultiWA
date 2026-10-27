@@ -106,3 +106,15 @@ export function mapBaileysCallStatus(status: string): CallState | null {
     default: return null;
   }
 }
+
+/** How many recent ids an adapter remembers to tell a repeat from something new. */
+export const MAX_REMEMBERED_IDS = 500;
+
+/** Add to a bounded set, evicting the oldest entry first. */
+export function remember(set: Set<string>, key: string, max: number): void {
+  if (set.size >= max) {
+    const oldest = set.values().next().value;
+    if (oldest !== undefined) set.delete(oldest);
+  }
+  set.add(key);
+}
