@@ -14,6 +14,7 @@ export * from './ack-status';
 export * from './db-retry';
 export * from './inbound-media';
 export * from './auto-reject-call';
+export * from './calls';
 export * from './wa-message-id';
 export * from './system-message';
 export * from './engine-type';

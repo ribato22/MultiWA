@@ -5,11 +5,8 @@
 // `autoRejectCalls` enabled, incoming WhatsApp voice/video calls are rejected,
 // and an optional configured message is sent back to the caller.
 
-export interface AutoRejectCallSettings {
-  autoRejectCalls?: boolean;
-  /** Optional reply sent to the caller after rejecting. Blank = reject silently. */
-  autoRejectCallMessage?: string;
-}
+// Defined in calls.ts (which replaces this module); one definition, or `export *` in index.ts is ambiguous.
+import type { AutoRejectCallSettings } from './calls';
 
 export interface AutoRejectCallDeps {
   rejectCall: (callId: string) => Promise<void>;
