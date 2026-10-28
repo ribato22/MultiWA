@@ -31,7 +31,9 @@ const LINK = 'https://call.whatsapp.com/voice/x';
 const SENT = { success: true, messageId: 'm1', conversationId: 'conv-1', waMessageId: 'wa-m1', status: 'sent' };
 const QUEUED = { success: true, messageId: 'm1', conversationId: 'conv-1', status: 'queued' }; // ENGINE_HOST=worker / durable send
 const FAILED = { success: false, messageId: 'm1', conversationId: 'conv-1', status: 'failed', error: 'Evaluation failed: boom' };
-const NOT_CONNECTED = { success: true, messageId: 'm1', conversationId: 'conv-1', status: 'pending', warning: 'Profile not connected, message queued' };
+// A profile with no engine: MessagesService.sendText throws 409 PROFILE_DISCONNECTED (#256).
+const notConnected = () =>
+  new HttpException({ statusCode: 409, error: 'PROFILE_DISCONNECTED', message: 'Profile is not connected; the message was not sent' }, 409);
 const row = (over: Record<string, unknown> = {}): any => ({
   id: 'c1', profileId: 'p1', waCallId: 'wa-1', fromJid: '628111000111@s.whatsapp.net', isVideo: false, isGroup: false,
   direction: 'incoming', outcome: 'missed', rejectedBy: null, startedAt: START, endedAt: START, followUp: 'open',
@@ -390,13 +392,12 @@ describe('CallsService.reply', () => {
   });
 
   // MessagesService.sendText does not throw when the engine fails: with ENGINE_HOST=api it RESOLVES
-  // { success: false, status: 'failed' } (an engine error or soft-fail) or { success: true, status: 'pending' } (the
-  // profile has no engine). A reply that did not go out must neither take the call up nor be announced.
+  // { success: false, status: 'failed' } (an engine error or soft-fail). A reply that did not go out must neither take
+  // the call up nor be announced.
   it.each([
     ['an engine error', FAILED, 502, 'Evaluation failed: boom'],
     ['a failure that gives no reason', { success: false, messageId: 'm1', status: 'failed' }, 502, 'The message could not be sent'],
     ['a soft failure without a status', { success: false, error: 'Profile not found' }, 502, 'Profile not found'],
-    ['a profile without an engine', NOT_CONNECTED, 409, 'Profile is not connected'],
   ])('%s is not a reply, and the call is left alone', async (_what, result, status, message) => {
     db.call.findUnique.mockResolvedValue(row());
     db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
@@ -406,6 +407,18 @@ describe('CallsService.reply', () => {
     expect(err).toBeInstanceOf(HttpException);
     expect(err.getStatus()).toBe(status);
     expect(err.message).toBe(message);
+    expect(db.call.update).not.toHaveBeenCalled();
+    expectNothingAnnounced(t);
+  });
+
+  it('a profile without an engine is not a reply: its 409 passes through and the call is left alone', async () => {
+    db.call.findUnique.mockResolvedValue(row());
+    const t = make();
+    t.messages.sendText.mockRejectedValue(notConnected());
+    const err = await t.svc.reply('c1', 'x').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ error: 'PROFILE_DISCONNECTED' });
     expect(db.call.update).not.toHaveBeenCalled();
     expectNothingAnnounced(t);
   });
@@ -674,7 +687,6 @@ describe.each(MODES)('CallsService.sendCallLink (ENGINE_HOST=%s)', (mode) => {
   it.each([
     ['an engine error', FAILED, 502, 'Evaluation failed: boom'],
     ['a failure that gives no reason', { success: false, messageId: 'm1', status: 'failed' }, 502, 'The message could not be sent'],
-    ['a profile without an engine', NOT_CONNECTED, 409, 'Profile is not connected'],
   ])('a link whose message failed (%s) is not remembered, and the call is left alone', async (_what, result, status, message) => {
     db.call.findUnique.mockResolvedValue(row());
     db.call.update.mockResolvedValue(row({ followUp: 'in_progress' }));
@@ -684,6 +696,18 @@ describe.each(MODES)('CallsService.sendCallLink (ENGINE_HOST=%s)', (mode) => {
     expect(err).toBeInstanceOf(HttpException);
     expect(err.getStatus()).toBe(status);
     expect(err.message).toBe(message);
+    expect(db.call.update).not.toHaveBeenCalled();
+    expectNothingAnnounced(t);
+  });
+
+  it('a link to a profile without an engine is not remembered: its 409 passes through and the call is left alone', async () => {
+    db.call.findUnique.mockResolvedValue(row());
+    const t = make();
+    t.messages.sendText.mockRejectedValue(notConnected());
+    const err = await t.svc.sendCallLink('c1', 'voice').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpException);
+    expect(err.getStatus()).toBe(409);
+    expect(err.getResponse()).toMatchObject({ error: 'PROFILE_DISCONNECTED' });
     expect(db.call.update).not.toHaveBeenCalled();
     expectNothingAnnounced(t);
   });

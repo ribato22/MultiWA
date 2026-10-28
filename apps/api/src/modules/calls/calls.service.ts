@@ -216,14 +216,13 @@ export class CallsService {
 
   /**
    * MessagesService.sendText does not throw when the engine fails: with ENGINE_HOST=api it RESOLVES
-   * { success: false, status: 'failed', error } (an engine error or soft-fail) or { success: true, status: 'pending' }
-   * (the profile has no engine); only what the send gate refuses is thrown. A send that did not happen must not be
-   * reported as done, so this runs right after the send, before the call is touched or a link remembered.
+   * { success: false, status: 'failed', error } (an engine error or soft-fail). It throws what the send gate refuses
+   * (429) and a profile with no engine (409 PROFILE_DISCONNECTED), which propagate as they are. A send that did not
+   * happen must not be reported as done, so this runs right after the send, before the call is touched or a link remembered.
    * 'queued' (ENGINE_HOST=worker, durable send) is an accepted send: the queue consumer delivers it.
    */
   private assertSent<T extends { success?: boolean; status?: string; error?: string }>(res: T): T {
     if (res.success === false || res.status === 'failed') throw new BadGatewayException(res.error ?? 'The message could not be sent');
-    if (res.status === 'pending') throw new ConflictException('Profile is not connected');
     return res;
   }
 

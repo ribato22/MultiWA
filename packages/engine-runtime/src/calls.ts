@@ -63,10 +63,10 @@ export interface CallEngineDeps extends CallDeps {
   settings: AutoRejectCallSettings | null | undefined | Promise<AutoRejectCallSettings | null | undefined>;
   rejectCall: (waCallId: string) => Promise<void>;
   /**
-   * Send-gated text send (MessagesService.sendText on the api, WorkerMessagesService.sendText on the worker). Both
-   * RESOLVE when the message was not sent ({ success: false }, or { status: 'pending' } for a profile without an
-   * engine), so each engine manager adapts the result: it must REJECT when the reply was not sent, because the
-   * once-per-24h claim on the call is released only then.
+   * Send-gated text send (MessagesService.sendText on the api, WorkerMessagesService.sendText on the worker). An
+   * engine failure RESOLVES as { success: false } (the api throws only gate refusals and a missing engine), so each
+   * engine manager adapts the result: it must REJECT when the reply was not sent, because the once-per-24h claim on
+   * the call is released only then.
    */
   sendText: (to: string, text: string) => Promise<unknown>;
   resolveIdentity?: IdentityResolver | null;

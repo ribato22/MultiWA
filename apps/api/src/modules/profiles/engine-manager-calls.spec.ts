@@ -103,19 +103,24 @@ describe('EngineManagerService.callDeps', () => {
     await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).resolves.toEqual(queued);
   });
 
-  // MessagesService.sendText RESOLVES when the engine fails ({ success: false, status: 'failed' }) or the profile has no
-  // engine ({ success: true, status: 'pending' }); it throws only what the send gate refuses. The runtime claims the
+  // MessagesService.sendText RESOLVES when the engine fails ({ success: false, status: 'failed' }); it throws what the
+  // send gate refuses and a profile with no engine (409 PROFILE_DISCONNECTED, #256). The runtime claims the
   // once-per-24h reply before sending and releases the claim only when sendText rejects, so a reply that was not sent
   // must reject here, or a failed auto-reply would block the next one for 24 h.
   it.each([
     [{ success: false, messageId: 'm1', conversationId: 'conv-1', status: 'failed', error: 'Evaluation failed: boom' }, /^reply not sent: Evaluation failed: boom$/],
     [{ success: false, status: 'failed' }, /^reply not sent: unknown reason$/],
-    [{ success: true, messageId: 'm1', conversationId: 'conv-1', status: 'pending', warning: 'Profile not connected, message queued' }, /^reply not sent: Profile not connected, message queued$/],
-    [{ success: true, status: 'pending' }, /^reply not sent: unknown reason$/],
   ])('a reply the service reports as not sent (%j) rejects, so the runtime releases its claim', async (result, reason) => {
     const { svc, messages } = make();
     messages.sendText.mockResolvedValue(result);
     await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).rejects.toThrow(reason);
+  });
+
+  it('lets a profile without an engine (409 PROFILE_DISCONNECTED) through unchanged', async () => {
+    const { svc, messages } = make();
+    const disconnected = new HttpException({ statusCode: 409, error: 'PROFILE_DISCONNECTED', message: 'Profile is not connected; the message was not sent' }, 409);
+    messages.sendText.mockRejectedValue(disconnected);
+    await expect((svc as any).callDeps(P, null).sendText('628111000111@s.whatsapp.net', 'hi')).rejects.toBe(disconnected);
   });
 
   it('lets what the send gate refuses through unchanged', async () => {

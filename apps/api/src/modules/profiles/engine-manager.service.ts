@@ -1079,11 +1079,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       // The send-gated path (daily caps, repeat suppression, floor delay), never engine.sendText.
       sendText: async (to, text) => {
         const res: { success?: boolean; status?: string; error?: string; warning?: string } = await this.messagesService.sendText({ profileId, to, text });
-        // MessagesService.sendText throws only what the send gate refuses. An engine error comes back as
-        // { success: false, status: 'failed' } and a profile without an engine as { success: true, status: 'pending' }.
+        // MessagesService.sendText throws what the send gate refuses and a profile without an engine (409
+        // PROFILE_DISCONNECTED); an engine error comes back as { success: false, status: 'failed' }.
         // The runtime releases its once-per-24h reply claim only when sendText rejects, so a reply that was not sent has
         // to reject here (the worker's adapter does the same), or a failed auto-reply would block the next one for 24 h.
-        if (res.success === false || res.status === 'failed' || res.status === 'pending') {
+        if (res.success === false || res.status === 'failed') {
           throw new Error(`reply not sent: ${res.error ?? res.warning ?? 'unknown reason'}`);
         }
         return res;
