@@ -61,6 +61,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
+// "628…, 628…" → ['628…', '628…'] for the quiet-profile alarm recipients.
+const splitRecipients = (s: string) => s.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+
 interface Profile {
   id: string;
   displayName: string;
@@ -73,7 +76,7 @@ interface Profile {
   dailyMessageLimit?: number | null;
   dailyMessageCount?: number;
   warmupEnabled?: boolean;
-  settings?: { autoRejectCalls?: boolean; autoRejectCallMessage?: string };
+  settings?: { autoRejectCalls?: boolean; autoRejectCallMessage?: string; quietAlarmHours?: number | null; quietAlarmNotify?: string[] };
   warmupStartPerDay?: number | null;
   warmupRampDays?: number | null;
   warmupStartedAt?: string | null;
@@ -224,6 +227,8 @@ export default function ProfileDetailPage() {
   const [warmupEnabled, setWarmupEnabled] = useState(false);
   const [autoRejectCalls, setAutoRejectCalls] = useState(false);
   const [autoRejectCallMessage, setAutoRejectCallMessage] = useState('');
+  const [quietAlarmHours, setQuietAlarmHours] = useState('');
+  const [quietAlarmNotify, setQuietAlarmNotify] = useState('');
   const [warmupStart, setWarmupStart] = useState<string>(''); // per-day start, string for number input
   const [warmupRampDays, setWarmupRampDays] = useState<string>('');
   const [coldDailyLimit, setColdDailyLimit] = useState<string>(''); // '' = fall back to default
@@ -468,6 +473,8 @@ export default function ProfileDetailPage() {
     setWarmupEnabled(profile.warmupEnabled ?? false);
     setAutoRejectCalls(profile.settings?.autoRejectCalls ?? false);
     setAutoRejectCallMessage(profile.settings?.autoRejectCallMessage ?? '');
+    setQuietAlarmHours(profile.settings?.quietAlarmHours ? String(profile.settings.quietAlarmHours) : '');
+    setQuietAlarmNotify((profile.settings?.quietAlarmNotify ?? []).join(', '));
     setWarmupStart(profile.warmupStartPerDay != null ? String(profile.warmupStartPerDay) : '');
     setWarmupRampDays(profile.warmupRampDays != null ? String(profile.warmupRampDays) : '');
     setColdDailyLimit(profile.coldDailyLimit != null ? String(profile.coldDailyLimit) : '');
@@ -531,6 +538,8 @@ export default function ProfileDetailPage() {
           serviceWindowHours: parsedWindow ?? 24,
           autoRejectCalls,
           autoRejectCallMessage: autoRejectCallMessage.trim() || undefined,
+          quietAlarmHours: quietAlarmHours.trim() ? Number(quietAlarmHours) : null,
+          quietAlarmNotify: splitRecipients(quietAlarmNotify),
         }),
       });
       if (res.ok) {
@@ -669,6 +678,8 @@ export default function ProfileDetailPage() {
     warmupEnabled !== (profile.warmupEnabled ?? false) ||
     autoRejectCalls !== (profile.settings?.autoRejectCalls ?? false) ||
     autoRejectCallMessage !== (profile.settings?.autoRejectCallMessage ?? '') ||
+    (quietAlarmHours.trim() ? Number(quietAlarmHours) : null) !== (profile.settings?.quietAlarmHours ?? null) ||
+    splitRecipients(quietAlarmNotify).join(',') !== (profile.settings?.quietAlarmNotify ?? []).join(',') ||
     (warmupStartN ?? null) !== (profile.warmupStartPerDay ?? null) ||
     (warmupRampN ?? null) !== (profile.warmupRampDays ?? null) ||
     (coldLimitN ?? null) !== (profile.coldDailyLimit ?? null) ||
@@ -1137,6 +1148,44 @@ export default function ProfileDetailPage() {
               <p className="text-[11px] text-slate-500">Sent to the caller after the call is rejected.</p>
             </div>
           )}
+        </div>
+
+        {/* Quiet-profile alarm */}
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3">
+          <div>
+            <p className="text-xs font-medium text-slate-200">Quiet-profile alarm</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Alert when this profile stays connected but receives no messages. Silence counts only within the server&apos;s active hours.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+            <div className="space-y-1.5">
+              <Label htmlFor="quietAlarmHours" className="text-xs text-slate-300">After (hours)</Label>
+              <Input
+                id="quietAlarmHours"
+                type="number"
+                min={1}
+                max={72}
+                step={1}
+                placeholder="Off"
+                value={quietAlarmHours}
+                onChange={(e) => setQuietAlarmHours(e.target.value)}
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="quietAlarmNotify" className="text-xs text-slate-300">WhatsApp the alarm to</Label>
+              <Input
+                id="quietAlarmNotify"
+                type="text"
+                placeholder="628123456789, 628123456780"
+                value={quietAlarmNotify}
+                onChange={(e) => setQuietAlarmNotify(e.target.value)}
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              />
+              <p className="text-[11px] text-slate-500">Up to 5 numbers, sent through another connected profile. The admin bell always gets it.</p>
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center justify-between gap-3 flex-wrap">
