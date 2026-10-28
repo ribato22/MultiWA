@@ -22,6 +22,8 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `OUTBOUND_SEND_CONCURRENCY` | ❌ | `10` | Max concurrent durable send deliveries |
 | `WEBHOOK_TIMEOUT_MS` | ❌ | `30000` | Webhook delivery timeout |
 | `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
+| `QUIET_ALARM_ACTIVE_HOURS` | ❌ | `07:00-22:00` | Daily window in which a connected profile's silence counts toward its quiet-profile alarm |
+| `QUIET_ALARM_TIMEZONE` | ❌ | `Asia/Jakarta` | Time zone of that window |
 
 ---
 
@@ -262,6 +264,54 @@ deployments.
 ```env
 # Allow webhooks to reach internal services on the same network
 WEBHOOK_ALLOW_PRIVATE_TARGETS=true
+```
+
+---
+
+## Quiet-Profile Alarm
+
+A profile can stay `connected` while WhatsApp has stopped delivering messages to
+it, and nothing reports a disconnect. The quiet-profile alarm catches this: when
+a connected profile receives no incoming message for a set number of hours, it
+raises **one** alarm (an admin bell notification, plus a WhatsApp message to your
+ops numbers through another connected profile of the same organization) and
+**one** notice when messages resume. Profiles are checked every 5 minutes. A
+disconnected profile never raises the alarm: the disconnect alert covers that.
+
+The alarm is set per profile, on the profile page or with
+`PUT /api/v1/profiles/:id`:
+
+- `quietAlarmHours` — whole hours, 1 to 72, of silence before the alarm. `null`
+  (or blank on the profile page) turns it off, which is the default.
+- `quietAlarmNotify` — up to 5 WhatsApp numbers that get the message. The
+  profile's own number is skipped, and `@broadcast` and `@newsletter` addresses
+  are refused.
+
+Set it on profiles that normally receive messages throughout the active hours: a
+profile that is quiet for long stretches will raise and recover regularly.
+
+Silence is counted only inside a daily active window, so a quiet night does not
+raise an alarm. Two variables set that window. The stock compose files do not
+forward them: add them under `environment:` of the API service to override the
+defaults.
+
+### `QUIET_ALARM_ACTIVE_HOURS`
+**Optional** | `HH:MM-HH:MM` | Default: `07:00-22:00`
+
+Daily window in which a connected profile's silence counts, in the time zone
+below. The start is included, the end is not, the window cannot cross midnight
+and it must last at least an hour. An invalid value falls back to the default.
+
+### `QUIET_ALARM_TIMEZONE`
+**Optional** | IANA time zone | Default: `Asia/Jakarta`
+
+Time zone of that window, also used for the times written in the alarm message.
+An unknown zone falls back to the default.
+
+```env
+# Count silence from 08:00 to 20:00 Jakarta time
+QUIET_ALARM_ACTIVE_HOURS=08:00-20:00
+QUIET_ALARM_TIMEZONE=Asia/Jakarta
 ```
 
 ---

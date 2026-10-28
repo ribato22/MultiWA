@@ -121,12 +121,19 @@ export class ProfilesService {
       if (dto.warmupEnabled && !wasEnabled) data.warmupStartedAt = new Date();
     }
     if (dto.engine !== undefined) data.engine = dto.engine;
-    // Auto-reject-call config lives in the settings JSON — merge so we never clobber
-    // other settings keys.
-    if (dto.autoRejectCalls !== undefined || dto.autoRejectCallMessage !== undefined) {
+    // Auto-reject-call and quiet-alarm config live in the settings JSON — merge so we
+    // never clobber other settings keys.
+    if (
+      dto.autoRejectCalls !== undefined ||
+      dto.autoRejectCallMessage !== undefined ||
+      dto.quietAlarmHours !== undefined ||
+      dto.quietAlarmNotify !== undefined
+    ) {
       const settings = { ...(((existing as any).settings as Record<string, unknown>) || {}) };
       if (dto.autoRejectCalls !== undefined) settings.autoRejectCalls = dto.autoRejectCalls;
       if (dto.autoRejectCallMessage !== undefined) settings.autoRejectCallMessage = dto.autoRejectCallMessage;
+      if (dto.quietAlarmHours !== undefined) settings.quietAlarmHours = dto.quietAlarmHours;
+      if (dto.quietAlarmNotify !== undefined) settings.quietAlarmNotify = dto.quietAlarmNotify;
       data.settings = settings;
     }
 

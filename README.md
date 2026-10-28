@@ -119,6 +119,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 - 🔌 **Pluggable Engine Adapters** — Clean engine interface with per-profile engine selection: whatsapp-web.js (default, production) or a Baileys adapter (experimental — not production-validated; `sendReaction` and `resolveIdentity` are stubs and history sync / WhatsApp-addressbook contact save are whatsapp-web.js-only; see [Engine Abstraction](docs/06-engine-abstraction.md))
 - 📨 **Unified Messaging API** — Send text, media, documents, contacts, locations
 - 📡 **Real-time WebSocket** — Live session status, QR codes, and events via Socket.IO
+- 🔕 **Quiet-Profile Alarm** — A connected profile that stops receiving messages raises one alarm (admin bell + WhatsApp to your ops numbers through another profile) and a notice when it recovers
 - 🔐 **JWT Authentication** — Secure API access with refresh tokens
 
 ### Admin Dashboard

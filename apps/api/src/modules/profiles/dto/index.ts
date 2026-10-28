@@ -2,7 +2,8 @@
 // apps/api/src/modules/profiles/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min } from 'class-validator';
+import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min, Max, IsArray, ArrayMaxSize, Matches } from 'class-validator';
+import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
 
 export enum EngineType {
   WHATSAPP_WEB_JS = 'whatsapp-web-js',
@@ -68,6 +69,32 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   autoRejectCallMessage?: string;
+
+  @ApiPropertyOptional({
+    example: 2,
+    nullable: true,
+    description:
+      'Quiet-profile alarm: hours without an incoming message (counted only within QUIET_ALARM_ACTIVE_HOURS) ' +
+      'before a connected profile raises an alarm. null turns it off.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(72)
+  quietAlarmHours?: number | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['628123456789'],
+    description: 'Quiet-profile alarm: up to 5 WhatsApp numbers that get it, sent through another connected profile.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsWhatsAppRecipient({ each: true })
+  // IsWhatsAppRecipient also takes these two; as an alarm target they would post a Status or a channel update. The trailing \s* covers the padding it trims.
+  @Matches(/^(?!.*@(broadcast|newsletter)\s*$)/, { each: true, message: '$property must not hold a @broadcast (Status) or @newsletter (channel) address' })
+  quietAlarmNotify?: string[];
 
   @ApiPropertyOptional({
     example: 1500,
