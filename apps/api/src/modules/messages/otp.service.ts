@@ -67,11 +67,12 @@ export class OtpService {
       this.logger.warn(`OTP for ${profileId}: unofficial send rejected (${err?.message}) → fallback`);
       return this.viaFallback(to, code, 'whatsapp-rejected');
     }
-    // Fail over IMMEDIATELY on a synchronously-known non-delivery (soft-fail, or the
-    // message was only enqueued / the profile is offline) — don't burn the ack timeout.
+    // Fail over IMMEDIATELY on a synchronously-known non-delivery (an engine soft-fail)
+    // — don't burn the ack timeout. A disconnected profile never reaches here: the send
+    // throws 409 PROFILE_DISCONNECTED and the catch above fails over.
     // NB: reliable per-OTP confirmation assumes synchronous send mode
     // (ENGINE_HOST=api, DURABLE_SEND off); in durable mode the primary is only queued.
-    if (!send?.messageId || send?.success === false || send?.status === 'failed' || send?.status === 'pending') {
+    if (!send?.messageId || send?.success === false || send?.status === 'failed') {
       return this.viaFallback(to, code, 'whatsapp-not-sent');
     }
 
