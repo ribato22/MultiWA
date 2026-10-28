@@ -1,181 +1,288 @@
 # MultiWA PHP SDK
 
-Official PHP SDK for [MultiWA](https://github.com/ribato22/multiwa) - WhatsApp Business API Gateway.
+Official PHP SDK for [MultiWA](https://github.com/ribato22/MultiWA), the self-hosted WhatsApp API gateway.
 
 ## Requirements
 
 - PHP 8.1 or higher
-- Guzzle HTTP Client 7.5+
+- Guzzle 7.5 or higher (installed with the SDK)
 
 ## Installation
 
-The SDK is available in this repository today. Public registry publishing
-(`multiwa/multiwa-php` on Packagist) is tracked as a release follow-up and
-is **not yet verified**, so do not assume
-`composer require multiwa/multiwa-php` resolves to this package on
-Packagist.
-
-Until the registry release is verified, install from this repository using
-a Composer `path` or `vcs` repository entry:
-
-```json
-// composer.json in your project
-{
-  "repositories": [
-    {
-      "type": "path",
-      "url": "../multiwa/packages/sdk-php"
-    }
-  ],
-  "require": {
-    "multiwa/multiwa-php": "*"
-  }
-}
+```bash
+composer require multiwa/multiwa-php
 ```
 
-Or via VCS:
+The first Packagist release is 1.0.0. Until it is live, install from a clone of
+the MultiWA repository with a Composer `path` repository:
 
 ```json
 {
-  "repositories": [
-    {
-      "type": "vcs",
-      "url": "https://github.com/ribato22/MultiWA"
-    }
-  ]
+  "repositories": [{ "type": "path", "url": "../MultiWA/packages/sdk-php" }],
+  "require": { "multiwa/multiwa-php": "*" }
 }
 ```
 
-Then run `composer install`.
-
-## Quick Start
+## Quick start
 
 ```php
 <?php
 
 use MultiWA\MultiWA;
 
-// Initialize the client. baseUrl must include the API prefix /api/v1.
+// baseUrl must include the API prefix /api/v1:
 //   Local dev: http://localhost:3000/api/v1
 //   Docker:    http://localhost:3333/api/v1
-//   Prod:      https://your-multiwa-instance.com/api/v1
 $client = new MultiWA(
     baseUrl: 'https://your-multiwa-instance.com/api/v1',
     apiKey: 'your-api-key',
 );
 
-// Send a text message
 $result = $client->messages()->sendText(
     profileId: 'your-profile-id',
     to: '6281234567890',
-    text: 'Hello from MultiWA PHP SDK!'
+    text: 'Hello from the MultiWA PHP SDK!',
 );
 
-print_r($result);
+echo $result->messageId;
 ```
 
-## Features
+The constructor also takes `timeout` (seconds, default 30) and `handler`, a
+Guzzle handler for tests (see [Testing your code](#testing-your-code)).
 
-### Messages
+## Messages
+
+`to` is a phone number with country code (`6281234567890`; `+`, spaces and
+dashes are fine) or a WhatsApp JID (`…@s.whatsapp.net`, `…@c.us`, a group
+`…@g.us`). Media goes by public `url` or by `base64`.
 
 ```php
-// Send text
-$client->messages()->sendText($profileId, $to, 'Hello!');
+$messages = $client->messages();
 
-// Send image
-$client->messages()->sendImage($profileId, $to, url: 'https://...', caption: 'Check this!');
+$messages->sendText($profileId, $to, 'Hello!');
+$messages->sendText($profileId, $to, 'Yes', quotedMessageId: $whatsappMessageId); // reply with a quote
+$messages->sendImage($profileId, $to, url: 'https://example.com/a.jpg', caption: 'Look');
+$messages->sendVideo($profileId, $to, url: 'https://example.com/a.mp4', caption: 'Watch');
+$messages->sendAudio($profileId, $to, url: 'https://example.com/a.ogg', ptt: true); // ptt: voice note
+$messages->sendDocument($profileId, $to, 'report.pdf', url: 'https://example.com/report.pdf', caption: 'Q3');
+$messages->sendLocation($profileId, $to, -6.2088, 106.8456, name: 'Monas', address: 'Jakarta');
+$messages->sendContact($profileId, $to, 'Budi', '6281111111111', email: 'budi@example.com');
+$messages->sendPoll($profileId, $to, 'Lunch?', ['Rice', 'Noodles'], allowMultipleAnswers: false);
+$messages->sendReaction($profileId, $result->messageId, '👍'); // MultiWA's message id; '' removes it
 
-// Send video
-$client->messages()->sendVideo($profileId, $to, url: 'https://...', caption: 'Watch!');
+// Stored messages, newest first (rows as the API returns them)
+$rows = $messages->list($profileId, limit: 50, offset: 0, type: 'text', direction: 'incoming');
+```
 
-// Send document
-$client->messages()->sendDocument($profileId, $to, filename: 'report.pdf', url: 'https://...');
+Every send returns a `MultiWA\Models\MessageResult`:
 
-// Send location
-$client->messages()->sendLocation($profileId, $to, -6.2088, 106.8456, name: 'Jakarta');
+| Property | |
+|---|---|
+| `success` | `false` when sending failed; `error` says why |
+| `messageId` | MultiWA's id of the stored message, the one `sendReaction()` takes |
+| `conversationId` | |
+| `status` | `sent`, `queued` (a worker sends it) or `failed` |
+| `waMessageId` | WhatsApp's id of the message once WhatsApp accepted it (`null` while queued); WebSocket `message:ack` events use this id |
+| `error` | |
 
-// Send contact
-$client->messages()->sendContact($profileId, $to, 'John Doe', '+6281234567890');
+## Contacts
 
-// Send poll
-$client->messages()->sendPoll(
+```php
+$contacts = $client->contacts();
+
+// Creates the contact, or merges tags and metadata into the one with this phone
+$contact = $contacts->create($profileId, '6281234567890', name: 'Budi', tags: ['vip'], metadata: ['source' => 'web']);
+$contact = $contacts->get($contact->id);
+
+$page = $contacts->list($profileId, search: 'bud', tags: ['vip', 'new'], limit: 50, offset: 0);
+// ['contacts' => Contact[], 'total' => 1, 'limit' => 50, 'offset' => 0]
+
+$contacts->update($contact->id, name: 'Budi S', tags: ['vip']); // tags and metadata replace the old ones
+$contacts->delete($contact->id); // ['success' => true]
+```
+
+## Broadcasts
+
+A broadcast is created as a draft and sends only when you start or schedule it.
+The profile's send limits pace it.
+
+```php
+$broadcasts = $client->broadcasts();
+
+$broadcast = $broadcasts->create(
     profileId: $profileId,
-    to: $to,
-    question: "What's your favorite color?",
-    options: ['Red', 'Green', 'Blue']
+    name: 'October promo',
+    message: 'Hello! Our promo starts today.',            // a text, or a message array (below)
+    recipients: ['type' => 'tags', 'value' => ['vip']],
+    settings: ['delayMin' => 5000, 'delayMax' => 15000],   // optional
+);
+
+$broadcasts->update($broadcast->id, name: 'October promo v2');   // drafts only
+$broadcasts->schedule($broadcast->id, new DateTimeImmutable('2026-11-01 09:00', new DateTimeZone('Asia/Jakarta')));
+$broadcasts->start($broadcast->id);   // ['success' => true, 'message' => 'Broadcast started', 'recipientCount' => 42]
+$broadcasts->pause($broadcast->id);   // the Broadcast, status paused
+$broadcasts->resume($broadcast->id);  // ['success' => true, 'message' => 'Broadcast resumed']
+$broadcasts->cancel($broadcast->id);  // the Broadcast, status failed
+$broadcasts->delete($broadcast->id);  // ['success' => true]; not while it is running
+
+$broadcasts->get($broadcast->id);
+$broadcasts->list($profileId, status: 'running'); // Broadcast[]
+$broadcasts->stats($broadcast->id);
+// ['id' => …, 'status' => 'completed', 'stats' => ['total' => 10, 'sent' => 9, 'delivered' => 8,
+//  'read' => 5, 'failed' => 1, 'pending' => 0, 'successRate' => 80, 'progress' => 100], 'duration' => 600, …]
+```
+
+- **message**: a string is sent as text. For media pass an array: `['type' => 'image', 'url' => 'https://…', 'text' => 'caption', 'mimetype' => 'image/jpeg']`; the types are `text`, `image`, `video`, `audio` and `document` (a document also takes `filename`).
+- **recipients**: `['type' => 'tags', 'value' => [tag, …]]` (contacts with any of the tags), `['type' => 'contacts', 'value' => [contact id or phone, …]]`, or `['type' => 'all']`.
+- **settings**: `delayMin` and `delayMax` (ms between messages), `batchSize`, `retryFailed` and `retryAttempts`.
+- A `Broadcast` has `id`, `profileId`, `name`, `status` (`draft`, `scheduled`, `running`, `paused`, `completed`, `failed`), `message`, `recipients`, `settings`, `stats` (`total`, `pending`, `sent`, `delivered`, `read`, `failed`) and the `scheduledAt`, `startedAt`, `completedAt`, `createdAt` and `updatedAt` dates.
+
+## Profiles
+
+A profile is one WhatsApp number.
+
+```php
+$profiles = $client->profiles();
+
+$profile = $profiles->create($workspaceId, 'Sales', engine: 'whatsapp-web-js'); // engine is optional
+$profile = $profiles->get($profile->id);           // $profile->displayName, ->phoneNumber, ->status, …
+$all = $profiles->list($workspaceId);              // Profile[] with messageCount; workspaceId is optional
+$profiles->update($profile->id, name: 'Sales ID'); // also engine, webhookUrl, webhookSecret
+$profiles->status($profile->id);
+// ['id' => …, 'name' => 'Sales', 'status' => 'connected', 'phone' => '628…', 'lastConnectedAt' => …, 'engineConnected' => true]
+$profiles->disconnect($profile->id);               // ['status' => 'disconnected']
+$profiles->delete($profile->id);                   // ['success' => true]; also deletes its messages and contacts
+```
+
+### Linking a number (QR code)
+
+```php
+$profiles->connect($profileId); // ['status' => 'connecting', 'message' => 'Scan QR code to connect']
+```
+
+The QR code is not part of the REST API: it is pushed as the `qr:update` event of
+the [WebSocket API](https://github.com/ribato22/MultiWA/blob/main/docs/08-websocket-api.md).
+A Socket.IO client connects to `https://your-multiwa-instance.com/ws` with the API
+key, emits `join` with the profile id, and shows each event's `qrCode` (a
+`data:image/png;base64,…` URL) until it is scanned. You can also scan it in the
+admin dashboard. Afterwards `status()` reports `connected`. A profile that is
+already linked answers `['status' => 'already_connected', …]`.
+
+## Webhooks
+
+```php
+use MultiWA\Clients\WebhooksClient;
+
+$webhooks = $client->webhooks();
+
+$webhook = $webhooks->create($profileId, 'https://example.com/hook', ['message.received', 'message.sent']);
+$secret = $webhook->secret; // generated by the server; keep it to verify deliveries
+
+$webhooks->get($webhook->id);
+$webhooks->list($profileId);                                      // Webhook[]
+$webhooks->update($webhook->id, events: ['message.received'], enabled: false);
+$webhooks->test($webhook->id);   // sends a signed `test` event: ['success' => true, 'message' => …]
+$webhooks->delete($webhook->id); // ['success' => true]
+
+// In your webhook endpoint: verify the signature over the RAW body
+$ok = WebhooksClient::verifySignature(
+    file_get_contents('php://input'),
+    $_SERVER['HTTP_X_MULTIWA_SIGNATURE'] ?? null,
+    $secret,
 );
 ```
 
-### Contacts
+`create()` and `update()` also take `headers`, extra headers sent with every
+delivery (`['X-Tenant' => 'acme']`).
+
+## Other routes
+
+`request()` calls any route of the [REST API](https://github.com/ribato22/MultiWA/blob/main/docs/07-api-specification.md)
+with the same authentication and error handling, and returns the decoded JSON:
 
 ```php
-// Create contact
-$client->contacts()->create(
-    profileId: $profileId,
-    phone: '6281234567890',
-    name: 'John Doe',
-    tags: ['customer', 'vip']
-);
-
-// List contacts
-$contacts = $client->contacts()->list($profileId);
+$result = $client->request('POST', 'messages/otp', [
+    'json' => ['profileId' => $profileId, 'to' => $to, 'text' => 'Your code is 563842', 'code' => '563842'],
+]);
 ```
 
-### Broadcasts
+## Errors
+
+Everything the SDK throws extends `MultiWA\Exceptions\MultiWAException`:
+
+| Exception | Thrown for | Adds |
+|---|---|---|
+| `MultiWAException` | No response (connection failed, timeout) or a success that is not JSON | |
+| `ApiException` | Any 4xx or 5xx, e.g. 409 `PROFILE_DISCONNECTED` (sent while the profile is offline) | `getStatusCode()`, `getErrorCode()`, `getResponseBody()` |
+| `ValidationException` | 400, 422 | `getErrors()`: the validation messages |
+| `AuthenticationException` | 401 (bad or missing API key), 403 (not allowed, or not in your organization) | |
+| `NotFoundException` | 404 | |
+| `RateLimitException` | 429 | `getRetryAt()` |
+
+The four specific ones extend `ApiException`. `getErrorCode()` returns the API's
+machine-readable code when it sends one (`PROFILE_DISCONNECTED`,
+`DAILY_LIMIT_REACHED`, `OTP_DELIVERY_FAILED`, …), else `null`. A resource of
+another organization, or one that does not exist, usually answers 403: the API
+does not reveal which.
+
+A 429 is the send gate protecting the number. Its code says which limit:
+
+| `getErrorCode()` | Meaning | `getRetryAt()` |
+|---|---|---|
+| `DAILY_LIMIT_REACHED` | The profile's daily cap | When the counter resets |
+| `COLD_DAILY_LIMIT_REACHED` | The cap for messages to chats that have not written to the number within the service window (24 hours by default) | When the counter resets |
+| `COLD_CIRCUIT_OPEN` | Those messages are paused after repeated failed deliveries | When they resume |
+| `REPEAT_SUPPRESSED` | The same text to the same chat moments ago | When it may be sent again |
+| `null` | Too many API requests per minute | `null` |
 
 ```php
-// Create broadcast
-$client->broadcasts()->create(
-    profileId: $profileId,
-    name: 'Promo Campaign',
-    recipients: ['6281234567890', '6281234567891'],
-    templateId: 'template-uuid'
-);
-
-// Start broadcast
-$client->broadcasts()->start($broadcastId);
-```
-
-### Profiles
-
-```php
-// Create profile
-$profile = $client->profiles()->create($workspaceId, 'My WhatsApp');
-
-// Connect and get QR
-$qr = $client->profiles()->getQr($profileId);
-
-// Check status
-$status = $client->profiles()->status($profileId);
-```
-
-### Webhooks
-
-```php
-// Create webhook
-$client->webhooks()->create(
-    profileId: $profileId,
-    url: 'https://your-webhook.com/whatsapp',
-    events: ['message.received', 'message.sent']
-);
-```
-
-## Error Handling
-
-```php
-use MultiWA\Exceptions\MultiWAException;
 use MultiWA\Exceptions\ApiException;
+use MultiWA\Exceptions\MultiWAException;
+use MultiWA\Exceptions\RateLimitException;
+use MultiWA\Exceptions\ValidationException;
 
 try {
     $result = $client->messages()->sendText($profileId, $to, 'Hello!');
+    if (!$result->success) {
+        echo "WhatsApp refused it: {$result->error}";
+    }
+} catch (RateLimitException $e) {
+    echo "{$e->getErrorCode()}, retry after {$e->getRetryAt()?->format(DATE_ATOM)}";
+} catch (ValidationException $e) {
+    echo implode("\n", $e->getErrors());
 } catch (ApiException $e) {
-    echo "API Error: " . $e->getMessage();
-    echo "Status: " . $e->getStatusCode();
+    echo "HTTP {$e->getStatusCode()} {$e->getErrorCode()}: {$e->getMessage()}";
 } catch (MultiWAException $e) {
-    echo "Error: " . $e->getMessage();
+    echo "MultiWA unreachable: {$e->getMessage()}";
 }
 ```
 
+## Testing your code
+
+Pass a Guzzle handler as the last constructor argument to answer requests
+without a server:
+
+```php
+use GuzzleHttp\Handler\MockHandler;
+use GuzzleHttp\Psr7\Response;
+
+$client = new MultiWA('https://wa.example.com/api/v1', 'test-key', handler: new MockHandler([
+    new Response(201, [], '{"success":true,"messageId":"m1","conversationId":"c1","status":"sent"}'),
+]));
+```
+
+## Development
+
+```bash
+composer install
+composer test     # PHPUnit
+composer analyse  # PHPStan
+```
+
+The tests check every call against the API's route list
+(`scripts/api-routes.snapshot.json`), so run them inside the
+[MultiWA repository](https://github.com/ribato22/MultiWA); elsewhere that check is skipped.
+
 ## License
 
-MIT - See [LICENSE](LICENSE) for details.
+MIT, see [LICENSE](LICENSE).
