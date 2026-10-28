@@ -85,7 +85,7 @@ const fixMediaUrl = (url?: string): string => {
   return normalized;
 };
 
-// Check if a name looks like a raw JID (e.g. "120363421805328930@g.us" or "6282283011108@s.whatsapp.net" or all digits)
+// Check if a name looks like a raw JID (e.g. "120363421805328930@g.us" or "628123456789@s.whatsapp.net" or all digits)
 const isJidLikeName = (name: string) => {
   if (!name) return true;
   const trimmed = name.trim();
