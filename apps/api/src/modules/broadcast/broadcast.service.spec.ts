@@ -390,6 +390,43 @@ describe('BroadcastService (durable execution)', () => {
       expect(last.stats.failed).toBe(1);
     });
 
+    // MessagesService answers an engine failure (client not ready, a rejected recipient)
+    // with a RETURNED { success: false, status: 'failed' }; it does not throw.
+    const notSent = { success: false, status: 'failed', error: 'Client not ready' };
+
+    it('counts a recipient whose send comes back { success: false } as failed, not sent', async () => {
+      msg.sendText.mockResolvedValue(notSent);
+      vi.mocked(prisma.broadcast.findUnique)
+        .mockResolvedValueOnce(runningBroadcast({ resolvedRecipients: ['a'] }) as any)
+        .mockResolvedValue({ status: 'running' } as any);
+
+      await (service as any).runExecution('b1');
+
+      const last = updateData().pop();
+      expect(last.status).toBe('completed');
+      expect(last.stats.sent).toBe(0);
+      expect(last.stats.failed).toBe(1);
+    });
+
+    it('retries a { success: false } send like a thrown error, then counts it as failed', async () => {
+      msg.sendText.mockResolvedValue(notSent);
+      vi.mocked(prisma.broadcast.findUnique)
+        .mockResolvedValueOnce(
+          runningBroadcast({
+            resolvedRecipients: ['a'],
+            settings: { delayMin: 0, delayMax: 0, batchSize: 1000, retryFailed: true, retryAttempts: 2 },
+          }) as any,
+        )
+        .mockResolvedValue({ status: 'running' } as any);
+
+      await (service as any).runExecution('b1');
+
+      expect(msg.sendText).toHaveBeenCalledTimes(2);
+      const last = updateData().pop();
+      expect(last.stats.sent).toBe(0);
+      expect(last.stats.failed).toBe(1);
+    });
+
     // Recovery of a 'running' row with no recipient snapshot: crash between the atomic
     // claim and the snapshot write, or a legacy pre-durable broadcast.
     it('recovers a snapshotless running broadcast that has sent nothing by resolving fresh', async () => {

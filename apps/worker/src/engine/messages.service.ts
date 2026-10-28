@@ -92,7 +92,14 @@ export class WorkerMessagesService {
 
     const engine = this.engineManager.getEngine(profileId);
     if (!engine) {
-      return { success: true, messageId: message.id, conversationId: conversation.id, status: 'pending', warning: 'Profile not connected' };
+      // No live engine means the profile is disconnected. Nothing ever resends a
+      // `pending` row, so answering success here lost the message while the rule engine
+      // believed it was sent. Fail it visibly: row, event, log and the soft failure
+      // (the worker has no HTTP layer). Only DB-generated ids reach the log; the
+      // recipient and the body never do (CodeQL js/log-injection).
+      await this.markFailed(message.id, profileId, jid, type, 'Profile not connected');
+      this.logger.warn(`Profile ${profile.id} is not connected; message ${message.id} marked failed`);
+      return { success: false, messageId: message.id, conversationId: conversation.id, status: 'failed', error: 'Profile not connected' };
     }
 
     try {
@@ -103,6 +110,15 @@ export class WorkerMessagesService {
         isCold,
         repeatDedupeText(type, content),
       );
+      // Engine sends report a failure by RETURNING { success: false, error } (client not
+      // ready, a stale group id), they do not throw. Without this guard the row stayed
+      // as it was and the caller got success: true plus a message.sent event for a
+      // message that never went out. Same guard as the api copy.
+      if (result && result.success === false) {
+        await this.markFailed(message.id, profileId, jid, type, result.error);
+        this.logger.warn(`Engine reported send failure for ${message.id}: ${result.error}`);
+        return { success: false, messageId: message.id, conversationId: conversation.id, status: 'failed', error: result.error || 'Engine send failed' };
+      }
       if (result?.messageId) {
         await prisma.message.update({ where: { id: message.id }, data: { messageId: result.messageId, status: 'sent' } });
       }
