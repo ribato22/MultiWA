@@ -21,10 +21,10 @@ const ACCEPT = [
   '(021) 123-4567', // leading-paren format (regression guard)
   '(202) 555-0143', // US parenthesized
   ' 6281234567890', // leading whitespace (CSV/copy-paste)
-  '628111017195@s.whatsapp.net',
-  '628111017195@c.us',
+  '628123456780@s.whatsapp.net',
+  '628123456780@c.us',
   '120363421805328930@g.us', // group
-  '628111017195:12@c.us', // device-suffixed JID
+  '628123456780:12@c.us', // device-suffixed JID
   '12345@lid', // short JID local is OK (no digit-floor on JID locals)
   'status@broadcast',
 ];
@@ -34,7 +34,7 @@ const REJECT = [
   'Rizky Bachtiar',
   'abc',
   '',
-  '628111017195@unknown.net', // unknown domain
+  '628123456780@unknown.net', // unknown domain
   'hello@world.com',
   '12345', // 5 digits < floor
   '123456', // 6 digits < floor
