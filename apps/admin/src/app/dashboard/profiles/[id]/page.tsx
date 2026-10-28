@@ -61,8 +61,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-// "628…, 628…" → ['628…', '628…'] for the quiet-profile alarm recipients.
-const splitRecipients = (s: string) => s.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+// "628…, 628…" → ['628…', '628…'] for the quiet-profile alarm recipients. Only commas, semicolons and newlines
+// separate: a number may hold spaces or dashes ("+62 812-3456-7890").
+const splitRecipients = (s: string) => s.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean);
 
 interface Profile {
   id: string;
@@ -518,6 +519,17 @@ export default function ProfileDetailPage() {
         return;
       }
     }
+    // Quiet-profile alarm. Blank hours turns it off and is sent as null: an empty string would become 0 and be refused.
+    const parsedQuietHours = quietAlarmHours.trim() === '' ? null : Number(quietAlarmHours);
+    if (parsedQuietHours != null && (!Number.isInteger(parsedQuietHours) || parsedQuietHours < 1 || parsedQuietHours > 72)) {
+      toast({ title: 'Invalid alarm hours', description: 'Enter a whole number of hours from 1 to 72, or leave empty to turn the alarm off.', variant: 'destructive' });
+      return;
+    }
+    const quietRecipients = splitRecipients(quietAlarmNotify);
+    if (quietRecipients.length > 5) {
+      toast({ title: 'Too many alarm numbers', description: 'Enter at most 5 numbers to send the alarm to.', variant: 'destructive' });
+      return;
+    }
     setSavingGuardrails(true);
     try {
       const token = localStorage.getItem('accessToken');
@@ -538,8 +550,8 @@ export default function ProfileDetailPage() {
           serviceWindowHours: parsedWindow ?? 24,
           autoRejectCalls,
           autoRejectCallMessage: autoRejectCallMessage.trim() || undefined,
-          quietAlarmHours: quietAlarmHours.trim() ? Number(quietAlarmHours) : null,
-          quietAlarmNotify: splitRecipients(quietAlarmNotify),
+          quietAlarmHours: parsedQuietHours,
+          quietAlarmNotify: quietRecipients,
         }),
       });
       if (res.ok) {

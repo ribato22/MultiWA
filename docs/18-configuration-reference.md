@@ -283,7 +283,12 @@ The alarm is set per profile, on the profile page or with
 
 - `quietAlarmHours` — whole hours, 1 to 72, of silence before the alarm. `null`
   (or blank on the profile page) turns it off, which is the default.
-- `quietAlarmNotify` — up to 5 WhatsApp numbers that get the message.
+- `quietAlarmNotify` — up to 5 WhatsApp numbers that get the message. The
+  profile's own number is skipped, and `@broadcast` and `@newsletter` addresses
+  are refused.
+
+Set it on profiles that normally receive messages throughout the active hours: a
+profile that is quiet for long stretches will raise and recover regularly.
 
 Silence is counted only inside a daily active window, so a quiet night does not
 raise an alarm. Two variables set that window. The stock compose files do not
@@ -294,8 +299,8 @@ defaults.
 **Optional** | `HH:MM-HH:MM` | Default: `07:00-22:00`
 
 Daily window in which a connected profile's silence counts, in the time zone
-below. The start is included, the end is not, and the window cannot cross
-midnight. An invalid value falls back to the default.
+below. The start is included, the end is not, the window cannot cross midnight
+and it must last at least an hour. An invalid value falls back to the default.
 
 ### `QUIET_ALARM_TIMEZONE`
 **Optional** | IANA time zone | Default: `Asia/Jakarta`
