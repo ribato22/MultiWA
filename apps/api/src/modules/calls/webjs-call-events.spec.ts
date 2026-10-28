@@ -21,6 +21,7 @@ const wire = () => {
 describe('WhatsAppWebJsAdapter calls', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -119,17 +120,21 @@ describe('WhatsAppWebJsAdapter calls', () => {
     expect(config.onCall.mock.calls.map((c: any[]) => c[0].state)).toEqual(['ringing']);
   });
 
+  // Only the log of a call seen ringing is reported, so these calls ring first.
+  const RANG = '3EB0C767D82CD7F2A5E14B9F6A03D1C4';
+
   it('turns a call-log message into one call-log entry (repeats are dropped)', () => {
     const { client, config } = wire();
+    client.emit('call', { id: RANG, from: '628111000111@c.us' });
     const log = {
-      type: 'call_log', id: { _serialized: 'false_628111000111@c.us_ABC' }, from: '628111000111@c.us',
+      type: 'call_log', id: { _serialized: `false_628111000111@c.us_${RANG}` }, from: '628111000111@c.us',
       fromMe: false, timestamp: 1_790_000_000, _data: { callOutcome: 'MISSED', isVideoCall: false },
     };
     client.emit('message_create', log);
     client.emit('message_create', log);
     expect(config.onCallLog).toHaveBeenCalledTimes(1);
     expect(config.onCallLog).toHaveBeenCalledWith({
-      messageId: 'false_628111000111@c.us_ABC', from: '628111000111@c.us', isVideo: false,
+      messageId: `false_628111000111@c.us_${RANG}`, callId: RANG, from: '628111000111@c.us', isVideo: false,
       outcome: 'missed', timestamp: new Date(1_790_000_000 * 1000),
     });
   });
@@ -138,8 +143,9 @@ describe('WhatsAppWebJsAdapter calls', () => {
     const { client, config } = wire();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     config.onCallLog.mockImplementation(() => { throw new Error('db down'); });
+    client.emit('call', { id: RANG, from: '628111000111@c.us' });
     const log = {
-      type: 'call_log', id: { _serialized: 'false_628111000111@c.us_ABC' }, from: '628111000111@c.us',
+      type: 'call_log', id: { _serialized: `false_628111000111@c.us_${RANG}` }, from: '628111000111@c.us',
       fromMe: false, timestamp: 1_790_000_000, _data: { callOutcome: 'MISSED', isVideoCall: false },
     };
     expect(() => client.emit('message_create', log)).not.toThrow();
@@ -192,9 +198,15 @@ describe('WhatsAppWebJsAdapter calls', () => {
       type: 'call_log', id: { _serialized: `false_123456@lid_${CALL_ID}` }, from: '123456@lid', fromMe: false,
       timestamp: 1_790_000_000, _data: { callOutcome, isVideoCall: true }, ...extra,
     });
+    // Only the log of a call seen ringing is reported, so each test's call rings first.
+    const wireRinging = (...callIds: string[]) => {
+      const wired = wire();
+      for (const id of callIds.length ? callIds : [CALL_ID]) wired.client.emit('call', { id, from: '123456@lid' });
+      return wired;
+    };
 
     it('turns a final outcome into one call-log entry that carries the call id', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       client.emit('multiwa_call_log', callLog('Missed'));
       expect(config.onCallLog).toHaveBeenCalledTimes(1);
       expect(config.onCallLog).toHaveBeenCalledWith({
@@ -204,14 +216,14 @@ describe('WhatsAppWebJsAdapter calls', () => {
     });
 
     it('reports the same final outcome once however often WhatsApp repeats it (each change fires twice)', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       client.emit('multiwa_call_log', callLog('Missed'));
       client.emit('multiwa_call_log', callLog('Missed'));
       expect(config.onCallLog).toHaveBeenCalledTimes(1);
     });
 
     it('stays silent about a log without a final result (Ongoing, Failed): nothing reported, nothing warned', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       for (const outcome of ['Ongoing', 'ONGOING', 5, 'Failed']) client.emit('multiwa_call_log', callLog(outcome));
       expect(config.onCallLog).not.toHaveBeenCalled();
@@ -219,7 +231,7 @@ describe('WhatsAppWebJsAdapter calls', () => {
     });
 
     it('warns once about an outcome it does not know, and reports nothing', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       client.emit('multiwa_call_log', callLog('SomethingNew'));
       client.emit('multiwa_call_log', callLog('SomethingNew'));
@@ -229,7 +241,7 @@ describe('WhatsAppWebJsAdapter calls', () => {
     });
 
     it('does not remember a log without a result, so its final change still gets through (Ongoing, then Missed: one entry, missed)', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       client.emit('multiwa_call_log', callLog('Ongoing'));
       client.emit('multiwa_call_log', callLog('Ongoing'));
       client.emit('multiwa_call_log', callLog('Missed'));
@@ -239,14 +251,14 @@ describe('WhatsAppWebJsAdapter calls', () => {
     });
 
     it('reports a rejected and an answered-elsewhere call too', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB');
       client.emit('multiwa_call_log', callLog('Rejected', { id: { _serialized: 'false_123456@lid_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' } }));
       client.emit('multiwa_call_log', callLog('AcceptedElsewhere', { id: { _serialized: 'false_123456@lid_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB' } }));
       expect(config.onCallLog.mock.calls.map((c: any[]) => c[0].outcome)).toEqual(['rejected', 'answered_elsewhere']);
     });
 
     it('ignores the account\'s own calls and other message types', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       client.emit('multiwa_call_log', callLog('Missed', { fromMe: true }));
       client.emit('multiwa_call_log', callLog('Missed', { type: 'chat' }));
@@ -255,14 +267,14 @@ describe('WhatsAppWebJsAdapter calls', () => {
     });
 
     it('shares its dedupe with message_create, so a build that emits both reports the call once', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       client.emit('message_create', callLog('Missed'));
       client.emit('multiwa_call_log', callLog('Missed'));
       expect(config.onCallLog).toHaveBeenCalledTimes(1);
     });
 
     it('keeps the event emitter alive when the call-log handler throws', () => {
-      const { client, config } = wire();
+      const { client, config } = wireRinging();
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       config.onCallLog.mockImplementation(() => { throw new Error('db down'); });
       expect(() => client.emit('multiwa_call_log', callLog('Missed'))).not.toThrow();
@@ -305,6 +317,67 @@ describe('WhatsAppWebJsAdapter calls', () => {
       const [entry] = config.onCallLog.mock.calls[0];
       expect(entry.callId, 'the log joins the call that rang').toBe(ringing.id);
       expect(entry).toMatchObject({ callId: X, from: '1234567@lid', isVideo: false, outcome });
+    });
+
+    // Right after a FRESH link, WhatsApp's history sync adds old call logs as new: in the live smoke of
+    // 2026-10-28, 171 reached onCallLog within 33 s of ready, none of them a call that rang.
+    const unseen = (i: number) => i.toString(16).toUpperCase().padStart(32, 'F'); // valid call ids, never rung
+    const OUTCOMES = ['Missed', 'AcceptedElsewhere', 'Rejected'];
+    const history = (client: EventEmitter, from: number, to: number) => {
+      for (let i = from; i < to; i++) {
+        const log = callLogMessage(unseen(i), OUTCOMES[i % 3]);
+        client.emit('message_create', log);
+        client.emit('multiwa_call_log', log);
+      }
+    };
+
+    it('drops the history a fresh link syncs, on both events, with one debug line per burst', () => {
+      const { client, config } = wire();
+      client.emit('ready');
+      history(client, 0, 50);
+      expect(config.onCallLog).not.toHaveBeenCalled();
+      expect(console.debug).toHaveBeenCalledTimes(1);
+      expect(String(vi.mocked(console.debug).mock.calls[0][0])).not.toContain('1234567');
+      const aMinuteLater = Date.now() + 61_000; // a new burst gets its own line
+      vi.spyOn(Date, 'now').mockReturnValue(aMinuteLater);
+      history(client, 50, 60);
+      expect(console.debug).toHaveBeenCalledTimes(2);
+    });
+
+    it('replays the fresh-link smoke: the two calls that rang get their logs, the history around them does not', async () => {
+      const { adapter, client, config } = wire();
+      const [CALL1, CALL2] = ['00E5C41B7A9D3F2E8C6B0A4D19F7E3C2', '00ACB16E2F9D04B8A3C7E51D2B9F0A64'];
+      client.emit('ready');
+      history(client, 0, 40);
+      client.emit('call', { id: CALL1, from: '1234567@lid', isVideo: false, isGroup: false });
+      history(client, 40, 41); // the smoke's last history log came 0.65 s after call 1 began ringing
+      client.emit('multiwa_call_ended', { id: CALL1 });
+      client.emit('multiwa_call_log', callLogMessage(CALL1, 'Missed'));
+      client.emit('multiwa_call_log', callLogMessage(CALL1, 'Missed'));
+      client.emit('call', { id: CALL2, from: '1234567@lid', isVideo: false, isGroup: false, reject: vi.fn().mockResolvedValue(undefined) });
+      await adapter.rejectCall(CALL2);
+      client.emit('multiwa_call_log', callLogMessage(CALL2, 'Rejected'));
+      client.emit('multiwa_call_log', callLogMessage(CALL2, 'Rejected'));
+      expect(config.onCallLog.mock.calls.map(([e]: any[]) => [e.callId, e.outcome])).toEqual([[CALL1, 'missed'], [CALL2, 'rejected']]);
+    });
+
+    it('forgets the calls that rang when the client disconnects: their logs are dropped, a new call still gets its log', () => {
+      const { client, config } = wire();
+      const [BEFORE, AFTER] = ['0B1F6A2E9C7D4835A0E2F91C6B7D3A58', '0C2E7B3F0D8E5946B1F3A02D7C8E4B69'];
+      client.emit('call', { id: BEFORE, from: '1234567@lid' });
+      client.emit('multiwa_call_ended', { id: BEFORE });
+      client.emit('disconnected', 'LOGOUT'); // e.g. unlinked, then linked again on the same client
+      client.emit('multiwa_call_log', callLogMessage(BEFORE, 'Missed'));
+      client.emit('call', { id: AFTER, from: '1234567@lid' });
+      client.emit('multiwa_call_log', callLogMessage(AFTER, 'Missed'));
+      expect(config.onCallLog.mock.calls.map(([e]: any[]) => e.callId)).toEqual([AFTER]);
+    });
+
+    it('drops a log whose id carries no call id, even from a caller whose call rang', () => {
+      const { client, config } = wire();
+      client.emit('call', { id: '00A9D2BADD351F56B87282EBA95ABCDE', from: '1234567@lid' });
+      client.emit('multiwa_call_log', callLogMessage('3EB0ABC', 'Missed')); // too short for a call id
+      expect(config.onCallLog).not.toHaveBeenCalled();
     });
   });
 

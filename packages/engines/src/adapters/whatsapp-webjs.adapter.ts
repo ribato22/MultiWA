@@ -39,6 +39,8 @@ export const ACK_STATUS_MAP: Record<number, string> = {
 // Caps: ringing calls we keep a handle on (for rejectCall), and distinct unreadable call-log shapes we warn about.
 const MAX_TRACKED_CALLS = 100;
 const MAX_WARNED_SHAPES = 20;
+// At most one line per this long about dropped call logs: a fresh link's history sync drops hundreds.
+const DROPPED_CALL_LOG_NOTE_MS = 60_000;
 
 export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   readonly engineType = 'whatsapp-web-js' as const;
@@ -55,6 +57,10 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   private calls = new Map<string, any>();
   // Ids already reported as ringing, so a repeated `call` event is not a new call (bounded).
   private seenCalls = new Set<string>();
+  // Ids of calls reported ringing since the last disconnect (bounded): only their call logs are
+  // reported. Kept after `ended`, since a call's log arrives about a second after it.
+  private callsRungThisSession = new Set<string>();
+  private droppedCallLogNotedAt = 0;
   // Call-log message ids already reported (message_create can repeat on re-inject).
   private seenCallLogs = new Set<string>();
   // Shapes of call-log messages we could not read, warned about once each.
@@ -173,8 +179,10 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         isConnected: false,
         isAuthenticated: false,
       };
-      // The page that held the ringing calls is gone: none of them can be rejected or ended now.
+      // The page that held the ringing calls is gone: none of them can be rejected or ended now,
+      // and a call log from here on is reported only for a call that rings after this.
       this.calls.clear();
+      this.callsRungThisSession.clear();
       this.config?.onDisconnected?.(reason);
     });
 
@@ -232,6 +240,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     this.client.on('call', (call: any) => {
       if (!call?.id || call.fromMe || this.seenCalls.has(call.id)) return; // incoming calls, once each
       remember(this.seenCalls, call.id, MAX_REMEMBERED_IDS);
+      remember(this.callsRungThisSession, call.id, MAX_REMEMBERED_IDS);
       this.calls.set(call.id, call);
       while (this.calls.size > MAX_TRACKED_CALLS) {
         const oldest = this.calls.keys().next().value;
@@ -277,8 +286,9 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
   /**
    * One call-log message, from either event. Reported once per message, when its outcome is
-   * final. A log without a final result (Ongoing, Failed) is normal, so it is neither warned
-   * about nor remembered: its change to the final outcome must still get through.
+   * final and its call id is a call reported ringing since the last disconnect. A log without
+   * a final result (Ongoing, Failed) is normal, so it is neither warned about nor remembered:
+   * its change to the final outcome must still get through.
    */
   private handleCallLogMessage(message: any): void {
     if (message?.type !== 'call_log') return;
@@ -286,6 +296,18 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     if (!entry) {
       // Own outgoing calls are ignored on purpose, and so is a log that gives no final result (Ongoing, Failed).
       if (!message.fromMe && !isCallLogWithoutOutcome(message)) this.warnUnreadableCallLog(message);
+      return;
+    }
+    // Right after a fresh link, WhatsApp's history sync adds old call logs as new (171 in the live
+    // smoke of 2026-10-28); each would become a bogus call, webhook and missed-call notice. So only
+    // the log of a call seen ringing is reported: a call that rang while the device was offline
+    // never reaches whatsapp-web.js at all. Dropped logs are not remembered, so they never push a
+    // real log's id out of the dedupe.
+    if (!entry.callId || !this.callsRungThisSession.has(entry.callId)) {
+      if (Date.now() - this.droppedCallLogNotedAt >= DROPPED_CALL_LOG_NOTE_MS) {
+        this.droppedCallLogNotedAt = Date.now();
+        console.debug(`[WhatsApp-WebJS] Ignoring call logs of calls not seen ringing for profile ${this.config?.profileId} (e.g. the history a fresh link syncs); more within a minute are not logged`);
+      }
       return;
     }
     if (this.seenCallLogs.has(entry.messageId)) return;

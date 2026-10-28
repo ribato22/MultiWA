@@ -19,7 +19,10 @@ export interface EngineConfig {
   onMessage?: (message: any) => void;
   onMessageAck?: (messageId: string, status: string) => void;
   onCall?: (call: IncomingCall) => void;
-  /** A WhatsApp call-log message ("Missed voice call"): the call's final outcome. */
+  /**
+   * A WhatsApp call-log message ("Missed voice call"): the call's final outcome. whatsapp-web.js
+   * reports one only for a call it reported `ringing` since the last disconnect, with its `callId`.
+   */
   onCallLog?: (entry: CallLogEntry) => void;
 }
 
