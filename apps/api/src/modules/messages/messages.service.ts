@@ -297,14 +297,33 @@ export class MessagesService {
     // API-hosted synchronous send (ENGINE_HOST=api, DURABLE_SEND off).
     const engine = this.engineManager.getEngine(profileId);
     if (!engine) {
-      this.logger.warn(`No engine found for profile ${profileId}, message queued as pending`);
-      return {
-        success: true,
+      // No live engine means the profile is disconnected. Nothing ever resends a
+      // `pending` row, so answering success here lost the message while the caller
+      // believed it was queued. Fail it visibly instead: row, event, log and a 409.
+      // (The queued paths above retry a bounded number of times, then do the same.)
+      await prisma.message.update({
+        where: { id: message.id },
+        data: { status: 'failed' },
+      });
+      this.eventEmitter.emit(AppEvents.MESSAGE.FAILED, {
+        profileId,
         messageId: message.id,
+        to: jid,
+        type,
         conversationId: conversation.id,
-        status: 'pending',
-        warning: 'Profile not connected, message queued',
-      };
+        error: 'Profile not connected',
+      });
+      // Only DB-generated uuids are interpolated: the recipient and the body never
+      // reach the log (CodeQL js/log-injection).
+      this.logger.warn(`Profile ${profile.id} is not connected; message ${message.id} marked failed`);
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.CONFLICT,
+          error: 'PROFILE_DISCONNECTED',
+          message: 'Profile is not connected; the message was not sent',
+        },
+        HttpStatus.CONFLICT,
+      );
     }
 
     let result: any;

@@ -52,7 +52,7 @@ export class SendMessageResponse {
 
   @ApiProperty({
     example: 'queued',
-    enum: ['queued', 'sent', 'pending', 'failed'],
+    enum: ['queued', 'sent', 'failed'],
     description: 'Initial status; the final delivery status arrives via webhook/realtime',
   })
   status: string;

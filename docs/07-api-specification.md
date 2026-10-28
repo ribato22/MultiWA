@@ -155,6 +155,14 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/messages/:id` | Get a single message |
 | `DELETE` | `/messages/:id` | Delete a message locally |
 
+> **Disconnected profile.** The endpoints that deliver a message (`text`, `image`, `video`, `audio`, `document`, `location`, `contact`, `reaction`, `reply`, `poll`) answer **`409 Conflict`** when the profile has no live WhatsApp connection, instead of reporting success:
+>
+> ```json
+> { "statusCode": 409, "error": "PROFILE_DISCONNECTED", "message": "Profile is not connected; the message was not sent" }
+> ```
+>
+> The message is stored with `status: "failed"` and a `message.failed` event is emitted. Nothing is retried automatically, so reconnect the profile and send again. `POST /messages/otp` does not return the 409: it fails over to its secondary channel, or answers `502 OTP_DELIVERY_FAILED` when no channel delivers. Bulk batches, broadcasts and scheduled messages record the message as `failed` instead of returning an error. With `DURABLE_SEND=true` a send is enqueued instead and retried a bounded number of times before it ends `failed` (see [Durable Sending](./10-messaging.md#durable-sending-optional)).
+
 ### Bulk Messaging (`/bulk`)
 
 | Method | Endpoint | Description |
