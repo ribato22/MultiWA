@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 217,
+  "routeCount": 224,
   "routes": [
     {
       "method": "DELETE",
@@ -344,6 +344,34 @@
     {
       "method": "POST",
       "path": "/api/v1/bulk/send"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls/:id"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/calls/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/calls/:id/call-link"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/calls/:id/reject"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/calls/:id/reply"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls/open-count"
     },
     {
       "method": "GET",

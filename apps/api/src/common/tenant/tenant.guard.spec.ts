@@ -20,6 +20,7 @@ vi.mock('@multiwa/database', () => ({
     workspace: { findFirst: vi.fn() },
     account: { findFirst: vi.fn() },
     role: { findFirst: vi.fn() },
+    call: { findFirst: vi.fn() },
   },
 }));
 
@@ -153,5 +154,17 @@ describe('TenantGuard', () => {
       [{ from: 'param', key: 'id', resource: 'role' }],
     );
     await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('resolves a call through the profile->org chain', async () => {
+    vi.mocked((prisma as any).call.findFirst).mockResolvedValue({ id: 'k1' });
+    const { guard, ctx } = makeContext(
+      { user: { organizationId: ORG }, params: { id: 'k1' } },
+      [{ from: 'param', key: 'id', resource: 'call' }],
+    );
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect((prisma as any).call.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'k1', profile: { workspace: { organizationId: ORG } } } }),
+    );
   });
 });

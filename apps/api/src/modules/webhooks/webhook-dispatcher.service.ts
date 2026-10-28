@@ -11,7 +11,7 @@ import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { Queue } from 'bullmq';
 import { prisma } from '@multiwa/database';
-import { APP_EVENT_SET } from '@multiwa/core';
+import { AppEvents, APP_EVENT_SET } from '@multiwa/core';
 import { isWorkerEngine } from '../../common/engine-host';
 
 /** DI token for the BullMQ 'webhooks' producer queue. */
@@ -28,6 +28,13 @@ function positiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
+/**
+ * Events the API produces itself (agent actions on calls). With ENGINE_HOST=worker the
+ * worker dispatches the engine's events, but these never reach the worker, so the API
+ * keeps dispatching them.
+ */
+export const API_ORIGINATED_EVENTS: ReadonlySet<string> = new Set<string>([AppEvents.CALL.UPDATED]);
+
 @Injectable()
 export class WebhookDispatcherService implements OnModuleInit {
   private readonly logger = new Logger(WebhookDispatcherService.name);
@@ -39,18 +46,20 @@ export class WebhookDispatcherService implements OnModuleInit {
 
   onModuleInit(): void {
     // When ENGINE_HOST=worker the engine (and thus event production) lives in the
-    // worker, which runs its own dispatcher. The API one must stay silent to avoid
-    // double-enqueuing webhook deliveries.
-    if (isWorkerEngine()) {
-      this.logger.log('ENGINE_HOST=worker: API webhook dispatcher deactivated (worker dispatches)');
-      return;
-    }
+    // worker, which runs its own dispatcher. The API must not double-enqueue those,
+    // but it still owns the events it produces itself.
+    const workerHostsEngine = isWorkerEngine();
     // onAny gives us the event name (unlike a bare @OnEvent('**') handler).
     this.eventEmitter.onAny((event: string | string[], payload: unknown) => {
       const name = Array.isArray(event) ? event.join('.') : String(event);
+      if (workerHostsEngine && !API_ORIGINATED_EVENTS.has(name)) return;
       void this.dispatch(name, payload);
     });
-    this.logger.log('Webhook dispatcher subscribed to the application event bus');
+    this.logger.log(
+      workerHostsEngine
+        ? 'ENGINE_HOST=worker: API webhook dispatcher handles API-originated events only (the worker dispatches engine events)'
+        : 'Webhook dispatcher subscribed to the application event bus',
+    );
   }
 
   private async dispatch(event: string, payload: any): Promise<void> {

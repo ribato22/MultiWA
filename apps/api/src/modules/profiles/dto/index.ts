@@ -2,7 +2,7 @@
 // apps/api/src/modules/profiles/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min, Max, IsArray, ArrayMaxSize, Matches } from 'class-validator';
+import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min, Max, MaxLength, IsArray, ArrayMaxSize, Matches } from 'class-validator';
 import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
 
 export enum EngineType {
@@ -65,10 +65,20 @@ export class UpdateProfileDto {
   @IsBoolean()
   autoRejectCalls?: boolean;
 
-  @ApiPropertyOptional({ description: 'Optional message sent to the caller after auto-rejecting a call. Blank = reject silently.' })
+  @ApiPropertyOptional({
+    description:
+      'Optional message sent to the caller after auto-rejecting a call, also when the reject itself failed because the caller had already hung up. ' +
+      'Sent at most once per caller per 24 hours, through the send gate (so it can be delayed or refused). Blank = reject silently.',
+  })
   @IsOptional()
   @IsString()
   autoRejectCallMessage?: string;
+
+  @ApiPropertyOptional({ description: 'Default text when an agent replies to a missed call from the Calls queue. Blank = none.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4096)
+  callReplyMessage?: string;
 
   @ApiPropertyOptional({
     example: 2,

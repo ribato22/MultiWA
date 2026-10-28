@@ -96,8 +96,8 @@ const COLD_DEFAULT_DAILY_LIMIT = Number(process.env.COLD_DEFAULT_DAILY_LIMIT) ||
 /**
  * Classify an outbound send as "cold" (business-initiated) vs "service" (reply).
  *
- * A send is a SERVICE reply when the recipient messaged this profile within
- * serviceWindowHours (WhatsApp's customer-service window) — those are not subject
+ * A send is a SERVICE reply when the recipient messaged this profile, or called it,
+ * within serviceWindowHours (WhatsApp's customer-service window) — those are not subject
  * to the reach-out lock and must flow freely. Everything else to a person is COLD
  * (first contact / outside the window: OTP, notifications, marketing). Group,
  * broadcast and newsletter sends are never cold outreach. A missing recipient
@@ -138,7 +138,18 @@ export async function classifyColdSend(
     orderBy: { timestamp: 'desc' },
     select: { timestamp: true },
   });
-  return !lastInbound || lastInbound.timestamp < since;
+  if (lastInbound && lastInbound.timestamp >= since) return false;
+  // An incoming call opens the window too: the caller reached out first.
+  // A failing lookup (for example a missing `calls` table) must never break the send itself.
+  try {
+    const recentCall = await prisma.call.findFirst({
+      where: { profileId, direction: 'incoming', fromJid: { in: [...candidates] }, startedAt: { gte: since } },
+      select: { id: true },
+    });
+    return !recentCall;
+  } catch {
+    return true;
+  }
 }
 
 /** Fields the lane cap resolver reads (superset of WarmupCapInput). */

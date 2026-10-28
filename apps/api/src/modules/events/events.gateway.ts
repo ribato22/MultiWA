@@ -14,6 +14,7 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { prisma } from '@multiwa/database';
+import type { RealtimeEmitter } from '@multiwa/core';
 import * as crypto from 'crypto';
 
 // CORS origins are driven by env so production isn't pinned to localhost.
@@ -30,7 +31,7 @@ const WS_CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3001,http
   },
   transports: ['websocket', 'polling'],
 })
-export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, RealtimeEmitter {
   private readonly logger = new Logger(EventsGateway.name);
 
   constructor(private readonly jwt: JwtService) {}
@@ -228,5 +229,10 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Emit message acknowledgment (sent/delivered/read)
   emitMessageAck(profileId: string, messageId: string, status: string) {
     this.server.to(`profile:${profileId}`).emit('message:ack', { profileId, messageId, status });
+  }
+
+  // Emit a call change (ringing, rejected, ended, follow-up/assignee updated)
+  emitCallUpdate(profileId: string, call: Record<string, unknown>) {
+    this.server.to(`profile:${profileId}`).emit('call:update', { ...call, profileId });
   }
 }

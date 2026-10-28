@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, handleAutoRejectCall, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, handleEngineCall, handleCallLog, closeStaleRingingCalls, rejectCallByAgent as rejectCallByAgentShared, AGENT_REJECT_TIMEOUT_MS, withTimeout, toCallPayload, type CallEngineDeps, type AutoRejectCallSettings, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -17,6 +17,7 @@ import { AppEvents } from '@multiwa/core';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { WorkerRuleEngineService } from './rule-engine.service';
+import { WorkerMessagesService } from './messages.service';
 import { WorkerNotificationsService, NotificationType } from './notifications.service';
 // NOTE (worker-local copy): only in-app notification rows are written here; the
 // email/push fan-out is best-effort and retained on the API path.
@@ -80,6 +81,10 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     @Inject(forwardRef(() => WorkerRuleEngineService))
     private readonly ruleEngine: WorkerRuleEngineService,
     private readonly notificationsService: WorkerNotificationsService,
+    // The send-gated path: the auto-reject reply of a call goes out through it, never through engine.sendText.
+    // WorkerMessagesService injects this manager back (forwardRef on both sides: a real cycle).
+    @Inject(forwardRef(() => WorkerMessagesService))
+    private readonly messagesService: WorkerMessagesService,
   ) {
     this.logger.log('Worker EngineManagerService initialized');
   }
@@ -335,6 +340,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     }
 
     this.logger.log('Worker EngineManagerService initializing...');
+
+    // Calls left "ringing" by the previous process lost their ring timers. Not awaited and never throws:
+    // a calls table that is missing or slow must not hold the boot (or the reconnects) back.
+    closeStaleRingingCalls()
+      .then((n) => { if (n) this.logger.log(`Closed ${n} call(s) left ringing by the previous process`); })
+      .catch((e) => this.logger.warn(`stale call sweep failed: ${(e as Error).message}`));
 
     const envEngine = process.env.DEFAULT_ENGINE;
     if (envEngine && !['whatsapp-web-js', 'baileys', 'mock'].includes(envEngine)) {
@@ -871,21 +882,26 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
         }
       },
-      onCall: async (call) => {
-        // Auto-reject acts on the offer only.
-        if ((call.state ?? 'ringing') !== 'ringing') return;
-        try {
-          const p = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
-          const eng = this.getEngine(profileId);
-          if (!eng) return;
-          await handleAutoRejectCall(call, (p?.settings ?? {}) as any, {
-            rejectCall: (id) => eng.rejectCall(id),
-            sendText: async (to, text) => { await eng.sendText(to, text); },
-            logger: { log: (m) => this.logger.log(m), warn: (m) => this.logger.warn(m) },
+      // Both call callbacks hand over to the runtime synchronously and return nothing: it registers the ringing
+      // step of a call when it is called, and the later signals of that call wait for the step, which only works
+      // if the offer is handed over before them. So the profile's settings are NOT awaited here: they go as the
+      // read in progress and the ringing step awaits them. Neither callback throws or rejects into the adapter.
+      onCall: (call) => {
+        const settings = prisma.profile
+          .findUnique({ where: { id: profileId }, select: { settings: true } })
+          .then((p) => (p?.settings ?? null) as AutoRejectCallSettings | null)
+          .catch((e) => {
+            this.logger.warn(`call settings read failed: ${(e as Error).message}`);
+            return null;
           });
-        } catch (e) {
-          this.logger.warn(`onCall handler failed: ${(e as Error).message}`);
-        }
+        handleEngineCall(call, this.callDeps(profileId, settings)).catch((e) =>
+          this.logger.warn(`onCall handler failed: ${(e as Error).message}`),
+        );
+      },
+      onCallLog: (entry) => {
+        handleCallLog(entry, this.callDeps(profileId, null)).catch((e) =>
+          this.logger.warn(`onCallLog handler failed: ${(e as Error).message}`),
+        );
       },
     };
 
@@ -990,6 +1006,48 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   getEngine(profileId: string): IWhatsAppEngine | null {
     return this.engines.get(profileId)?.engine || null;
+  }
+
+  /** Collaborators for the shared calls runtime, bound to one profile. */
+  private callDeps(profileId: string, settings: CallEngineDeps['settings']): CallEngineDeps {
+    const engine = this.getEngine(profileId);
+    return {
+      profileId,
+      settings,
+      emit: (event, payload) => this.emitEvent(event, payload),
+      emitRealtime: (payload) => this.realtime.emitCallUpdate(profileId, payload),
+      notify: (title, body, meta) => this.notifyOrgUsers(profileId, NotificationType.CALL, title, body, meta),
+      rejectCall: async (waCallId) => {
+        // Without an engine there is nothing to reject with: fail, so the runtime does not record a reject that never happened.
+        const live = this.getEngine(profileId);
+        if (!live) throw new Error(`no live engine for profile ${profileId}`);
+        await live.rejectCall(waCallId);
+      },
+      // The send-gated path (daily caps, repeat suppression, floor delay), never engine.sendText.
+      sendText: async (to, text) => {
+        const res: { success: boolean; status?: string; error?: string; warning?: string } = await this.messagesService.sendText({ profileId, to, text });
+        // WorkerMessagesService.sendText never throws: a refusal of the send gate, an unknown profile, a profile without
+        // an engine or an engine error all come back as { success: false } (the api's MessagesService.sendText throws the
+        // gate's refusals and a missing engine instead). The runtime releases its once-per-24h reply claim only when
+        // sendText rejects, so a reply that was not sent has to reject here.
+        if (!res.success) throw new Error(`reply not sent: ${res.error ?? res.warning ?? 'unknown reason'}`);
+        return res;
+      },
+      resolveIdentity: engine ? (jid) => engine.resolveIdentity(jid) : null,
+      logger: { log: (m) => this.logger.log(m), warn: (m) => this.logger.warn(m) },
+    };
+  }
+
+  /** engine-commands 'reject-call': an agent rejected a ringing call from the API. Errors keep their runtime codes (CALL_NOT_FOUND, CALL_NOT_RINGING). */
+  async rejectCallByAgent(profileId: string, callId: string): Promise<Record<string, unknown>> {
+    const engine = this.getEngine(profileId);
+    if (!engine) throw new Error(`ENGINE_NOT_CONNECTED: profile ${profileId} is not connected`);
+    const row = await rejectCallByAgentShared(callId, {
+      ...this.callDeps(profileId, null),
+      // Bounded: the runtime holds the call while this runs, however long a stuck page takes (ENGINE_TIMEOUT maps to 504).
+      rejectCall: (waCallId) => withTimeout(engine.rejectCall(waCallId), AGENT_REJECT_TIMEOUT_MS, 'ENGINE_TIMEOUT: reject'),
+    });
+    return toCallPayload(row);
   }
 
   /**

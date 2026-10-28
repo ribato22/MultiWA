@@ -1,8 +1,9 @@
 // EngineCommandsService unit tests — proves result-bearing commands enqueue with
 // request/reply (waitUntilFinished) and fire-and-forget commands just enqueue.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ServiceUnavailableException } from '@nestjs/common';
+import { AGENT_REJECT_TIMEOUT_MS } from '@multiwa/engine-runtime';
 import { EngineCommandsService } from './engine-commands.service';
 
 function makeService(opts: { ready?: boolean; result?: any } = {}) {
@@ -56,5 +57,71 @@ describe('EngineCommandsService', () => {
   it('throws ServiceUnavailable for result commands when the client is not ready', async () => {
     const { svc } = makeService({ ready: false });
     await expect(svc.connectProfile('p1')).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it('rejectCall and createCallLink are request/reply commands', async () => {
+    await s.svc.rejectCall('p1', 'c1');
+    expect(s.queue.add).toHaveBeenCalledWith('reject-call', { profileId: 'p1', callId: 'c1' }, expect.objectContaining({ attempts: 1 }));
+    await s.svc.createCallLink('p1', 'video');
+    expect(s.queue.add).toHaveBeenCalledWith('create-call-link', { profileId: 'p1', type: 'video' }, expect.objectContaining({ attempts: 1 }));
+    expect(s.waitUntilFinished).toHaveBeenCalledTimes(2);
+  });
+
+  // The runtime bounds an agent's reject at AGENT_REJECT_TIMEOUT_MS (25 s) and holds the call until then; the REST layer
+  // gives up at 30 s (CallsService) and the worker's command lock is 40 s. The wait for the worker sits between the
+  // first two, so the runtime lets go of the call first (its ENGINE_TIMEOUT comes back as the job's failure) in both
+  // engine modes, not 5 s after the agent was answered 504.
+  it('waits for a call command longer than the runtime bounds a reject, and shorter than the REST layer does', async () => {
+    await s.svc.rejectCall('p1', 'c1');
+    await s.svc.createCallLink('p1', 'voice');
+    const waits = s.waitUntilFinished.mock.calls.map((c) => c[1]);
+    expect(waits).toEqual([28_000, 28_000]);
+    for (const wait of waits) {
+      expect(wait).toBeGreaterThan(AGENT_REJECT_TIMEOUT_MS);
+      expect(wait).toBeLessThan(30_000);
+    }
+  });
+
+  describe('job ids', () => {
+    // BullMQ drops a job whose id exists: two commands in the same millisecond with the same id would be one job,
+    // and the second request would be answered with the result of the first (or none).
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-27T09:00:00.000Z') });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+    const ids = () => s.queue.add.mock.calls.map((c) => c[2].jobId);
+
+    it('reject-call carries the call: two calls rejected in the same millisecond are two jobs', async () => {
+      await s.svc.rejectCall('p1', 'c1');
+      await s.svc.rejectCall('p1', 'c2');
+      const [first, second] = ids();
+      expect(first).toBe(`reject-call-p1-c1-${Date.now()}`);
+      expect(second).toBe(`reject-call-p1-c2-${Date.now()}`);
+    });
+
+    it('reject-call keeps the time: asking again later is a new job, not the failed one still kept', async () => {
+      await s.svc.rejectCall('p1', 'c1');
+      vi.setSystemTime(Date.now() + 1);
+      await s.svc.rejectCall('p1', 'c1');
+      const [first, second] = ids();
+      expect(first).not.toBe(second);
+    });
+
+    it('create-call-link has a random part: two links asked for in the same millisecond are two jobs', async () => {
+      await s.svc.createCallLink('p1', 'voice');
+      await s.svc.createCallLink('p1', 'voice');
+      const [first, second] = ids();
+      expect(first).toMatch(new RegExp(`^create-call-link-p1-${Date.now()}-[0-9a-f-]{36}$`));
+      expect(second).toMatch(new RegExp(`^create-call-link-p1-${Date.now()}-[0-9a-f-]{36}$`));
+      expect(first).not.toBe(second);
+    });
+
+    it('every other command keeps <name>-<profile>-<time>', async () => {
+      await s.svc.connectProfile('p1');
+      await s.svc.getEngineStatus('p1');
+      expect(ids()).toEqual([`connect-profile-p1-${Date.now()}`, `get-status-p1-${Date.now()}`]);
+    });
   });
 });

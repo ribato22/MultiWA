@@ -97,6 +97,7 @@ model User {
   auditLogs           AuditLog[]
   notifications       Notification[]
   assignedConversations Conversation[] @relation("AssignedAgent")
+  assignedCalls         Call[]         @relation("AssignedCalls")
   sessions            Session[]
   refreshTokens       RefreshToken[]
   pushSubscriptions   PushSubscription[]
@@ -182,6 +183,7 @@ model Profile {
   webhooks      Webhook[]
   scheduledMessages ScheduledMessage[]
   knowledgeDocuments KnowledgeDocument[]
+  calls         Call[]
 
   @@map("profiles")
 }
@@ -208,9 +210,44 @@ model Conversation {
   contact      Contact?  @relation(fields: [contactId], references: [id])
   assignedUser User?     @relation("AssignedAgent", fields: [assignedUserId], references: [id])
   messages     Message[]
+  calls        Call[]
 
   @@unique([profileId, jid])
   @@map("conversations")
+}
+
+// Incoming WhatsApp calls (phase 1). One row per engine call id; rows built from a
+// call-log message alone use waCallId "log:<messageId>". Outcomes only move forward
+// (packages/engine-runtime/src/call-state.ts).
+model Call {
+  id              String    @id @default(uuid())
+  profileId       String
+  waCallId        String                          // engine call id
+  fromJid         String                          // caller, stored like Conversation.jid
+  isVideo         Boolean   @default(false)
+  isGroup         Boolean   @default(false)
+  direction       String    @default("incoming")  // incoming | outgoing (phase 2)
+  outcome         String    @default("ringing")   // ringing | missed | rejected | answered_elsewhere | unknown
+  rejectedBy      String?                         // auto | agent | device
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?                       // when it stopped ringing
+  followUp        String    @default("open")      // open | in_progress | done
+  assignedUserId  String?
+  autoReplySentAt DateTime?
+  conversationId  String?
+  metadata        Json      @default("{}")        // lidJid, source, callLogMessageId, callLinks
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  profile      Profile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  assignedUser User?         @relation("AssignedCalls", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@unique([profileId, waCallId])
+  @@index([profileId, startedAt])
+  @@index([profileId, followUp, startedAt])
+  @@index([profileId, fromJid, startedAt])
+  @@map("calls")
 }
 
 // ============================================

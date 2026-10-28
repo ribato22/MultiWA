@@ -17,6 +17,7 @@ export enum NotificationType {
   AUTOMATION = 'automation',
   SYSTEM = 'system',
   SECURITY = 'security',
+  CALL = 'call',
 }
 
 @Injectable()

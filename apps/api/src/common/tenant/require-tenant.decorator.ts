@@ -8,6 +8,7 @@ import { SetMetadata } from '@nestjs/common';
  *   - workspace: Workspace.organizationId
  *   - account:   Account -> Workspace.organizationId
  *   - role:      Role.organizationId
+ *   - call:      Call.profile.workspace.organizationId
  */
 export type TenantResource =
   | 'profile'
@@ -20,6 +21,7 @@ export type TenantResource =
   | 'message'
   | 'scheduledMessage'
   | 'knowledgeDocument'
+  | 'call'
   | 'workspace'
   | 'account'
   | 'role';

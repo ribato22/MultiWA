@@ -10,6 +10,7 @@ function makeBridge() {
     emitConnectionStatus: vi.fn(),
     emitMessage: vi.fn(),
     emitMessageAck: vi.fn(),
+    emitCallUpdate: vi.fn(),
   };
   const config = { get: vi.fn() };
   const svc = new RealtimeBridgeService(config as any, eventsGateway as any);
@@ -41,6 +42,12 @@ describe('RealtimeBridgeService.handle', () => {
   it('re-emits message:ack', () => {
     bridge.svc.handle(JSON.stringify({ type: 'message:ack', profileId: 'p1', payload: { messageId: 'm1', status: 'read' } }));
     expect(bridge.eventsGateway.emitMessageAck).toHaveBeenCalledWith('p1', 'm1', 'read');
+  });
+
+  it('re-emits call:update', () => {
+    const payload = { profileId: 'p1', callId: 'c1', outcome: 'missed' };
+    bridge.svc.handle(JSON.stringify({ type: 'call:update', profileId: 'p1', payload }));
+    expect(bridge.eventsGateway.emitCallUpdate).toHaveBeenCalledWith('p1', payload);
   });
 
   it('tracks heartbeat without emitting anything', () => {

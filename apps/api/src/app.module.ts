@@ -19,6 +19,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { EngineCommandsModule } from './modules/engine-commands/engine-commands.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
+import { CallsModule } from './modules/calls/calls.module';
 import { TemplatesModule } from './modules/templates/templates.module';
 import { BroadcastModule } from './modules/broadcast/broadcast.module';
 import { AutomationModule } from './modules/automation/automation.module';
@@ -98,6 +99,7 @@ import { MetricsModule } from './metrics/metrics.module';
     WebhooksModule,
     ContactsModule,
     ConversationsModule,
+    CallsModule,
     TemplatesModule,
     BroadcastModule,
     AutomationModule,

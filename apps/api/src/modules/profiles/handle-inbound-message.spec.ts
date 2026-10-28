@@ -19,6 +19,9 @@ vi.mock('@multiwa/database', () => ({
   },
 }));
 
+// EngineManagerService imports MessagesService (the send-gated reply of an auto-rejected call); nothing here sends.
+vi.mock('../messages/messages.service', () => ({ MessagesService: class {} }));
+
 import { prisma } from '@multiwa/database';
 import { EngineManagerService } from './engine-manager.service';
 
@@ -29,7 +32,7 @@ function makeService() {
   const ruleEngine = { processMessage: vi.fn().mockResolvedValue([]) };
   const notifications = { createForOrg: vi.fn() };
   const eventEmitter = { emit: vi.fn() };
-  const service = new EngineManagerService(realtime as any, ruleEngine as any, notifications as any, eventEmitter as any);
+  const service = new EngineManagerService(realtime as any, ruleEngine as any, notifications as any, eventEmitter as any, {} as any);
 
   const engine = { resolveIdentity: vi.fn(), markAsRead: vi.fn(), getGroupInfo: vi.fn() };
   (service as any).engines = new Map([[PROFILE, { engine, profileId: PROFILE, status: 'connected' }]]);

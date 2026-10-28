@@ -8,10 +8,14 @@ import { ProfilesService } from './profiles.service';
 import { EngineManagerService } from './engine-manager.service';
 import { EventsGateway } from '../events/events.gateway';
 import { AutomationModule } from '../automation/automation.module';
+import { MessagesModule } from '../messages/messages.module';
 
 @Module({
   imports: [
     forwardRef(() => AutomationModule),
+    // EngineManagerService sends the auto-reject reply of a call through MessagesService (send gate);
+    // MessagesModule imports this module back, hence forwardRef on both sides.
+    forwardRef(() => MessagesModule),
   ],
   controllers: [ProfilesController],
   providers: [
