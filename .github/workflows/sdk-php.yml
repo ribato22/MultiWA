@@ -1,0 +1,57 @@
+name: PHP SDK
+
+# Validates, analyses and tests packages/sdk-php on every PHP version it supports.
+# The tests check each SDK call against scripts/api-routes.snapshot.json, so a
+# change to the snapshot (an API route was added, renamed or removed) runs them too.
+# Outside the monorepo that check is skipped; --fail-on-skipped keeps it from
+# being skipped here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/sdk-php/**'
+      - 'scripts/api-routes.snapshot.json'
+      - '.github/workflows/sdk-php.yml'
+  pull_request:
+    paths:
+      - 'packages/sdk-php/**'
+      - 'scripts/api-routes.snapshot.json'
+      - '.github/workflows/sdk-php.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4']
+    defaults:
+      run:
+        working-directory: packages/sdk-php
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      # No lock file is committed (it is a library), so each PHP version gets the
+      # newest dependencies it supports, the way users install them.
+      - name: Install dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist
+
+      - name: PHPStan
+        run: vendor/bin/phpstan analyse --no-progress
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit --fail-on-skipped
