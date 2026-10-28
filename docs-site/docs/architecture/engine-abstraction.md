@@ -52,6 +52,56 @@ interface IWhatsAppEngine {
 }
 ```
 
+### Calls
+
+Engines report incoming WhatsApp calls through two callbacks of `EngineConfig`, and can reject a call and create a call link. The types are in `packages/engines/src/types.ts`:
+
+```typescript
+type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
+type CallLogOutcome = 'missed' | 'rejected' | 'answered_elsewhere';
+type CallLinkType = 'voice' | 'video';
+
+interface IncomingCall {
+  id: string;          // engine call id, passed back to rejectCall
+  from: string;        // caller JID as the engine reports it (@c.us, @s.whatsapp.net or @lid); may be empty after 'ringing'
+  isVideo: boolean;
+  isGroup: boolean;
+  state?: CallState;   // absent = 'ringing'
+}
+
+interface CallLogEntry {
+  messageId: string;   // the call-log message id (dedupe key)
+  callId?: string;     // the engine call id, when the message id carries it
+  from: string;
+  isVideo: boolean;
+  outcome: CallLogOutcome;
+  timestamp: Date;
+}
+
+// EngineConfig
+onCall?: (call: IncomingCall) => void;
+onCallLog?: (entry: CallLogEntry) => void;   // WhatsApp's call-log message: the call's final outcome
+
+// IWhatsAppEngine
+rejectCall(callId: string): Promise<void>;                   // rejects when the call is not ringing any more
+createCallLink(type: CallLinkType): Promise<string | null>;  // null = this engine has no call-link API
+```
+
+| | whatsapp-web.js | Baileys |
+|---|---|---|
+| `onCall` | `ringing`, and `ended` once the call stops being the active call. Its live events cannot tell how a call ended | `ringing`, `accepted` (answered on another device of the account), `rejected` (declined on the phone or by MultiWA), `missed` (the offer rang out) and `ended` (any other end of the call; how it ended is not known) |
+| `onCallLog` | `missed`, `rejected` or `answered_elsewhere`, from WhatsApp's call-log message, usually moments after `ended`. Only for a call it reported `ringing` since it last connected: the old call logs a freshly linked device syncs are ignored | Never called |
+| `createCallLink` | A WhatsApp call link | `null`: the Baileys version MultiWA pins has no call-link API |
+
+Match a call by `id`: `from`, `isVideo` and `isGroup` are reliable on `ringing` and best effort on later states. A call-log message is matched to its call by `callId`, and by caller and time when it carries none.
+
+- `rejectCall` rejects with `Call is not ringing any more` when the engine no longer holds the call (it ended, was answered or was rejected); the API answers `409` for that text.
+- A call link is a plain link: anyone who has it can join, without approval.
+- A call that rang while the profile was offline: whatsapp-web.js gets no live event for it and ignores its call log, so it is never recorded. Baileys delivers it as a normal `ringing` offer (its own `offline` flag is not passed on), so it is handled like any other.
+- Answering and placing calls are not supported.
+
+Storing the calls and publishing the `call.*` [webhook events](<../api/webhook-events.md#call-events>) is done once, in the shared runtime (`packages/engine-runtime`), so an engine only has to report.
+
 ---
 
 ## Configuration

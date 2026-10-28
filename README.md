@@ -118,6 +118,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 - 📱 **Multi-Session Management** — Connect unlimited WhatsApp accounts
 - 🔌 **Pluggable Engine Adapters** — Clean engine interface with per-profile engine selection: whatsapp-web.js (default, production) or a Baileys adapter (experimental — not production-validated; `sendReaction` and `resolveIdentity` are stubs and history sync / WhatsApp-addressbook contact save are whatsapp-web.js-only; see [Engine Abstraction](docs/06-engine-abstraction.md))
 - 📨 **Unified Messaging API** — Send text, media, documents, contacts, locations
+- 📞 **Call Management** — Incoming call history and a follow-up queue (reply, call link, assign, done), reject or auto-reject with an optional reply (at most one per caller per 24 hours), missed-call notifications, and `call.*` webhooks; call links need whatsapp-web.js (see [Webhook Events](docs/09-webhook-events.md#call-events))
 - 📡 **Real-time WebSocket** — Live session status, QR codes, and events via Socket.IO
 - 🔕 **Quiet-Profile Alarm** — A connected profile that stops receiving messages raises one alarm (admin bell + WhatsApp to your ops numbers through another profile) and a notice when it recovers
 - 🔐 **JWT Authentication** — Secure API access with refresh tokens
