@@ -10,25 +10,24 @@ MultiWA delivers real-time events to your HTTP endpoints via webhooks.
 
 All paths use the API base URL described in [API Specification](./07-api-specification.md#71-overview): Docker default is `http://localhost:3333/api/v1`.
 
-### Per-Profile Webhook
+### Create a Webhook
+
+A webhook belongs to one profile. Create it with `POST /api/v1/webhooks`:
+
 ```bash
-POST /api/v1/profiles/:id/webhook
-{
-  "url": "https://yourserver.com/webhook",
-  "secret": "optional-hmac-secret",
-  "events": ["message.received", "connection.ready"]
-}
+curl -X POST http://localhost:3333/api/v1/webhooks \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: YOUR_API_KEY" \
+  -d '{
+    "profileId": "profile-123",
+    "url": "https://your-server.example.com/webhook",
+    "events": ["message.received", "connection.ready"]
+  }'
 ```
 
-### Global Webhook
-```bash
-POST /api/v1/webhooks
-{
-  "url": "https://yourserver.com/webhook",
-  "secret": "your-secret",
-  "events": ["*"]
-}
-```
+`events` lists event names; there is no wildcard. Subscribe to each event you need (see [Event Types](#event-types)).
+
+MultiWA generates the signing secret itself; a `secret` field in the request is ignored. The response is the created webhook, and its `secret` field is the key for [HMAC Verification](#hmac-verification). `GET /api/v1/webhooks/:id` returns it again.
 
 ---
 
@@ -68,7 +67,7 @@ POST /api/v1/webhooks
 
 ## HMAC Verification
 
-If you set a `secret`, verify the signature over the **raw request body** (the exact bytes MultiWA sent), not a re-serialized object:
+Every delivery is signed with the webhook's `secret` (returned when you [create the webhook](#create-a-webhook)). Verify the signature over the **raw request body** (the exact bytes MultiWA sent), not a re-serialized object:
 
 ```javascript
 const crypto = require('crypto');
