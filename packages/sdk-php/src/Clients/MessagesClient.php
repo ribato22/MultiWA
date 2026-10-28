@@ -4,22 +4,26 @@ declare(strict_types=1);
 
 namespace MultiWA\Clients;
 
-use GuzzleHttp\Client as HttpClient;
 use MultiWA\Models\MessageResult;
+use MultiWA\MultiWA;
 
 /**
- * Messages API Client
- * 
- * Send text, images, videos, documents, locations, contacts, and polls.
+ * Messages API: send text, media, locations, contacts, polls and reactions.
+ *
+ * `to` is a phone number with country code (6281234567890; +, spaces and
+ * dashes are fine) or a WhatsApp JID (…@s.whatsapp.net, …@c.us, a group …@g.us).
+ * Media goes by public `url` or by `base64`.
  */
 class MessagesClient
 {
     public function __construct(
-        private readonly HttpClient $http
-    ) {}
+        private readonly MultiWA $client,
+    ) {
+    }
 
     /**
-     * Send a text message
+     * @param string|null $quotedMessageId WhatsApp id of a message to quote (reply to);
+     *                                     an id WhatsApp cannot find is ignored
      */
     public function sendText(
         string $profileId,
@@ -27,23 +31,14 @@ class MessagesClient
         string $text,
         ?string $quotedMessageId = null,
     ): MessageResult {
-        $response = $this->http->post('messages/text', [
-            'json' => [
-                'profileId' => $profileId,
-                'to' => $to,
-                'text' => $text,
-                'quotedMessageId' => $quotedMessageId,
-            ],
+        return $this->send('text', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'text' => $text,
+            'quotedMessageId' => $quotedMessageId,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
-    /**
-     * Send an image message
-     */
     public function sendImage(
         string $profileId,
         string $to,
@@ -52,25 +47,16 @@ class MessagesClient
         ?string $caption = null,
         ?string $mimetype = null,
     ): MessageResult {
-        $response = $this->http->post('messages/image', [
-            'json' => array_filter([
-                'profileId' => $profileId,
-                'to' => $to,
-                'url' => $url,
-                'base64' => $base64,
-                'caption' => $caption,
-                'mimetype' => $mimetype,
-            ], fn($v) => $v !== null),
+        return $this->send('image', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'url' => $url,
+            'base64' => $base64,
+            'caption' => $caption,
+            'mimetype' => $mimetype,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
-    /**
-     * Send a video message
-     */
     public function sendVideo(
         string $profileId,
         string $to,
@@ -79,24 +65,18 @@ class MessagesClient
         ?string $caption = null,
         ?string $mimetype = null,
     ): MessageResult {
-        $response = $this->http->post('messages/video', [
-            'json' => array_filter([
-                'profileId' => $profileId,
-                'to' => $to,
-                'url' => $url,
-                'base64' => $base64,
-                'caption' => $caption,
-                'mimetype' => $mimetype,
-            ], fn($v) => $v !== null),
+        return $this->send('video', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'url' => $url,
+            'base64' => $base64,
+            'caption' => $caption,
+            'mimetype' => $mimetype,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
     /**
-     * Send an audio/voice message
+     * @param bool $ptt Send as a voice note (push-to-talk)
      */
     public function sendAudio(
         string $profileId,
@@ -106,52 +86,36 @@ class MessagesClient
         ?string $mimetype = null,
         bool $ptt = false,
     ): MessageResult {
-        $response = $this->http->post('messages/audio', [
-            'json' => array_filter([
-                'profileId' => $profileId,
-                'to' => $to,
-                'url' => $url,
-                'base64' => $base64,
-                'mimetype' => $mimetype,
-                'ptt' => $ptt,
-            ], fn($v) => $v !== null),
+        return $this->send('audio', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'url' => $url,
+            'base64' => $base64,
+            'mimetype' => $mimetype,
+            'ptt' => $ptt,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
-    /**
-     * Send a document/file
-     */
     public function sendDocument(
         string $profileId,
         string $to,
         string $filename,
         ?string $url = null,
         ?string $base64 = null,
+        ?string $caption = null,
         ?string $mimetype = null,
     ): MessageResult {
-        $response = $this->http->post('messages/document', [
-            'json' => array_filter([
-                'profileId' => $profileId,
-                'to' => $to,
-                'filename' => $filename,
-                'url' => $url,
-                'base64' => $base64,
-                'mimetype' => $mimetype,
-            ], fn($v) => $v !== null),
+        return $this->send('document', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'filename' => $filename,
+            'url' => $url,
+            'base64' => $base64,
+            'caption' => $caption,
+            'mimetype' => $mimetype,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
-    /**
-     * Send a location
-     */
     public function sendLocation(
         string $profileId,
         string $to,
@@ -160,24 +124,18 @@ class MessagesClient
         ?string $name = null,
         ?string $address = null,
     ): MessageResult {
-        $response = $this->http->post('messages/location', [
-            'json' => array_filter([
-                'profileId' => $profileId,
-                'to' => $to,
-                'latitude' => $latitude,
-                'longitude' => $longitude,
-                'name' => $name,
-                'address' => $address,
-            ], fn($v) => $v !== null),
+        return $this->send('location', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'name' => $name,
+            'address' => $address,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
     /**
-     * Send a contact card (vCard)
+     * Sends a contact card (vCard).
      */
     public function sendContact(
         string $profileId,
@@ -186,29 +144,17 @@ class MessagesClient
         string $phone,
         ?string $email = null,
     ): MessageResult {
-        $response = $this->http->post('messages/contact', [
-            'json' => [
-                'profileId' => $profileId,
-                'to' => $to,
-                'contacts' => [
-                    [
-                        'name' => $name,
-                        'phone' => $phone,
-                        'email' => $email,
-                    ],
-                ],
+        return $this->send('contact', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'contacts' => [
+                array_filter(['name' => $name, 'phone' => $phone, 'email' => $email], static fn ($v) => $v !== null),
             ],
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
     /**
-     * Send an interactive poll
-     * 
-     * @param string[] $options Poll options (2-12 items)
+     * @param string[] $options 2 to 12 answers
      */
     public function sendPoll(
         string $profileId,
@@ -217,44 +163,40 @@ class MessagesClient
         array $options,
         bool $allowMultipleAnswers = false,
     ): MessageResult {
-        $response = $this->http->post('messages/poll', [
-            'json' => [
-                'profileId' => $profileId,
-                'to' => $to,
-                'question' => $question,
-                'options' => $options,
-                'allowMultipleAnswers' => $allowMultipleAnswers,
-            ],
+        return $this->send('poll', [
+            'profileId' => $profileId,
+            'to' => $to,
+            'question' => $question,
+            'options' => $options,
+            'allowMultipleAnswers' => $allowMultipleAnswers,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
     /**
-     * React to a message with an emoji
+     * Reacts to a message with an emoji; an empty emoji removes the reaction.
+     *
+     * @param string $messageId MultiWA's message id (MessageResult::$messageId, or
+     *                          `id` of a row from list()), not the WhatsApp id
      */
     public function sendReaction(
         string $profileId,
         string $messageId,
         string $emoji,
     ): MessageResult {
-        $response = $this->http->post('messages/reaction', [
-            'json' => [
-                'profileId' => $profileId,
-                'messageId' => $messageId,
-                'emoji' => $emoji,
-            ],
+        return $this->send('reaction', [
+            'profileId' => $profileId,
+            'messageId' => $messageId,
+            'emoji' => $emoji,
         ]);
-
-        return MessageResult::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
     }
 
     /**
-     * List messages for a profile
+     * Stored messages of a profile, newest first, with their conversation.
+     *
+     * @param string|null $type      text, image, video, audio, document, location or contact
+     * @param string|null $direction incoming or outgoing
+     *
+     * @return array<mixed> The message rows as the API returns them
      */
     public function list(
         string $profileId,
@@ -263,15 +205,23 @@ class MessagesClient
         ?string $type = null,
         ?string $direction = null,
     ): array {
-        $response = $this->http->get("messages/profile/{$profileId}", [
-            'query' => array_filter([
+        return $this->client->request('GET', 'messages/profile/' . rawurlencode($profileId), [
+            'query' => [
                 'limit' => $limit,
                 'offset' => $offset,
                 'type' => $type,
                 'direction' => $direction,
-            ], fn($v) => $v !== null),
+            ],
         ]);
+    }
 
-        return json_decode($response->getBody()->getContents(), true);
+    /**
+     * @param array<string, mixed> $body
+     */
+    private function send(string $type, array $body): MessageResult
+    {
+        return MessageResult::fromArray($this->client->request('POST', "messages/{$type}", [
+            'json' => array_filter($body, static fn ($v) => $v !== null),
+        ]));
     }
 }
