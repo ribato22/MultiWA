@@ -35,6 +35,8 @@ const reason = (e: any) => {
   return clean(typeof body === 'string' ? body : body?.message ?? body?.error ?? JSON.stringify(body));
 };
 const latest = (a: Date | null, b: Date | null) => (a && b ? (a > b ? a : b) : a ?? b);
+// Digits of a number or JID ("+62 812-3456-789", "62812…@s.whatsapp.net"). A local 08… counts as 628…, the way normalizeJid sends it.
+const digits = (s: unknown) => String(s).replace(/@.*$/, '').replace(/\D/g, '').replace(/^0/, '62');
 
 @Injectable()
 export class QuietProfileCron {
@@ -49,16 +51,22 @@ export class QuietProfileCron {
     this.logger.log(`Quiet-profile alarm active hours: ${windowLabel(this.window)}`);
   }
 
+  // The cron library calls the job with its `onComplete` as the first argument, so the schedule sits on this
+  // wrapper and the sweep takes its clock explicitly.
   @Cron('*/5 * * * *')
-  async checkQuietProfiles(now: Date = new Date()): Promise<void> {
+  tick(): Promise<void> {
+    return this.checkQuietProfiles(new Date());
+  }
+
+  async checkQuietProfiles(now: Date): Promise<void> {
     let profiles: ProfileRow[];
     try {
-      profiles = (await prisma.profile.findMany({
+      profiles = await prisma.profile.findMany({
         select: {
           id: true, displayName: true, phoneNumber: true, status: true, settings: true,
           lastConnectedAt: true, quietAlarmAt: true, workspace: { select: { organizationId: true } },
         },
-      })) as ProfileRow[];
+      });
     } catch (e) {
       this.logger.warn(`Quiet-profile sweep failed: ${clean((e as Error).message)}`);
       return;
@@ -82,12 +90,17 @@ export class QuietProfileCron {
       return;
     }
 
+    // Nothing to raise and nothing to close: skip the lookup.
+    if (!p.quietAlarmAt && p.status !== 'connected') return;
+
+    // One clock: `now`, quietAlarmAt and lastConnectedAt are this host's, so the message time is its createdAt (when the
+    // host stored it), not `timestamp` (WhatsApp's clock). Ordering by timestamp keeps the (profileId, timestamp) index in use.
     const last = await prisma.message.findFirst({
       where: { profileId: p.id, direction: 'incoming' },
       orderBy: { timestamp: 'desc' },
-      select: { timestamp: true },
+      select: { createdAt: true },
     });
-    const lastIncomingAt = last?.timestamp ?? null;
+    const lastIncomingAt = last?.createdAt ?? null;
 
     if (p.quietAlarmAt) {
       if (lastIncomingAt && lastIncomingAt > p.quietAlarmAt) {
@@ -97,12 +110,16 @@ export class QuietProfileCron {
       return;
     }
 
-    if (p.status !== 'connected') return;
     const since = latest(lastIncomingAt, p.lastConnectedAt);
     if (!since) return;
     const threshold = hours * 60;
     if (activeMinutesBetween(since, now, this.window, threshold) < threshold) return;
 
+    // Before the compare-and-set: notify() cannot send without an organization, and a raised-but-unsent episode would be lost.
+    if (!p.workspace?.organizationId) {
+      this.logger.warn(`Quiet-profile alarm for ${p.id} skipped: the profile has no organization`);
+      return;
+    }
     const raised = await prisma.profile.updateMany({ where: { id: p.id, quietAlarmAt: null }, data: { quietAlarmAt: now } });
     if (raised.count) await this.notify(p, settings, 'quiet', since, now);
   }
@@ -138,9 +155,12 @@ export class QuietProfileCron {
       this.logger.warn(`Quiet-profile alarm for ${p.id}: no other connected profile to send it through, bell only`);
       return;
     }
+    // An alarm sent to the quiet profile's own number would arrive as an incoming message and close its own alarm.
+    const own = p.phoneNumber ? digits(p.phoneNumber) : '';
     for (const recipient of to) {
+      if (own && digits(recipient) === own) continue;
       try {
-        const res: any = await this.messagesService.sendText({ profileId: sender.id, to: recipient, text } as any);
+        const res = await this.messagesService.sendText({ profileId: sender.id, to: recipient, text });
         if (res?.success === false) this.logger.warn(`Quiet-profile alarm for ${p.id} not sent through ${sender.id}: ${clean(res.error ?? 'failed')}`);
       } catch (e) {
         this.logger.warn(`Quiet-profile alarm for ${p.id} not sent through ${sender.id}: ${reason(e)}`);

@@ -2,7 +2,7 @@
 // apps/api/src/modules/profiles/dto/index.ts
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min, Max, IsArray, ArrayMaxSize } from 'class-validator';
+import { IsString, IsOptional, IsUrl, IsEnum, IsInt, IsBoolean, Min, Max, IsArray, ArrayMaxSize, Matches } from 'class-validator';
 import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
 
 export enum EngineType {
@@ -92,6 +92,8 @@ export class UpdateProfileDto {
   @IsArray()
   @ArrayMaxSize(5)
   @IsWhatsAppRecipient({ each: true })
+  // IsWhatsAppRecipient also takes these two; as an alarm target they would post a Status or a channel update. The trailing \s* covers the padding it trims.
+  @Matches(/^(?!.*@(broadcast|newsletter)\s*$)/, { each: true, message: '$property must not hold a @broadcast (Status) or @newsletter (channel) address' })
   quietAlarmNotify?: string[];
 
   @ApiPropertyOptional({

@@ -25,9 +25,15 @@ describe('UpdateProfileDto quiet-profile alarm', () => {
     await refused({ quietAlarmHours: 1.5 }, 'quietAlarmHours');
   });
 
-  it('takes up to 5 WhatsApp recipients', async () => {
-    const to = ['628123456789', '628123456780@s.whatsapp.net'];
+  it('takes up to 5 WhatsApp recipients: numbers, @s.whatsapp.net, @c.us and an ops group (@g.us)', async () => {
+    const to = ['628123456789', '628123456780@s.whatsapp.net', '628123456781@c.us', '120363041234567890@g.us'];
     await expect(body({ quietAlarmNotify: to })).resolves.toMatchObject({ quietAlarmNotify: to });
+  });
+
+  it('refuses a Status (@broadcast) or a channel (@newsletter) address, even one padded with spaces', async () => {
+    await refused({ quietAlarmNotify: ['status@broadcast'] }, 'quietAlarmNotify');
+    await refused({ quietAlarmNotify: ['120363041234567890@newsletter'] }, 'quietAlarmNotify');
+    await refused({ quietAlarmNotify: ['628123456789', ' 120363041234567890@newsletter '] }, 'quietAlarmNotify');
   });
 
   it('refuses more than 5 recipients, or one that is not a WhatsApp number', async () => {

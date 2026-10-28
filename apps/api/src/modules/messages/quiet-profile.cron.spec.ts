@@ -41,7 +41,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const lastIncoming = (iso: string | null) => db.message.findFirst.mockResolvedValue(iso ? { timestamp: at(iso) } : null);
+// The cron reads createdAt (this host's clock), the same clock as `now`, quietAlarmAt and lastConnectedAt.
+const lastIncoming = (iso: string | null) => db.message.findFirst.mockResolvedValue(iso ? { createdAt: at(iso) } : null);
 
 describe('QuietProfileCron', () => {
   it('raises once after 2 active hours: bell, then WhatsApp through another connected profile', async () => {
@@ -86,12 +87,22 @@ describe('QuietProfileCron', () => {
     expect(db.profile.updateMany).not.toHaveBeenCalled();
   });
 
-  it('never raises for a profile that is not connected', async () => {
+  it('never raises for a profile that is not connected, and does not even look up its messages', async () => {
     db.profile.findMany.mockResolvedValue([profile({ status: 'disconnected' })]);
     lastIncoming('2026-10-28T01:00:00Z');
     await cron.checkQuietProfiles(NOW);
     expect(db.profile.updateMany).not.toHaveBeenCalled();
     expect(notifications.createForOrg).not.toHaveBeenCalled();
+    expect(db.message.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a disconnected profile with an open alarm is still looked up, so the alarm can close', async () => {
+    const alarmAt = at('2026-10-28T05:00:00Z');
+    db.profile.findMany.mockResolvedValue([profile({ status: 'disconnected', quietAlarmAt: alarmAt })]);
+    lastIncoming('2026-10-28T05:30:00Z');
+    await cron.checkQuietProfiles(NOW);
+    expect(db.message.findFirst).toHaveBeenCalledTimes(1);
+    expect(db.profile.updateMany).toHaveBeenCalledWith({ where: { id: 'p1', quietAlarmAt: alarmAt }, data: { quietAlarmAt: null } });
   });
 
   it('no second alarm while one is open', async () => {
@@ -190,5 +201,83 @@ describe('QuietProfileCron', () => {
     await cron.checkQuietProfiles(NOW);
     expect(notifications.createForOrg).not.toHaveBeenCalled();
     expect(messages.sendText).not.toHaveBeenCalled();
+  });
+
+  // --- one clock -----------------------------------------------------------------------------------------------
+  it('asks for the newest message by timestamp (the index) and reads its createdAt, the host clock', async () => {
+    db.profile.findMany.mockResolvedValue([profile()]);
+    lastIncoming('2026-10-28T05:50:00Z');
+    await cron.checkQuietProfiles(NOW);
+    expect(db.message.findFirst).toHaveBeenCalledWith({
+      where: { profileId: 'p1', direction: 'incoming' },
+      orderBy: { timestamp: 'desc' },
+      select: { createdAt: true },
+    });
+  });
+
+  it('a skewed host clock is not silence: a message stamped 7 h before it was stored does not raise the alarm', async () => {
+    const createdAt = at('2026-10-28T05:50:00Z'); // 10 minutes before NOW on this host's clock
+    const timestamp = new Date(createdAt.getTime() - 7 * 3_600_000); // WhatsApp's clock is 7 h behind the host's
+    db.profile.findMany.mockResolvedValue([profile()]);
+    db.message.findFirst.mockResolvedValue({ timestamp, createdAt });
+
+    await cron.checkQuietProfiles(NOW);
+
+    expect(db.profile.updateMany).not.toHaveBeenCalled();
+    expect(notifications.createForOrg).not.toHaveBeenCalled();
+  });
+
+  // --- no silent raise -----------------------------------------------------------------------------------------
+  it('a profile without an organization is skipped with one warning, and the episode is not marked raised', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    db.profile.findMany.mockResolvedValue([profile({ workspace: null })]);
+    lastIncoming('2026-10-28T03:30:00Z');
+
+    await cron.checkQuietProfiles(NOW);
+
+    expect(db.profile.updateMany).not.toHaveBeenCalled();
+    expect(notifications.createForOrg).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no organization'));
+  });
+
+  // --- never through its own number ----------------------------------------------------------------------------
+  it("never sends the alarm to the quiet profile's own number, however it is written", async () => {
+    db.profile.findMany.mockResolvedValue([
+      profile({
+        settings: {
+          quietAlarmHours: 2,
+          quietAlarmNotify: ['628123456789@s.whatsapp.net', '+62 812-3456-789', '0812 3456 789', '628111000111'],
+        },
+      }),
+    ]);
+    lastIncoming('2026-10-28T03:30:00Z');
+
+    await cron.checkQuietProfiles(NOW);
+
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(1); // the bell still rings
+    expect(messages.sendText).toHaveBeenCalledTimes(1);
+    expect(messages.sendText).toHaveBeenCalledWith(expect.objectContaining({ to: '628111000111' }));
+  });
+
+  it('a profile without a number keeps all its recipients, even one with no digits in it', async () => {
+    db.profile.findMany.mockResolvedValue([profile({ phoneNumber: null, settings: { quietAlarmHours: 2, quietAlarmNotify: ['628111000111', 'ops@lid'] } })]);
+    lastIncoming('2026-10-28T03:30:00Z');
+    await cron.checkQuietProfiles(NOW);
+    expect(messages.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  // --- the trigger ---------------------------------------------------------------------------------------------
+  it('tick() runs the sweep with the current time', async () => {
+    const sweep = vi.spyOn(cron, 'checkQuietProfiles').mockResolvedValue(undefined);
+    await cron.tick();
+    expect(sweep).toHaveBeenCalledTimes(1);
+    expect(sweep.mock.calls[0][0]).toBeInstanceOf(Date);
+  });
+
+  it('only tick() is scheduled: the cron library passes onComplete to the job as its first argument', () => {
+    const cronOf = (fn: unknown) => Reflect.getMetadata('SCHEDULE_CRON_OPTIONS', fn as object);
+    expect(cronOf(QuietProfileCron.prototype.tick)).toMatchObject({ cronTime: '*/5 * * * *' });
+    expect(cronOf(QuietProfileCron.prototype.checkQuietProfiles)).toBeUndefined();
   });
 });

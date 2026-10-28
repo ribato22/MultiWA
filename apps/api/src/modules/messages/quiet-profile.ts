@@ -22,7 +22,10 @@ function validTimeZone(tz: string): boolean {
   }
 }
 
-/** QUIET_ALARM_ACTIVE_HOURS ("07:00-22:00") + QUIET_ALARM_TIMEZONE; each falls back to its own default when missing or invalid. */
+/**
+ * QUIET_ALARM_ACTIVE_HOURS ("07:00-22:00") + QUIET_ALARM_TIMEZONE; each falls back to its own default when missing or invalid.
+ * A window under an hour is invalid: activeMinutesBetween would walk years of minutes to reach a threshold of hours.
+ */
 export function parseActiveWindow(hours?: string, timeZone?: string): ActiveWindow {
   const tz = timeZone?.trim() ?? '';
   const zone = tz && validTimeZone(tz) ? tz : DEFAULT_ACTIVE_WINDOW.timeZone;
@@ -31,7 +34,7 @@ export function parseActiveWindow(hours?: string, timeZone?: string): ActiveWind
   if (!m) return fallback;
   const startMin = Number(m[1]) * 60 + Number(m[2]);
   const endMin = Number(m[3]) * 60 + Number(m[4]);
-  if (Number(m[2]) > 59 || Number(m[4]) > 59 || startMin >= endMin || endMin > 24 * 60) return fallback;
+  if (Number(m[2]) > 59 || Number(m[4]) > 59 || endMin - startMin < 60 || endMin > 24 * 60) return fallback;
   return { startMin, endMin, timeZone: zone };
 }
 
@@ -54,6 +57,7 @@ function localParts(t: number, timeZone: string): Record<string, string> {
 /**
  * Minutes of [from, to) inside the daily active window, in the window's time zone.
  * Counts minute by minute (correct across DST) and stops at `cap` — the caller passes its threshold.
+ * ponytail: counts minute by minute, roughly 1 s per year of silence when the threshold is never reached; count whole local days if that ever matters.
  */
 export function activeMinutesBetween(from: Date, to: Date, w: ActiveWindow, cap = Number.POSITIVE_INFINITY): number {
   let n = 0;

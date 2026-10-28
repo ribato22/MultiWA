@@ -58,6 +58,15 @@ describe('parseActiveWindow', () => {
     expect(parseActiveWindow('22:00-07:00', 'UTC')).toEqual({ startMin: 420, endMin: 1320, timeZone: 'UTC' });
   });
 
+  it('refuses a window shorter than an hour, and falls back to the default hours in the zone that was given', () => {
+    expect(parseActiveWindow('10:00-10:59', 'UTC')).toEqual({ startMin: 420, endMin: 1320, timeZone: 'UTC' });
+    expect(parseActiveWindow('23:30-24:00', 'Mars/Base')).toEqual(W);
+  });
+
+  it('takes a window of exactly an hour', () => {
+    expect(parseActiveWindow('10:00-11:00', 'UTC')).toEqual({ startMin: 600, endMin: 660, timeZone: 'UTC' });
+  });
+
   it('labels a window for the log', () => {
     expect(windowLabel(W)).toBe('07:00-22:00 Asia/Jakarta');
   });
