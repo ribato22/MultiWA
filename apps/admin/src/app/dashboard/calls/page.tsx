@@ -168,8 +168,10 @@ export default function CallsPage() {
           setRinging((prev) => prev.map(withChat));
         });
       }
-      // A call ended: a strip refetch (after an action, on a reconnect) read while it still rang is stale (auto-reject takes milliseconds) and must not bring it back.
-      if (p.outcome !== 'ringing') ringingSeq.current++;
+      // Realtime is authoritative: a strip refetch (after an action, on a reconnect) still in flight was read before this
+      // update, so it must neither bring back a call that just ended (auto-reject takes milliseconds) nor drop one that
+      // just rang.
+      ringingSeq.current++;
     });
     return () => {
       socket.disconnect();
