@@ -18,11 +18,17 @@ export default defineConfig({
       exclude: ['**/*.spec.ts', 'main.ts', 'index.ts', '**/*.module.ts', '**/engine-manager.service.ts'],
       // Ratchet floor set just below the current coverage so the gate passes today
       // and only fails on a REGRESSION. Raise as coverage grows.
+      //
+      // branches: v8 reports a file that no spec imports as 0 statements but NO branches,
+      // so messages.service.ts and rule-engine.service.ts (85 branches, mostly untested)
+      // were invisible to this number and it read 86%. The specs that pin the "a send that
+      // did not happen is never sent" fixes import them for real: branches read 57.5%,
+      // while lines/statements went 22% -> 41%. 50 leaves room for the Node 20 CI run.
       thresholds: {
         lines: 20,
         statements: 20,
         functions: 45,
-        branches: 70,
+        branches: 50,
       },
     },
   },

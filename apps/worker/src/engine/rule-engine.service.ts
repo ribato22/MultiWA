@@ -296,11 +296,14 @@ export class WorkerRuleEngineService {
       case 'reply': {
         // Send text reply
         const replyContent = await this.interpolateVariables(action.message || '', message);
-        await this.messagesService.sendText({
+        const replyResult = await this.messagesService.sendText({
           profileId: message.profileId,
           to: message.senderJid,
           text: replyContent,
         } as any);
+        if (replyResult && replyResult.success === false) {
+          return { action: 'reply', success: false, error: replyResult.error || 'Failed to send reply' };
+        }
         return { action: 'reply', success: true, data: { message: replyContent } };
       }
 
@@ -514,11 +517,14 @@ export class WorkerRuleEngineService {
         });
 
         if (aiResult.success && aiResult.content) {
-          await this.messagesService.sendText({
+          const aiSendResult = await this.messagesService.sendText({
             profileId: message.profileId,
             to: message.senderJid,
             text: aiResult.content,
           } as any);
+          if (aiSendResult && aiSendResult.success === false) {
+            return { action: 'ai_reply', success: false, error: aiSendResult.error || 'Failed to send AI reply' };
+          }
           return {
             action: 'ai_reply',
             success: true,

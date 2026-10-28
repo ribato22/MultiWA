@@ -40,16 +40,17 @@ export class ScheduledMessageCron {
           // Send the message using the appropriate method
           const content = scheduled.content as any;
           
+          let result: Awaited<ReturnType<MessagesService['sendText']>>;
           switch (scheduled.type) {
             case 'text':
-              await this.messagesService.sendText({
+              result = await this.messagesService.sendText({
                 profileId: scheduled.profileId,
                 to: scheduled.to,
                 text: content.text || content,
               });
               break;
             case 'image':
-              await this.messagesService.sendImage({
+              result = await this.messagesService.sendImage({
                 profileId: scheduled.profileId,
                 to: scheduled.to,
                 url: content.url,
@@ -59,7 +60,7 @@ export class ScheduledMessageCron {
               });
               break;
             case 'video':
-              await this.messagesService.sendVideo({
+              result = await this.messagesService.sendVideo({
                 profileId: scheduled.profileId,
                 to: scheduled.to,
                 url: content.url,
@@ -69,7 +70,7 @@ export class ScheduledMessageCron {
               });
               break;
             case 'audio':
-              await this.messagesService.sendAudio({
+              result = await this.messagesService.sendAudio({
                 profileId: scheduled.profileId,
                 to: scheduled.to,
                 url: content.url,
@@ -78,7 +79,7 @@ export class ScheduledMessageCron {
               });
               break;
             case 'document':
-              await this.messagesService.sendDocument({
+              result = await this.messagesService.sendDocument({
                 profileId: scheduled.profileId,
                 to: scheduled.to,
                 url: content.url,
@@ -90,6 +91,14 @@ export class ScheduledMessageCron {
               break;
             default:
               throw new Error(`Unsupported message type: ${scheduled.type}`);
+          }
+
+          // queueMessage answers an engine failure (client not ready, a rejected
+          // recipient) with a returned { success: false, status: 'failed', error }
+          // instead of throwing. Only a message that went out is marked sent: fail the
+          // row with the reason, exactly like a thrown error below.
+          if (result?.success === false || result?.status === 'failed') {
+            throw new Error(result.error || 'Send failed');
           }
 
           // Mark as sent

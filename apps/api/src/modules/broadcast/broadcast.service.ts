@@ -463,9 +463,10 @@ export class BroadcastService implements OnModuleInit {
           const messageText = this.resolveTemplate(message, phone);
 
           // Send based on message type
+          let result: Awaited<ReturnType<MessagesService['sendText']>>;
           switch (message.type) {
             case 'image':
-              await this.messagesService.sendImage({
+              result = await this.messagesService.sendImage({
                 profileId,
                 to: phone,
                 url: message.url,
@@ -474,7 +475,7 @@ export class BroadcastService implements OnModuleInit {
               });
               break;
             case 'video':
-              await this.messagesService.sendVideo({
+              result = await this.messagesService.sendVideo({
                 profileId,
                 to: phone,
                 url: message.url,
@@ -483,7 +484,7 @@ export class BroadcastService implements OnModuleInit {
               });
               break;
             case 'audio':
-              await this.messagesService.sendAudio({
+              result = await this.messagesService.sendAudio({
                 profileId,
                 to: phone,
                 url: message.url,
@@ -491,7 +492,7 @@ export class BroadcastService implements OnModuleInit {
               });
               break;
             case 'document':
-              await this.messagesService.sendDocument({
+              result = await this.messagesService.sendDocument({
                 profileId,
                 to: phone,
                 url: message.url,
@@ -502,11 +503,18 @@ export class BroadcastService implements OnModuleInit {
               break;
             default:
               // Text message
-              await this.messagesService.sendText({
+              result = await this.messagesService.sendText({
                 profileId,
                 to: phone,
                 text: messageText,
               });
+          }
+
+          // An engine failure (client not ready, a rejected recipient) comes back as a
+          // returned { success: false, status: 'failed', error }, not a throw. Count it
+          // as a failed attempt so the retry policy below applies to it too.
+          if (result?.success === false || result?.status === 'failed') {
+            throw new Error(result.error || 'Send failed');
           }
 
           sentCount++;
