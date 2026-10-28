@@ -28,6 +28,12 @@ interface ProfileRow {
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
+// The send gate's 429 keeps its reason in the body ({ error: 'REPEAT_SUPPRESSED', ... }) and its .message is only "Http Exception".
+// `message` goes first: Nest bodies carry both ({ message: 'Invalid recipient: ...', error: 'Bad Request' }) and the message is the useful one.
+const reason = (e: any) => {
+  const body = typeof e?.getResponse === 'function' ? e.getResponse() : e?.message;
+  return clean(typeof body === 'string' ? body : body?.message ?? body?.error ?? JSON.stringify(body));
+};
 const latest = (a: Date | null, b: Date | null) => (a && b ? (a > b ? a : b) : a ?? b);
 
 @Injectable()
@@ -137,7 +143,7 @@ export class QuietProfileCron {
         const res: any = await this.messagesService.sendText({ profileId: sender.id, to: recipient, text } as any);
         if (res?.success === false) this.logger.warn(`Quiet-profile alarm for ${p.id} not sent through ${sender.id}: ${clean(res.error ?? 'failed')}`);
       } catch (e) {
-        this.logger.warn(`Quiet-profile alarm for ${p.id} not sent through ${sender.id}: ${clean((e as Error).message)}`);
+        this.logger.warn(`Quiet-profile alarm for ${p.id} not sent through ${sender.id}: ${reason(e)}`);
       }
     }
   }

@@ -46,10 +46,16 @@ describe('parseActiveWindow', () => {
     expect(parseActiveWindow('08:30-17:00', 'UTC')).toEqual({ startMin: 510, endMin: 1020, timeZone: 'UTC' });
   });
 
-  it('falls back to 07:00-22:00 Asia/Jakarta for missing or invalid values', () => {
+  it('falls back to 07:00-22:00 Asia/Jakarta when both values are missing or invalid', () => {
     expect(parseActiveWindow(undefined, undefined)).toEqual(W);
     expect(parseActiveWindow('22:00-07:00', 'Mars/Base')).toEqual(W);
     expect(parseActiveWindow('7-22', '')).toEqual(W);
+  });
+
+  it('defaults the hours and the time zone independently', () => {
+    expect(parseActiveWindow(undefined, 'UTC')).toEqual({ startMin: 420, endMin: 1320, timeZone: 'UTC' });
+    expect(parseActiveWindow('08:00-20:00', 'Mars/Base')).toEqual({ startMin: 480, endMin: 1200, timeZone: 'Asia/Jakarta' });
+    expect(parseActiveWindow('22:00-07:00', 'UTC')).toEqual({ startMin: 420, endMin: 1320, timeZone: 'UTC' });
   });
 
   it('labels a window for the log', () => {
@@ -66,6 +72,10 @@ describe('formatting and texts', () => {
 
   it('formats a local time', () => {
     expect(formatLocal(at('2026-10-28T02:12:00Z'), 'Asia/Jakarta')).toBe('28 Oct 09:12');
+  });
+
+  it('abbreviates September as "Sep" (en-GB ICU data says "Sept")', () => {
+    expect(formatLocal(at('2026-09-05T02:12:00Z'), 'Asia/Jakarta')).toBe('05 Sep 09:12');
   });
 
   it('writes the alarm text', () => {

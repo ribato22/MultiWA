@@ -22,15 +22,17 @@ function validTimeZone(tz: string): boolean {
   }
 }
 
-/** QUIET_ALARM_ACTIVE_HOURS ("07:00-22:00") + QUIET_ALARM_TIMEZONE; anything invalid falls back to the default. */
+/** QUIET_ALARM_ACTIVE_HOURS ("07:00-22:00") + QUIET_ALARM_TIMEZONE; each falls back to its own default when missing or invalid. */
 export function parseActiveWindow(hours?: string, timeZone?: string): ActiveWindow {
-  const m = (hours ?? '').match(/^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/);
   const tz = timeZone?.trim() ?? '';
-  if (!m || !validTimeZone(tz || DEFAULT_ACTIVE_WINDOW.timeZone)) return DEFAULT_ACTIVE_WINDOW;
+  const zone = tz && validTimeZone(tz) ? tz : DEFAULT_ACTIVE_WINDOW.timeZone;
+  const fallback = { ...DEFAULT_ACTIVE_WINDOW, timeZone: zone };
+  const m = (hours ?? '').match(/^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/);
+  if (!m) return fallback;
   const startMin = Number(m[1]) * 60 + Number(m[2]);
   const endMin = Number(m[3]) * 60 + Number(m[4]);
-  if (Number(m[2]) > 59 || Number(m[4]) > 59 || startMin >= endMin || endMin > 24 * 60) return DEFAULT_ACTIVE_WINDOW;
-  return { startMin, endMin, timeZone: tz || DEFAULT_ACTIVE_WINDOW.timeZone };
+  if (Number(m[2]) > 59 || Number(m[4]) > 59 || startMin >= endMin || endMin > 24 * 60) return fallback;
+  return { startMin, endMin, timeZone: zone };
 }
 
 export function windowLabel(w: ActiveWindow): string {
@@ -42,7 +44,8 @@ const formatters = new Map<string, Intl.DateTimeFormat>();
 function localParts(t: number, timeZone: string): Record<string, string> {
   let f = formatters.get(timeZone);
   if (!f) {
-    f = new Intl.DateTimeFormat('en-GB', { timeZone, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    // en-US, not en-GB: some ICU builds spell September "Sept" in en-GB. Only the parts are used, so the layout is ours.
+    f = new Intl.DateTimeFormat('en-US', { timeZone, day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
     formatters.set(timeZone, f);
   }
   return Object.fromEntries(f.formatToParts(t).map((p) => [p.type, p.value]));

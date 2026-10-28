@@ -1,5 +1,6 @@
 // QuietProfileCron: one alarm per silent episode, one recovery notice, silence counted in active hours only.
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { BadRequestException, HttpException, Logger } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({
   prisma: {
@@ -34,6 +35,10 @@ beforeEach(() => {
   messages = { sendText: vi.fn().mockResolvedValue({ success: true }) };
   notifications = { createForOrg: vi.fn().mockResolvedValue([]) };
   cron = new QuietProfileCron(messages as any, notifications as any);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 const lastIncoming = (iso: string | null) => db.message.findFirst.mockResolvedValue(iso ? { timestamp: at(iso) } : null);
@@ -143,6 +148,39 @@ describe('QuietProfileCron', () => {
     messages.sendText.mockRejectedValueOnce(new Error('Profile is not connected; the message was not sent'));
     await expect(cron.checkQuietProfiles(NOW)).resolves.toBeUndefined();
     expect(messages.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs why the send gate refused a message: the reason is in the 429 body, not in its message', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    db.profile.findMany.mockResolvedValue([profile()]);
+    lastIncoming('2026-10-28T03:30:00Z');
+    messages.sendText.mockRejectedValueOnce(new HttpException({ error: 'REPEAT_SUPPRESSED', retryInMs: 1000 }, 429));
+
+    await cron.checkQuietProfiles(NOW);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('REPEAT_SUPPRESSED'));
+  });
+
+  it('still logs the message of an exception that has both a message and an error code', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    db.profile.findMany.mockResolvedValue([profile()]);
+    lastIncoming('2026-10-28T03:30:00Z');
+    messages.sendText.mockRejectedValueOnce(new BadRequestException('Invalid recipient: 628111000111'));
+
+    await cron.checkQuietProfiles(NOW);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Invalid recipient: 628111000111'));
+  });
+
+  it('names a profile without a display name by its id', async () => {
+    db.profile.findMany.mockResolvedValue([profile({ displayName: null })]);
+    lastIncoming('2026-10-28T03:30:00Z');
+
+    await cron.checkQuietProfiles(NOW);
+
+    const [, , title, text] = notifications.createForOrg.mock.calls[0];
+    expect(title).toBe('p1 is receiving no messages');
+    expect(text).toContain('profile "p1" (+628123456789)');
   });
 
   it('another process raised it first: no duplicate notice', async () => {
