@@ -54,9 +54,14 @@ export class WebhookClient {
   }
 
   /**
-   * Get webhook delivery logs
+   * Get webhook delivery logs.
+   *
+   * @deprecated The MultiWA API exposes no webhook delivery log (there is no
+   * `GET /webhooks/:id/logs` route), so this always rejects with an `Error`.
+   * `GET /audit/logs` is the audit trail, not a delivery log. Use
+   * {@link WebhookClient.test} to check that an endpoint receives events.
    */
-  async getLogs(id: string, options?: {
+  async getLogs(_id: string, _options?: {
     limit?: number;
     offset?: number;
   }): Promise<PaginatedResponse<{
@@ -67,6 +72,9 @@ export class WebhookClient {
     success: boolean;
     createdAt: Date;
   }>> {
-    return this.client.get(`/webhooks/${id}/logs`, options);
+    throw new Error(
+      'webhooks.getLogs() is deprecated: the MultiWA API exposes no webhook delivery log ' +
+        '(there is no GET /webhooks/:id/logs route).'
+    );
   }
 }

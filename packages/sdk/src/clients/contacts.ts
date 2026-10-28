@@ -100,7 +100,8 @@ export class ContactClient {
    * Remove tags from a contact
    */
   async removeTags(id: string, tags: string[]): Promise<Contact> {
-    return this.client.delete(`/contacts/${id}/tags`, { tags });
+    // The API reads `tags` from the DELETE body; sent as a query it removed nothing.
+    return this.client.request('DELETE', `/contacts/${id}/tags`, { body: { tags } });
   }
 
   /**

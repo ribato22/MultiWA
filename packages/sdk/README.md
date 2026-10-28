@@ -148,8 +148,10 @@ const webhook = await client.webhooks.create({
 });
 
 await client.webhooks.test(id);
-const logs = await client.webhooks.getLogs(id);
 ```
+
+The API exposes no webhook delivery log, so `client.webhooks.getLogs()` is
+deprecated and always rejects with an `Error`.
 
 ### Automations
 
@@ -190,9 +192,9 @@ try {
 ```typescript
 const client = new MultiWAClient({
   apiKey: 'your-api-key',
-  baseUrl: 'http://localhost:3000',  // API server URL
-  timeout: 30000,                     // Request timeout (ms)
-  headers: {                          // Custom headers
+  baseUrl: 'http://localhost:3000/api/v1', // API base URL, including /api/v1
+  timeout: 30000,                          // Request timeout (ms)
+  headers: {                               // Custom headers
     'X-Custom-Header': 'value',
   },
 });
