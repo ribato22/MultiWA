@@ -119,11 +119,14 @@ curl -X POST https://your-multiwa-host/api/v1/webhooks \
   -H "X-API-Key: $MULTIWA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
+    "profileId": "profile-123",
     "url": "https://yourserver.com/webhook",
-    "secret": "a-long-random-string",
     "events": ["message.received", "connection.ready"]
   }'
 ```
+
+MultiWA generates the signing secret and returns it in the response (`secret`); use it to
+verify the `X-MultiWA-Signature` header. `events` lists event names — there is no wildcard.
 
 > Reply `2xx` quickly. Do slow work (DB writes, outbound calls) in a queue —
 > MultiWA retries on non-2xx responses.
