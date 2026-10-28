@@ -22,7 +22,9 @@ import type {
   ContactOptions,
   PollOptions,
   SendMessageOptions,
+  CallLinkType,
 } from '../types';
+import { mapBaileysCallStatus, remember, MAX_REMEMBERED_IDS } from '../call-events';
 
 
 export class BaileysAdapter implements IWhatsAppEngine {
@@ -37,7 +39,10 @@ export class BaileysAdapter implements IWhatsAppEngine {
   private currentQR: string | null = null;
   private qrCallbacks: ((qr: string) => void)[] = [];
   // Caller JID per call id — Baileys' rejectCall(id, from) needs both.
+  // Unbounded on purpose: only offers that never get a follow-up stay here. Cap it if that ever grows.
   private callFrom = new Map<string, string>();
+  // Ids already reported as ringing, so a repeated offer is not a new call (bounded).
+  private seenCalls = new Set<string>();
   private authState: any = null;
   private connectionRetryCount: number = 0;
   private maxConnectionRetries: number = 3;
@@ -156,17 +161,29 @@ export class BaileysAdapter implements IWhatsAppEngine {
     const sock = this.socket;
     const isCurrent = () => this.socket === sock;
 
-    // Incoming voice/video call — surface the initial offer for auto-reject.
+    // Incoming voice/video call: every Baileys status of it (see mapBaileysCallStatus).
     this.socket.ev.on('call', (calls: any[]) => {
       if (!isCurrent()) return;
       for (const call of calls || []) {
-        if (call?.status && call.status !== 'offer') continue;
-        if (call?.id && call?.from) this.callFrom.set(call.id, call.from);
+        const state = call?.id ? mapBaileysCallStatus(call.status) : null;
+        if (!state) continue;
+        // Follow-ups may lack `from`; the offer's caller is the best answer then.
+        const from: string = call.from || this.callFrom.get(call.id) || '';
+        if (state === 'ringing') {
+          // Report each offer once: Baileys can deliver it twice (`offer` and `offer_notice`,
+          // or again after a reconnect).
+          if (!from || this.seenCalls.has(call.id)) continue;
+          remember(this.seenCalls, call.id, MAX_REMEMBERED_IDS);
+          this.callFrom.set(call.id, from);
+        } else {
+          this.callFrom.delete(call.id); // no longer ringing: nothing left to reject
+        }
         this.config?.onCall?.({
-          id: call?.id,
-          from: call?.from || '',
-          isVideo: !!call?.isVideo,
-          isGroup: (call?.from || '').includes('@g.us'),
+          id: call.id,
+          from,
+          isVideo: !!call.isVideo,
+          isGroup: !!call.isGroup || String(from).includes('@g.us'),
+          state,
         });
       }
     });
@@ -600,11 +617,16 @@ export class BaileysAdapter implements IWhatsAppEngine {
   }
 
   async rejectCall(callId: string): Promise<void> {
+    if (!this.socket) throw new Error('Client not ready');
     const from = this.callFrom.get(callId);
-    if (this.socket && from) {
-      await this.socket.rejectCall(callId, from);
-    }
+    if (!from) throw new Error('Call is not ringing any more');
+    await this.socket.rejectCall(callId, from);
     this.callFrom.delete(callId);
+  }
+
+  /** Baileys 6.17 (the pinned version) has no call-link API; 7.x adds `createCallLink`. */
+  async createCallLink(_type: CallLinkType): Promise<string | null> {
+    return null;
   }
 
   async markAsRead(chatId: string, messageIds?: string[]): Promise<void> {

@@ -872,6 +872,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         }
       },
       onCall: async (call) => {
+        // Auto-reject acts on the offer only.
+        if ((call.state ?? 'ringing') !== 'ringing') return;
         try {
           const p = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
           const eng = this.getEngine(profileId);
