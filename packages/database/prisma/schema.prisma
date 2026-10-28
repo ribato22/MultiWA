@@ -166,6 +166,8 @@ model Profile {
   // Per-profile engine selection. whatsapp-web-js (default, production) | baileys (EXPERIMENTAL) | mock (testing).
   engine          String   @default("whatsapp-web-js")
   lastConnectedAt DateTime?
+  // Quiet-profile alarm: when the open alarm fired; null = none open (QuietProfileCron).
+  quietAlarmAt    DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
