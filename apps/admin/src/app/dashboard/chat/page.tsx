@@ -87,6 +87,56 @@ const fixMediaUrl = (url?: string): string => {
   return normalized;
 };
 
+// Inbound media is stored inline as a base64 data URL (engine-runtime applyInboundMedia), which
+// fixMediaUrl rejects. A media element may show a data URL of its own kind, never SVG (it can
+// carry script); links and new tabs only ever get http(s), or a blob made from the data URL.
+const DATA_URL = /^data:([a-z]+)\/([a-z0-9.+_-]+)[^,]*;base64,/i;
+
+const mediaSrc = (url: string | undefined, kind: 'image' | 'audio' | 'video'): string => {
+  const m = url?.match(DATA_URL);
+  if (!m) return fixMediaUrl(url);
+  return m[1].toLowerCase() === kind && m[2].toLowerCase() !== 'svg+xml' ? (url as string) : '';
+};
+
+// Open an image in a new tab, or download a file. Browsers block navigating to a data: URL, so
+// one goes through a blob: only a non-SVG image is opened, anything else is downloaded.
+const openMedia = (url?: string, filename?: string) => {
+  const m = url?.match(DATA_URL);
+  if (!m) {
+    const href = fixMediaUrl(url);
+    if (href) window.open(href, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  const type = `${m[1]}/${m[2]}`.toLowerCase();
+  const bytes = Uint8Array.from(atob((url as string).slice(m[0].length)), (c) => c.charCodeAt(0));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type }));
+  if (type.startsWith('image/') && type !== 'image/svg+xml') {
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+  } else {
+    a.download = filename || 'download';
+  }
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+};
+
+// Why a media message has nothing to show (engine-runtime sets mediaOmitted above the size cap).
+const missingMedia = (content: any): string =>
+  content?.mediaOmitted
+    ? `Too large to store${content.mediaBytes ? ` (${(content.mediaBytes / 1048576).toFixed(1)} MB)` : ''}`
+    : 'Not available';
+
+const MediaUnavailable = ({ icon, label, content }: { icon: string; label: string; content: any }) => (
+  <div className="bg-secondary/30 rounded-lg p-4 flex items-center gap-3 min-w-[200px]">
+    <span className="text-3xl">{icon}</span>
+    <div>
+      <p className="text-sm font-medium">{label}</p>
+      <p className="text-xs text-muted-foreground">{missingMedia(content)}</p>
+    </div>
+  </div>
+);
+
 // Check if a name looks like a raw JID (e.g. "120363421805328930@g.us" or "628123456789@s.whatsapp.net" or all digits)
 const isJidLikeName = (name: string) => {
   if (!name) return true;
@@ -996,58 +1046,64 @@ export default function ChatPage() {
                       )}
                       {msg.type === 'image' && (
                         <div>
-                          {msg.content?.url ? (
-                            <>
-                              <img 
-                                src={fixMediaUrl(msg.content.url)} 
-                                alt="Image" 
-                                className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer"
-                                onClick={() => window.open(fixMediaUrl(msg.content?.url), '_blank')}
-                              />
-                              {msg.content?.caption && (
-                                <p className="mt-2 text-sm">{msg.content.caption}</p>
-                              )}
-                            </>
+                          {mediaSrc(msg.content?.url, 'image') ? (
+                            <img
+                              src={mediaSrc(msg.content?.url, 'image')}
+                              alt="Image"
+                              loading="lazy"
+                              className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer"
+                              onClick={() => openMedia(msg.content?.url)}
+                            />
                           ) : (
-                            <div className="bg-secondary/30 rounded-lg p-4 flex items-center gap-3 min-w-[200px]">
-                              <span className="text-3xl">📷</span>
-                              <div>
-                                <p className="text-sm font-medium">Photo</p>
-                                <p className="text-xs text-muted-foreground">Image not available</p>
-                              </div>
-                            </div>
+                            <MediaUnavailable icon="📷" label="Photo" content={msg.content} />
                           )}
-                        </div>
-                      )}
-                      {msg.type === 'video' && (
-                        <div>
-                          <video 
-                            src={fixMediaUrl(msg.content?.url)} 
-                            controls
-                            className="rounded-lg max-w-full max-h-64"
-                          />
                           {msg.content?.caption && (
                             <p className="mt-2 text-sm">{msg.content.caption}</p>
                           )}
                         </div>
                       )}
-                      {msg.type === 'audio' && (
+                      {msg.type === 'video' && (
+                        <div>
+                          {mediaSrc(msg.content?.url, 'video') ? (
+                            <video
+                              src={mediaSrc(msg.content?.url, 'video')}
+                              controls
+                              className="rounded-lg max-w-full max-h-64"
+                            />
+                          ) : (
+                            <MediaUnavailable icon="🎬" label="Video" content={msg.content} />
+                          )}
+                          {msg.content?.caption && (
+                            <p className="mt-2 text-sm">{msg.content.caption}</p>
+                          )}
+                        </div>
+                      )}
+                      {(msg.type === 'audio' || msg.type === 'ptt') && (
                         <div className="min-w-[200px]">
-                          <audio src={fixMediaUrl(msg.content?.url)} controls className="w-full" />
+                          {mediaSrc(msg.content?.url, 'audio') ? (
+                            <audio src={mediaSrc(msg.content?.url, 'audio')} controls className="w-full" />
+                          ) : (
+                            <MediaUnavailable icon={msg.type === 'ptt' ? '🎙️' : '🎵'} label={msg.type === 'ptt' ? 'Voice message' : 'Audio'} content={msg.content} />
+                          )}
                         </div>
                       )}
                       {msg.type === 'document' && (
                         <div>
-                          <a 
-                            href={fixMediaUrl(msg.content?.url)} 
-                            target="_blank" 
+                          <a
+                            href={fixMediaUrl(msg.content?.url) || '#'}
+                            target="_blank"
                             rel="noopener noreferrer"
+                            onClick={(e) => {
+                              if (fixMediaUrl(msg.content?.url)) return;
+                              e.preventDefault();
+                              openMedia(msg.content?.url, msg.content?.filename);
+                            }}
                             className="flex items-center gap-3 bg-secondary/50 rounded-lg p-3 hover:bg-secondary/70 transition-colors cursor-pointer no-underline text-inherit max-w-[300px] overflow-hidden"
                           >
                             <div className="text-3xl">📄</div>
                             <div className="flex-1 min-w-0">
                               <p className="font-medium truncate">{msg.content?.filename || 'Document'}</p>
-                              <p className="text-xs text-muted-foreground">Document</p>
+                              <p className="text-xs text-muted-foreground">{fixMediaUrl(msg.content?.url) || msg.content?.url?.match(DATA_URL) ? 'Document' : missingMedia(msg.content)}</p>
                             </div>
                             <div className="text-muted-foreground">⬇️</div>
                           </a>
@@ -1155,15 +1211,15 @@ export default function ChatPage() {
                       )}
                       {msg.type === 'sticker' && (
                         <div className="w-32 h-32 flex items-center justify-center">
-                          {msg.content?.url ? (
-                            <img src={fixMediaUrl(msg.content.url)} alt="Sticker" className="max-w-full max-h-full object-contain" />
+                          {mediaSrc(msg.content?.url, 'image') ? (
+                            <img src={mediaSrc(msg.content?.url, 'image')} alt="Sticker" loading="lazy" className="max-w-full max-h-full object-contain" />
                           ) : (
                             <div className="text-6xl">🏷️</div>
                           )}
                         </div>
                       )}
                       {/* Fallback for unknown types */}
-                      {!['text', 'image', 'video', 'audio', 'document', 'location', 'vcard', 'contact', 'contacts', 'poll', 'poll_creation', 'event', 'event_creation', 'sticker', 'chat'].includes(msg.type) && (
+                      {!['text', 'image', 'video', 'audio', 'ptt', 'document', 'location', 'vcard', 'contact', 'contacts', 'poll', 'poll_creation', 'event', 'event_creation', 'sticker', 'chat'].includes(msg.type) && (
                         <div className="bg-secondary/50 rounded-lg p-3 text-sm">
                           <p className="text-muted-foreground italic">📎 {msg.type} message</p>
                           {msg.content?.text && <p className="mt-1">{msg.content.text}</p>}
