@@ -29,6 +29,8 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
 | `QUIET_ALARM_ACTIVE_HOURS` | ❌ | `07:00-22:00` | Daily window in which a connected profile's silence counts toward its quiet-profile alarm |
 | `QUIET_ALARM_TIMEZONE` | ❌ | `Asia/Jakarta` | Time zone of that window |
+| `CALL_RING_TIMEOUT_MS` | ❌ | `90000` | A call still ringing after this long is closed as `unknown` |
+| `CALL_LOG_GRACE_MS` | ❌ | `60000` | How long a call that stopped ringing as `unknown` waits for WhatsApp's call log before the team is told about an unanswered call |
 
 ---
 
@@ -318,6 +320,29 @@ An unknown zone falls back to the default.
 QUIET_ALARM_ACTIVE_HOURS=08:00-20:00
 QUIET_ALARM_TIMEZONE=Asia/Jakarta
 ```
+
+---
+
+## Calls
+
+Timers for incoming WhatsApp calls. They are read by the process that hosts the engine: the API by default, the worker with `ENGINE_HOST=worker`. The stock Compose files do not pass them through, so add them to the `environment:` of that service. A value that is not a positive number falls back to the default.
+
+### `CALL_RING_TIMEOUT_MS`
+**Optional** | Number (milliseconds) | Default: `90000`
+
+How long a call may stay `ringing` before MultiWA gives up on it and closes it as `unknown`, and tells your team about an unanswered call. It is the safety net for a call whose end the engine never reported. WhatsApp's call log can still settle the call afterwards (a `call.updated` webhook).
+
+### `CALL_LOG_GRACE_MS`
+**Optional** | Number (milliseconds) | Default: `60000`
+
+A call that stopped ringing as `unknown` usually gets its real outcome (missed, rejected, answered on another device) from WhatsApp's call-log message within moments. If none has arrived after this long, MultiWA tells your team about an unanswered call. The call stays `unknown` until a call log settles it.
+
+```env
+CALL_RING_TIMEOUT_MS=90000
+CALL_LOG_GRACE_MS=60000
+```
+
+The timers live in memory. When the engine host starts, every call still `ringing` is closed as `unknown` at once, whatever its age, and no `call.ended` webhook is sent for it. It stays `unknown`, since an engine passes on only the call log of a call it saw ringing since it last connected.
 
 ---
 

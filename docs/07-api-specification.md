@@ -235,6 +235,22 @@ Incoming WhatsApp calls, recorded per profile and published as the `call.receive
 | `POST` | `/calls/:id/reply` | Send a text to the caller (default: the profile's `callReplyMessage`) |
 | `POST` | `/calls/:id/call-link` | Create a WhatsApp call link (`voice` / `video`) and send it to the caller |
 
+`reply` and `call-link` send a WhatsApp message to the caller, so they behave like a send from `/messages`:
+
+- **API-key scope.** An API key with an explicit scope list needs `messages:write` (*Send Messages*) for them, and gets `403` without it. Keys with no scopes or with `*`, and JWT logins, skip this check. The reads, `PATCH` and `reject` ask for no scope.
+- **Send gate.** The text goes through the profile's send gate (see [Messaging](./10-messaging.md)): it waits out the pacing delay and can be refused with `429` and a code in the body. `DAILY_LIMIT_REACHED` and `REPEAT_SUPPRESSED` (the same text to the same caller within a minute, by default) can happen at any time; `COLD_DAILY_LIMIT_REACHED` and `COLD_CIRCUIT_OPEN` only once the service window has closed. An incoming call opens the service window (`serviceWindowHours`, 24 hours by default) the way an incoming message does, so answering a recent call is a reply, not cold outreach. With `DURABLE_SEND=true` or `ENGINE_HOST=worker` the text is queued instead (the `message` in the response has `status: "queued"`), and a delivery failure arrives as a `message.failed` webhook.
+
+Other errors of the call actions:
+
+| Status | When |
+|--------|------|
+| `409` | `reject`: the call is not ringing any more. Any action: the profile is not connected. `call-link`: the engine cannot create call links (Baileys) |
+| `422` | `reply` or `call-link` for a group call |
+| `502` | The text to the caller was not sent, or WhatsApp returned no call link |
+| `504` | `reject` or the creation of the call link: WhatsApp did not answer in time (about 30 seconds) |
+
+**Auto-reject.** A profile with `autoRejectCalls` on (set with `PUT /profiles/:id`) rejects a ringing call at once (`rejectedBy` is `auto`). A non-blank `autoRejectCallMessage` is then sent to the caller, also when the reject failed because the caller had already hung up. That reply goes through the same send gate and is sent at most once per caller per 24 hours; it is never sent for a group call or for a call known only from its call log. A reply the gate refuses or the engine fails to send is not retried and does not use up the 24 hours, so the caller's next call can try again.
+
 ### Contacts (`/contacts`)
 
 | Method | Endpoint | Description |
