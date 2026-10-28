@@ -11,6 +11,7 @@ import {
   LayoutGrid,
   Smartphone,
   MessagesSquare,
+  PhoneIncoming,
   MessageSquare,
   Users,
   LayoutTemplate,
@@ -46,6 +47,7 @@ const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',              Icon: LayoutGrid },
   { name: 'Profiles',     href: '/dashboard/profiles',     Icon: Smartphone },
   { name: 'Chat',         href: '/dashboard/chat',         Icon: MessagesSquare },
+  { name: 'Calls',        href: '/dashboard/calls',        Icon: PhoneIncoming },
   { name: 'Messages',     href: '/dashboard/messages',     Icon: MessageSquare },
   { name: 'Contacts',     href: '/dashboard/contacts',     Icon: Users },
   { name: 'Templates',    href: '/dashboard/templates',    Icon: LayoutTemplate },
@@ -103,6 +105,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Chat unread (org-wide) for the sidebar badge
   const [chatUnread, setChatUnread] = useState(0);
 
+  // Open call follow-ups (org-wide) for the sidebar Calls badge
+  const [callsOpen, setCallsOpen] = useState(0);
+
   // Account menu (top-right)
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userRef = useRef<HTMLDivElement>(null);
@@ -125,6 +130,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     try {
       const chat = await api.getChatUnreadCount();
       if (chat.data) setChatUnread(chat.data.count);
+    } catch {}
+    try {
+      const calls = await api.getCallsOpenCount();
+      if (calls.data) setCallsOpen(calls.data.count);
     } catch {}
   }, []);
 
@@ -226,7 +235,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             {menuItems.map((item) => {
               const Icon = item.Icon;
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
-              const badge = item.href === '/dashboard/chat' ? chatUnread : 0;
+              const badge = item.href === '/dashboard/chat' ? chatUnread : item.href === '/dashboard/calls' ? callsOpen : 0;
               const badgeLabel = badge > 99 ? '99+' : String(badge);
               return (
                 <Link
@@ -255,7 +264,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {sidebarOpen && badge > 0 && (
                     <span
                       className="ml-auto min-w-[20px] h-5 bg-destructive text-destructive-foreground text-[11px] font-bold rounded-full flex items-center justify-center px-1.5 tabular-nums"
-                      aria-label={`${badge} unread`}
+                      aria-label={item.href === '/dashboard/calls' ? `${badge} open` : `${badge} unread`}
                     >
                       {badgeLabel}
                     </span>

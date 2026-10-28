@@ -77,7 +77,7 @@ interface Profile {
   dailyMessageLimit?: number | null;
   dailyMessageCount?: number;
   warmupEnabled?: boolean;
-  settings?: { autoRejectCalls?: boolean; autoRejectCallMessage?: string; quietAlarmHours?: number | null; quietAlarmNotify?: string[] };
+  settings?: { autoRejectCalls?: boolean; autoRejectCallMessage?: string; callReplyMessage?: string; quietAlarmHours?: number | null; quietAlarmNotify?: string[] };
   warmupStartPerDay?: number | null;
   warmupRampDays?: number | null;
   warmupStartedAt?: string | null;
@@ -228,6 +228,7 @@ export default function ProfileDetailPage() {
   const [warmupEnabled, setWarmupEnabled] = useState(false);
   const [autoRejectCalls, setAutoRejectCalls] = useState(false);
   const [autoRejectCallMessage, setAutoRejectCallMessage] = useState('');
+  const [callReplyMessage, setCallReplyMessage] = useState('');
   const [quietAlarmHours, setQuietAlarmHours] = useState('');
   const [quietAlarmNotify, setQuietAlarmNotify] = useState('');
   const [warmupStart, setWarmupStart] = useState<string>(''); // per-day start, string for number input
@@ -474,6 +475,7 @@ export default function ProfileDetailPage() {
     setWarmupEnabled(profile.warmupEnabled ?? false);
     setAutoRejectCalls(profile.settings?.autoRejectCalls ?? false);
     setAutoRejectCallMessage(profile.settings?.autoRejectCallMessage ?? '');
+    setCallReplyMessage(profile.settings?.callReplyMessage ?? '');
     setQuietAlarmHours(profile.settings?.quietAlarmHours ? String(profile.settings.quietAlarmHours) : '');
     setQuietAlarmNotify((profile.settings?.quietAlarmNotify ?? []).join(', '));
     setWarmupStart(profile.warmupStartPerDay != null ? String(profile.warmupStartPerDay) : '');
@@ -549,7 +551,8 @@ export default function ProfileDetailPage() {
           coldDailyLimit: parsedCold,
           serviceWindowHours: parsedWindow ?? 24,
           autoRejectCalls,
-          autoRejectCallMessage: autoRejectCallMessage.trim() || undefined,
+          autoRejectCallMessage: autoRejectCallMessage.trim(),
+          callReplyMessage: callReplyMessage.trim(),
           quietAlarmHours: parsedQuietHours,
           quietAlarmNotify: quietRecipients,
         }),
@@ -689,7 +692,8 @@ export default function ProfileDetailPage() {
     jitterMs !== (profile.messageDelayJitterMs ?? 0) ||
     warmupEnabled !== (profile.warmupEnabled ?? false) ||
     autoRejectCalls !== (profile.settings?.autoRejectCalls ?? false) ||
-    autoRejectCallMessage !== (profile.settings?.autoRejectCallMessage ?? '') ||
+    autoRejectCallMessage.trim() !== (profile.settings?.autoRejectCallMessage ?? '') ||
+    callReplyMessage.trim() !== (profile.settings?.callReplyMessage ?? '') ||
     (quietAlarmHours.trim() ? Number(quietAlarmHours) : null) !== (profile.settings?.quietAlarmHours ?? null) ||
     splitRecipients(quietAlarmNotify).join(',') !== (profile.settings?.quietAlarmNotify ?? []).join(',') ||
     (warmupStartN ?? null) !== (profile.warmupStartPerDay ?? null) ||
@@ -1160,6 +1164,23 @@ export default function ProfileDetailPage() {
               <p className="text-[11px] text-slate-500">Sent to the caller after the call is rejected.</p>
             </div>
           )}
+        </div>
+
+        {/* Default reply for the Calls queue */}
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-1.5">
+          <Label htmlFor="callReplyMessage" className="text-xs font-medium text-slate-200">
+            Missed-call reply
+          </Label>
+          <Input
+            id="callReplyMessage"
+            type="text"
+            maxLength={4096}
+            placeholder="Maaf, kami melewatkan panggilan Anda. Ada yang bisa kami bantu?"
+            value={callReplyMessage}
+            onChange={(e) => setCallReplyMessage(e.target.value)}
+            className="bg-slate-950/40 border-slate-800 text-slate-100"
+          />
+          <p className="text-[11px] text-slate-500">Prefilled when an agent replies to a call from the Calls page.</p>
         </div>
 
         {/* Quiet-profile alarm */}

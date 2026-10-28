@@ -3,11 +3,13 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
-import { api, Profile, Conversation } from '@/lib/api';
+import { api, Profile, Conversation, type CallRecord } from '@/lib/api';
+import { fromPayload, isCallEntry, mergeTimeline, type CallUpdatePayload } from '@/lib/calls';
+import { CallTimelineRow } from '@/components/calls/call-timeline-row';
 import { formatRelative, formatFull, formatTime, formatDate, formatDateTime, formatDaySeparator, dayBucket } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -136,10 +138,15 @@ export default function ChatPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoaded, setConversationsLoaded] = useState(false); // the list has been asked for once (it may have failed)
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationCalls, setConversationCalls] = useState<CallRecord[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  // What the API says about older messages in the DB. Unlike hasMoreOlder (optimistic, keeps the
+  // "load older" button), this decides whether a call older than the first message is shown.
+  const [olderInDb, setOlderInDb] = useState(true);
   const [msgLimit, setMsgLimit] = useState(50);
   const [messageInput, setMessageInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -163,6 +170,13 @@ export default function ChatPage() {
   // The socket handlers are bound once per profile, so they read the open conversation here.
   const openConversationId = useRef<string | null>(null);
   openConversationId.current = selectedConversation?.id ?? null;
+  // Bumped each time a conversation is opened: the messages answer, the calls answer and a load-older
+  // of a chat we already left are dropped, so none of them lands in the open one.
+  const loadSeq = useRef(0);
+  // Set right before the calls answer of a load is stored: only that change scrolls to the end, not a live update of a row.
+  const scrollForCalls = useRef(false);
+
+  const timeline = useMemo(() => mergeTimeline(messages, conversationCalls, olderInDb), [messages, conversationCalls, olderInDb]);
 
   // Emoji categories
   const emojiCategories: Record<string, { label: string; emojis: string[] }> = {
@@ -181,13 +195,24 @@ export default function ChatPage() {
   // URL → state sync. On mount or URL change, hydrate selected conversation.
   useEffect(() => {
     const convId = searchParams.get('conv');
-    if (!convId) return;
+    if (!convId || selectedConversation?.id === convId) return;
     const found = conversations.find(c => c.id === convId);
-    if (found && (!selectedConversation || selectedConversation.id !== convId)) {
+    if (found) {
       setSelectedConversation(found);
       setMobileView('messages');
+      return;
     }
-  }, [searchParams, conversations]);
+    if (!conversationsLoaded) return;
+    // Not among the profile's latest conversations (all the list holds): ask for it.
+    let stale = false;
+    api.getConversation(convId).then(({ data: conv }) => {
+      // Only the open profile's: a message sent from here goes out through the open profile.
+      if (stale || !conv || conv.profileId !== selectedProfile) return;
+      setSelectedConversation(conv);
+      setMobileView('messages');
+    });
+    return () => { stale = true; };
+  }, [searchParams, conversations, conversationsLoaded, selectedProfile]);
 
   // WebSocket connection for real-time message status updates
   useEffect(() => {
@@ -229,6 +254,11 @@ export default function ChatPage() {
           return msg;
         }));
       }
+    });
+
+    // A call of the open chat changes (it ends, is rejected...): its row follows. Rows are not added here: the load has them.
+    socket.on('call:update', (p: CallUpdatePayload) => {
+      setConversationCalls(prev => prev.map(c => (c.id === p.callId ? fromPayload(p, c) : c)));
     });
 
     // Real-time incoming messages
@@ -281,7 +311,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (selectedConversation) {
-      loadMessages(selectedConversation.id);
+      loadMessages(selectedConversation);
       // Mark as read when opening a conversation
       if (selectedConversation.unreadCount > 0) {
         api.markAsRead(selectedConversation.id).catch(() => {});
@@ -294,9 +324,21 @@ export default function ChatPage() {
     }
   }, [selectedConversation?.id]);
 
+  // Scroll only when the newest entry changes: opening a chat, a new message, or a call arriving (in a second
+  // request) that ends the chat. Not on every timeline change: a load-older prepend keeps its own anchor and an
+  // ack update must not pull someone reading the history down.
+  const newestKey = timeline[timeline.length - 1]?.id ?? '';
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [newestKey]);
+
+  // The calls answer can add rows above the last message after the scroll above has started: scroll again. Only for
+  // that answer (loadMessages flags it): a live update of a row must not pull someone reading the history down.
+  useEffect(() => {
+    if (!scrollForCalls.current) return;
+    scrollForCalls.current = false;
+    if (conversationCalls.length) scrollToBottom();
+  }, [conversationCalls]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -307,7 +349,8 @@ export default function ChatPage() {
     if (res.data) {
       setProfiles(res.data);
       if (res.data.length > 0) {
-        setSelectedProfile(res.data[0].id);
+        const wanted = searchParams.get('profile');
+        setSelectedProfile(res.data.find((p) => p.id === wanted)?.id ?? res.data[0].id);
       }
     }
     setLoading(false);
@@ -343,25 +386,39 @@ export default function ChatPage() {
       }
       setConversations(Array.from(jidMap.values()));
     }
+    setConversationsLoaded(true);
   };
 
-  const loadMessages = async (conversationId: string) => {
+  const loadMessages = async (conv: Conversation) => {
     // Reset load-older state for the newly opened conversation (optimistic: assume
     // WhatsApp may have deeper history than the DB snapshot).
     setHasMoreOlder(true);
     setMsgLimit(50);
-    const res = await api.getMessages(conversationId);
+    const seq = ++loadSeq.current;
+    // Never show the previous conversation's calls, also when this load fails.
+    setConversationCalls([]);
+    const res = await api.getMessages(conv.id);
+    if (seq !== loadSeq.current) return; // another conversation was opened meanwhile
     if (res.data) {
       // API returns { messages: [...], hasMore } or possibly an array
       const raw = res.data as any;
       const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
       setMessages(msgArray);
+      setOlderInDb(Array.isArray(raw) ? false : !!raw.hasMore);
+      // The conversation's own profile, not selectedProfile: after a profile switch the open conversation can still be the old one's.
+      // ponytail: the newest 50 calls only, not refetched on load-older; refetch with since=<oldest message> if older periods need their calls
+      const callsRes = await api.getCalls(conv.profileId, { from: conv.jid, limit: 50 });
+      if (seq === loadSeq.current) {
+        scrollForCalls.current = true;
+        setConversationCalls(callsRes.data?.calls ?? []);
+      }
     }
   };
 
   // On-demand "load older": pull deeper history from WhatsApp, persist it, prepend
   // to the view while preserving scroll position.
   const handleLoadOlder = async () => {
+    const seq = loadSeq.current;
     if (!selectedConversation || loadingOlder) return;
     setLoadingOlder(true);
     const container = messagesContainerRef.current;
@@ -370,11 +427,13 @@ export default function ChatPage() {
     const newLimit = msgLimit + 50;
     try {
       const res = await api.loadOlderMessages(selectedConversation.id, newLimit);
+      if (seq !== loadSeq.current) return; // another conversation was opened meanwhile
       if (res.data) {
         const data = res.data as any;
         setMessages(data.messages || []);
         setMsgLimit(newLimit);
         setHasMoreOlder(!!data.hasMore);
+        setOlderInDb(!!data.hasMore);
         // Keep the viewport anchored where the user was after prepend.
         requestAnimationFrame(() => {
           const c = messagesContainerRef.current;
@@ -565,6 +624,7 @@ export default function ChatPage() {
     setMobileView('messages');
     const params = new URLSearchParams(window.location.search);
     params.set('conv', conv.id);
+    params.set('profile', conv.profileId); // a reload opens this chat's profile, not the one the link named
     router.replace(`/dashboard/chat?${params.toString()}`, { scroll: false });
   }, [router]);
 
@@ -666,6 +726,9 @@ export default function ChatPage() {
       </div>
     );
   }
+
+  // A message's key uses its index among the messages only, so a call row landing before it does not remount it.
+  let msgIdx = 0;
 
   return (
     <div className="h-[calc(100vh-120px)] flex bg-card rounded-2xl border border-border overflow-hidden">
@@ -853,7 +916,7 @@ export default function ChatPage() {
                   </button>
                 </div>
               )}
-              {messages.length === 0 ? (
+              {timeline.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <div className="text-6xl mb-4">🔐</div>
@@ -861,10 +924,25 @@ export default function ChatPage() {
                   </div>
                 </div>
               ) : (
-                messages.map((msg, idx) => {
-                  const showDaySeparator = idx === 0 || dayBucket(msg.timestamp) !== dayBucket(messages[idx - 1]?.timestamp);
+                timeline.map((entry, idx) => {
+                  const showDaySeparator = idx === 0 || dayBucket(entry.timestamp) !== dayBucket(timeline[idx - 1]?.timestamp);
+                  if (isCallEntry(entry)) {
+                    return (
+                      <Fragment key={entry.id}>
+                        {showDaySeparator && (
+                          <div className="flex justify-center my-3">
+                            <span className="text-xs text-muted-foreground bg-secondary/60 px-3 py-1 rounded-full">
+                              {formatDaySeparator(entry.timestamp)}
+                            </span>
+                          </div>
+                        )}
+                        <CallTimelineRow call={entry.call} />
+                      </Fragment>
+                    );
+                  }
+                  const msg = entry;
                   return (
-                  <Fragment key={`${msg.id}-${idx}`}>
+                  <Fragment key={`${msg.id}-${msgIdx++}`}>
                     {showDaySeparator && (
                       <div className="flex justify-center my-3">
                         <span className="text-xs text-muted-foreground bg-secondary/60 px-3 py-1 rounded-full">
