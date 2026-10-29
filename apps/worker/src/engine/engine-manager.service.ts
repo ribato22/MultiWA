@@ -511,7 +511,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       const entries = await fs.readdir(sessionDir, { recursive: true, withFileTypes: true });
       for (const entry of entries) {
         if (lockFiles.includes(entry.name)) {
-          const lockPath = path.join(entry.parentPath || entry.path, entry.name);
+          const lockPath = path.join(entry.parentPath, entry.name);
           try {
             await fs.unlink(lockPath);
             this.logger.log(`Removed stale Chromium lock file: ${lockPath}`);

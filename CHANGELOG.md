@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Runtime: Node.js 24 LTS.** The Docker images (api, worker, admin) and CI run Node.js 24. Node.js 20 reached end-of-life on 2026-04-30. Running MultiWA from source now needs Node.js 24 or newer. The SDK and the n8n node keep their own, older Node floors.
+
 ## [1.3.0] - 2026-10-29
 
 ### Added

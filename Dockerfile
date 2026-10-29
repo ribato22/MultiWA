@@ -4,7 +4,7 @@
 # ============================================
 
 # ── Stage 1: Install & Build ─────────────────
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
@@ -69,7 +69,7 @@ RUN pnpm --filter @multiwa/admin build || true
 
 
 # ── Stage 2: API Runtime ─────────────────────
-FROM node:20-slim AS api
+FROM node:24-slim AS api
 
 WORKDIR /app
 
@@ -144,7 +144,7 @@ CMD ["/usr/local/bin/entrypoint-api.sh"]
 
 
 # ── Stage 3: Admin Dashboard Runtime ─────────
-FROM node:20-alpine AS admin
+FROM node:24-alpine AS admin
 
 WORKDIR /app
 
