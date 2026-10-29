@@ -5,6 +5,7 @@ import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js
 import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
 import { readCallLog, isCallLogWithoutOutcome, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
+import { WebJsCallMedia, CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT } from './webjs-call-media';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -65,11 +66,14 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   private seenCallLogs = new Set<string>();
   // Shapes of call-log messages we could not read, warned about once each.
   private warnedCallLogShapes = new Set<string>();
+  // Call media: only when the server switch is on (EngineConfig.callMedia.enabled).
+  callMedia?: WebJsCallMedia;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
     
     const sessionDir = config.sessionDir || `./sessions/${config.profileId}`;
+    const callMediaOn = config.callMedia?.enabled === true;
     
     // Platform-aware Puppeteer args
     const isLinux = process.platform === 'linux';
@@ -107,6 +111,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
 
     this.client = new Client({
+      ...(callMediaOn ? { evalOnNewDoc: CALL_MEDIA_INIT_SCRIPT } : {}),
       ...webVersionOpts,
       authStrategy: new LocalAuth({
         clientId: config.profileId,
@@ -117,10 +122,20 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || config.puppeteerOptions?.executablePath,
         timeout: 60000, // 60 seconds for browser launch
         protocolTimeout: 240000, // 240 seconds for CDP protocol operations
-        args: config.puppeteerOptions?.args || defaultArgs,
+        args: [...(config.puppeteerOptions?.args || defaultArgs), ...(callMediaOn ? CALL_MEDIA_CHROME_ARGS : [])],
       },
     });
 
+    // The wrapper belongs to THIS client: once the adapter lets go of it (destroy(), or a newer initialize()) it has
+    // no page. whatsapp-web.js destroy() only closes the browser; client.pupPage stays set.
+    const client = this.client;
+    this.callMedia = callMediaOn
+      ? new WebJsCallMedia(
+          () => (this.client === client ? (client as any).pupPage : null),
+          () => this.isReady(),
+          config.profileId,
+        )
+      : undefined;
     this.setupEventHandlers();
   }
 
@@ -163,6 +178,19 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       this.currentQR = null;
       this.config?.onReady?.(info?.wid?.user || '', info?.pushname || '');
     });
+
+    // Call media setup on EVERY ready: WhatsApp Web can reload its page (seen 3 s after the first ready),
+    // and the handler above deliberately ignores every ready after the first.
+    if (this.callMedia) {
+      const media = this.callMedia;
+      this.client.on('ready', () => {
+        media.preparePage().catch((e) => {
+          const profile = String(this.config?.profileId).replace(/[\r\n]/g, '');
+          const why = String((e as Error)?.message ?? e).replace(/[\r\n]/g, '');
+          console.warn(`[WhatsApp-WebJS] call media setup failed for profile ${profile}: ${why}`);
+        });
+      });
+    }
 
     // Authenticated (repeated for the same reason as 'ready')
     this.client.on('authenticated', () => {

@@ -24,6 +24,11 @@ export interface EngineConfig {
    * reports one only for a call it reported `ringing` since the last disconnect, with its `callId`.
    */
   onCallLog?: (entry: CallLogEntry) => void;
+  /**
+   * Call media (answering calls from the dashboard). Set from the SERVER switch CALLS_MEDIA_ENABLED,
+   * never per profile: it changes how the browser is launched, which only takes effect at launch.
+   */
+  callMedia?: { enabled: boolean };
 }
 
 /**
@@ -178,6 +183,83 @@ export interface RecentChat {
   messages: RecentChatMessage[];
 }
 
+/** Why an engine cannot carry call audio right now. */
+export type CallMediaUnsupportedReason =
+  | 'not_ready'               // the WhatsApp Web page is not connected
+  | 'web_calling_disabled'    // WhatsApp Web's calling UI gate is off for this account
+  | 'voip_stack_unavailable'  // no voip stack, or not the in-browser one
+  | 'module_missing'          // a WhatsApp Web module the call recipes need is gone (WhatsApp changed)
+  | 'hooks_missing'           // our call-media hooks are not on this document (the init script did not run, or failed)
+  | 'not_prepared'            // the hooks are here, but the page setup (the microphone permission) has not succeeded
+  | 'page_error';             // the probe itself failed, or reported something this side does not know
+
+export interface CallMediaSupport {
+  supported: boolean;
+  reasons: CallMediaUnsupportedReason[];
+  /** WhatsApp Web build, when known. */
+  waVersion?: string | null;
+}
+
+/**
+ * Call-media primitives of an engine that runs WhatsApp Web in a browser (whatsapp-web.js only).
+ * Every method that takes a call id refuses another one: answer, hangUp, playAnnouncement and startRecording
+ * act on WhatsApp's ACTIVE call only; stopRecording stops only the recording of that call (also after it ended).
+ * Every method runs in the browser page, and on a hung page any of them can wait up to puppeteer's protocol timeout
+ * (the adapter sets 240 s), whatever deadline it has inside the page: the coordinator puts its own deadline around
+ * these calls.
+ */
+export interface CallMediaEngine {
+  getSupport(): Promise<CallMediaSupport>;
+  /**
+   * Answer the ringing call; resolves once it is connected, rejects when it is not ringing or does not connect in
+   * time. WhatsApp's accept cannot be cancelled, so a call can still connect AFTER this rejected "did not connect in
+   * time". After that rejection the caller MUST call `hangUp(callId)`, ignore its error, and release the call.
+   * It does not refuse a video call: this engine is voice-only and never looks at the call type, so the coordinator
+   * decides which calls to answer.
+   */
+  answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }>;
+  /** End the call the way WhatsApp Web's End button does; rejects when the voip stack does not end it in time (10 s). */
+  hangUp(callId: string): Promise<void>;
+  /**
+   * Play audio to the caller through the call's microphone; the agent input is held silent meanwhile. One
+   * announcement at a time: a second one rejects ("Announcement already playing") and leaves the first alone. One that
+   * has not ended 5 s after its own length (a suspended or torn-down audio context never reaches the end) rejects
+   * ("Announcement did not finish"), is cut off, and gives the agent input back. The line is free again either way.
+   */
+  playAnnouncement(callId: string, audio: Buffer): Promise<{ durationMs: number }>;
+  /**
+   * Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in
+   * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.
+   * A recording ends with its call: it stops by itself 250-500 ms after its call is over (WhatsApp's active call is
+   * another call or none, or the engine's call tracking reported the call ended), so it never records the next call.
+   * That is a backstop: stop a recording when its call is reported `ended`, and never start one for a call that was.
+   * `stopRecording(callId)` is still required, to collect the last chunks, get `durationMs`, and free the slot (a
+   * start before that rejects "Already recording"). A recorder that fails stops the same way, and stopRecording then
+   * rejects.
+   * onChunk must not throw: a chunk it refuses is lost, and stopRecording reports the loss. The engine logs one
+   * warning (never audio) when it had to guess which stream is the caller; the left channel is then in doubt.
+   * A start that rejects may still have begun recording in the page (it timed out in Node after the page began). Then
+   * the caller MUST call `stopRecording(callId)`, ignore its error, before the next start, and discard the chunks that
+   * start received: they are not a recording. The exception depends on the caller's OWN state, never on the error text:
+   * while it holds a running recording of this call (an earlier start that resolved and was not stopped), a rejected
+   * second start must NOT be followed by a stop, which would end that recording. (The page says "Already recording"
+   * for an orphan recorder too, and there the stop is the cure.) Chunks are routed by call id, so another call's audio
+   * never reaches onChunk; a later recording of the SAME call, after a stop that failed, may begin with the last
+   * chunks of the earlier attempt.
+   */
+  startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void>;
+  /**
+   * Stop recording; resolves after the last chunk was delivered, with `durationMs` up to the moment the recorder
+   * stopped (for one that ended with its call: 250-500 ms after the call ended, not this later stop). Rejects when the
+   * recorder failed or chunks were lost (the message says which, and how many of how many; both are reported
+   * together); the recorder is freed either way. ANY rejection can mean an incomplete recording, not only those:
+   * "Not recording" after a page reload, "Client not ready", a puppeteer error after the browser closed. Treat the
+   * file as partial. A stop never overtakes its own start: one that arrives while the start still runs waits for it.
+   * It needs no WhatsApp readiness, so it also works after a disconnect, while the page still holds the recorder.
+   */
+  stopRecording(callId: string): Promise<{ durationMs: number }>;
+}
+
 /**
  * Base interface for WhatsApp engines
  * All engine adapters must implement this interface
@@ -224,6 +306,8 @@ export interface IWhatsAppEngine {
    * no call-link API; rejects when the client is not ready or WhatsApp returns no link.
    */
   createCallLink(type: CallLinkType): Promise<string | null>;
+  /** Call media, when this engine has it AND the server switch is on; undefined otherwise (Baileys, mock). */
+  callMedia?: CallMediaEngine;
 
   // QR Code
   getQRCode(): Promise<string | null>;

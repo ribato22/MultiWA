@@ -233,6 +233,21 @@ describe('the engine call callbacks', () => {
   });
 });
 
+// The server switch for answering calls in the dashboard: only the exact string 'true' launches WhatsApp Web with
+// the call-media hooks.
+describe('the call media server switch', () => {
+  it.each([
+    [undefined, false],
+    ['false', false],
+    ['1', false],
+    ['true', true],
+  ])('CALLS_MEDIA_ENABLED=%s hands the engine callMedia.enabled=%s', async (value, enabled) => {
+    vi.stubEnv('CALLS_MEDIA_ENABLED', value);
+    const { config } = await connect();
+    expect(config.callMedia).toEqual({ enabled });
+  });
+});
+
 describe('the boot sweep of calls left ringing', () => {
   async function boot() {
     const ctx = make();
