@@ -24,6 +24,11 @@ export interface EngineConfig {
    * reports one only for a call it reported `ringing` since the last disconnect, with its `callId`.
    */
   onCallLog?: (entry: CallLogEntry) => void;
+  /**
+   * Call media (answering calls from the dashboard). Set from the SERVER switch CALLS_MEDIA_ENABLED,
+   * never per profile: it changes how the browser is launched, which only takes effect at launch.
+   */
+  callMedia?: { enabled: boolean };
 }
 
 /**
@@ -178,6 +183,39 @@ export interface RecentChat {
   messages: RecentChatMessage[];
 }
 
+/** Why an engine cannot carry call audio right now. */
+export type CallMediaUnsupportedReason =
+  | 'not_ready'               // the WhatsApp Web page is not connected
+  | 'web_calling_disabled'    // WhatsApp Web's calling UI gate is off for this account
+  | 'voip_stack_unavailable'  // no voip stack, or not the in-browser one
+  | 'module_missing'          // a WhatsApp Web module the call recipes need is gone (WhatsApp changed)
+  | 'page_error';             // the probe itself failed
+
+export interface CallMediaSupport {
+  supported: boolean;
+  reasons: CallMediaUnsupportedReason[];
+  /** WhatsApp Web build, when known. */
+  waVersion?: string | null;
+}
+
+/**
+ * Call-media primitives of an engine that runs WhatsApp Web in a browser (whatsapp-web.js only).
+ * Every method acts on WhatsApp's ACTIVE call and refuses another call id.
+ */
+export interface CallMediaEngine {
+  getSupport(): Promise<CallMediaSupport>;
+  /** Answer the ringing call; resolves once it is connected, rejects when it is not ringing or does not connect in time. */
+  answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }>;
+  /** End the call the way WhatsApp Web's End button does. */
+  hangUp(callId: string): Promise<void>;
+  /** Play audio to the caller through the call's microphone; the agent input is held silent meanwhile. */
+  playAnnouncement(callId: string, audio: Buffer): Promise<{ durationMs: number }>;
+  /** Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in order. */
+  startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void>;
+  /** Stop recording; resolves after the last chunk was delivered. */
+  stopRecording(callId: string): Promise<{ durationMs: number }>;
+}
+
 /**
  * Base interface for WhatsApp engines
  * All engine adapters must implement this interface
@@ -224,6 +262,8 @@ export interface IWhatsAppEngine {
    * no call-link API; rejects when the client is not ready or WhatsApp returns no link.
    */
   createCallLink(type: CallLinkType): Promise<string | null>;
+  /** Call media, when this engine has it AND the server switch is on; undefined otherwise (Baileys, mock). */
+  callMedia?: CallMediaEngine;
 
   // QR Code
   getQRCode(): Promise<string | null>;
