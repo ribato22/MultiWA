@@ -674,6 +674,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     const engineConfig: EngineConfig = {
       profileId,
       sessionDir,
+      // Server switch, default off: launches WhatsApp Web with call-media hooks (dashboard answering, phase 2).
+      callMedia: { enabled: process.env.CALLS_MEDIA_ENABLED === 'true' },
       onQR: async (qr: string) => {
         this.logger.log(`QR code received for profile ${profileId}`);
         // A QR means the page loaded and WhatsApp is waiting for a human: not a hang.
