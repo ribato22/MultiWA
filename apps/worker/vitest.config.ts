@@ -23,7 +23,7 @@ export default defineConfig({
       // so messages.service.ts and rule-engine.service.ts (85 branches, mostly untested)
       // were invisible to this number and it read 86%. The specs that pin the "a send that
       // did not happen is never sent" fixes import them for real: branches read 57.5%,
-      // while lines/statements went 22% -> 41%. 50 leaves room for the Node 20 CI run.
+      // while lines/statements went 22% -> 41%. 50 leaves room for the Node 24 CI run.
       thresholds: {
         lines: 20,
         statements: 20,
