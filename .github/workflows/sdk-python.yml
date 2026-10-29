@@ -23,7 +23,8 @@ permissions:
 jobs:
   test:
     name: Python ${{ matrix.python }}
-    runs-on: ubuntu-latest
+    # actions/python-versions builds 3.9 (EOL) for Ubuntu 22.04/24.04 only, not for ubuntu-latest (26.04).
+    runs-on: ${{ matrix.python == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
