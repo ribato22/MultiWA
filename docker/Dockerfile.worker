@@ -38,6 +38,9 @@ COPY packages/engine-runtime ./packages/engine-runtime
 COPY packages/sdk ./packages/sdk
 COPY tsconfig.json ./tsconfig.json
 
+# puppeteer >= 20 reads PUPPETEER_SKIP_DOWNLOAD; the engine uses the system Chromium, so skip its ~600 MB Chrome download.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 # Install dependencies
 RUN pnpm install --frozen-lockfile --filter @multiwa/worker...
 
@@ -99,6 +102,9 @@ COPY --from=builder /app/packages/database/package.json ./packages/database/
 COPY --from=builder /app/packages/engines/package.json ./packages/engines/
 COPY --from=builder /app/packages/engine-runtime/package.json ./packages/engine-runtime/
 
+# puppeteer >= 20 reads PUPPETEER_SKIP_DOWNLOAD; the engine uses the system Chromium, so skip its ~600 MB Chrome download.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 # Install production dependencies only
 RUN pnpm install --frozen-lockfile --prod --filter @multiwa/worker...
 
@@ -121,7 +127,6 @@ ENV NODE_ENV=production
 ENV SESSIONS_PATH=/data/sessions
 ENV SESSIONS_DIR=/data/sessions
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV WORKER_HEALTH_PORT=3002
 
 WORKDIR /app/apps/worker

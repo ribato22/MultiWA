@@ -31,6 +31,9 @@ COPY apps/admin/package.json ./apps/admin/
 COPY packages/chatwoot-bridge/package.json ./packages/chatwoot-bridge/
 COPY packages/n8n-nodes-multiwa/package.json ./packages/n8n-nodes-multiwa/
 
+# puppeteer >= 20 reads PUPPETEER_SKIP_DOWNLOAD; the engine uses the system Chromium, so skip its ~600 MB Chrome download.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 # Install dependencies (allow lockfile updates for missing deps)
 RUN pnpm install --frozen-lockfile --filter @multiwa/api...
 
@@ -123,6 +126,9 @@ COPY --from=builder /app/apps/admin/package.json ./apps/admin/package.json
 COPY --from=builder /app/packages/chatwoot-bridge/package.json ./packages/chatwoot-bridge/package.json
 COPY --from=builder /app/packages/n8n-nodes-multiwa/package.json ./packages/n8n-nodes-multiwa/package.json
 
+# puppeteer >= 20 reads PUPPETEER_SKIP_DOWNLOAD; the engine uses the system Chromium, so skip its ~600 MB Chrome download.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 # Install production dependencies in runner
 RUN pnpm install --frozen-lockfile --prod --filter @multiwa/api...
 
@@ -166,7 +172,6 @@ ENV NODE_ENV=production
 ENV SESSIONS_PATH=/data/sessions
 # Point Puppeteer to system Chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 EXPOSE 3333
 
