@@ -219,12 +219,15 @@ export interface CallMediaEngine {
   /**
    * Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in
    * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.
-   * onChunk must not throw: a chunk it refuses is lost, and stopRecording reports the loss.
+   * onChunk must not throw: a chunk it refuses is lost, and stopRecording reports the loss. The engine logs one
+   * warning (never audio) when it had to guess which stream is the caller; the left channel is then in doubt.
    */
   startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void>;
   /**
    * Stop recording; resolves after the last chunk was delivered. Rejects when chunks were lost (the message says
-   * how many of how many: the file is partial); the recording is stopped either way.
+   * how many of how many: the file is partial); the recording is stopped either way. A stop never overtakes its own
+   * start: one that arrives while the start still runs waits for it. It needs no WhatsApp readiness, so it also
+   * works after a disconnect, while the page still holds the recorder.
    */
   stopRecording(callId: string): Promise<{ durationMs: number }>;
 }

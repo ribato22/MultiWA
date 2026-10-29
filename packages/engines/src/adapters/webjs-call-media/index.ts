@@ -3,7 +3,8 @@
 //
 // Thin wrapper: every method runs one function of ./page inside the profile's WhatsApp Web page, and those
 // functions check the call id themselves. The wrapper owns one piece of state: the recording slot (which sink gets
-// the chunks). Only used when EngineConfig.callMedia.enabled (the server switch CALLS_MEDIA_ENABLED).
+// the chunks, and the start in progress, so a stop can wait for it). Only used when EngineConfig.callMedia.enabled
+// (the server switch CALLS_MEDIA_ENABLED).
 import type { CallMediaEngine, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
 import {
   installCallMediaHooks,
@@ -44,7 +45,7 @@ const HANG_UP_TIMEOUT_MS = 10_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const RECORDING_TIMESLICE_MS = 5_000;
 const KNOWN_REASONS: ReadonlySet<string> = new Set(['web_calling_disabled', 'voip_stack_unavailable', 'module_missing', 'hooks_missing']);
-const clean = (s: string) => String(s).replace(/[\r\n]/g, '');
+const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 
 export class WebJsCallMedia implements CallMediaEngine {
   /**
@@ -56,8 +57,11 @@ export class WebJsCallMedia implements CallMediaEngine {
    * next call looks again.
    */
   private readonly bindings = new WeakMap<object, Promise<void>>();
-  /** The recording in progress and its sink. The binding delivers to whatever this holds. */
-  private recording: { callId: string; onChunk: (chunk: Buffer) => void } | null = null;
+  /**
+   * The recording in progress and its sink. The binding delivers to whatever this holds. `started` settles when
+   * the start does (bound, and the in-page recorder running, or failed): a stop waits for it.
+   */
+  private recording: { callId: string; onChunk: (chunk: Buffer) => void; started: Promise<void> } | null = null;
   /** The probe error logged last: a probe that keeps failing the same way logs once. */
   private probeError: string | null = null;
 
@@ -114,27 +118,49 @@ export class WebJsCallMedia implements CallMediaEngine {
     return this.requirePage().evaluate(playAnnouncementInPage, callId, audio.toString('base64'));
   }
 
-  /** Takes the recording slot before the first await, and frees it only when this start fails. */
+  /**
+   * Takes the recording slot before the first await, with the start itself on it (`started`), and frees the slot
+   * only when this start fails. Warns once when the caller's tap was a guess (more than one fresh candidate, or the
+   * fallback to an older tap): the recording's left channel may then not be the caller. No audio is logged.
+   */
   async startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void> {
     const page = this.requirePage();
     if (this.recording) throw new Error('Already recording');
-    const slot = { callId, onChunk };
+    const started = (async () => {
+      await this.bindRecording(page);
+      const r: Awaited<ReturnType<typeof startRecordingInPage>> = await page.evaluate(startRecordingInPage, callId, RECORDING_TIMESLICE_MS);
+      if (r.freshCandidates > 1 || r.fallback) {
+        console.warn(
+          `[WhatsApp-WebJS] Call ${clean(callId)} for profile ${clean(this.profileId)}: the caller audio tap is a guess ` +
+            `(${clean(r.freshCandidates)} fresh candidates, older tap used: ${clean(r.fallback)}, via ${clean(r.callerVia)}); ` +
+            `the recording's left channel may not be the caller`,
+        );
+      }
+    })();
+    const slot = { callId, onChunk, started }; // no await between the start above and this line
     this.recording = slot;
     try {
-      await this.bindRecording(page);
-      await page.evaluate(startRecordingInPage, callId, RECORDING_TIMESLICE_MS);
+      await started;
     } catch (e) {
       if (this.recording === slot) this.recording = null;
       throw e;
     }
   }
 
-  /** Frees the slot whatever happens, so a failed stop never blocks the next recording. */
+  /**
+   * A stop never overtakes its own start: it waits for the start to settle, because the in-page recorder exists only
+   * once the start succeeded (after a failed start it is a plain "Not recording"). It needs a page but no WhatsApp
+   * readiness: after a `disconnected` event the page can still hold our recorder. Frees the slot whatever happens, so
+   * a failed stop never blocks the next recording.
+   */
   async stopRecording(callId: string): Promise<{ durationMs: number }> {
     const slot = this.recording;
     if (slot && slot.callId !== callId) throw new Error('Not recording this call');
     try {
-      return await this.requirePage().evaluate(stopRecordingInPage, callId);
+      await slot?.started.catch(() => undefined);
+      const page = this.page();
+      if (!page) throw new Error('Client not ready');
+      return await page.evaluate(stopRecordingInPage, callId);
     } finally {
       if (this.recording === slot) this.recording = null;
     }
@@ -164,7 +190,9 @@ export class WebJsCallMedia implements CallMediaEngine {
   private async exposeRecording(page: any): Promise<void> {
     try {
       await page.exposeFunction('__mwRecordingChunk', (b64: string) => {
-        this.recording?.onChunk(Buffer.from(b64, 'base64'));
+        // No slot, no sink: a chunk that returned normally would count as delivered. Throwing makes the page count it as lost.
+        if (!this.recording) throw new Error('No recording in progress');
+        this.recording.onChunk(Buffer.from(b64, 'base64'));
       });
     } catch (e) {
       // "already exists": an earlier attempt failed after puppeteer took the name, so it still holds our binding

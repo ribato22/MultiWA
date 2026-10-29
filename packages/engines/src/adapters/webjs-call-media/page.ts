@@ -3,8 +3,9 @@
 //
 // Every function runs INSIDE the browser page (page.evaluate / evaluateOnNewDocument), so each one is
 // self-contained: no imports, no closures over module scope. That is why each per-call function repeats the same
-// one-line call-id guard. The engines target (ES2021) keeps them free of TypeScript helpers;
-// webjs-call-media.spec.ts asserts that. The interfaces below are types only, erased at compile time.
+// one-line call-id guard. The engines target (ES2021) keeps them free of TypeScript helpers (a downlevel helper
+// would not exist in the page): the browser spec runs the page functions stringified, as puppeteer sends them, and
+// the unit spec checks the init script. The interfaces below are types only, erased at compile time.
 //
 // The recipes are WhatsApp Web's own: the Accept and End buttons
 // (useWAWebVoipCallHandlers) and its playback routes (WAWebVoipAudioPlayback*). Proven live in spike B and
@@ -31,6 +32,19 @@ export interface MwTap {
 }
 
 /**
+ * How callerTap chose its tap: the tripwire for a wrong pick. A normal call has exactly ONE fresh candidate, the
+ * playback of the caller; anything else means the pick was a guess.
+ */
+export interface MwTapPick {
+  /** The chosen tap was noted after the answer started (`seq > answeredAfter`). */
+  fresh: boolean;
+  /** In-use taps that are not ours and were noted after the answer, when the choice was made; more than one is ambiguous. */
+  freshCandidates: number;
+  /** No tap of this call turned up within the wait: an older one that is still in use was taken. */
+  fallback: boolean;
+}
+
+/**
  * `window.__mwCall`, published by installCallMediaHooks once all its hooks are in place: the state the page
  * functions share, and the API PR 2's page peer builds on (it sends `await callerTap(5000)` to the agent and feeds
  * `inputs.agent`).
@@ -45,11 +59,13 @@ export interface MwCall {
   noted: number;
   /**
    * The caller's voice: the newest in-use tap that is not ours, preferring one noted after the answer started
-   * (`answeredAfter`). WhatsApp Web starts its playback only once the call connects, so this waits up to `waitMs` for
-   * such a tap, then takes the newest in-use one; null when there is none. The recorder uses it, and so will PR 2's
-   * attachCaller.
+   * (`answeredAfter`). WhatsApp Web starts playing the caller right after `acceptCall`, before the call reads as
+   * connected (live: the tap was noted about 40 ms after the accept), and `answeredAfter` is recorded before the
+   * accept, so that tap counts as noted after the answer. This waits up to `waitMs` for such a tap, then takes the
+   * newest in-use one; null when there is none. The recorder uses it, and so will PR 2's attachCaller. The tap
+   * comes as a copy with how it was chosen (MwTapPick).
    */
-  callerTap(waitMs: number): Promise<MwTap | null>;
+  callerTap(waitMs: number): Promise<(MwTap & MwTapPick) | null>;
   /** `noted` when answerActiveCall last started an answer: the taps with a higher `seq` belong to the current call. */
   answeredAfter?: number;
   /** The injected microphone, created by ensure(): every audio-only getUserMedia gets a clone of `dest`'s track. */
@@ -98,10 +114,14 @@ export function installCallMediaHooks(): void {
     announcing: false,
     realGetUserMedia: md.getUserMedia.bind(md),
     async callerTap(waitMs: number) {
-      const pick = (after: number) => call.taps.filter((t) => t.seq > after && !(t.stream as any).__mwOwn && inUse(t)).pop() ?? null;
+      const candidates = (after: number) => call.taps.filter((t) => t.seq > after && !(t.stream as any).__mwOwn && inUse(t));
       const end = Date.now() + waitMs;
-      while (!pick(call.answeredAfter ?? 0) && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
-      return pick(call.answeredAfter ?? 0) ?? pick(0);
+      while (!candidates(call.answeredAfter ?? 0).length && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+      const after = call.answeredAfter ?? 0;
+      const fresh = candidates(after);
+      const tap = fresh[fresh.length - 1] ?? candidates(0).pop();
+      if (!tap) return null;
+      return { ...tap, fresh: tap.seq > after, freshCandidates: fresh.length, fallback: tap.seq <= after };
     },
     ensure() {
       if (!call.ctx) {
@@ -325,17 +345,20 @@ export async function playAnnouncementInPage(callId: string, b64: string): Promi
 /**
  * Record the call `callId`: left = the caller (callerTap), right = what the caller hears (the injected
  * microphone). WebM/Opus chunks, in order, go to the page binding `__mwRecordingChunk`. One recorder at a time,
- * also for starts that overlap while they wait for a caller tap. A chunk the binding fails to take is counted and
- * skipped; the later ones are still delivered, and stopRecordingInPage reports the loss.
+ * also for starts that overlap while they wait for a caller tap. The call-id guard runs again after that wait: a
+ * call that ended meanwhile is refused, not recorded on whatever tap was left. A chunk the binding fails to take is
+ * counted and skipped; the later ones are still delivered, and stopRecordingInPage reports the loss.
+ * Resolves with how the caller's tap was chosen (MwTapPick, see callerTap): the wrapper warns when it was a guess.
  */
-export async function startRecordingInPage(callId: string, timesliceMs: number): Promise<{ callerVia: string }> {
+export async function startRecordingInPage(callId: string, timesliceMs: number): Promise<{ callerVia: string } & MwTapPick> {
   const w = window as any;
-  const c = w.require('WAWebCallCollection').activeCall;
-  if (!c || String(c.id) !== callId || (w._multiwaCallId && w._multiwaCallId !== callId)) throw new Error('Call is not the active call');
+  const ours = () => { const c = w.require('WAWebCallCollection').activeCall; return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId); };
+  if (!ours()) throw new Error('Call is not the active call');
   if (typeof w.__mwRecordingChunk !== 'function') throw new Error('Recording binding missing');
   const call: MwCall = w.__mwCall.ensure();
   if (call.recorder) throw new Error('Already recording');
   const tap = await call.callerTap(5000);
+  if (!ours()) throw new Error('Call is not the active call'); // it ended, or another call took its place, during the wait
   if (!tap) throw new Error('No caller audio to record');
   // The recorder is claimed below, synchronously; another start may have claimed it while this one waited for a tap.
   if (call.recorder) throw new Error('Already recording');
@@ -380,7 +403,7 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
   });
   done.catch(() => {}); // stopRecordingInPage reports it; a recorder that stops by itself must not log an unhandled rejection
   call.recorder = { callId, mr, startedAt: Date.now(), nodes, done };
-  return { callerVia: tap.via };
+  return { callerVia: tap.via, fresh: tap.fresh, freshCandidates: tap.freshCandidates, fallback: tap.fallback };
 }
 
 /**
