@@ -1,8 +1,9 @@
 // MultiWA Gateway - call media for the whatsapp-web.js engine (Node side)
 // packages/engines/src/adapters/webjs-call-media/index.ts
 //
-// Thin wrapper: every method runs one function of ./page inside the profile's WhatsApp Web page. Only used
-// when EngineConfig.callMedia.enabled (the server switch CALLS_MEDIA_ENABLED).
+// Thin wrapper: every method runs one function of ./page inside the profile's WhatsApp Web page, and those
+// functions check the call id themselves. The wrapper owns one piece of state: the recording slot (which sink gets
+// the chunks). Only used when EngineConfig.callMedia.enabled (the server switch CALLS_MEDIA_ENABLED).
 import type { CallMediaEngine, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
 import {
   installCallMediaHooks,
@@ -10,13 +11,13 @@ import {
   probeCallMedia,
   answerActiveCall,
   hangUpActiveCall,
-  isActiveCall,
   playAnnouncementInPage,
   startRecordingInPage,
   stopRecordingInPage,
 } from './page';
 
-export * from './page';
+/** The in-page functions, under a namespace: they only work inside the page (page.evaluate), never in Node. */
+export * as callMediaPage from './page';
 
 /**
  * Chrome flags for call media:
@@ -39,8 +40,10 @@ export const CALL_MEDIA_CHROME_ARGS = [
 export const CALL_MEDIA_INIT_SCRIPT = `(${installCallMediaHooks.toString()})();`;
 
 const DEFAULT_ANSWER_TIMEOUT_MS = 15_000;
+const HANG_UP_TIMEOUT_MS = 10_000;
+const PROBE_TIMEOUT_MS = 5_000;
 const RECORDING_TIMESLICE_MS = 5_000;
-const KNOWN_REASONS: ReadonlySet<string> = new Set(['web_calling_disabled', 'voip_stack_unavailable', 'module_missing']);
+const KNOWN_REASONS: ReadonlySet<string> = new Set(['web_calling_disabled', 'voip_stack_unavailable', 'module_missing', 'hooks_missing']);
 const clean = (s: string) => String(s).replace(/[\r\n]/g, '');
 
 export class WebJsCallMedia implements CallMediaEngine {
@@ -53,7 +56,10 @@ export class WebJsCallMedia implements CallMediaEngine {
    * next call looks again.
    */
   private readonly bindings = new WeakMap<object, Promise<void>>();
-  private onChunk: ((chunk: Buffer) => void) | null = null;
+  /** The recording in progress and its sink. The binding delivers to whatever this holds. */
+  private recording: { callId: string; onChunk: (chunk: Buffer) => void } | null = null;
+  /** The probe error logged last: a probe that keeps failing the same way logs once. */
+  private probeError: string | null = null;
 
   /** @param page returns the current puppeteer Page (it changes when the engine relaunches) */
   constructor(
@@ -81,10 +87,15 @@ export class WebJsCallMedia implements CallMediaEngine {
     const page = this.page();
     if (!page || !this.isReady()) return { supported: false, reasons: ['not_ready'] };
     try {
-      const r = await page.evaluate(probeCallMedia);
-      const reasons = r.reasons.filter((x: string) => KNOWN_REASONS.has(x)) as CallMediaUnsupportedReason[];
+      const r = await page.evaluate(probeCallMedia, PROBE_TIMEOUT_MS);
+      this.probeError = null;
+      // fail closed: a reason this side does not know must never read as supported
+      const reasons = [...new Set<string>(r.reasons.map((x: string) => (KNOWN_REASONS.has(x) ? x : 'page_error')))] as CallMediaUnsupportedReason[];
       return { supported: reasons.length === 0, reasons, waVersion: r.waVersion };
-    } catch {
+    } catch (e) {
+      const msg = clean((e as Error)?.message ?? String(e));
+      if (msg !== this.probeError) console.warn(`[WhatsApp-WebJS] call media probe for profile ${this.profileId} failed: ${msg}`);
+      this.probeError = msg;
       return { supported: false, reasons: ['page_error'] };
     }
   }
@@ -96,43 +107,42 @@ export class WebJsCallMedia implements CallMediaEngine {
   }
 
   async hangUp(callId: string): Promise<void> {
-    await this.requirePage().evaluate(hangUpActiveCall, callId);
+    await this.requirePage().evaluate(hangUpActiveCall, callId, HANG_UP_TIMEOUT_MS);
   }
 
   async playAnnouncement(callId: string, audio: Buffer): Promise<{ durationMs: number }> {
-    const page = await this.activePage(callId);
-    return page.evaluate(playAnnouncementInPage, audio.toString('base64'));
+    return this.requirePage().evaluate(playAnnouncementInPage, callId, audio.toString('base64'));
   }
 
+  /** Takes the recording slot before the first await, and frees it only when this start fails. */
   async startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void> {
-    const page = await this.activePage(callId);
-    await this.bindRecording(page);
-    this.onChunk = onChunk;
+    const page = this.requirePage();
+    if (this.recording) throw new Error('Already recording');
+    const slot = { callId, onChunk };
+    this.recording = slot;
     try {
-      await page.evaluate(startRecordingInPage, RECORDING_TIMESLICE_MS);
+      await this.bindRecording(page);
+      await page.evaluate(startRecordingInPage, callId, RECORDING_TIMESLICE_MS);
     } catch (e) {
-      this.onChunk = null;
+      if (this.recording === slot) this.recording = null;
       throw e;
     }
   }
 
-  async stopRecording(_callId: string): Promise<{ durationMs: number }> {
+  /** Frees the slot whatever happens, so a failed stop never blocks the next recording. */
+  async stopRecording(callId: string): Promise<{ durationMs: number }> {
+    const slot = this.recording;
+    if (slot && slot.callId !== callId) throw new Error('Not recording this call');
     try {
-      return await this.requirePage().evaluate(stopRecordingInPage);
+      return await this.requirePage().evaluate(stopRecordingInPage, callId);
     } finally {
-      this.onChunk = null;
+      if (this.recording === slot) this.recording = null;
     }
   }
 
   private requirePage(): any {
     const page = this.page();
     if (!page || !this.isReady()) throw new Error('Client not ready');
-    return page;
-  }
-
-  private async activePage(callId: string): Promise<any> {
-    const page = this.requirePage();
-    if (!(await page.evaluate(isActiveCall, callId))) throw new Error('Call is not the active call');
     return page;
   }
 
@@ -154,7 +164,7 @@ export class WebJsCallMedia implements CallMediaEngine {
   private async exposeRecording(page: any): Promise<void> {
     try {
       await page.exposeFunction('__mwRecordingChunk', (b64: string) => {
-        this.onChunk?.(Buffer.from(b64, 'base64'));
+        this.recording?.onChunk(Buffer.from(b64, 'base64'));
       });
     } catch (e) {
       // "already exists": an earlier attempt failed after puppeteer took the name, so it still holds our binding

@@ -3,32 +3,31 @@
 // replaced by small fakes:
 // - acceptCall connects after 300 ms (or never, with `hangAccept`);
 // - getVoipStackInterface answers at once (or never, with `hangStack`, or only after a busy page, `stackBusyMs`);
-// - "WhatsApp's playback" is an oscillator connected to AudioContext.destination;
+// - "WhatsApp's playback" is a 440 Hz oscillator, connected to AudioContext.destination or played through an
+//   <audio> element (`playbackVia`), started at accept (or later by the test, with `autoPlayback` off);
 // - "WhatsApp's mic capture" is the getUserMedia it gets.
 // It proves the guards, the answer flow and its timeout (which also bounds the stack lookup and the accept),
-// that the injected mic carries the announcement (and holds the agent meanwhile, and gives the line back when
-// an announcement never ends), the stereo recording (L caller, R heard, checked by tone), one recorder at a
-// time, its recovery from a failed chunk delivery and the hang-up, without WhatsApp. Automated form of spike
-// B's selftest.mjs.
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+// the hang-up and probe deadlines, that the injected mic carries the announcement (and holds the agent
+// meanwhile, and gives the line back when an announcement never ends), the stereo recording (L caller, R heard,
+// checked by tone) through both taps and on a page that carried earlier calls, one recorder at a time, its
+// handling of failed chunk deliveries, and the real Node wrapper on its own page, without WhatsApp. Automated
+// form of spike B's selftest.mjs.
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import {
-  CALL_MEDIA_CHROME_ARGS,
-  CALL_MEDIA_INIT_SCRIPT,
-  answerActiveCall,
-  hangUpActiveCall,
-  playAnnouncementInPage,
-  probeCallMedia,
-  prepareCallMediaPage,
-  startRecordingInPage,
-  stopRecordingInPage,
-} from '@multiwa/engines';
+import { CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaPage } from '@multiwa/engines';
 
+const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..', '..');
 const engines = createRequire(path.join(REPO_ROOT, 'packages/engines/package.json'));
 const puppeteer = createRequire(engines.resolve('whatsapp-web.js'))('puppeteer');
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Polls `ok` until it holds or `ms` passed; returns whether it held. */
+const until = async (ok: () => boolean, ms: number) => {
+  for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await sleep(50);
+  return ok();
+};
 
 /** A 16-bit mono WAV of a sine tone: the announcement fixture, built here so no binary lives in git. */
 function sineWav(hz: number, seconds: number, rate = 16000): Buffer {
@@ -44,37 +43,65 @@ function sineWav(hz: number, seconds: number, rate = 16000): Buffer {
 /** Fake WhatsApp Web modules: only what the call recipes touch. */
 function installFakeWhatsApp() {
   const w = window as any;
-  const fake: any = (w.__fakeWa = { endCalls: [], gumStream: null, level: () => 0, hangAccept: false, connectAfterMs: 300, accepts: 0, hangStack: false, releaseStack: null, stackBusyMs: 0 });
+  const fake: any = (w.__fakeWa = {
+    endCalls: [], gumStream: null, level: () => 0, hangAccept: false, connectAfterMs: 300, connectTimer: null, accepts: 0,
+    hangStack: false, releaseStack: null, stackBusyMs: 0, autoPlayback: true, playbackVia: 'destination', playbacks: [],
+  });
   const call: any = { id: 'CALL1', state: 3, getState() { return this.state; } };
   const CC: any = { activeCall: call };
-  // The same call object rings again as `id` (for the tests that run after the hang-up).
-  fake.ring = (id: string) => { call.id = id; call.state = 3; CC.activeCall = call; w._multiwaCallId = id; };
-  let playback: any = null;
+  // The same call object rings again as `id` (for the tests that run after the hang-up), as a NEW call: a connect
+  // still pending from the old one must not connect it.
+  fake.ring = (id: string) => {
+    clearTimeout(fake.connectTimer);
+    call.id = id; call.state = 3; delete call.userEndedCall; CC.activeCall = call; w._multiwaCallId = id;
+  };
+  // WhatsApp's playback of the caller, 440 Hz, on either route WA Web picks: straight to the context's destination
+  // (tap B) or through an <audio> element's srcObject (tap A). `ctx` reuses a context, as WA Web may across calls.
+  fake.play = (via: string, ctx?: AudioContext) => {
+    ctx ??= new AudioContext();
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 440;
+    const p: any = { ctx, osc };
+    if (via === 'element') {
+      const out = ctx.createMediaStreamDestination();
+      osc.connect(out);
+      p.el = new Audio();
+      p.el.srcObject = out.stream;
+      p.el.play().catch(() => {});
+    } else {
+      osc.connect(ctx.destination);
+    }
+    osc.start();
+    fake.playbacks.push(p);
+    return p;
+  };
+  // The end of a call's media: WA Web stops its playback and closes its contexts.
+  fake.stopPlaybacks = async () => {
+    const ps = fake.playbacks.splice(0);
+    for (const p of ps) { try { p.osc.stop(); } catch {} if (p.el) p.el.srcObject = null; }
+    await Promise.all([...new Set(ps.map((p: any) => p.ctx))].map((ctx: any) => (ctx.state === 'closed' ? null : ctx.close())));
+  };
   const stack = {
     type: 'web',
     async acceptCall() {
       fake.accepts++;
       if (fake.hangAccept) return new Promise<void>(() => {}); // a voip stack that never answers
       call.state = 4;
-      // WhatsApp's playback (the caller): an oscillator to the destination, like the direct route.
-      const ctx = new AudioContext();
-      const osc = ctx.createOscillator();
-      osc.frequency.value = 440;
-      osc.connect(ctx.destination);
-      osc.start();
-      playback = { ctx, osc };
+      if (fake.autoPlayback) fake.play(fake.playbackVia);
       // WhatsApp's mic capture: it asks for the microphone like WAWebVoipAcquireMediaStream does.
       fake.gumStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
-      const an = ctx.createAnalyser();
-      ctx.createMediaStreamSource(fake.gumStream).connect(an);
+      fake.capture ??= new AudioContext();
+      const an = fake.capture.createAnalyser();
+      fake.capture.createMediaStreamSource(fake.gumStream).connect(an);
       const buf = new Float32Array(an.fftSize);
       fake.level = () => { an.getFloatTimeDomainData(buf); let s = 0; for (const v of buf) s += v * v; return Math.sqrt(s / buf.length); };
-      setTimeout(() => { call.state = 6; }, fake.connectAfterMs);
+      fake.connectTimer = setTimeout(() => { call.state = 6; }, fake.connectAfterMs);
     },
     async endCall(reason: number, flag: boolean) {
       fake.endCalls.push([reason, flag]);
       CC.activeCall = null;
-      playback?.osc.stop();
+      fake.gumStream?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+      await fake.stopPlaybacks();
     },
   };
   const modules: Record<string, any> = {
@@ -103,26 +130,50 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
   let server: Server;
   let browser: any;
   let page: any;
+  let url: string;
   const chunks: Buffer[] = [];
-  let failChunks = false; // the Node side of the recording binding throws while this is set
+  let deliveries = 0; // calls of the Node side of the recording binding
+  let failDelivery: (n: number) => boolean = () => false; // the binding throws on the deliveries this picks
+
+  /** A page with the fake WhatsApp Web and our hooks, like the engine's; no recording binding unless `beforeGoto` adds one. */
+  const openPage = async (beforeGoto?: (p: any) => Promise<void>) => {
+    const p = await browser.newPage();
+    await p.evaluateOnNewDocument(installFakeWhatsApp);
+    await p.evaluateOnNewDocument(CALL_MEDIA_INIT_SCRIPT);
+    await beforeGoto?.(p);
+    await p.goto(url);
+    await p.keyboard.press('Shift');
+    return p;
+  };
+
+  /** Levels and tones of a WebM recording, decoded in the browser: which tone sits in which channel. */
+  const analyze = (webm: Buffer) =>
+    page.evaluate(async (b64: string) => {
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const buf = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(bytes.buffer);
+      const rms = (x: Float32Array) => { let s = 0; for (const v of x) s += v * v; return Math.sqrt(s / x.length); };
+      // amplitude of one frequency (single-bin DFT), to tell WHICH tone sits in WHICH channel
+      const tone = (x: Float32Array, hz: number) => { const w = (2 * Math.PI * hz) / buf.sampleRate; let re = 0, im = 0; for (let i = 0; i < x.length; i++) { re += x[i] * Math.cos(w * i); im -= x[i] * Math.sin(w * i); } return Math.hypot(re, im) / x.length; };
+      const L = buf.getChannelData(0), R = buf.getChannelData(1);
+      return { channels: buf.numberOfChannels, left: rms(L), right: rms(R), l440: tone(L, 440), l660: tone(L, 660), r440: tone(R, 440), r660: tone(R, 660) };
+    }, webm.toString('base64'));
 
   beforeAll(async () => {
     server = createServer((_q, res) => res.end('<!doctype html><title>call media</title>')).listen(0, '127.0.0.1');
     await new Promise((r) => server.once('listening', r));
+    url = `http://127.0.0.1:${(server.address() as any).port}/`;
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: ['--no-sandbox', ...CALL_MEDIA_CHROME_ARGS],
     });
-    page = await browser.newPage();
-    await page.evaluateOnNewDocument(installFakeWhatsApp);
-    await page.evaluateOnNewDocument(CALL_MEDIA_INIT_SCRIPT);
-    await page.exposeFunction('__mwRecordingChunk', (b64: string) => {
-      if (failChunks) throw new Error('chunk sink down');
-      chunks.push(Buffer.from(b64, 'base64'));
-    });
-    await page.goto(`http://127.0.0.1:${(server.address() as any).port}/`);
-    await page.keyboard.press('Shift');
+    page = await openPage((p) =>
+      p.exposeFunction('__mwRecordingChunk', (b64: string) => {
+        deliveries++;
+        if (failDelivery(deliveries)) throw new Error('chunk sink down');
+        chunks.push(Buffer.from(b64, 'base64'));
+      }),
+    );
   }, 60_000);
 
   afterAll(async () => {
@@ -130,9 +181,17 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     server?.close();
   });
 
+  // A failed test must not leave a recorder running into the next one.
+  afterEach(async () => {
+    await page.evaluate(() => {
+      const c = (window as any).__mwCall;
+      if (c?.recorder) { c.recorder.mr.stop(); c.recorder.nodes.forEach((n: AudioNode) => n.disconnect()); c.recorder = null; }
+    });
+  });
+
   it('prepares the page and reports support', async () => {
     expect(await page.evaluate(prepareCallMediaPage)).toEqual({ hooks: true, micPermission: 'granted' });
-    expect(await page.evaluate(probeCallMedia)).toEqual({ reasons: [], waVersion: '2.3000.test' });
+    expect(await page.evaluate(probeCallMedia, 5000)).toEqual({ reasons: [], waVersion: '2.3000.test' });
   });
 
   it('refuses another call id, then answers the active call once it connects', async () => {
@@ -145,7 +204,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
   it('the announcement reaches the injected microphone, holds the agent meanwhile, and restores it after', async () => {
     const levels: number[] = [];
     const gains: number[] = [];
-    const playing = page.evaluate(playAnnouncementInPage, sineWav(660, 1.5).toString('base64'));
+    const playing = page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 1.5).toString('base64'));
     for (let i = 0; i < 8; i++) {
       await new Promise((r) => setTimeout(r, 150));
       levels.push(await page.evaluate(() => (window as any).__fakeWa.level()));
@@ -160,33 +219,37 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
 
   it('refuses a second announcement while one plays, and a failed announcement does not block the next', async () => {
     const gain = () => page.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value);
-    const first = page.evaluate(playAnnouncementInPage, sineWav(660, 1.5).toString('base64'));
+    const first = page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 1.5).toString('base64'));
     await new Promise((r) => setTimeout(r, 300));
-    await expect(page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64'))).rejects.toThrow('Announcement already playing');
+    await expect(page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 0.3).toString('base64'))).rejects.toThrow('Announcement already playing');
     expect(await gain()).toBe(0); // the refused one did not hand the line back to the agent early
     expect((await first).durationMs).toBe(1500);
     expect(await gain()).toBe(1);
     // not audio: decodeAudioData rejects, and the guard must be released all the same
-    await expect(page.evaluate(playAnnouncementInPage, Buffer.from('not audio').toString('base64'))).rejects.toThrow();
-    expect((await page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64'))).durationMs).toBe(300);
+    await expect(page.evaluate(playAnnouncementInPage, 'CALL1', Buffer.from('not audio').toString('base64'))).rejects.toThrow();
+    expect((await page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 0.3).toString('base64'))).durationMs).toBe(300);
+  });
+
+  it('an announcement gives the agent input back the gain it had, not full volume', async () => {
+    const gain = (v?: number) => page.evaluate((x?: number) => { const g = (window as any).__mwCall.inputs.agent.gain; if (x !== undefined) g.value = x; return g.value; }, v);
+    await gain(0.25); // the agent held low before the announcement
+    try {
+      await page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 0.3).toString('base64'));
+      expect(await gain()).toBe(0.25);
+    } finally {
+      await gain(1);
+    }
   });
 
   it('records stereo: the caller on the left, what the caller hears on the right', async () => {
-    expect(await page.evaluate(startRecordingInPage, 1000)).toEqual({ callerVia: 'destination' });
-    await page.evaluate(playAnnouncementInPage, sineWav(660, 2).toString('base64'));
-    const stop = await page.evaluate(stopRecordingInPage);
+    const from = chunks.length;
+    expect(await page.evaluate(startRecordingInPage, 'CALL1', 1000)).toEqual({ callerVia: 'destination' });
+    await page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 2).toString('base64'));
+    const stop = await page.evaluate(stopRecordingInPage, 'CALL1');
     expect(stop.durationMs).toBeGreaterThanOrEqual(1900);
-    const webm = Buffer.concat(chunks);
+    const webm = Buffer.concat(chunks.slice(from));
     expect(webm.subarray(0, 4).toString('hex')).toBe('1a45dfa3'); // EBML header
-    const ch = await page.evaluate(async (b64: string) => {
-      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const buf = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(bytes.buffer);
-      const rms = (x: Float32Array) => { let s = 0; for (const v of x) s += v * v; return Math.sqrt(s / x.length); };
-      // amplitude of one frequency (single-bin DFT), to tell WHICH tone sits in WHICH channel
-      const tone = (x: Float32Array, hz: number) => { const w = (2 * Math.PI * hz) / buf.sampleRate; let re = 0, im = 0; for (let i = 0; i < x.length; i++) { re += x[i] * Math.cos(w * i); im -= x[i] * Math.sin(w * i); } return Math.hypot(re, im) / x.length; };
-      const L = buf.getChannelData(0), R = buf.getChannelData(1);
-      return { channels: buf.numberOfChannels, left: rms(L), right: rms(R), l440: tone(L, 440), l660: tone(L, 660), r440: tone(R, 440), r660: tone(R, 660) };
-    }, webm.toString('base64'));
+    const ch = await analyze(webm);
     expect(ch.channels).toBe(2);
     expect(ch.left).toBeGreaterThan(0.05);  // the 440 Hz "caller"
     expect(ch.right).toBeGreaterThan(0.05); // the 660 Hz announcement the caller heard
@@ -195,19 +258,33 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
   });
 
   it('recovers from a failed chunk delivery: stopping clears the recorder, so the next recording starts', async () => {
-    failChunks = true;
+    failDelivery = () => true;
     try {
-      await page.evaluate(startRecordingInPage, 200);
+      await page.evaluate(startRecordingInPage, 'CALL1', 200);
       await new Promise((r) => setTimeout(r, 500));
-      await expect(page.evaluate(stopRecordingInPage)).rejects.toThrow('chunk sink down');
+      await expect(page.evaluate(stopRecordingInPage, 'CALL1')).rejects.toThrow('chunk sink down');
     } finally {
-      failChunks = false;
+      failDelivery = () => false;
     }
     const before = chunks.length;
-    expect(await page.evaluate(startRecordingInPage, 200)).toEqual({ callerVia: 'destination' }); // not "Already recording"
+    expect(await page.evaluate(startRecordingInPage, 'CALL1', 200)).toEqual({ callerVia: 'destination' }); // not "Already recording"
     await new Promise((r) => setTimeout(r, 500));
-    expect((await page.evaluate(stopRecordingInPage)).durationMs).toBeGreaterThanOrEqual(400);
+    expect((await page.evaluate(stopRecordingInPage, 'CALL1')).durationMs).toBeGreaterThanOrEqual(400);
     expect(chunks.length).toBeGreaterThan(before);
+  });
+
+  it('a failed chunk delivery loses only that chunk: the later ones still arrive, and stop reports the loss', async () => {
+    const lost = deliveries + 2; // the 2nd chunk of this recording
+    failDelivery = (n) => n === lost;
+    try {
+      await page.evaluate(startRecordingInPage, 'CALL1', 200);
+      await sleep(1200);
+      const stop = await page.evaluate(stopRecordingInPage, 'CALL1').then(() => 'resolved', (e: Error) => e.message);
+      expect(deliveries - lost).toBeGreaterThanOrEqual(2); // the chunks after the lost one went through
+      expect(stop).toMatch(/1 of \d+ recording chunks were not delivered: chunk sink down/);
+    } finally {
+      failDelivery = () => false;
+    }
   });
 
   it('refuses a second recording started before any caller audio exists: one recorder, the other is refused', async () => {
@@ -216,7 +293,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     await page.evaluate(() => { const c = (window as any).__mwCall; c.savedTaps = c.taps; c.taps = []; });
     const restoreTaps = () => page.evaluate(() => { const c = (window as any).__mwCall; c.taps = c.savedTaps; });
     try {
-      const both = Promise.allSettled([page.evaluate(startRecordingInPage, 1000), page.evaluate(startRecordingInPage, 1000)]);
+      const both = Promise.allSettled([page.evaluate(startRecordingInPage, 'CALL1', 1000), page.evaluate(startRecordingInPage, 'CALL1', 1000)]);
       await new Promise((r) => setTimeout(r, 200));
       await restoreTaps();
       const settled = await both;
@@ -224,16 +301,87 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(1);
       expect(refused).toHaveLength(1);
       expect(refused[0].reason?.message).toContain('Already recording');
-      expect((await page.evaluate(stopRecordingInPage)).durationMs).toBeGreaterThanOrEqual(0); // the one recorder stops cleanly
+      expect((await page.evaluate(stopRecordingInPage, 'CALL1')).durationMs).toBeGreaterThanOrEqual(0); // the one recorder stops cleanly
     } finally {
       await restoreTaps();
     }
   });
 
+  it('the media calls refuse another call id', async () => {
+    await expect(page.evaluate(playAnnouncementInPage, 'OTHER', sineWav(660, 0.3).toString('base64'))).rejects.toThrow('Call is not the active call');
+    await expect(page.evaluate(startRecordingInPage, 'OTHER', 1000)).rejects.toThrow('Call is not the active call');
+    expect(await page.evaluate(startRecordingInPage, 'CALL1', 1000)).toEqual({ callerVia: 'destination' });
+    await expect(page.evaluate(stopRecordingInPage, 'OTHER')).rejects.toThrow('Not recording this call');
+    expect((await page.evaluate(stopRecordingInPage, 'CALL1')).durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a node WhatsApp disconnects from the destination leaves the tap too, and disconnect keeps its native behaviour', async () => {
+    const r = await page.evaluate(async () => {
+      const ctx: any = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      const m = new AudioContext();
+      const an = m.createAnalyser();
+      m.createMediaStreamSource(ctx.__mwTap.stream).connect(an);
+      const buf = new Float32Array(an.fftSize);
+      const level = () => { an.getFloatTimeDomainData(buf); let s = 0; for (const v of buf) s += v * v; return Math.sqrt(s / buf.length); };
+      await new Promise((res) => setTimeout(res, 300));
+      const connected = level();
+      gain.disconnect(ctx.destination); // how a page mutes ONE node
+      await new Promise((res) => setTimeout(res, 400));
+      const disconnected = level();
+      let again = 'no error';
+      try { gain.disconnect(ctx.destination); } catch (e) { again = (e as Error).name; } // no such connection left: the native error
+      osc.stop();
+      await ctx.close();
+      await m.close();
+      return { connected, disconnected, again };
+    });
+    expect(r.connected).toBeGreaterThan(0.1);
+    expect(r.disconnected).toBeLessThan(0.01);
+    expect(r.again).toBe('InvalidAccessError');
+  });
+
   it('hangs up the way the End button does', async () => {
-    await expect(page.evaluate(hangUpActiveCall, 'OTHER')).rejects.toThrow('Call is not the active call');
-    await page.evaluate(hangUpActiveCall, 'CALL1');
+    await expect(page.evaluate(hangUpActiveCall, 'OTHER', 5000)).rejects.toThrow('Call is not the active call');
+    await page.evaluate(hangUpActiveCall, 'CALL1', 5000);
     expect(await page.evaluate(() => (window as any).__fakeWa.endCalls)).toEqual([[1, true]]);
+  });
+
+  it('bounds the hang-up by its timeout when the voip stack never answers, and touches nothing after it', async () => {
+    const state = () => page.evaluate(() => ({ ended: (window as any).__fakeWa.endCalls.length, userEndedCall: !!(window as any).require('WAWebCallCollection').activeCall?.userEndedCall }));
+    await page.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL2'); f.hangStack = true; });
+    const before = await state();
+    const t0 = Date.now();
+    try {
+      const outcome = await Promise.race([
+        page.evaluate(hangUpActiveCall, 'CALL2', 300).then(() => 'resolved', (e: Error) => e.message),
+        sleep(3000).then(() => 'still pending after 3 s'), // a hang is a failure, not a test timeout
+      ]);
+      expect(outcome).toContain('Call did not end in time');
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(await state()).toEqual({ ended: before.ended, userEndedCall: false }); // set only once the stack is in hand
+      await page.evaluate(() => (window as any).__fakeWa.releaseStack()); // the lookup answers late
+      await sleep(300);
+      expect(await state()).toEqual({ ended: before.ended, userEndedCall: false }); // and nothing ends after the deadline
+    } finally {
+      await page.evaluate(() => { const f = (window as any).__fakeWa; f.hangStack = false; f.releaseStack?.(); });
+    }
+  });
+
+  it('the probe reports voip_stack_unavailable at its deadline when the voip stack never answers', async () => {
+    await page.evaluate(() => { (window as any).__fakeWa.hangStack = true; });
+    const t0 = Date.now();
+    try {
+      const outcome = await Promise.race([page.evaluate(probeCallMedia, 300), sleep(3000).then(() => 'still pending after 3 s')]);
+      expect(outcome).toEqual({ reasons: ['voip_stack_unavailable'], waVersion: '2.3000.test' });
+      expect(Date.now() - t0).toBeLessThan(2000);
+    } finally {
+      await page.evaluate(() => { const f = (window as any).__fakeWa; f.hangStack = false; f.releaseStack?.(); });
+    }
   });
 
   it('gives up at the timeout when the call is accepted but never connects', async () => {
@@ -241,7 +389,8 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     try {
       await expect(page.evaluate(answerActiveCall, 'CALL2', 600)).rejects.toThrow('Call did not connect in time');
     } finally {
-      await page.evaluate(() => { (window as any).__fakeWa.connectAfterMs = 300; });
+      // the 60-s connect must not fire into a later test, and the fake caller's playback stops here
+      await page.evaluate(async () => { const f = (window as any).__fakeWa; f.connectAfterMs = 300; clearTimeout(f.connectTimer); await f.stopPlaybacks(); });
     }
   }, 15_000);
 
@@ -301,7 +450,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     try {
       const t0 = Date.now();
       const outcome = Promise.race([
-        page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64')).then(() => 'resolved', (e: Error) => e.message),
+        page.evaluate(playAnnouncementInPage, 'CALL3', sineWav(660, 0.3).toString('base64')).then(() => 'resolved', (e: Error) => e.message),
         new Promise<string>((r) => setTimeout(() => r('still pending after 9 s'), 9000)), // a hang is a failure, not a test timeout
       ]);
       await new Promise((r) => setTimeout(r, 1000));
@@ -312,6 +461,158 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     } finally {
       await page.evaluate(async () => { const ctx = (window as any).__mwCall.ctx; delete ctx.resume; await ctx.resume(); });
     }
-    expect((await page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64'))).durationMs).toBe(300);
+    expect((await page.evaluate(playAnnouncementInPage, 'CALL3', sineWav(660, 0.3).toString('base64'))).durationMs).toBe(300);
   }, 25_000);
+
+  it('without our hooks: the probe says hooks_missing, and the call is not answered', async () => {
+    await page.evaluate(() => { const w = window as any; w.__savedMwCall = w.__mwCall; delete w.__mwCall; w.__fakeWa.ring('CALL6'); w.__fakeWa.accepts = 0; });
+    try {
+      expect((await page.evaluate(probeCallMedia, 2000)).reasons).toEqual(['hooks_missing']);
+      // answering anyway would put Chrome's fake microphone (a beep) on the call
+      await expect(page.evaluate(answerActiveCall, 'CALL6', 2000)).rejects.toThrow('Call media hooks missing');
+      expect(await page.evaluate(() => (window as any).__fakeWa.accepts)).toBe(0);
+    } finally {
+      await page.evaluate(() => { const w = window as any; w.__mwCall = w.__savedMwCall; delete w.__savedMwCall; });
+    }
+  });
+
+  it('records the CURRENT call on a page that carried earlier calls (closed, leaked and reused playback contexts)', async () => {
+    await page.evaluate(async () => {
+      const f = (window as any).__fakeWa;
+      // the playbacks of earlier calls on this document:
+      f.reused = f.play('destination').ctx; // a context WhatsApp keeps, and reuses below for this call
+      for (let i = 0; i < 2; i++) { const { ctx } = f.play('destination'); await new Promise((r) => setTimeout(r, 100)); await ctx.close(); } // closed: Chrome keeps their tap tracks "live"
+      f.play('destination'); // left open
+      for (const p of f.playbacks) { try { p.osc.stop(); } catch {} } // the earlier calls ended: all silent now
+      f.ring('CALL4');
+      f.autoPlayback = false; // this call's playback starts late, below
+    });
+    try {
+      await page.evaluate(answerActiveCall, 'CALL4', 5000);
+      const from = chunks.length;
+      const started = page.evaluate(startRecordingInPage, 'CALL4', 500);
+      await sleep(200);
+      await page.evaluate(() => { const f = (window as any).__fakeWa; f.play('destination', f.reused); }); // this call's playback, in the reused context
+      expect(await started).toEqual({ callerVia: 'destination' });
+      await sleep(1500);
+      await page.evaluate(stopRecordingInPage, 'CALL4');
+      const ch = await analyze(Buffer.concat(chunks.slice(from)));
+      expect(ch.left).toBeGreaterThan(0.05); // the caller of THIS call, not the dead or silent tap of an earlier one
+      expect(ch.l440).toBeGreaterThan(0.1);
+      expect(ch.l440).toBeGreaterThan(ch.l660 * 5);
+      await page.evaluate(hangUpActiveCall, 'CALL4', 5000);
+    } finally {
+      await page.evaluate(async () => { const f = (window as any).__fakeWa; f.autoPlayback = true; delete f.reused; await f.stopPlaybacks(); });
+    }
+  });
+
+  it('records the caller when WhatsApp plays it through an <audio> element (tap A)', async () => {
+    await page.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL5'); f.playbackVia = 'element'; });
+    try {
+      await page.evaluate(answerActiveCall, 'CALL5', 5000);
+      const from = chunks.length;
+      expect(await page.evaluate(startRecordingInPage, 'CALL5', 500)).toEqual({ callerVia: 'element' });
+      await sleep(1500);
+      await page.evaluate(stopRecordingInPage, 'CALL5');
+      const ch = await analyze(Buffer.concat(chunks.slice(from)));
+      expect(ch.left).toBeGreaterThan(0.05);
+      expect(ch.l440).toBeGreaterThan(0.1);
+      expect(ch.l440).toBeGreaterThan(ch.l660 * 5);
+      await page.evaluate(hangUpActiveCall, 'CALL5', 5000);
+    } finally {
+      await page.evaluate(async () => { const f = (window as any).__fakeWa; f.playbackVia = 'destination'; await f.stopPlaybacks(); });
+    }
+  });
+
+  it('callerTap waits for a tap of the current call, and only then takes an older one still in use', async () => {
+    try {
+      const r = await page.evaluate(async () => {
+        const f = (window as any).__fakeWa;
+        const call = (window as any).__mwCall;
+        const early = f.play('destination'); // playing before the answer...
+        call.answeredAfter = call.noted; // ...that starts in the same millisecond (what answerActiveCall records)
+        const t0 = Date.now();
+        const old = await call.callerTap(300);
+        const waited = Date.now() - t0;
+        const current = f.play('destination'); // this call's playback
+        const fresh = await call.callerTap(300);
+        return { waited, old: old?.owner === early.ctx, fresh: fresh?.owner === current.ctx };
+      });
+      expect(r).toEqual({ waited: expect.any(Number), old: true, fresh: true });
+      expect(r.waited).toBeGreaterThanOrEqual(300);
+    } finally {
+      await page.evaluate(() => (window as any).__fakeWa.stopPlaybacks());
+    }
+  });
+
+  it('the real wrapper on its own page: binds the recording, refuses a second start without cutting the first, stops only its call', async () => {
+    const page2 = await openPage(); // no binding of its own: the wrapper binds it
+    try {
+      // without the binding a recording would lose every chunk: refused at once
+      await expect(page2.evaluate(startRecordingInPage, 'CALL1', 1000)).rejects.toThrow('Recording binding missing');
+      const media = new WebJsCallMedia(() => page2, () => true, 'p1');
+      await media.preparePage();
+      expect(await page2.evaluate(() => ({ binding: typeof (window as any).__mwRecordingChunk, prepared: (window as any).__mwCall.prepared }))).toEqual({ binding: 'function', prepared: true });
+      expect(await media.getSupport()).toEqual({ supported: true, reasons: [], waVersion: '2.3000.test' });
+      await media.answer('CALL1'); // the fake caller starts playing at accept
+      const first: Buffer[] = [];
+      const second: Buffer[] = [];
+      await media.startRecording('CALL1', (c) => first.push(c));
+      await expect(media.startRecording('CALL1', (c) => second.push(c))).rejects.toThrow('Already recording');
+      // the running recording keeps its sink: its first chunk (5-s timeslice) comes AFTER the refused start
+      expect(await until(() => first.length > 0, 8000)).toBe(true);
+      await expect(media.stopRecording('OTHER')).rejects.toThrow('Not recording this call');
+      expect((await media.stopRecording('CALL1')).durationMs).toBeGreaterThanOrEqual(5000);
+      expect(second).toHaveLength(0);
+      const ch = await analyze(Buffer.concat(first));
+      expect(ch.left).toBeGreaterThan(0.05);
+      expect(ch.l440).toBeGreaterThan(ch.l660 * 5); // the fake caller, on the left
+    } finally {
+      await page2.close();
+    }
+  }, 20_000);
+
+  it('the real wrapper counts a binding puppeteer kept from its own failed attempt as bound', async () => {
+    const page3 = await openPage();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      // puppeteer takes the binding name before it awaits anything, so an attempt that fails after that leaves it taken
+      const expose = page3.exposeFunction.bind(page3);
+      let attempts = 0;
+      page3.exposeFunction = async (name: string, fn: any) => {
+        attempts++;
+        await expose(name, fn);
+        if (attempts === 1) throw new Error('Protocol error: Target closed');
+      };
+      const media = new WebJsCallMedia(() => page3, () => true, 'p1');
+      await media.preparePage(); // logged, and the rest of the setup still ran
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('recording binding'));
+      expect(await page3.evaluate(() => (window as any).__mwCall.prepared)).toBe(true);
+      await media.answer('CALL1');
+      const got: Buffer[] = [];
+      await media.startRecording('CALL1', (c) => got.push(c)); // binds again: "already exists" means still ours
+      expect(attempts).toBe(2);
+      await sleep(300);
+      await media.stopRecording('CALL1');
+      expect(got.length).toBeGreaterThan(0); // the chunks come through the binding of the first attempt
+    } finally {
+      warn.mockRestore();
+      await page3.close();
+    }
+  });
+
+  it('the wrapper fails closed: a reason it does not know reads as page_error, and a failing probe logs once', async () => {
+    const newer = new WebJsCallMedia(() => ({ evaluate: async () => ({ reasons: ['web_calling_disabled', 'from_a_newer_page'], waVersion: 'x' }) }), () => true, 'p1');
+    expect(await newer.getSupport()).toEqual({ supported: false, reasons: ['web_calling_disabled', 'page_error'], waVersion: 'x' });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const broken = new WebJsCallMedia(() => ({ evaluate: async () => { throw new Error('Execution context was\ndestroyed'); } }), () => true, 'p1');
+      expect(await broken.getSupport()).toEqual({ supported: false, reasons: ['page_error'] });
+      expect(await broken.getSupport()).toEqual({ supported: false, reasons: ['page_error'] });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('Execution context wasdestroyed'); // one line, as clean() makes it
+    } finally {
+      warn.mockRestore();
+    }
+  });
 }, 120_000);

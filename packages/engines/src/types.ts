@@ -189,7 +189,8 @@ export type CallMediaUnsupportedReason =
   | 'web_calling_disabled'    // WhatsApp Web's calling UI gate is off for this account
   | 'voip_stack_unavailable'  // no voip stack, or not the in-browser one
   | 'module_missing'          // a WhatsApp Web module the call recipes need is gone (WhatsApp changed)
-  | 'page_error';             // the probe itself failed
+  | 'hooks_missing'           // our call-media hooks are not on this document (the init script did not run, or failed)
+  | 'page_error';             // the probe itself failed, or reported something this side does not know
 
 export interface CallMediaSupport {
   supported: boolean;
@@ -200,19 +201,31 @@ export interface CallMediaSupport {
 
 /**
  * Call-media primitives of an engine that runs WhatsApp Web in a browser (whatsapp-web.js only).
- * Every method acts on WhatsApp's ACTIVE call and refuses another call id.
+ * Every method that takes a call id refuses another one: answer, hangUp, playAnnouncement and startRecording
+ * act on WhatsApp's ACTIVE call only; stopRecording stops only the recording of that call (also after it ended).
  */
 export interface CallMediaEngine {
   getSupport(): Promise<CallMediaSupport>;
-  /** Answer the ringing call; resolves once it is connected, rejects when it is not ringing or does not connect in time. */
+  /**
+   * Answer the ringing call; resolves once it is connected, rejects when it is not ringing or does not connect in
+   * time. WhatsApp's accept cannot be cancelled, so a call can still connect AFTER this rejected "did not connect in
+   * time". After that rejection the caller MUST call `hangUp(callId)`, ignore its error, and release the call.
+   */
   answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }>;
-  /** End the call the way WhatsApp Web's End button does. */
+  /** End the call the way WhatsApp Web's End button does; rejects when the voip stack does not end it in time (10 s). */
   hangUp(callId: string): Promise<void>;
   /** Play audio to the caller through the call's microphone; the agent input is held silent meanwhile. */
   playAnnouncement(callId: string, audio: Buffer): Promise<{ durationMs: number }>;
-  /** Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in order. */
+  /**
+   * Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in
+   * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.
+   * onChunk must not throw: a chunk it refuses is lost, and stopRecording reports the loss.
+   */
   startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void>;
-  /** Stop recording; resolves after the last chunk was delivered. */
+  /**
+   * Stop recording; resolves after the last chunk was delivered. Rejects when chunks were lost (the message says
+   * how many of how many: the file is partial); the recording is stopped either way.
+   */
   stopRecording(callId: string): Promise<{ durationMs: number }>;
 }
 
