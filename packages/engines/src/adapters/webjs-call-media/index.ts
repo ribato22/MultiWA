@@ -47,6 +47,7 @@ const RECORDING_TIMESLICE_MS = 5_000;
 const KNOWN_REASONS: ReadonlySet<string> = new Set(['web_calling_disabled', 'voip_stack_unavailable', 'module_missing', 'hooks_missing']);
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 
+/** One wrapper per page (the adapter makes one per client): the binding name is fixed and "already exists" counts as ours, so a second wrapper's chunks would reach the first one's slot. */
 export class WebJsCallMedia implements CallMediaEngine {
   /**
    * The recording binding per page object, as the PENDING attempt: concurrent callers share one
@@ -58,8 +59,8 @@ export class WebJsCallMedia implements CallMediaEngine {
    */
   private readonly bindings = new WeakMap<object, Promise<void>>();
   /**
-   * The recording in progress and its sink. The binding delivers to whatever this holds. `started` settles when
-   * the start does (bound, and the in-page recorder running, or failed): a stop waits for it.
+   * The recording in progress and its sink. The binding delivers the chunks of `callId` to `onChunk`, and no others.
+   * `started` settles when the start does (bound, and the in-page recorder running, or failed): a stop waits for it.
    */
   private recording: { callId: string; onChunk: (chunk: Buffer) => void; started: Promise<void> } | null = null;
   /** The probe error logged last: a probe that keeps failing the same way logs once. */
@@ -189,9 +190,12 @@ export class WebJsCallMedia implements CallMediaEngine {
 
   private async exposeRecording(page: any): Promise<void> {
     try {
-      await page.exposeFunction('__mwRecordingChunk', (b64: string) => {
-        // No slot, no sink: a chunk that returned normally would count as delivered. Throwing makes the page count it as lost.
+      await page.exposeFunction('__mwRecordingChunk', (callId: string, b64: string) => {
+        // A chunk that returned normally would count as delivered, so a chunk with no sink throws: the page counts it as lost.
+        // Same for a chunk of another call: an earlier start that failed in Node after the page began leaves an orphan
+        // recorder, and its audio must never land in the recording that holds the slot now.
         if (!this.recording) throw new Error('No recording in progress');
+        if (this.recording.callId !== callId) throw new Error('Not recording this call');
         this.recording.onChunk(Buffer.from(b64, 'base64'));
       });
     } catch (e) {

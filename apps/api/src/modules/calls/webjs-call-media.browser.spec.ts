@@ -30,7 +30,7 @@ const until = async (ok: () => boolean, ms: number) => {
   return ok();
 };
 /** What startRecordingInPage reports on a normal call: the one tap that connected after the answer, no guessing. */
-const normalPick = (callerVia: 'destination' | 'element') => ({ callerVia, fresh: true, freshCandidates: 1, fallback: false });
+const normalPick = (callerVia: 'destination' | 'element') => ({ callerVia, freshCandidates: 1, fallback: false });
 
 /** A 16-bit mono WAV of a sine tone: the announcement fixture, built here so no binary lives in git. */
 function sineWav(hz: number, seconds: number, rate = 16000): Buffer {
@@ -149,7 +149,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     return p;
   };
   /** A fresh page whose recording binding drops the chunks, for the tests that call the page functions directly. */
-  const openRecordingPage = () => openPage((p) => p.exposeFunction('__mwRecordingChunk', () => undefined));
+  const openRecordingPage = () => openPage((p) => p.exposeFunction('__mwRecordingChunk', (_callId: string, _b64: string) => undefined));
 
   /** Levels and tones of a WebM recording, decoded in the browser: which tone sits in which channel. */
   const analyze = (webm: Buffer) =>
@@ -173,7 +173,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       args: ['--no-sandbox', ...CALL_MEDIA_CHROME_ARGS],
     });
     page = await openPage((p) =>
-      p.exposeFunction('__mwRecordingChunk', (b64: string) => {
+      p.exposeFunction('__mwRecordingChunk', (_callId: string, b64: string) => {
         deliveries++;
         if (failDelivery(deliveries)) throw new Error('chunk sink down');
         chunks.push(Buffer.from(b64, 'base64'));
@@ -564,15 +564,15 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         const waited = Date.now() - t0;
         const current = f.play('destination'); // this call's playback
         const fresh = await call.callerTap(300);
-        const pick = (t: any) => t && { fresh: t.fresh, freshCandidates: t.freshCandidates, fallback: t.fallback };
+        const pick = (t: any) => t && { freshCandidates: t.freshCandidates, fallback: t.fallback };
         return { waited, old: old?.owner === early.ctx, fresh: fresh?.owner === current.ctx, oldPick: pick(old), freshPick: pick(fresh) };
       });
       expect(r).toEqual({
         waited: expect.any(Number),
         old: true,
         fresh: true,
-        oldPick: { fresh: false, freshCandidates: 0, fallback: true }, // the older tap is a fallback, and says so
-        freshPick: { fresh: true, freshCandidates: 1, fallback: false },
+        oldPick: { freshCandidates: 0, fallback: true }, // the older tap is a fallback, and says so
+        freshPick: { freshCandidates: 1, fallback: false },
       });
       expect(r.waited).toBeGreaterThanOrEqual(300);
     } finally {
@@ -723,6 +723,32 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     }
   });
 
+  it('a chunk carries its call id: one of another call is lost, not handed to the recording that holds the slot', async () => {
+    // An earlier start whose evaluate rejected in Node can leave an orphan recorder in the page; its chunks must
+    // never reach the recording of another call.
+    const p = await openPage();
+    try {
+      const media = new WebJsCallMedia(() => p, () => true, 'p1');
+      await media.preparePage(); // binds
+      const got: Buffer[] = [];
+      // A fresh page has no caller audio: the start holds the slot while it waits in the page for a tap.
+      const start = media.startRecording('CALL1', (c) => got.push(c));
+      start.catch(() => undefined); // a failed assertion closes the page under it: no unhandled rejection on top
+      await sleep(300);
+      const send = (callId: string) =>
+        p.evaluate((id: string) => (window as any).__mwRecordingChunk(id, btoa('x')).then(() => 'delivered', (e: Error) => e.message), callId);
+      expect(await send('CALL0')).toBe('Not recording this call');
+      expect(got).toHaveLength(0);
+      expect(await send('CALL1')).toBe('delivered');
+      expect(got.map(String)).toEqual(['x']);
+      await p.evaluate(() => { (window as any).__fakeWa.play('destination'); }); // the caller's audio appears: the start finishes
+      await start;
+      await media.stopRecording('CALL1');
+    } finally {
+      await p.close();
+    }
+  });
+
   it('refuses to record a call that ended while its start waited for a caller tap', async () => {
     const p = await openRecordingPage();
     try {
@@ -745,7 +771,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       expect(await p.evaluate(startRecordingInPage, 'CALL1', 500)).toEqual(normalPick('destination'));
       await p.evaluate(stopRecordingInPage, 'CALL1');
       await p.evaluate(() => { (window as any).__fakeWa.play('destination'); }); // a second context connects after the answer
-      expect(await p.evaluate(startRecordingInPage, 'CALL1', 500)).toEqual({ callerVia: 'destination', fresh: true, freshCandidates: 2, fallback: false });
+      expect(await p.evaluate(startRecordingInPage, 'CALL1', 500)).toEqual({ callerVia: 'destination', freshCandidates: 2, fallback: false });
       await p.evaluate(stopRecordingInPage, 'CALL1');
     } finally {
       await p.close();
@@ -778,7 +804,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
   it('the wrapper warns for the older-tap fallback too, and keeps line breaks out of the log line', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      const fallback = { callerVia: 'element', fresh: false, freshCandidates: 0, fallback: true };
+      const fallback = { callerVia: 'element', freshCandidates: 0, fallback: true };
       const media = new WebJsCallMedia(() => ({ exposeFunction: async () => undefined, evaluate: async () => fallback }), () => true, 'p\n1');
       await media.startRecording('CALL\n1', () => undefined);
       expect(warn).toHaveBeenCalledTimes(1);

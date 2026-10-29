@@ -36,8 +36,6 @@ export interface MwTap {
  * playback of the caller; anything else means the pick was a guess.
  */
 export interface MwTapPick {
-  /** The chosen tap was noted after the answer started (`seq > answeredAfter`). */
-  fresh: boolean;
   /** In-use taps that are not ours and were noted after the answer, when the choice was made; more than one is ambiguous. */
   freshCandidates: number;
   /** No tap of this call turned up within the wait: an older one that is still in use was taken. */
@@ -121,7 +119,7 @@ export function installCallMediaHooks(): void {
       const fresh = candidates(after);
       const tap = fresh[fresh.length - 1] ?? candidates(0).pop();
       if (!tap) return null;
-      return { ...tap, fresh: tap.seq > after, freshCandidates: fresh.length, fallback: tap.seq <= after };
+      return { ...tap, freshCandidates: fresh.length, fallback: tap.seq <= after };
     },
     ensure() {
       if (!call.ctx) {
@@ -344,10 +342,11 @@ export async function playAnnouncementInPage(callId: string, b64: string): Promi
 
 /**
  * Record the call `callId`: left = the caller (callerTap), right = what the caller hears (the injected
- * microphone). WebM/Opus chunks, in order, go to the page binding `__mwRecordingChunk`. One recorder at a time,
- * also for starts that overlap while they wait for a caller tap. The call-id guard runs again after that wait: a
- * call that ended meanwhile is refused, not recorded on whatever tap was left. A chunk the binding fails to take is
- * counted and skipped; the later ones are still delivered, and stopRecordingInPage reports the loss.
+ * microphone). WebM/Opus chunks, in order, go to the page binding `__mwRecordingChunk(callId, base64)`. One recorder
+ * at a time, also for starts that overlap while they wait for a caller tap. The call-id guard runs again after that
+ * wait: a call that ended meanwhile is refused, not recorded on whatever tap was left. A chunk the binding fails to
+ * take (it refuses a chunk of any other call, too) is counted and skipped; the later ones are still delivered, and
+ * stopRecordingInPage reports the loss.
  * Resolves with how the caller's tap was chosen (MwTapPick, see callerTap): the wrapper warns when it was a guess.
  */
 export async function startRecordingInPage(callId: string, timesliceMs: number): Promise<{ callerVia: string } & MwTapPick> {
@@ -386,7 +385,7 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
           const u8 = new Uint8Array(await e.data.arrayBuffer());
           let bin = '';
           for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
-          await w.__mwRecordingChunk(btoa(bin));
+          await w.__mwRecordingChunk(callId, btoa(bin));
         })
         .catch((err) => { failed ??= err; failedChunks++; });
     };
@@ -403,7 +402,7 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
   });
   done.catch(() => {}); // stopRecordingInPage reports it; a recorder that stops by itself must not log an unhandled rejection
   call.recorder = { callId, mr, startedAt: Date.now(), nodes, done };
-  return { callerVia: tap.via, fresh: tap.fresh, freshCandidates: tap.freshCandidates, fallback: tap.fallback };
+  return { callerVia: tap.via, freshCandidates: tap.freshCandidates, fallback: tap.fallback };
 }
 
 /**

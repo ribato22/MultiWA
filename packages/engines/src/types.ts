@@ -221,6 +221,9 @@ export interface CallMediaEngine {
    * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.
    * onChunk must not throw: a chunk it refuses is lost, and stopRecording reports the loss. The engine logs one
    * warning (never audio) when it had to guess which stream is the caller; the left channel is then in doubt.
+   * After a rejection the page may still be recording (a start that timed out in Node after the page began): the
+   * caller MUST call `stopRecording(callId)` and ignore its error before the next start. Chunks delivered to a start
+   * that rejected are not a recording: discard them.
    */
   startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void>;
   /**
