@@ -1,11 +1,12 @@
 // The call-media page functions in a real headless Chrome, against a FAKE WhatsApp Web: the same
 // CALL_MEDIA_INIT_SCRIPT and page functions the engine injects, the same Chrome flags, with WA Web's modules
 // replaced by small fakes:
-// - acceptCall connects after 300 ms;
+// - acceptCall connects after 300 ms (or never, with `hangAccept`);
 // - "WhatsApp's playback" is an oscillator connected to AudioContext.destination;
 // - "WhatsApp's mic capture" is the getUserMedia it gets.
-// It proves the guards, the answer flow, that the injected mic carries the announcement, the stereo
-// recording (L caller, R heard) and the hang-up, without WhatsApp. Automated form of spike B's selftest.mjs.
+// It proves the guards, the answer flow and its timeout, that the injected mic carries the announcement (and
+// holds the agent meanwhile), the stereo recording (L caller, R heard, checked by tone), its recovery from a
+// failed chunk delivery and the hang-up, without WhatsApp. Automated form of spike B's selftest.mjs.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
@@ -40,13 +41,16 @@ function sineWav(hz: number, seconds: number, rate = 16000): Buffer {
 /** Fake WhatsApp Web modules: only what the call recipes touch. */
 function installFakeWhatsApp() {
   const w = window as any;
-  const fake: any = (w.__fakeWa = { endCalls: [], gumStream: null, level: () => 0 });
+  const fake: any = (w.__fakeWa = { endCalls: [], gumStream: null, level: () => 0, hangAccept: false, connectAfterMs: 300 });
   const call: any = { id: 'CALL1', state: 3, getState() { return this.state; } };
   const CC: any = { activeCall: call };
+  // The same call object rings again as `id` (for the tests that run after the hang-up).
+  fake.ring = (id: string) => { call.id = id; call.state = 3; CC.activeCall = call; w._multiwaCallId = id; };
   let playback: any = null;
   const stack = {
     type: 'web',
     async acceptCall() {
+      if (fake.hangAccept) return new Promise<void>(() => {}); // a voip stack that never answers
       call.state = 4;
       // WhatsApp's playback (the caller): an oscillator to the destination, like the direct route.
       const ctx = new AudioContext();
@@ -61,7 +65,7 @@ function installFakeWhatsApp() {
       ctx.createMediaStreamSource(fake.gumStream).connect(an);
       const buf = new Float32Array(an.fftSize);
       fake.level = () => { an.getFloatTimeDomainData(buf); let s = 0; for (const v of buf) s += v * v; return Math.sqrt(s / buf.length); };
-      setTimeout(() => { call.state = 6; }, 300);
+      setTimeout(() => { call.state = 6; }, fake.connectAfterMs);
     },
     async endCall(reason: number, flag: boolean) {
       fake.endCalls.push([reason, flag]);
@@ -88,6 +92,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
   let browser: any;
   let page: any;
   const chunks: Buffer[] = [];
+  let failChunks = false; // the Node side of the recording binding throws while this is set
 
   beforeAll(async () => {
     server = createServer((_q, res) => res.end('<!doctype html><title>call media</title>')).listen(0, '127.0.0.1');
@@ -100,7 +105,10 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     page = await browser.newPage();
     await page.evaluateOnNewDocument(installFakeWhatsApp);
     await page.evaluateOnNewDocument(CALL_MEDIA_INIT_SCRIPT);
-    await page.exposeFunction('__mwRecordingChunk', (b64: string) => { chunks.push(Buffer.from(b64, 'base64')); });
+    await page.exposeFunction('__mwRecordingChunk', (b64: string) => {
+      if (failChunks) throw new Error('chunk sink down');
+      chunks.push(Buffer.from(b64, 'base64'));
+    });
     await page.goto(`http://127.0.0.1:${(server.address() as any).port}/`);
     await page.keyboard.press('Shift');
   }, 60_000);
@@ -122,14 +130,33 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     expect(await page.evaluate(() => (window as any).__mwCall.gumCalls)).toBe(1); // WhatsApp took the injected mic
   });
 
-  it('the announcement reaches the injected microphone, and the agent input is restored after it', async () => {
+  it('the announcement reaches the injected microphone, holds the agent meanwhile, and restores it after', async () => {
     const levels: number[] = [];
+    const gains: number[] = [];
     const playing = page.evaluate(playAnnouncementInPage, sineWav(660, 1.5).toString('base64'));
-    for (let i = 0; i < 8; i++) { await new Promise((r) => setTimeout(r, 150)); levels.push(await page.evaluate(() => (window as any).__fakeWa.level())); }
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 150));
+      levels.push(await page.evaluate(() => (window as any).__fakeWa.level()));
+      gains.push(await page.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value));
+    }
     const r = await playing;
     expect(r.durationMs).toBe(1500);
     expect(Math.max(...levels)).toBeGreaterThan(0.05);
+    expect(gains).toContain(0); // the agent input is silent WHILE the announcement plays
     expect(await page.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value)).toBe(1);
+  });
+
+  it('refuses a second announcement while one plays, and a failed announcement does not block the next', async () => {
+    const gain = () => page.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value);
+    const first = page.evaluate(playAnnouncementInPage, sineWav(660, 1.5).toString('base64'));
+    await new Promise((r) => setTimeout(r, 300));
+    await expect(page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64'))).rejects.toThrow('Announcement already playing');
+    expect(await gain()).toBe(0); // the refused one did not hand the line back to the agent early
+    expect((await first).durationMs).toBe(1500);
+    expect(await gain()).toBe(1);
+    // not audio: decodeAudioData rejects, and the guard must be released all the same
+    await expect(page.evaluate(playAnnouncementInPage, Buffer.from('not audio').toString('base64'))).rejects.toThrow();
+    expect((await page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64'))).durationMs).toBe(300);
   });
 
   it('records stereo: the caller on the left, what the caller hears on the right', async () => {
@@ -143,11 +170,32 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const buf = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(bytes.buffer);
       const rms = (x: Float32Array) => { let s = 0; for (const v of x) s += v * v; return Math.sqrt(s / x.length); };
-      return { channels: buf.numberOfChannels, left: rms(buf.getChannelData(0)), right: rms(buf.getChannelData(1)) };
+      // amplitude of one frequency (single-bin DFT), to tell WHICH tone sits in WHICH channel
+      const tone = (x: Float32Array, hz: number) => { const w = (2 * Math.PI * hz) / buf.sampleRate; let re = 0, im = 0; for (let i = 0; i < x.length; i++) { re += x[i] * Math.cos(w * i); im -= x[i] * Math.sin(w * i); } return Math.hypot(re, im) / x.length; };
+      const L = buf.getChannelData(0), R = buf.getChannelData(1);
+      return { channels: buf.numberOfChannels, left: rms(L), right: rms(R), l440: tone(L, 440), l660: tone(L, 660), r440: tone(R, 440), r660: tone(R, 660) };
     }, webm.toString('base64'));
     expect(ch.channels).toBe(2);
     expect(ch.left).toBeGreaterThan(0.05);  // the 440 Hz "caller"
     expect(ch.right).toBeGreaterThan(0.05); // the 660 Hz announcement the caller heard
+    expect(ch.l440).toBeGreaterThan(ch.l660 * 5); // left = the caller, not the announcement
+    expect(ch.r660).toBeGreaterThan(ch.r440 * 5); // right = the announcement, not the caller
+  });
+
+  it('recovers from a failed chunk delivery: stopping clears the recorder, so the next recording starts', async () => {
+    failChunks = true;
+    try {
+      await page.evaluate(startRecordingInPage, 200);
+      await new Promise((r) => setTimeout(r, 500));
+      await expect(page.evaluate(stopRecordingInPage)).rejects.toThrow('chunk sink down');
+    } finally {
+      failChunks = false;
+    }
+    const before = chunks.length;
+    expect(await page.evaluate(startRecordingInPage, 200)).toEqual({ callerVia: 'destination' }); // not "Already recording"
+    await new Promise((r) => setTimeout(r, 500));
+    expect((await page.evaluate(stopRecordingInPage)).durationMs).toBeGreaterThanOrEqual(400);
+    expect(chunks.length).toBeGreaterThan(before);
   });
 
   it('hangs up the way the End button does', async () => {
@@ -155,4 +203,24 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     await page.evaluate(hangUpActiveCall, 'CALL1');
     expect(await page.evaluate(() => (window as any).__fakeWa.endCalls)).toEqual([[1, true]]);
   });
+
+  it('gives up at the timeout when the call is accepted but never connects', async () => {
+    await page.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL2'); f.connectAfterMs = 60_000; });
+    try {
+      await expect(page.evaluate(answerActiveCall, 'CALL2', 600)).rejects.toThrow('Call did not connect in time');
+    } finally {
+      await page.evaluate(() => { (window as any).__fakeWa.connectAfterMs = 300; });
+    }
+  }, 15_000);
+
+  it('bounds the whole answer by its timeout, also when the voip stack never accepts', async () => {
+    await page.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL2'); f.hangAccept = true; });
+    const t0 = Date.now();
+    try {
+      await expect(page.evaluate(answerActiveCall, 'CALL2', 500)).rejects.toThrow('Call did not connect in time');
+    } finally {
+      await page.evaluate(() => { (window as any).__fakeWa.hangAccept = false; });
+    }
+    expect(Date.now() - t0).toBeLessThan(5000); // not puppeteer's protocol timeout (minutes)
+  }, 15_000);
 }, 120_000);

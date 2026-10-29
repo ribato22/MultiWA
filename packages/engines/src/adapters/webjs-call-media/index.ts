@@ -44,7 +44,12 @@ const KNOWN_REASONS: ReadonlySet<string> = new Set(['web_calling_disabled', 'voi
 const clean = (s: string) => String(s).replace(/[\r\n]/g, '');
 
 export class WebJsCallMedia implements CallMediaEngine {
-  private readonly bound = new WeakSet<object>();
+  /**
+   * The recording binding per page object, as the PENDING `exposeFunction`. puppeteer throws "already exists"
+   * on a second `exposeFunction` of the same name, so each page gets exactly one attempt: concurrent callers
+   * share it instead of binding twice, and a failed attempt is dropped so the next call retries.
+   */
+  private readonly bindings = new WeakMap<object, Promise<void>>();
   private onChunk: ((chunk: Buffer) => void) | null = null;
 
   /** @param page returns the current puppeteer Page (it changes when the engine relaunches) */
@@ -127,10 +132,18 @@ export class WebJsCallMedia implements CallMediaEngine {
 
   /** One binding per page object; puppeteer keeps it across navigations. */
   private async bindRecording(page: any): Promise<void> {
-    if (this.bound.has(page)) return;
-    this.bound.add(page);
-    await page.exposeFunction('__mwRecordingChunk', (b64: string) => {
-      this.onChunk?.(Buffer.from(b64, 'base64'));
-    });
+    let bound = this.bindings.get(page);
+    if (!bound) {
+      bound = page.exposeFunction('__mwRecordingChunk', (b64: string) => {
+        this.onChunk?.(Buffer.from(b64, 'base64'));
+      });
+      this.bindings.set(page, bound);
+    }
+    try {
+      await bound;
+    } catch (e) {
+      this.bindings.delete(page);
+      throw e;
+    }
   }
 }

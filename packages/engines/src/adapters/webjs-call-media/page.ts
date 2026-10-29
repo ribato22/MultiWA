@@ -22,7 +22,7 @@
 export function installCallMediaHooks(): void {
   const w = window as any;
   if (w !== w.top || w.__mwCall || !navigator.mediaDevices) return;
-  const call: any = (w.__mwCall = { taps: [], ctx: null, dest: null, inputs: null, gumCalls: 0, recorder: null });
+  const call: any = (w.__mwCall = { taps: [], ctx: null, dest: null, inputs: null, gumCalls: 0, recorder: null, announcing: false });
   const note = (stream: MediaStream, via: string) => {
     if (!call.taps.some((t: any) => t.stream === stream)) call.taps.push({ stream, via, at: Date.now() });
   };
@@ -111,7 +111,11 @@ export async function probeCallMedia(): Promise<{ reasons: string[]; waVersion: 
   return { reasons: [...new Set(reasons)], waVersion: w.Debug?.VERSION ?? null };
 }
 
-/** Answer the ringing call `callId` (WhatsApp's active call) and wait until it is connected. */
+/**
+ * Answer the ringing call `callId` (WhatsApp's active call) and wait until it is connected. ONE deadline,
+ * `timeoutMs` after accept is called, bounds the whole answer: the accept itself (a voip stack that never
+ * answers would otherwise hold this until puppeteer's protocol timeout) and the wait for the connected state.
+ */
 export async function answerActiveCall(callId: string, timeoutMs: number): Promise<{ connectedAfterMs: number }> {
   const w = window as any;
   const CC = w.require('WAWebCallCollection');
@@ -124,13 +128,20 @@ export async function answerActiveCall(callId: string, timeoutMs: number): Promi
   w.__mwCall?.ensure();
   const stack = await w.require('WAWebVoipStackInterface').getVoipStackInterface();
   const t0 = Date.now();
-  await stack.acceptCall(true, false, null);
-  for (;;) {
-    const a = CC.activeCall;
-    if (!a || String(a.id) !== callId) throw new Error('Call ended before it connected');
-    if (U.isCallConnected(a.getState())) return { connectedAfterMs: Date.now() - t0 };
-    if (Date.now() - t0 > timeoutMs) throw new Error('Call did not connect in time');
-    await new Promise((r) => setTimeout(r, 100));
+  const deadline = t0 + timeoutMs;
+  let timer: any;
+  const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Call did not connect in time')), timeoutMs); });
+  try {
+    await Promise.race([stack.acceptCall(true, false, null), expired]);
+    for (;;) {
+      const a = CC.activeCall;
+      if (!a || String(a.id) !== callId) throw new Error('Call ended before it connected');
+      if (U.isCallConnected(a.getState())) return { connectedAfterMs: Date.now() - t0 };
+      if (Date.now() > deadline) throw new Error('Call did not connect in time');
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -150,22 +161,32 @@ export function isActiveCall(callId: string): boolean {
   return !!c && String(c.id) === callId;
 }
 
-/** Play an encoded audio file (base64) into the call's microphone; the agent input is silent until it ends. */
+/**
+ * Play an encoded audio file (base64) into the call's microphone; the agent input is silent until it ends.
+ * One at a time: a second announcement would hand the line back to the agent while the first still plays, so
+ * it is refused. The guard is set before the first await and released in `finally`, whatever happens.
+ */
 export async function playAnnouncementInPage(b64: string): Promise<{ durationMs: number }> {
   const call = (window as any).__mwCall.ensure();
-  const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
-  const buf = await call.ctx.decodeAudioData(bytes.buffer);
-  const src = call.ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(call.inputs.announcement);
-  call.inputs.agent.gain.value = 0;
+  if (call.announcing) throw new Error('Announcement already playing');
+  call.announcing = true;
   try {
-    await new Promise<void>((resolve) => { src.onended = () => resolve(); src.start(); });
+    const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+    const buf = await call.ctx.decodeAudioData(bytes.buffer);
+    const src = call.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(call.inputs.announcement);
+    call.inputs.agent.gain.value = 0;
+    try {
+      await new Promise<void>((resolve) => { src.onended = () => resolve(); src.start(); });
+    } finally {
+      call.inputs.agent.gain.value = 1;
+      src.disconnect();
+    }
+    return { durationMs: Math.round(buf.duration * 1000) };
   } finally {
-    call.inputs.agent.gain.value = 1;
-    src.disconnect();
+    call.announcing = false;
   }
-  return { durationMs: Math.round(buf.duration * 1000) };
 }
 
 /**
@@ -207,14 +228,21 @@ export async function startRecordingInPage(timesliceMs: number): Promise<{ calle
   return { callerVia: tap.via };
 }
 
-/** Stop recording; resolves once the last chunk went through the binding. */
+/**
+ * Stop recording; resolves once the last chunk went through the binding. If a chunk delivery failed this
+ * rejects, but the recorder is cleared all the same: otherwise every later start would fail with
+ * "Already recording" until the page reloads.
+ */
 export async function stopRecordingInPage(): Promise<{ durationMs: number }> {
   const call = (window as any).__mwCall;
   const rec = call?.recorder;
   if (!rec) throw new Error('Not recording');
   rec.mr.stop();
-  await rec.done;
-  rec.nodes.forEach((n: AudioNode) => n.disconnect());
-  call.recorder = null;
+  try {
+    await rec.done;
+  } finally {
+    rec.nodes.forEach((n: AudioNode) => n.disconnect());
+    call.recorder = null;
+  }
   return { durationMs: Date.now() - rec.startedAt };
 }
