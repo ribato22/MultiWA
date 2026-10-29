@@ -208,9 +208,9 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     }, webm.toString('base64'));
 
   beforeAll(async () => {
-    server = createServer((_q, res) => res.end('<!doctype html><title>call media</title>')).listen(0, 'localhost');
+    server = createServer((_q, res) => res.end('<!doctype html><title>call media</title>')).listen(0, '127.0.0.1');
     await new Promise((r) => server.once('listening', r));
-    url = `http://localhost:${(server.address() as any).port}/`;
+    url = `http://127.0.0.1:${(server.address() as any).port}/`;
     browser = await puppeteer.launch({
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,

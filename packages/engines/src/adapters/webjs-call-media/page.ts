@@ -44,11 +44,11 @@ export interface MwTapPick {
 
 /**
  * `window.__mwCall`, published by installCallMediaHooks once all its hooks are in place: the state the page
- * functions share, and the API PR 2's page peer builds on (it sends `await callerTap(5000)` to the agent and feeds
+ * functions share, and the API the media bridge builds on (it sends `await callerTap(5000)` to the agent and feeds
  * `inputs.agent`).
  *
  * Our own streams carry `__mwOwn`, so the taps skip them. Mark a stream BEFORE setting it as an element's
- * srcObject (PR 2: the muted keep-alive of the agent's track), or tap A takes it for the caller.
+ * srcObject (the media bridge: the muted keep-alive of the agent's track), or tap A takes it for the caller.
  */
 export interface MwCall {
   /** Recent taps, oldest first. Every note drops the taps no longer in use and keeps the last 8. Read callerTap(). */
@@ -60,7 +60,7 @@ export interface MwCall {
    * (`answeredAfter`). WhatsApp Web starts playing the caller right after `acceptCall`, before the call reads as
    * connected (live: the tap was noted about 40 ms after the accept), and `answeredAfter` is recorded before the
    * accept, so that tap counts as noted after the answer. This waits up to `waitMs` for such a tap, then takes the
-   * newest in-use one; null when there is none. The recorder uses it, and so will PR 2's attachCaller. The tap
+   * newest in-use one; null when there is none. The recorder uses it, and so will the media bridge. The tap
    * comes as a copy with how it was chosen (MwTapPick).
    */
   callerTap(waitMs: number): Promise<(MwTap & MwTapPick) | null>;
@@ -69,7 +69,7 @@ export interface MwCall {
   /** The injected microphone, created by ensure(): every audio-only getUserMedia gets a clone of `dest`'s track. */
   ctx: AudioContext | null;
   dest: MediaStreamAudioDestinationNode | null;
-  /** Mixed into the microphone: the announcement, and the agent (PR 2), held silent while an announcement plays. */
+  /** Mixed into the microphone: the announcement, and the agent (media bridge), muted while an announcement plays. */
   inputs: { announcement: GainNode; agent: GainNode } | null;
   /** Creates the microphone once, resumes its context, returns this. */
   ensure(): MwCall;
