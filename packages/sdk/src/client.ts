@@ -100,14 +100,18 @@ export class MultiWAClient {
     // the endpoint path starts with a leading slash.
     const url = new URL(joinApiUrl(this.options.baseUrl, path));
 
-    // Add query parameters
+    // Add query parameters. An array goes out as repeated keys (?tags=a&tags=b),
+    // which is how the API reads it; String(['a', 'b']) sent the single tag "a,b".
     if (options?.query) {
       Object.entries(options.query).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-          url.searchParams.set(key, String(value));
+        if (value === undefined || value === null) return;
+        for (const item of Array.isArray(value) ? value : [value]) {
+          url.searchParams.append(key, String(item));
         }
       });
     }
+
+    const body = options?.body ? JSON.stringify(options.body) : undefined;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.options.timeout);
@@ -116,11 +120,14 @@ export class MultiWAClient {
       const response = await fetch(url.toString(), {
         method,
         headers: {
-          'Content-Type': 'application/json',
+          // Only a request with a body is labelled JSON: the API (Fastify) answers
+          // 400 FST_ERR_CTP_EMPTY_JSON_BODY to an empty application/json body,
+          // which failed every bodyless POST, PUT and DELETE.
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
           'X-API-Key': this.options.apiKey,
           ...this.options.headers,
         },
-        body: options?.body ? JSON.stringify(options.body) : undefined,
+        body,
         signal: controller.signal,
       });
 
