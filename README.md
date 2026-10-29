@@ -239,16 +239,15 @@ curl -X POST http://localhost:3333/api/v1/accounts/YOUR_ACCOUNT_ID/profiles/YOUR
 ## 📦 SDKs
 
 The TypeScript SDK is published on npm (`npm install @multiwa/sdk`), the
-Python SDK on PyPI (`pip install multiwa`), and the n8n community node on npm
-(`npm install n8n-nodes-multiwa`). The PHP SDK (`multiwa/multiwa-php`) is
-ready for its first Packagist release, 1.3.0 — until that release is live,
-install it from this repo with a Composer `path` repository.
+Python SDK on PyPI (`pip install multiwa`), the PHP SDK on Packagist
+(`composer require multiwa/multiwa-php`), and the n8n community node on npm
+(`npm install n8n-nodes-multiwa`).
 
 | Language | Source | Status |
 |----------|--------|--------|
 | TypeScript/Node.js | [`packages/sdk`](packages/sdk) | Published on npm · `npm install @multiwa/sdk` |
 | Python | [`packages/sdk-python`](packages/sdk-python) | Published on PyPI · `pip install multiwa` |
-| PHP | [`packages/sdk-php`](packages/sdk-php) | Packagist release pending (1.3.0) · `composer require multiwa/multiwa-php` |
+| PHP | [`packages/sdk-php`](packages/sdk-php) | Published on Packagist · `composer require multiwa/multiwa-php` |
 | n8n community node | [`packages/n8n-nodes-multiwa`](packages/n8n-nodes-multiwa) | Published on npm · `npm install n8n-nodes-multiwa` |
 
 ### TypeScript SDK Example

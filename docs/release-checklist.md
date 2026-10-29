@@ -55,9 +55,9 @@ everything that needs human attention.
 - [ ] No SDK install snippet implies a registry release that has not
       actually happened. Published packages use their real install command
       (TypeScript: `npm install @multiwa/sdk`; Python: `pip install multiwa`;
-      n8n node: `npm install n8n-nodes-multiwa`). SDKs still awaiting a
-      registry (PHP `multiwa/sdk`) must say "Included in repository · registry
-      publishing pending."
+      PHP: `composer require multiwa/multiwa-php`; n8n node:
+      `npm install n8n-nodes-multiwa`). An SDK still awaiting its registry
+      must say "Included in repository · registry publishing pending."
 
 ## 5. Docker Quick Start Smoke Test
 
