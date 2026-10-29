@@ -4,28 +4,28 @@ MultiWA Python SDK
 Official Python SDK for MultiWA - WhatsApp Business API Gateway.
 """
 
-from .client import MultiWA, AsyncMultiWA
-from .webhooks import verify_webhook_signature
+from .client import AsyncMultiWA, MultiWA
 from .types import (
+    Broadcast,
+    Contact,
     Message,
     MessageResult,
-    Contact,
-    Broadcast,
-    Template,
     Profile,
+    Template,
     Webhook,
 )
+from .webhooks import verify_webhook_signature
 
-__version__ = "1.0.0"
+__version__ = "1.3.0"
 __all__ = [
-    "MultiWA",
     "AsyncMultiWA",
+    "Broadcast",
+    "Contact",
     "Message",
     "MessageResult",
-    "Contact",
-    "Broadcast",
-    "Template",
+    "MultiWA",
     "Profile",
+    "Template",
     "Webhook",
     "verify_webhook_signature",
 ]

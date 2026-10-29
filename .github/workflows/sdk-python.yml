@@ -1,0 +1,54 @@
+name: Python SDK
+
+# Lints, type-checks and tests packages/sdk-python on every Python version it supports.
+# The tests check each SDK call against scripts/api-routes.snapshot.json, so a change
+# to the snapshot (an API route was added, renamed or removed) runs them too.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/sdk-python/**'
+      - 'scripts/api-routes.snapshot.json'
+      - '.github/workflows/sdk-python.yml'
+  pull_request:
+    paths:
+      - 'packages/sdk-python/**'
+      - 'scripts/api-routes.snapshot.json'
+      - '.github/workflows/sdk-python.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }}
+    # actions/python-versions builds 3.9 (EOL) for Ubuntu 22.04/24.04 only, not for ubuntu-latest (26.04).
+    runs-on: ${{ matrix.python == '3.9' && 'ubuntu-24.04' || 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    defaults:
+      run:
+        working-directory: packages/sdk-python
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+
+      - name: Ruff
+        if: matrix.python == '3.12'  # static checks: one run is enough (mypy targets 3.9)
+        run: ruff check .
+
+      - name: Mypy
+        if: matrix.python == '3.12'  # static checks: one run is enough (mypy targets 3.9)
+        run: mypy multiwa tests
+
+      - name: Pytest
+        run: pytest -q -W error

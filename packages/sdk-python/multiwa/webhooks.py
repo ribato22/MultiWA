@@ -4,18 +4,19 @@ MultiWA Python SDK - Webhooks Client
 Client for managing webhook configurations.
 """
 
+from __future__ import annotations
+
 import hashlib
 import hmac
-from typing import Optional, List, Dict, Any, Union
+from typing import Any, cast
 
-import httpx
-
+from ._base import AsyncResource, SyncResource
 from .types import Webhook
 
 
 def verify_webhook_signature(
-    payload: Union[str, bytes],
-    signature: Optional[str],
+    payload: str | bytes,
+    signature: str | None,
     secret: str,
 ) -> bool:
     """Verify a MultiWA webhook HMAC-SHA256 signature.
@@ -33,130 +34,166 @@ def verify_webhook_signature(
     return hmac.compare_digest(expected, signature)
 
 
-class WebhooksClient:
+def _reject_secret(secret: str | None) -> None:
+    if secret is not None:
+        raise ValueError(
+            "The MultiWA API generates the webhook secret itself; "
+            "read it from Webhook.secret instead of passing one"
+        )
+
+
+class WebhooksClient(SyncResource):
     """Synchronous Webhooks API client"""
-    
-    def __init__(self, http: httpx.Client):
-        self._http = http
-    
+
     def create(
         self,
         profile_id: str,
         url: str,
-        events: List[str],
-        secret: Optional[str] = None,
+        events: list[str],
+        secret: str | None = None,
     ) -> Webhook:
-        """Create a new webhook"""
-        response = self._http.post("/webhooks", json={
-            "profileId": profile_id,
-            "url": url,
-            "events": events,
-            "secret": secret,
-        })
-        response.raise_for_status()
-        return Webhook(**response.json())
-    
+        """Create a webhook. The API generates its signing secret
+        (``Webhook.secret``); passing ``secret`` raises ``ValueError``.
+        """
+        _reject_secret(secret)
+        return Webhook.model_validate(
+            self._request(
+                "POST",
+                "/webhooks",
+                json={
+                    "profileId": profile_id,
+                    "url": url,
+                    "events": events,
+                },
+            )
+        )
+
     def get(self, webhook_id: str) -> Webhook:
         """Get a webhook by ID"""
-        response = self._http.get(f"/webhooks/{webhook_id}")
-        response.raise_for_status()
-        return Webhook(**response.json())
-    
-    def list(
-        self,
-        profile_id: str,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[Webhook]:
-        """List webhooks for a profile"""
-        response = self._http.get(
-            f"/webhooks/profile/{profile_id}",
-            params={"limit": limit, "offset": offset}
-        )
-        response.raise_for_status()
-        return [Webhook(**w) for w in response.json()]
-    
+        return Webhook.model_validate(self._request("GET", f"/webhooks/{webhook_id}"))
+
     def update(
         self,
         webhook_id: str,
-        url: Optional[str] = None,
-        events: Optional[List[str]] = None,
-        is_active: Optional[bool] = None,
-        secret: Optional[str] = None,
+        url: str | None = None,
+        events: list[str] | None = None,
+        is_active: bool | None = None,
+        secret: str | None = None,
     ) -> Webhook:
-        """Update a webhook"""
-        data = {}
-        if url is not None:
-            data["url"] = url
-        if events is not None:
-            data["events"] = events
-        if is_active is not None:
-            data["isActive"] = is_active
-        if secret is not None:
-            data["secret"] = secret
-            
-        response = self._http.patch(f"/webhooks/{webhook_id}", json=data)
-        response.raise_for_status()
-        return Webhook(**response.json())
-    
-    def delete(self, webhook_id: str) -> Dict[str, bool]:
+        """Update a webhook; ``is_active`` enables or disables it.
+
+        The secret cannot be changed: passing ``secret`` raises ``ValueError``.
+        """
+        _reject_secret(secret)
+        return Webhook.model_validate(
+            self._request(
+                "PUT",
+                f"/webhooks/{webhook_id}",
+                json={"url": url, "events": events, "enabled": is_active},
+            )
+        )
+
+    def delete(self, webhook_id: str) -> dict[str, Any]:
         """Delete a webhook"""
-        response = self._http.delete(f"/webhooks/{webhook_id}")
-        response.raise_for_status()
-        return response.json()
-    
-    def test(self, webhook_id: str) -> Dict[str, Any]:
-        """Test a webhook by sending a test event"""
-        response = self._http.post(f"/webhooks/{webhook_id}/test")
-        response.raise_for_status()
-        return response.json()
+        return cast(
+            "dict[str, Any]", self._request("DELETE", f"/webhooks/{webhook_id}")
+        )
+
+    def test(self, webhook_id: str) -> dict[str, Any]:
+        """Send a test event to the webhook; returns ``{"success", "message"}``"""
+        return cast(
+            "dict[str, Any]", self._request("POST", f"/webhooks/{webhook_id}/test")
+        )
+
+    def list(
+        self,
+        profile_id: str,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[Webhook]:
+        """List webhooks for a profile.
+
+        The API returns the full list; ``limit``/``offset`` are applied here.
+        """
+        rows = self._request("GET", "/webhooks", params={"profileId": profile_id})
+        return [Webhook.model_validate(w) for w in rows[offset:][:limit]]
 
 
-class AsyncWebhooksClient:
+class AsyncWebhooksClient(AsyncResource):
     """Asynchronous Webhooks API client"""
-    
-    def __init__(self, http: httpx.AsyncClient):
-        self._http = http
-    
+
     async def create(
         self,
         profile_id: str,
         url: str,
-        events: List[str],
-        secret: Optional[str] = None,
+        events: list[str],
+        secret: str | None = None,
     ) -> Webhook:
-        """Create a new webhook"""
-        response = await self._http.post("/webhooks", json={
-            "profileId": profile_id,
-            "url": url,
-            "events": events,
-            "secret": secret,
-        })
-        response.raise_for_status()
-        return Webhook(**response.json())
-    
+        """Create a webhook. The API generates its signing secret
+        (``Webhook.secret``); passing ``secret`` raises ``ValueError``.
+        """
+        _reject_secret(secret)
+        return Webhook.model_validate(
+            await self._request(
+                "POST",
+                "/webhooks",
+                json={
+                    "profileId": profile_id,
+                    "url": url,
+                    "events": events,
+                },
+            )
+        )
+
     async def get(self, webhook_id: str) -> Webhook:
         """Get a webhook by ID"""
-        response = await self._http.get(f"/webhooks/{webhook_id}")
-        response.raise_for_status()
-        return Webhook(**response.json())
-    
+        return Webhook.model_validate(
+            await self._request("GET", f"/webhooks/{webhook_id}")
+        )
+
+    async def update(
+        self,
+        webhook_id: str,
+        url: str | None = None,
+        events: list[str] | None = None,
+        is_active: bool | None = None,
+        secret: str | None = None,
+    ) -> Webhook:
+        """Update a webhook; ``is_active`` enables or disables it.
+
+        The secret cannot be changed: passing ``secret`` raises ``ValueError``.
+        """
+        _reject_secret(secret)
+        return Webhook.model_validate(
+            await self._request(
+                "PUT",
+                f"/webhooks/{webhook_id}",
+                json={"url": url, "events": events, "enabled": is_active},
+            )
+        )
+
+    async def delete(self, webhook_id: str) -> dict[str, Any]:
+        """Delete a webhook"""
+        return cast(
+            "dict[str, Any]", await self._request("DELETE", f"/webhooks/{webhook_id}")
+        )
+
+    async def test(self, webhook_id: str) -> dict[str, Any]:
+        """Send a test event to the webhook; returns ``{"success", "message"}``"""
+        return cast(
+            "dict[str, Any]",
+            await self._request("POST", f"/webhooks/{webhook_id}/test"),
+        )
+
     async def list(
         self,
         profile_id: str,
-        limit: int = 50,
+        limit: int | None = None,
         offset: int = 0,
-    ) -> List[Webhook]:
-        """List webhooks for a profile"""
-        response = await self._http.get(
-            f"/webhooks/profile/{profile_id}",
-            params={"limit": limit, "offset": offset}
-        )
-        response.raise_for_status()
-        return [Webhook(**w) for w in response.json()]
-    
-    async def delete(self, webhook_id: str) -> Dict[str, bool]:
-        """Delete a webhook"""
-        response = await self._http.delete(f"/webhooks/{webhook_id}")
-        response.raise_for_status()
-        return response.json()
+    ) -> list[Webhook]:
+        """List webhooks for a profile.
+
+        The API returns the full list; ``limit``/``offset`` are applied here.
+        """
+        rows = await self._request("GET", "/webhooks", params={"profileId": profile_id})
+        return [Webhook.model_validate(w) for w in rows[offset:][:limit]]

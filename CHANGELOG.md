@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Python SDK 1.3.0** (`multiwa` on PyPI, released on its own) — every method now calls a route that exists, with the request body the API expects, and the models parse the real responses; bodyless POST/DELETE calls no longer get a 400. Adds `broadcasts.schedule`/`resume` and the missing async methods. Details in [`packages/sdk-python/CHANGELOG.md`](packages/sdk-python/CHANGELOG.md).
+
 ## [1.2.0] - 2026-07-21
 
 Unified versioning: the app, all workspace packages, and every SDK now share a
