@@ -26,13 +26,12 @@ from the monorepo-wide `v*` GitHub Release (`.github/workflows/release.yml`).
    packages). Confirm the scope is free: `npm view @multiwa/sdk`. If taken,
    rename the package (e.g. `@ribato22/multiwa-sdk`) in `packages/sdk/package.json`.
 2. Enable 2FA (auth-and-writes) on the npm account.
-3. **Bootstrap the first publish** (OIDC can only attach to a package that already
-   exists): create a Granular Access Token scoped to `@multiwa/*` with publish
-   rights, add it as the repo secret `NPM_TOKEN`. The workflow's `NODE_AUTH_TOKEN`
-   fallback uses it for the first release.
-4. After the package exists, switch to keyless: npmjs.com → @multiwa/sdk →
-   Settings → **Trusted Publishing** → add a GitHub Actions publisher for
-   `ribato22/MultiWA`, workflow `publish-sdk.yml`. Then delete `NPM_TOKEN`.
+3. **Trusted Publishing** (in place since 1.3.0): npmjs.com → @multiwa/sdk →
+   Settings → **Trusted Publisher** → GitHub Actions, `ribato22` / `MultiWA`,
+   workflow `publish-sdk.yml`, no environment, **Allow npm publish** (stage
+   publish is always allowed; dist-tag is not needed). The repository holds no npm
+   token. A new connection must publish once within 48 hours to be validated, and
+   a run started before the connection was saved fails: re-run it afterwards.
 
 **Each release:** bump `version` in `packages/sdk/package.json`, then
 `git tag sdk-v<version> && git push origin sdk-v<version>`.
@@ -55,8 +54,8 @@ from the monorepo-wide `v*` GitHub Release (`.github/workflows/release.yml`).
 
 ## npm — n8n community node (`n8n-nodes-multiwa`)
 
-Same model as the TS SDK (Trusted Publisher for `publish-n8n-node.yml`, or
-`NPM_TOKEN` bootstrap). Once live on npm it is installable via n8n → Settings →
+Same model as the TS SDK: a Trusted Publisher for `publish-n8n-node.yml` (its own
+connection on the `n8n-nodes-multiwa` package), no token. Once live on npm it is installable via n8n → Settings →
 Community Nodes; optionally submit it to n8n's verified-node program.
 
 **Each release:** bump the package version, `git tag n8n-v<version> && git push origin n8n-v<version>`.
