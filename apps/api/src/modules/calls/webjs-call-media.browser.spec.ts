@@ -10,8 +10,9 @@
 // the hang-up and probe deadlines, that the injected mic carries the announcement (and holds the agent
 // meanwhile, and gives the line back when an announcement never ends), the stereo recording (L caller, R heard,
 // checked by tone) through both taps and on a page that carried earlier calls, one recorder at a time, its
-// handling of failed chunk deliveries, how it picked the caller's tap (the tripwire for a wrong pick), that a
-// recording ends with its call instead of recording the next one, and the real Node wrapper on its own page,
+// handling of failed chunk deliveries and recorder errors, how it picked the caller's tap (the tripwire for a
+// wrong pick), that a recording ends with its call (gone from WhatsApp's active call, or ended by the patch's own
+// signal) and clears its poll instead of recording the next call, and the real Node wrapper on its own page,
 // without WhatsApp: a stop never overtakes its start, a chunk with no sink counts as lost, a guessed caller tap
 // is warned about. It automates what was first proven by hand against live WhatsApp Web on 2026-10-29.
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
@@ -156,7 +157,8 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
   /**
    * A fresh page with CALL1 answered (the fake caller, 440 Hz, plays from the accept) and a recording of it running;
    * its chunks go to `got`. `__reads` counts the page's looks at WhatsApp's active call: that is what the recorder's
-   * poll does, so `looks` tells whether it still runs.
+   * poll does, so `looks` tells whether it still runs. `__intervals` holds the ids of the intervals set since and not
+   * cleared: a poll that stops reading but is never cleared would stay there (`liveIntervals`).
    */
   const openRecording = async (got: Buffer[] = []) => {
     const p = await openPage((pg) =>
@@ -167,6 +169,11 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       const lookUp = w.require;
       w.__reads = 0;
       w.require = (name: string) => { if (name === 'WAWebCallCollection') w.__reads++; return lookUp(name); };
+      const live = (w.__intervals = new Set<number>());
+      const setIt = w.setInterval.bind(w);
+      const clearIt = w.clearInterval.bind(w);
+      w.setInterval = (...args: any[]) => { const id = setIt(...args); live.add(id); return id; };
+      w.clearInterval = (id: number) => { live.delete(id); clearIt(id); };
     });
     await p.evaluate(answerActiveCall, 'CALL1', 5000);
     const startedAt = Date.now();
@@ -174,6 +181,11 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     return { p, startedAt };
   };
   const recorderState = (p: any) => p.evaluate(() => (window as any).__mwCall.recorder.mr.state);
+  /** How many of the intervals set since `openRecording` are still live: the recorder's poll while it records, none after. */
+  const liveIntervals = (p: any) => p.evaluate(() => (window as any).__intervals.size);
+  /** Makes the page's recorder fail: a track added to the recorded stream errors the MediaRecorder, which then stops. */
+  const failRecorder = (p: any) =>
+    p.evaluate(() => (window as any).__mwCall.recorder.mr.stream.addTrack(new AudioContext().createMediaStreamDestination().stream.getAudioTracks()[0]));
   /** Waits up to `ms` for the page's recorder to stop; whether it did. */
   const recorderStops = async (p: any, ms: number) => {
     const end = Date.now() + ms;
@@ -840,7 +852,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       // CALL1 ends: its caller falls silent (WhatsApp keeps the context, and may reuse it) and the next call rings
       await p.evaluate(() => { const f = (window as any).__fakeWa; f.playbacks[0].osc.stop(); f.ring('CALL2'); });
       const ended = Date.now() - startedAt;
-      await sleep(1500); // the recorder takes about 0.5 s to see it; the next call's audio only starts after that
+      await sleep(1500); // the recorder takes 250-500 ms to see it; the next call's audio only starts after that
       await p.evaluate(() => { const f = (window as any).__fakeWa; f.play('destination', f.playbacks[0].ctx, 880); }); // its caller, same context
       await p.evaluate(playAnnouncementInPage, 'CALL2', sineWav(880, 1).toString('base64')); // and its announcement
       expect(await recorderState(p)).toBe('inactive');
@@ -867,10 +879,12 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     const { p } = await openRecording();
     try {
       expect(await looks(p, 600)).toBeGreaterThan(0); // the recorder polls its call
+      expect(await liveIntervals(p)).toBe(1); // the poll is the one interval, so the check below can see it leak
       await end(p);
       expect(await recorderStops(p, 2000)).toBe(true);
       expect(await looks(p, 700)).toBe(0); // and has stopped polling
       expect((await p.evaluate(stopRecordingInPage, 'CALL1')).durationMs).toBeGreaterThan(0); // still collectable
+      expect(await liveIntervals(p)).toBe(0); // and its interval is cleared, not just idle
     } finally {
       await p.close();
     }
@@ -881,8 +895,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     [
       'the recorder fails',
       async (p: any) => {
-        // a track added to the recorded stream: the recorder errors, and stops
-        await p.evaluate(() => (window as any).__mwCall.recorder.mr.stream.addTrack(new AudioContext().createMediaStreamDestination().stream.getAudioTracks()[0]));
+        await failRecorder(p);
         expect(await recorderStops(p, 2000)).toBe(true);
       },
     ],
@@ -890,8 +903,78 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     const { p } = await openRecording();
     try {
       expect(await looks(p, 600)).toBeGreaterThan(0);
+      expect(await liveIntervals(p)).toBe(1);
       await stop(p);
       expect(await looks(p, 700)).toBe(0);
+      expect(await liveIntervals(p)).toBe(0);
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
+  it('a recording also ends when the patch reports its call ended (it clears _multiwaCallId), though the call still holds the slot', async () => {
+    const { p, startedAt } = await openRecording();
+    try {
+      // State 0 alone is no end: a call that was just set reads 0 until its state arrives.
+      await p.evaluate(() => { (window as any).require('WAWebCallCollection').activeCall.state = 0; });
+      await sleep(800); // several polls
+      expect(await recorderState(p)).toBe('recording');
+      // What the whatsapp-web.js patch does for a known call that comes back in state 0: it reports the end and clears
+      // the id. WhatsApp's active call still holds the call, and an unset id passes the call-id guard.
+      await p.evaluate(() => { (window as any)._multiwaCallId = null; });
+      const ended = Date.now() - startedAt;
+      expect(await recorderStops(p, 1500)).toBe(true);
+      await sleep(1500); // the late stop comes long after the end
+      const stop = await p.evaluate(stopRecordingInPage, 'CALL1');
+      expect(stop.durationMs).toBeGreaterThan(ended); // after the end...
+      expect(stop.durationMs).toBeLessThan(ended + 1000); // ...but up to the recorder's stop, not up to this stop, 1.5+ s later
+      expect(await liveIntervals(p)).toBe(0);
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
+  it('a call the patch reports ended while the start waits for a caller tap still ends its recording', async () => {
+    const p = await openRecordingPage();
+    try {
+      // a fresh page has no caller audio, so the start waits for a tap
+      const start = p.evaluate(startRecordingInPage, 'CALL1', 500);
+      await sleep(300);
+      await p.evaluate(() => { (window as any)._multiwaCallId = null; }); // the patch reports the end; the call stays in the slot
+      await p.evaluate(() => { (window as any).__fakeWa.play('destination'); }); // a tap turns up all the same
+      await start; // the guard after the wait lets an unset id pass: it records...
+      expect(await recorderStops(p, 1500)).toBe(true); // ...until the poll sees that the patch had tracked this call
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
+  it('a recorder that fails is reported by stop, which still frees the slot: the next recording starts', async () => {
+    const { p } = await openRecording();
+    try {
+      await failRecorder(p);
+      expect(await recorderStops(p, 2000)).toBe(true);
+      // the recording is shorter than its call, and stop says so instead of resolving as if it had ended with the call
+      await expect(p.evaluate(stopRecordingInPage, 'CALL1')).rejects.toThrow(/Recorder failed: InvalidModificationError/);
+      expect(await p.evaluate(startRecordingInPage, 'CALL1', 500)).toEqual(normalPick('destination')); // not "Already recording"
+      await sleep(500);
+      expect((await p.evaluate(stopRecordingInPage, 'CALL1')).durationMs).toBeGreaterThanOrEqual(400); // and records fine
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
+  it('a recorder failure and lost chunks are reported together, in one message', async () => {
+    const p = await openPage((pg) => pg.exposeFunction('__mwRecordingChunk', () => { throw new Error('chunk sink down'); }));
+    try {
+      await p.evaluate(answerActiveCall, 'CALL1', 5000);
+      await p.evaluate(startRecordingInPage, 'CALL1', 200);
+      await sleep(500); // chunks are lost already
+      await failRecorder(p);
+      expect(await recorderStops(p, 2000)).toBe(true);
+      await expect(p.evaluate(stopRecordingInPage, 'CALL1')).rejects.toThrow(
+        /Recorder failed: InvalidModificationError.*; \d+ of \d+ recording chunks were not delivered: chunk sink down/,
+      );
     } finally {
       await p.close();
     }

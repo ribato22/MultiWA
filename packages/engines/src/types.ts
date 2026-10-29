@@ -230,9 +230,11 @@ export interface CallMediaEngine {
   /**
    * Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in
    * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.
-   * A recording ends with its call: it stops by itself about 0.5 s after its call stops being WhatsApp's active call,
-   * so it never records the next call. `stopRecording(callId)` is still required, to collect the last chunks, get
-   * `durationMs`, and free the slot (a start before that rejects "Already recording").
+   * A recording ends with its call: it stops by itself 250-500 ms after its call is over (WhatsApp's active call is
+   * another call or none, or the engine's call tracking reported the call ended), so it never records the next call.
+   * `stopRecording(callId)` is still required, to collect the last chunks, get `durationMs`, and free the slot (a
+   * start before that rejects "Already recording"). A recorder that fails stops the same way, and stopRecording then
+   * rejects.
    * onChunk must not throw: a chunk it refuses is lost, and stopRecording reports the loss. The engine logs one
    * warning (never audio) when it had to guess which stream is the caller; the left channel is then in doubt.
    * A start that rejects may still have begun recording in the page (it timed out in Node after the page began). Then
@@ -246,13 +248,13 @@ export interface CallMediaEngine {
    */
   startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void>;
   /**
-   * Stop recording; resolves after the last chunk was delivered, with `durationMs` up to the moment the recording
-   * ended (for one that ended with its call: the end of the call, not this later stop). Rejects when chunks were lost
-   * (the message says how many of how many); the recorder is freed either way. ANY rejection can mean an incomplete
-   * recording, not only lost chunks: "Not recording" after a page reload, "Client not ready", a puppeteer error after
-   * the browser closed. Treat the file as partial. A stop never overtakes its own start: one that arrives while the
-   * start still runs waits for it. It needs no WhatsApp readiness, so it also works after a disconnect, while the
-   * page still holds the recorder.
+   * Stop recording; resolves after the last chunk was delivered, with `durationMs` up to the moment the recorder
+   * stopped (for one that ended with its call: 250-500 ms after the call ended, not this later stop). Rejects when the
+   * recorder failed or chunks were lost (the message says which, and how many of how many; both are reported
+   * together); the recorder is freed either way. ANY rejection can mean an incomplete recording, not only those:
+   * "Not recording" after a page reload, "Client not ready", a puppeteer error after the browser closed. Treat the
+   * file as partial. A stop never overtakes its own start: one that arrives while the start still runs waits for it.
+   * It needs no WhatsApp readiness, so it also works after a disconnect, while the page still holds the recorder.
    */
   stopRecording(callId: string): Promise<{ durationMs: number }>;
 }
