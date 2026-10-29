@@ -110,7 +110,7 @@ describe('call media in the whatsapp-web.js adapter', () => {
 
   it('switched on: the hooks go on every document, the flags on the browser, and the adapter holds a wrapper', async () => {
     const { adapter, client } = await initAdapter({ callMedia: { enabled: true } });
-    expect(client.options.evalOnNewDoc).toBe(CALL_MEDIA_INIT_SCRIPT); // the script string: WA Web reloads itself, the hooks must follow
+    expect(client.options.evalOnNewDoc).toBe(CALL_MEDIA_INIT_SCRIPT); // the very string the specs check and inject
     expect(client.options.puppeteer.args).toEqual([...DEFAULT_ARGS, ...CALL_MEDIA_CHROME_ARGS]);
     expect(adapter.callMedia).toBeInstanceOf(WebJsCallMedia);
   });
@@ -161,6 +161,40 @@ describe('call media in the whatsapp-web.js adapter', () => {
     } finally {
       process.off('unhandledRejection', unhandled);
     }
+  });
+
+  it('a second initialize() cannot move the first wrapper onto the second client: the first ready leaves the second page alone', async () => {
+    const { adapter, client: first, config } = await initAdapter({ callMedia: { enabled: true } });
+    await adapter.initialize(config); // not done in production (one adapter per engine), but nothing forbids it
+    const second = adapter.client;
+    expect(second).not.toBe(first);
+    const secondPage = fakePage();
+    first.pupPage = fakePage();
+    second.pupPage = secondPage;
+    first.emit('ready');
+    await tick();
+    expect(secondPage.exposeFunction).not.toHaveBeenCalled();
+    expect(secondPage.keyboard.press).not.toHaveBeenCalled();
+    expect(secondPage.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('after destroy() the wrapper has no page, although whatsapp-web.js leaves client.pupPage set', async () => {
+    const { adapter, client } = await initAdapter({ callMedia: { enabled: true } });
+    const page = fakePage();
+    client.pupPage = page;
+    client.emit('ready'); // the adapter reads ready now
+    await vi.waitFor(() => expect(page.evaluate).toHaveBeenCalledTimes(1));
+    const media: WebJsCallMedia = adapter.callMedia;
+    await adapter.destroy(); // whatsapp-web.js destroy() closes the browser and does not clear client.pupPage
+    expect(client.pupPage).toBe(page);
+    const touches = () => page.evaluate.mock.calls.length + page.exposeFunction.mock.calls.length + page.keyboard.press.mock.calls.length;
+    const before = touches();
+    await media.preparePage(); // a no-op, not a failed attempt on a closed page
+    await expect(media.stopRecording('c1')).rejects.toThrow('Client not ready');
+    await expect(media.startRecording('c1', () => undefined)).rejects.toThrow('Client not ready');
+    await expect(media.answer('c1')).rejects.toThrow('Client not ready');
+    expect(await media.getSupport()).toEqual({ supported: false, reasons: ['not_ready'] });
+    expect(touches()).toBe(before);
   });
 });
 
@@ -264,5 +298,76 @@ describe('WebJsCallMedia without a browser', () => {
     expect(page.evaluate).toHaveBeenCalledWith(prepareCallMediaPage);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toContain('recording binding');
+  });
+
+  describe('the page setup warning', () => {
+    const NO_HOOKS = { hooks: false, micPermission: 'no hooks' };
+    const MIC_FAILED = { hooks: true, micPermission: 'failed: NotAllowedError: Permission denied' };
+    const GOOD = { hooks: true, micPermission: 'granted' };
+
+    /** Runs preparePage once per result, the page answering each in turn; returns the warnings logged. */
+    const warningsFor = async (results: object[], profileId = 'p1') => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      warn.mockClear(); // a test may call this twice: start from no calls
+      const page = fakePage();
+      for (const r of results) page.evaluate.mockResolvedValueOnce(r);
+      const media = new WebJsCallMedia(() => page, () => true, profileId);
+      for (const _r of results) await media.preparePage();
+      return warn.mock.calls.map((c) => String(c[0]));
+    };
+
+    it('a page without the hooks warns once, however many readys follow', async () => {
+      expect(await warningsFor([NO_HOOKS, NO_HOOKS, NO_HOOKS, NO_HOOKS, NO_HOOKS])).toEqual([
+        '[WhatsApp-WebJS] call media page setup for profile p1: {"hooks":false,"micPermission":"no hooks"}',
+      ]);
+    });
+
+    it('a different bad result warns again', async () => {
+      const lines = await warningsFor([NO_HOOKS, NO_HOOKS, MIC_FAILED, MIC_FAILED]);
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toContain('"hooks":false');
+      expect(lines[1]).toContain('failed: NotAllowedError: Permission denied');
+    });
+
+    it('a good setup in between re-arms the warning', async () => {
+      const lines = await warningsFor([NO_HOOKS, GOOD, NO_HOOKS, { hooks: true, micPermission: 'already granted' }, NO_HOOKS, NO_HOOKS]);
+      expect(lines).toHaveLength(3);
+      expect(new Set(lines).size).toBe(1); // the same text, three times: each after a good setup
+    });
+
+    it('a failed mic permission warns, a granted one never does', async () => {
+      expect(await warningsFor([MIC_FAILED])).toEqual([
+        '[WhatsApp-WebJS] call media page setup for profile p1: {"hooks":true,"micPermission":"failed: NotAllowedError: Permission denied"}',
+      ]);
+      expect(await warningsFor([GOOD, { hooks: true, micPermission: 'already granted' }])).toEqual([]);
+    });
+
+    it('stays one line whatever the page or the profile id holds', async () => {
+      const lines = await warningsFor([{ hooks: true, micPermission: 'failed: a\nb\r\nc' }], 'p\n1');
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain('call media page setup for profile p1: ');
+      expect(lines[0]).not.toMatch(/[\r\n]/);
+    });
+  });
+
+  it('every log line keeps the profile id on one line', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const log = vi.mocked(console.log); // spied by the beforeEach above
+    const page = fakePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p\n1');
+    page.exposeFunction.mockRejectedValueOnce(new Error('Protocol error: Target closed'));
+    page.evaluate.mockResolvedValueOnce({ hooks: false, micPermission: 'no hooks' });
+    await media.preparePage(); // the binding warning and the setup warning
+    page.evaluate.mockRejectedValueOnce(new Error('boom'));
+    await media.getSupport(); // the probe warning
+    await media.answer('c1'); // the answered line
+    page.evaluate.mockResolvedValueOnce({ callerVia: 'destination', freshCandidates: 2, fallback: false });
+    await media.startRecording('c1', () => undefined); // the guessed-tap warning
+    const lines = [...warn.mock.calls, ...log.mock.calls].map((c) => String(c[0]));
+    expect(lines).toHaveLength(5);
+    for (const line of lines) {
+      expect(line).toContain('profile p1');
+      expect(line).not.toMatch(/[\r\n]/);
+    }
   });
 });

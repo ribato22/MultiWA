@@ -126,8 +126,15 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       },
     });
 
+    // The wrapper belongs to THIS client: once the adapter lets go of it (destroy(), or a newer initialize()) it has
+    // no page. whatsapp-web.js destroy() only closes the browser; client.pupPage stays set.
+    const client = this.client;
     this.callMedia = callMediaOn
-      ? new WebJsCallMedia(() => (this.client as any)?.pupPage, () => this.isReady(), config.profileId)
+      ? new WebJsCallMedia(
+          () => (this.client === client ? (client as any).pupPage : null),
+          () => this.isReady(),
+          config.profileId,
+        )
       : undefined;
     this.setupEventHandlers();
   }
@@ -177,9 +184,11 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     if (this.callMedia) {
       const media = this.callMedia;
       this.client.on('ready', () => {
-        media.preparePage().catch((e) =>
-          console.warn(`[WhatsApp-WebJS] call media setup failed for profile ${String(this.config?.profileId).replace(/[\r\n]/g, '')}: ${String((e as Error)?.message ?? e).replace(/[\r\n]/g, '')}`),
-        );
+        media.preparePage().catch((e) => {
+          const profile = String(this.config?.profileId).replace(/[\r\n]/g, '');
+          const why = String((e as Error)?.message ?? e).replace(/[\r\n]/g, '');
+          console.warn(`[WhatsApp-WebJS] call media setup failed for profile ${profile}: ${why}`);
+        });
       });
     }
 

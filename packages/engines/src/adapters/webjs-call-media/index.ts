@@ -35,8 +35,10 @@ export const CALL_MEDIA_CHROME_ARGS = [
 ];
 
 /**
- * whatsapp-web.js `evalOnNewDoc` takes a script STRING. A function would lose its body when serialized
- * together with others, and the hooks must run on every new document (WA Web reloads itself).
+ * The hook installer as ONE script string: the exact source production passes as `evalOnNewDoc` is the source both
+ * specs check and inject. (A function would work too and would also reach every new document, reloads included:
+ * puppeteer's `evaluateOnNewDocument` builds `(fn)()` from it. whatsapp-web.js types `evalOnNewDoc` as `Function`
+ * but forwards it to puppeteer, which takes a string as well.)
  */
 export const CALL_MEDIA_INIT_SCRIPT = `(${installCallMediaHooks.toString()})();`;
 
@@ -47,7 +49,10 @@ const RECORDING_TIMESLICE_MS = 5_000;
 const KNOWN_REASONS: ReadonlySet<string> = new Set(['web_calling_disabled', 'voip_stack_unavailable', 'module_missing', 'hooks_missing']);
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 
-/** One wrapper per page (the adapter makes one per client): the binding name is fixed and "already exists" counts as ours, so a second wrapper's chunks would reach the first one's slot. */
+/**
+ * One wrapper per page (the adapter makes one per client): the binding name is fixed and "already exists" counts as
+ * ours, so a second wrapper's chunks would reach the first one's slot.
+ */
 export class WebJsCallMedia implements CallMediaEngine {
   /**
    * The recording binding per page object, as the PENDING attempt: concurrent callers share one
@@ -65,6 +70,8 @@ export class WebJsCallMedia implements CallMediaEngine {
   private recording: { callId: string; onChunk: (chunk: Buffer) => void; started: Promise<void> } | null = null;
   /** The probe error logged last: a probe that keeps failing the same way logs once. */
   private probeError: string | null = null;
+  /** The setup problem warned about last: ready repeats 5-12 times per sync, so a problem that stays warns once. */
+  private setupWarning: string | null = null;
 
   /** @param page returns the current puppeteer Page (it changes when the engine relaunches) */
   constructor(
@@ -79,13 +86,19 @@ export class WebJsCallMedia implements CallMediaEngine {
     if (!page) return;
     // The binding never blocks the rest: user activation and the mic permission are needed for every call.
     await this.bindRecording(page).catch((e: any) => {
-      console.warn(`[WhatsApp-WebJS] call media recording binding for profile ${this.profileId}: ${clean(e?.message ?? e)}`);
+      console.warn(`[WhatsApp-WebJS] call media recording binding for profile ${clean(this.profileId)}: ${clean(e?.message ?? e)}`);
     });
     await page.keyboard.press('Shift').catch(() => undefined); // a trusted key press = user activation
     const r = await page.evaluate(prepareCallMediaPage);
-    if (!r.hooks || !/^(granted|already granted)$/.test(r.micPermission)) {
-      console.warn(`[WhatsApp-WebJS] call media page setup for profile ${this.profileId}: ${clean(JSON.stringify(r))}`);
+    if (r.hooks && /^(granted|already granted)$/.test(r.micPermission)) {
+      this.setupWarning = null; // a good setup re-arms the warning
+      return;
     }
+    const msg = clean(JSON.stringify(r));
+    if (msg !== this.setupWarning) {
+      console.warn(`[WhatsApp-WebJS] call media page setup for profile ${clean(this.profileId)}: ${msg}`);
+    }
+    this.setupWarning = msg;
   }
 
   async getSupport(): Promise<CallMediaSupport> {
@@ -99,7 +112,7 @@ export class WebJsCallMedia implements CallMediaEngine {
       return { supported: reasons.length === 0, reasons, waVersion: r.waVersion };
     } catch (e) {
       const msg = clean((e as Error)?.message ?? String(e));
-      if (msg !== this.probeError) console.warn(`[WhatsApp-WebJS] call media probe for profile ${this.profileId} failed: ${msg}`);
+      if (msg !== this.probeError) console.warn(`[WhatsApp-WebJS] call media probe for profile ${clean(this.profileId)} failed: ${msg}`);
       this.probeError = msg;
       return { supported: false, reasons: ['page_error'] };
     }
@@ -107,7 +120,7 @@ export class WebJsCallMedia implements CallMediaEngine {
 
   async answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }> {
     const r = await this.requirePage().evaluate(answerActiveCall, callId, opts?.timeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS);
-    console.log(`[WhatsApp-WebJS] Call ${clean(callId)} answered for profile ${this.profileId}, connected after ${r.connectedAfterMs} ms`);
+    console.log(`[WhatsApp-WebJS] Call ${clean(callId)} answered for profile ${clean(this.profileId)}, connected after ${r.connectedAfterMs} ms`);
     return r;
   }
 
