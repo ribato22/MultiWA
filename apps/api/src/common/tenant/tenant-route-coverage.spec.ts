@@ -16,7 +16,8 @@ import 'reflect-metadata';
 import { readdirSync, readFileSync } from 'fs';
 import path from 'path';
 import { describe, it, expect } from 'vitest';
-import { PATH_METADATA, GUARDS_METADATA } from '@nestjs/common/constants';
+import { PATH_METADATA, GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { TENANT_CHECK } from './require-tenant.decorator';
 import { TenantGuard } from './tenant.guard';
 
@@ -51,7 +52,6 @@ const TENANT_CONTROLLERS = [
 const ORG_DERIVED_ALLOWLIST = new Set<string>([
   'AccountsController.findAll',
   'AccountsController.create',
-  'ProfilesController.findAll',
   'ProfilesController.create',
   'WorkspacesController.findAll',
   'WorkspacesController.create',
@@ -115,5 +115,26 @@ describe('tenant route coverage (IDOR regression guard)', () => {
       }
     }
     expect(violations, `Tenant routes missing @RequireTenant (add the check or allowlist as org-derived):\n  ${violations.join('\n  ')}`).toEqual([]);
+  });
+
+  // An allowlisted route is trusted because it scopes by the caller's org alone. One that ALSO reads a
+  // tenant id from the query or body (GET /profiles took `?workspaceId=` and listed any workspace) is not
+  // org-derived, whatever the allowlist says.
+  it('an allowlisted (org-derived) route reads no tenant id from the query or body', () => {
+    const TENANT_KEYS = new Set(['workspaceId', 'profileId', 'organizationId', 'accountId']);
+    const violations: string[] = [];
+    for (const Ctrl of TENANT_CONTROLLERS) {
+      for (const name of Object.getOwnPropertyNames(Ctrl.prototype)) {
+        if (!ORG_DERIVED_ALLOWLIST.has(`${Ctrl.name}.${name}`)) continue;
+        const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, Ctrl, name) || {};
+        for (const [slot, arg] of Object.entries<any>(args)) {
+          const type = Number(slot.split(':')[0]);
+          if ((type === RouteParamtypes.QUERY || type === RouteParamtypes.BODY) && TENANT_KEYS.has(arg?.data)) {
+            violations.push(`${Ctrl.name}.${name} reads ${arg.data} (${RouteParamtypes[type]})`);
+          }
+        }
+      }
+    }
+    expect(violations, `Allowlisted routes that take a tenant id (add @RequireTenant and drop them from the allowlist):\n  ${violations.join('\n  ')}`).toEqual([]);
   });
 });

@@ -20,6 +20,7 @@ export class ProfilesController {
   constructor(private readonly profilesService: ProfilesService) {}
 
   @Get()
+  @RequireTenant({ from: 'query', key: 'workspaceId', resource: 'workspace', optional: true })
   @ApiOperation({ summary: 'List all profiles in workspace' })
   @ApiResponse({ status: 200, description: 'List of profiles' })
   async findAll(@Request() req: any, @Query('workspaceId') workspaceId?: string) {

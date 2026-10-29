@@ -24,9 +24,10 @@ export class ProfilesService {
       select: { id: true },
     });
 
-    const workspaceIds = workspaceId 
-      ? [workspaceId] 
-      : workspaces.map(w => w.id);
+    // A workspaceId is only honoured inside the caller's organization; the route's TenantGuard
+    // refuses a foreign one first, and this keeps every other caller of findAll safe as well.
+    const own = workspaces.map((w) => w.id);
+    const workspaceIds = workspaceId ? own.filter((id) => id === workspaceId) : own;
 
     const profiles = await prisma.profile.findMany({
       where: { workspaceId: { in: workspaceIds } },
