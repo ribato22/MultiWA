@@ -180,6 +180,8 @@ jobs:
           JWT_SECRET: test-jwt-secret
           JWT_REFRESH_SECRET: test-jwt-refresh-secret
           ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          # The runner's Chrome, for the call-media browser spec: puppeteer's own download is skipped on a cached store.
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
       # Structural IDOR guard: every tenant-scoped route must carry @RequireTenant.
       - name: Tenant route-coverage check
