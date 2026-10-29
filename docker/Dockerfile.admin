@@ -29,6 +29,10 @@ COPY packages/sdk/package.json ./packages/sdk/
 COPY packages/chatwoot-bridge/package.json ./packages/chatwoot-bridge/
 COPY packages/n8n-nodes-multiwa/package.json ./packages/n8n-nodes-multiwa/
 
+# The admin installs no puppeteer today; same rule as api/worker so a future dependency cannot pull in a ~600 MB Chrome.
+# (puppeteer >= 20 reads PUPPETEER_SKIP_DOWNLOAD. Guarded by apps/api/src/docker-image-hygiene.spec.ts.)
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
 # Install all dependencies with frozen lockfile
 RUN pnpm install --frozen-lockfile --filter @multiwa/admin...
 

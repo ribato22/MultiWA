@@ -12,3 +12,10 @@ sessions
 !**/README.md
 .vscode
 .idea
+
+# Local env files hold real secrets. `COPY . .` and `COPY packages/database` would bake
+# one into an image built on a developer machine, so keep them out of the context at
+# every depth; the .env.example template stays (the last matching line wins).
+**/.env
+**/.env.*
+!**/.env.example
