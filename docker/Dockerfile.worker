@@ -1,5 +1,5 @@
 # Build stage - use Debian slim for consistency with API
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
@@ -76,7 +76,7 @@ RUN cd apps/worker && \
   (test -f dist/main.js && echo "✅ Worker build OK" || (echo "❌ Worker build failed: apps/worker/dist/main.js missing" && exit 1))
 
 # Production stage
-FROM node:20-slim AS runner
+FROM node:24-slim AS runner
 
 WORKDIR /app
 

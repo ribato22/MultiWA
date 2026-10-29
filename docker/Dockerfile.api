@@ -1,5 +1,5 @@
 # Build stage - use node with full Chromium support for Puppeteer
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
@@ -86,7 +86,7 @@ RUN test -f apps/api/dist/main.js && echo "API dist verified" || (echo "FATAL: A
 # are now in the TypeScript source code. No post-compilation patches needed.
 
 # Production stage - use Debian slim for Chromium support
-FROM node:20-slim AS runner
+FROM node:24-slim AS runner
 
 WORKDIR /app
 

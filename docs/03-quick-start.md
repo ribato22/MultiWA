@@ -7,7 +7,7 @@ Get MultiWA running in under 5 minutes.
 ## Prerequisites
 
 - Docker & Docker Compose installed (recommended)
-- OR Node.js 20+, pnpm 9+, PostgreSQL 16+, and Redis 7+ for local development
+- OR Node.js 24+, pnpm 9+, PostgreSQL 16+, and Redis 7+ for local development
 
 ---
 

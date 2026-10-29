@@ -23,7 +23,7 @@
     "prisma": "^7.10.1"
   },
   "devDependencies": {
-    "@types/node": "^20.19.43",
+    "@types/node": "^24.19.2",
     "typescript": "^5.7.0"
   }
 }
