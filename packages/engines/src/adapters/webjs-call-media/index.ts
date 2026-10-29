@@ -2,9 +2,10 @@
 // packages/engines/src/adapters/webjs-call-media/index.ts
 //
 // Thin wrapper: every method runs one function of ./page inside the profile's WhatsApp Web page, and those
-// functions check the call id themselves. The wrapper owns one piece of state: the recording slot (which sink gets
-// the chunks, and the start in progress, so a stop can wait for it). Only used when EngineConfig.callMedia.enabled
-// (the server switch CALLS_MEDIA_ENABLED).
+// functions check the call id themselves. The wrapper keeps only a little bookkeeping: the recording slot (which
+// sink gets the chunks, and the start in progress, so a stop can wait for it), the recording binding per page, and
+// the last probe and setup problem it logged (a problem that stays is logged once). Only used when
+// EngineConfig.callMedia.enabled (the server switch CALLS_MEDIA_ENABLED).
 import type { CallMediaEngine, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
 import {
   installCallMediaHooks,
@@ -46,7 +47,9 @@ const DEFAULT_ANSWER_TIMEOUT_MS = 15_000;
 const HANG_UP_TIMEOUT_MS = 10_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const RECORDING_TIMESLICE_MS = 5_000;
-const KNOWN_REASONS: ReadonlySet<string> = new Set(['web_calling_disabled', 'voip_stack_unavailable', 'module_missing', 'hooks_missing']);
+const KNOWN_REASONS: ReadonlySet<string> = new Set([
+  'web_calling_disabled', 'voip_stack_unavailable', 'module_missing', 'hooks_missing', 'not_prepared',
+]);
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 
 /**

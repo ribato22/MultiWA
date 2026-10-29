@@ -8,8 +8,8 @@
 // the unit spec checks the init script. The interfaces below are types only, erased at compile time.
 //
 // The recipes are WhatsApp Web's own: the Accept and End buttons
-// (useWAWebVoipCallHandlers) and its playback routes (WAWebVoipAudioPlayback*). Proven live in spike B and
-// Milestone 0 (2026-10-29: macOS Chrome, Linux Chromium 156, and the wagw api image). See findings.md.
+// (useWAWebVoipCallHandlers) and its playback routes (WAWebVoipAudioPlayback*). Proven live on 2026-10-29 on
+// macOS Chrome, on Linux Chromium 156 and in the production api image.
 
 /** A stream WhatsApp Web plays: a candidate for the caller's voice. */
 export interface MwTap {
@@ -79,8 +79,19 @@ export interface MwCall {
   realGetUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>;
   /** prepareCallMediaPage got the microphone permission on this document. */
   prepared?: boolean;
-  /** The one recorder; `done` settles once the last chunk went through the binding. */
-  recorder: { callId: string; mr: MediaRecorder; startedAt: number; nodes: AudioNode[]; done: Promise<void> } | null;
+  /**
+   * The one recorder; `done` settles once the last chunk went through the binding. `endedAt` is set when the
+   * MediaRecorder stops: on request, by itself with its call (startRecordingInPage), or on an error of its own.
+   * A stopped recorder stays here until stopRecordingInPage collects it and frees the slot.
+   */
+  recorder: {
+    callId: string;
+    mr: MediaRecorder;
+    startedAt: number;
+    endedAt?: number;
+    nodes: AudioNode[];
+    done: Promise<void>;
+  } | null;
   /** One announcement at a time. */
   announcing: boolean;
 }
@@ -207,16 +218,24 @@ export async function prepareCallMediaPage(): Promise<{ hooks: boolean; micPermi
 }
 
 /**
- * Can this page carry a call: modules present, calling UI on, in-browser voip stack, our hooks. A voip stack
- * lookup that does not answer within `timeoutMs` counts as `voip_stack_unavailable`.
+ * Can this page carry a call: modules present, calling UI on, in-browser voip stack, our hooks, and the page setup
+ * done on this document (`prepared`: the microphone permission was granted). A voip stack lookup that does not
+ * answer within `timeoutMs` counts as `voip_stack_unavailable`.
  */
 export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: string[]; waVersion: string | null }> {
   const w = window as any;
   const reasons: string[] = [];
   const req = (m: string) => { try { return w.require(m); } catch { return null; } };
-  const needed = ['WAWebCallCollection', 'WAWebVoipCallStateUtils', 'WAWebVoipStackInterface', 'WAWebVoipSignalingEnums', 'WAWebCallRingtone', 'WAWebVoipCallAudioUnlock', 'WAWebVoipGatingUtils'];
+  const needed = [
+    'WAWebCallCollection', 'WAWebVoipCallStateUtils', 'WAWebVoipStackInterface', 'WAWebVoipSignalingEnums',
+    'WAWebCallRingtone', 'WAWebVoipCallAudioUnlock', 'WAWebVoipGatingUtils',
+  ];
   if (needed.some((m) => !req(m))) reasons.push('module_missing');
-  try { if (req('WAWebVoipGatingUtils')?.isWebCallingUiEnabled() !== true) reasons.push('web_calling_disabled'); } catch { reasons.push('web_calling_disabled'); }
+  try {
+    if (req('WAWebVoipGatingUtils')?.isWebCallingUiEnabled() !== true) reasons.push('web_calling_disabled');
+  } catch {
+    reasons.push('web_calling_disabled');
+  }
   let timer: any;
   try {
     const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('voip stack lookup timed out')), timeoutMs); });
@@ -228,6 +247,7 @@ export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: stri
     clearTimeout(timer);
   }
   if (!w.__mwCall) reasons.push('hooks_missing');
+  else if (!w.__mwCall.prepared) reasons.push('not_prepared'); // the hooks are here, the page setup is not done
   return { reasons: [...new Set(reasons)], waVersion: w.Debug?.VERSION ?? null };
 }
 
@@ -347,11 +367,18 @@ export async function playAnnouncementInPage(callId: string, b64: string): Promi
  * wait: a call that ended meanwhile is refused, not recorded on whatever tap was left. A chunk the binding fails to
  * take (it refuses a chunk of any other call, too) is counted and skipped; the later ones are still delivered, and
  * stopRecordingInPage reports the loss.
+ * A recording ends with its call, or it would go on and record the NEXT call on this page: the call-id guard is
+ * polled every 250 ms, and when it fails on two polls in a row (about 0.5 s; a single poll can see a flicker) the
+ * recorder stops by itself. It stays in `call.recorder`, stopped, until stopRecordingInPage collects the last chunks
+ * and frees the slot; a start before that is refused with "Already recording".
  * Resolves with how the caller's tap was chosen (MwTapPick, see callerTap): the wrapper warns when it was a guess.
  */
 export async function startRecordingInPage(callId: string, timesliceMs: number): Promise<{ callerVia: string } & MwTapPick> {
   const w = window as any;
-  const ours = () => { const c = w.require('WAWebCallCollection').activeCall; return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId); };
+  const ours = () => {
+    const c = w.require('WAWebCallCollection').activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
   if (!ours()) throw new Error('Call is not the active call');
   if (typeof w.__mwRecordingChunk !== 'function') throw new Error('Recording binding missing');
   const call: MwCall = w.__mwCall.ensure();
@@ -376,7 +403,9 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
   let stopped: Promise<void>;
   try {
     mr = new MediaRecorder(out.stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 64000 });
-    stopped = new Promise<void>((resolve) => { mr.onstop = () => resolve(); });
+    // `stop` follows every end of the recorder (a request, the poll below, an error of its own): the one place that
+    // notes when the recording ended.
+    stopped = new Promise<void>((resolve) => { mr.onstop = () => { rec.endedAt ??= Date.now(); resolve(); }; });
     mr.ondataavailable = (e: BlobEvent) => {
       if (!e.data.size) return;
       chunks++;
@@ -401,27 +430,36 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
     if (failedChunks) throw new Error(`${failedChunks} of ${chunks} recording chunks were not delivered: ${failed?.message ?? failed}`);
   });
   done.catch(() => {}); // stopRecordingInPage reports it; a recorder that stops by itself must not log an unhandled rejection
-  call.recorder = { callId, mr, startedAt: Date.now(), nodes, done };
+  const rec: NonNullable<MwCall['recorder']> = { callId, mr, startedAt: Date.now(), nodes, done };
+  call.recorder = rec;
+  let gone = 0;
+  const poll = setInterval(() => {
+    // however the recorder stopped (a request, an error, or the stop below), the poll ends with it
+    if (mr.state === 'inactive') { clearInterval(poll); return; }
+    try { gone = ours() ? 0 : gone + 1; } catch { gone++; } // a call state that cannot be read is not a live call
+    if (gone >= 2) mr.stop();
+  }, 250);
   return { callerVia: tap.via, freshCandidates: tap.freshCandidates, fallback: tap.fallback };
 }
 
 /**
- * Stop the recording of `callId`; resolves once the last chunk went through the binding. Rejects when chunks were
- * lost (the message says how many of how many), but the recorder is cleared all the same: otherwise every later
- * start would fail with "Already recording" until the page reloads. No active-call guard: a recording must stop
- * after its call ended.
+ * Stop the recording of `callId`; resolves once the last chunk went through the binding, with its length up to the
+ * moment the recorder stopped: for a recording that ended by itself with its call, the end of the call, not this
+ * (later) stop. Rejects when chunks were lost (the message says how many of how many), but the recorder is cleared
+ * all the same: otherwise every later start would fail with "Already recording" until the page reloads. No
+ * active-call guard: a recording must stop after its call ended.
  */
 export async function stopRecordingInPage(callId: string): Promise<{ durationMs: number }> {
   const call: MwCall = (window as any).__mwCall;
   const rec = call?.recorder;
   if (!rec) throw new Error('Not recording');
   if (rec.callId !== callId) throw new Error('Not recording this call');
-  rec.mr.stop();
+  if (rec.mr.state !== 'inactive') rec.mr.stop(); // it may have stopped with its call already
   try {
     await rec.done;
   } finally {
     rec.nodes.forEach((n: AudioNode) => n.disconnect());
     if (call.recorder === rec) call.recorder = null;
   }
-  return { durationMs: Date.now() - rec.startedAt };
+  return { durationMs: (rec.endedAt ?? Date.now()) - rec.startedAt };
 }
