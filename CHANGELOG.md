@@ -7,9 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-29
+
+### Added
+
+- **WhatsApp calls (incoming)** — calls are recorded per profile with their outcome (missed, rejected, answered on another device, unknown) and a follow-up queue: `/api/v1/calls` (list, assign, follow up, reject a ringing call, reply, send a call link), `call.received` / `call.rejected` / `call.ended` / `call.updated` webhooks, the realtime `call:update` event, a Calls page and call rows in the chat, per-profile auto-reject with a reply (at most once per caller per 24 hours, through the send gate), and missed-call notifications. whatsapp-web.js only. (#248, #262, #263, #264)
+- **Quiet-profile alarm** — a connected profile that receives nothing for a set number of hours raises one alarm (admin notification plus a WhatsApp message to your ops numbers through another profile) and one notice when it recovers; `QUIET_ALARM_ACTIVE_HOURS` and `QUIET_ALARM_TIMEZONE`. (#260)
+- **PHP SDK, release-ready** — `multiwa/multiwa-php` calls the real routes, throws typed exceptions (`MultiWAException`, `ApiException`, `AuthenticationException`, `ValidationException`, `NotFoundException`, `RateLimitException`) and is tested on PHP 8.1–8.4; a workflow publishes it to Packagist from a split repository once that is set up (`docs/21-releasing-and-distribution.md`). (#270)
+- Copy a profile's UUID from the profile page. (#222)
+- Alerts on silent engine degradation (group-list fallback, dropped acks). (#146)
+- Scripts to recover inbound media that was stored without its file, and to ship an exported image to an air-gapped host as a per-layer delta. (#245, #247)
+
+### Changed
+
+- **A send through a disconnected profile answers `409 PROFILE_DISCONNECTED`** and the message is marked `failed`; it used to answer `201` with a message that stayed `pending` and was never sent. Scheduled messages, broadcasts and automation replies record such failures as failed. (#256, #257)
+- **Python SDK** — every call uses a real route with the API's request bodies; broadcast `create` takes the API's `recipients` and `message` objects (a list or a string is converted), and `resume` and `schedule` are new; arguments the API never accepted (`template_id`, contact `email`, webhook `secret`, profile `is_active`) raise `ValueError`, and `get_qr` raises because QR codes arrive over the WebSocket `qr:update` event. See `packages/sdk-python/CHANGELOG.md`. (#269)
+- Dependencies: Fastify 5.12, Prisma 7.10, Next 15.5, nodemailer 10.1, BullMQ 6.1 (patched) and the remaining security updates; Docker images are built from the lockfile. (#173, #174, #185, #212, #214, #220, #221, #230–#243, #252)
+- Docs: the WebSocket API page documents the real Socket.IO gateway, and the webhook pages match the API. (#258, #265)
+
 ### Fixed
 
-- **Python SDK 1.3.0** (`multiwa` on PyPI, released on its own) — every method now calls a route that exists, with the request body the API expects, and the models parse the real responses; bodyless POST/DELETE calls no longer get a 400. Adds `broadcasts.schedule`/`resume` and the missing async methods. Details in [`packages/sdk-python/CHANGELOG.md`](packages/sdk-python/CHANGELOG.md).
+- The admin chat shows inbound media and plays voice notes again. (#266)
+- Inbound images are downloaded with their media on current WhatsApp Web. (#246)
+- TypeScript SDK: conversation archive, unarchive and read use `PUT`; calls without a body no longer send a JSON Content-Type (the API answered 400); `removeTags` sends its body; `tags` filters are sent as repeated parameters. (#268)
+- Engine: a remote logout no longer crashes the process; a QR wait is kept until it is scanned or times out; `authenticated` and `ready` are reported once per connect. (#224, #226, #228)
+- The worker is no longer wedged after a Redis outage. (#168)
+- A socket `join` waits for the handshake auth, and a live message only appears in its own chat. (#254, #255)
+- Uploads: every accepted MIME type keeps its extension, and the stored media URL is served. (#209, #227)
+- Media sends, the message page size, the conversation list's memory use, recorded send-failure reasons, and identical replies repeated within a minute (now suppressed by the send gate). (#170, #205, #207, #208)
+- whatsapp-web.js is patched for WhatsApp Web's message-key rename (groups, history sync, outbound acks). (#144, #145)
+
+### Security
+
+- `GET /profiles?workspaceId=` only lists the caller's own workspaces, and the tenant-coverage test now fails when an allowlisted route reads a tenant id from the query or body. (#267)
+- An API key stops working once its user is deactivated. (#249)
+- The Redis URL logged at startup no longer shows its credentials. (#225)
+- Dependency security updates: the production audit went from 5 critical / 62 high to 0 / 5, and Dependabot alerts are enabled. (#230–#243)
+
+Full list of changes: [v1.2.0...v1.3.0](https://github.com/ribato22/MultiWA/compare/v1.2.0...v1.3.0)
 
 ## [1.2.0] - 2026-07-21
 

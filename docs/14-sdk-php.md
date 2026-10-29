@@ -10,7 +10,7 @@ Official PHP SDK for MultiWA: the Composer package `multiwa/multiwa-php`, source
 composer require multiwa/multiwa-php
 ```
 
-The first Packagist release is 1.0.0 (see [Releasing & Distribution](./21-releasing-and-distribution.md)). Until it is live, install from a clone of this repository with a Composer `path` repository:
+The first Packagist release is 1.3.0 (see [Releasing & Distribution](./21-releasing-and-distribution.md)). Until it is live, install from a clone of this repository with a Composer `path` repository:
 
 ```json
 {

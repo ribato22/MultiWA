@@ -82,7 +82,7 @@ package on PHP 8.1–8.4 for every change to it.
    only long-lived secret in the release setup (`GITHUB_TOKEN` cannot push to
    another repository); without it the workflow stops with an error naming it.
 3. Push the first tag (below). The mirror then has `composer.json` at its root
-   and the tag `v1.0.0`.
+   and the tag `v1.3.0`.
 4. Submit `https://github.com/ribato22/multiwa-php` on packagist.org (**Submit**).
 5. Enable auto-update: log in to packagist.org with GitHub and grant the
    Packagist application access, so it installs its push webhook on the mirror
@@ -91,7 +91,7 @@ package on PHP 8.1–8.4 for every change to it.
 
 **Each release:** the version comes from the tag only, so there is nothing to
 bump: `git tag sdk-php-v<version> && git push origin sdk-php-v<version>`
-(the first release is `sdk-php-v1.0.0`).
+(the first release is `sdk-php-v1.3.0`; SDK versions follow the project version).
 
 ## Docker images (GHCR primary, Docker Hub optional)
 
