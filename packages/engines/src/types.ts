@@ -232,6 +232,7 @@ export interface CallMediaEngine {
    * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.
    * A recording ends with its call: it stops by itself 250-500 ms after its call is over (WhatsApp's active call is
    * another call or none, or the engine's call tracking reported the call ended), so it never records the next call.
+   * That is a backstop: stop a recording when its call is reported `ended`, and never start one for a call that was.
    * `stopRecording(callId)` is still required, to collect the last chunks, get `durationMs`, and free the slot (a
    * start before that rejects "Already recording"). A recorder that fails stops the same way, and stopRecording then
    * rejects.

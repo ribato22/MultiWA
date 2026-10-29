@@ -934,16 +934,32 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     }
   }, 20_000);
 
-  it('a call the patch reports ended while the start waits for a caller tap still ends its recording', async () => {
+  it('a call the patch reports ended while the start waits for a caller tap is refused, not recorded', async () => {
     const p = await openRecordingPage();
     try {
       // a fresh page has no caller audio, so the start waits for a tap
       const start = p.evaluate(startRecordingInPage, 'CALL1', 500);
+      start.catch(() => undefined); // asserted below; an earlier failure must not surface as an unhandled rejection
       await sleep(300);
       await p.evaluate(() => { (window as any)._multiwaCallId = null; }); // the patch reports the end; the call stays in the slot
       await p.evaluate(() => { (window as any).__fakeWa.play('destination'); }); // a tap turns up all the same
-      await start; // the guard after the wait lets an unset id pass: it records...
-      expect(await recorderStops(p, 1500)).toBe(true); // ...until the poll sees that the patch had tracked this call
+      await expect(start).rejects.toThrow('Call is not the active call');
+      expect(await p.evaluate(() => (window as any).__mwCall.recorder)).toBeNull();
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
+  it('a call the patch never tracked (no _multiwaCallId when the recording starts) is not ended by the unset id', async () => {
+    const p = await openRecordingPage();
+    try {
+      await p.evaluate(() => { delete (window as any)._multiwaCallId; });
+      await p.evaluate(answerActiveCall, 'CALL1', 5000);
+      await p.evaluate(startRecordingInPage, 'CALL1', 500);
+      await sleep(1200); // several polls
+      expect(await recorderState(p)).toBe('recording'); // judged by the call-id guard alone
+      await p.evaluate(() => (window as any).__fakeWa.ring('CALL2')); // the slot changes: now it ends
+      expect(await recorderStops(p, 2000)).toBe(true);
     } finally {
       await p.close();
     }

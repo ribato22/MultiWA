@@ -371,7 +371,8 @@ export async function playAnnouncementInPage(callId: string, b64: string): Promi
  * Record the call `callId`: left = the caller (callerTap), right = what the caller hears (the injected
  * microphone). WebM/Opus chunks, in order, go to the page binding `__mwRecordingChunk(callId, base64)`. One recorder
  * at a time, also for starts that overlap while they wait for a caller tap. The call-id guard runs again after that
- * wait: a call that ended meanwhile is refused, not recorded on whatever tap was left. A chunk the binding fails to
+ * wait: a call that ended meanwhile (also as the patch reports it, see below) is refused, not recorded on whatever tap
+ * was left. A chunk the binding fails to
  * take (it refuses a chunk of any other call, too) is counted and skipped; the later ones are still delivered, and
  * stopRecordingInPage reports the loss. So does a recorder that fails (the first error is kept): it stops, and the
  * recording is shorter than its call.
@@ -379,8 +380,11 @@ export async function playAnnouncementInPage(callId: string, b64: string): Promi
  * 250 ms, and when it is over on two polls in a row (so 250-500 ms after the end; a single poll can see a flicker) the
  * recorder stops by itself. A call is over when the call-id guard fails (WhatsApp's active call is another call, or
  * none), or when the whatsapp-web.js patch that tracks the call reports it ended (it clears `_multiwaCallId`; the call
- * may still be WhatsApp's active call). The recorder stays in `call.recorder`, stopped, until stopRecordingInPage
- * collects the last chunks and frees the slot; a start before that is refused with "Already recording".
+ * may still be WhatsApp's active call). That is a backstop with two limits: a call the patch did not track when the
+ * start began is judged by the call-id guard alone, and a call the patch reports again after its end (it sets the id
+ * back) ends only when WhatsApp's active call changes. The recorder stays in `call.recorder`, stopped, until
+ * stopRecordingInPage collects the last chunks and frees the slot; a start before that is refused with "Already
+ * recording".
  * Resolves with how the caller's tap was chosen (MwTapPick, see callerTap): the wrapper warns when it was a guess.
  */
 export async function startRecordingInPage(callId: string, timesliceMs: number): Promise<{ callerVia: string } & MwTapPick> {
@@ -399,7 +403,8 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
   const call: MwCall = w.__mwCall.ensure();
   if (call.recorder) throw new Error('Already recording');
   const tap = await call.callerTap(5000);
-  if (!ours()) throw new Error('Call is not the active call'); // it ended, or another call took its place, during the wait
+  // it ended (also as the patch reports it), or another call took its place, during the wait
+  if (over()) throw new Error('Call is not the active call');
   if (!tap) throw new Error('No caller audio to record');
   // The recorder is claimed below, synchronously; another start may have claimed it while this one waited for a tap.
   if (call.recorder) throw new Error('Already recording');
