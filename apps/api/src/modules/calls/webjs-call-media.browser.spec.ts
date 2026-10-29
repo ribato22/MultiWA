@@ -2,11 +2,14 @@
 // CALL_MEDIA_INIT_SCRIPT and page functions the engine injects, the same Chrome flags, with WA Web's modules
 // replaced by small fakes:
 // - acceptCall connects after 300 ms (or never, with `hangAccept`);
+// - getVoipStackInterface answers at once (or never, with `hangStack`, or only after a busy page, `stackBusyMs`);
 // - "WhatsApp's playback" is an oscillator connected to AudioContext.destination;
 // - "WhatsApp's mic capture" is the getUserMedia it gets.
-// It proves the guards, the answer flow and its timeout, that the injected mic carries the announcement (and
-// holds the agent meanwhile), the stereo recording (L caller, R heard, checked by tone), its recovery from a
-// failed chunk delivery and the hang-up, without WhatsApp. Automated form of spike B's selftest.mjs.
+// It proves the guards, the answer flow and its timeout (which also bounds the stack lookup and the accept),
+// that the injected mic carries the announcement (and holds the agent meanwhile, and gives the line back when
+// an announcement never ends), the stereo recording (L caller, R heard, checked by tone), one recorder at a
+// time, its recovery from a failed chunk delivery and the hang-up, without WhatsApp. Automated form of spike
+// B's selftest.mjs.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
@@ -41,7 +44,7 @@ function sineWav(hz: number, seconds: number, rate = 16000): Buffer {
 /** Fake WhatsApp Web modules: only what the call recipes touch. */
 function installFakeWhatsApp() {
   const w = window as any;
-  const fake: any = (w.__fakeWa = { endCalls: [], gumStream: null, level: () => 0, hangAccept: false, connectAfterMs: 300 });
+  const fake: any = (w.__fakeWa = { endCalls: [], gumStream: null, level: () => 0, hangAccept: false, connectAfterMs: 300, accepts: 0, hangStack: false, releaseStack: null, stackBusyMs: 0 });
   const call: any = { id: 'CALL1', state: 3, getState() { return this.state; } };
   const CC: any = { activeCall: call };
   // The same call object rings again as `id` (for the tests that run after the hang-up).
@@ -50,6 +53,7 @@ function installFakeWhatsApp() {
   const stack = {
     type: 'web',
     async acceptCall() {
+      fake.accepts++;
       if (fake.hangAccept) return new Promise<void>(() => {}); // a voip stack that never answers
       call.state = 4;
       // WhatsApp's playback (the caller): an oscillator to the destination, like the direct route.
@@ -76,7 +80,15 @@ function installFakeWhatsApp() {
   const modules: Record<string, any> = {
     WAWebCallCollection: CC,
     WAWebVoipCallStateUtils: { isCallIncoming: (s: number) => s === 3 || s === 8, isCallConnected: (s: number) => s === 6 || s === 11 },
-    WAWebVoipStackInterface: { getVoipStackInterface: async () => stack },
+    WAWebVoipStackInterface: {
+      getVoipStackInterface: async () => {
+        // a busy page: the main thread is blocked, so the answer's timer cannot run before the lookup returns
+        for (const end = Date.now() + fake.stackBusyMs; Date.now() < end; ) { /* spin */ }
+        // a lookup that never answers, until the test releases it (late)
+        if (fake.hangStack) await new Promise<void>((resolve) => { fake.releaseStack = resolve; });
+        return stack;
+      },
+    },
     WAWebVoipSignalingEnums: { EndCallReason: { Self: 1 } },
     WAWebCallRingtone: { stopCallRingtone() {} },
     WAWebVoipCallAudioUnlock: { prepareCallAudioElement() {} },
@@ -198,6 +210,26 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     expect(chunks.length).toBeGreaterThan(before);
   });
 
+  it('refuses a second recording started before any caller audio exists: one recorder, the other is refused', async () => {
+    // No tap yet: both starts pass the first "Already recording" check and wait in the tap loop, with the
+    // recorder still unclaimed. Whoever leaves the loop first must claim it; the other must be refused.
+    await page.evaluate(() => { const c = (window as any).__mwCall; c.savedTaps = c.taps; c.taps = []; });
+    const restoreTaps = () => page.evaluate(() => { const c = (window as any).__mwCall; c.taps = c.savedTaps; });
+    try {
+      const both = Promise.allSettled([page.evaluate(startRecordingInPage, 1000), page.evaluate(startRecordingInPage, 1000)]);
+      await new Promise((r) => setTimeout(r, 200));
+      await restoreTaps();
+      const settled = await both;
+      const refused = settled.filter((s): s is PromiseRejectedResult => s.status === 'rejected');
+      expect(settled.filter((s) => s.status === 'fulfilled')).toHaveLength(1);
+      expect(refused).toHaveLength(1);
+      expect(refused[0].reason?.message).toContain('Already recording');
+      expect((await page.evaluate(stopRecordingInPage)).durationMs).toBeGreaterThanOrEqual(0); // the one recorder stops cleanly
+    } finally {
+      await restoreTaps();
+    }
+  });
+
   it('hangs up the way the End button does', async () => {
     await expect(page.evaluate(hangUpActiveCall, 'OTHER')).rejects.toThrow('Call is not the active call');
     await page.evaluate(hangUpActiveCall, 'CALL1');
@@ -223,4 +255,63 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     }
     expect(Date.now() - t0).toBeLessThan(5000); // not puppeteer's protocol timeout (minutes)
   }, 15_000);
+
+  it('bounds the voip stack lookup by the same deadline, and never accepts after it', async () => {
+    const accepts = () => page.evaluate(() => (window as any).__fakeWa.accepts);
+    await page.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL2'); f.hangStack = true; f.accepts = 0; });
+    const t0 = Date.now();
+    try {
+      await expect(page.evaluate(answerActiveCall, 'CALL2', 500)).rejects.toThrow('Call did not connect in time');
+      expect(Date.now() - t0).toBeLessThan(5000); // not puppeteer's protocol timeout (minutes)
+      // the lookup answers late: the answer is over, so acceptCall must not run now
+      await page.evaluate(() => (window as any).__fakeWa.releaseStack());
+      await new Promise((r) => setTimeout(r, 300));
+      expect(await accepts()).toBe(0);
+    } finally {
+      await page.evaluate(() => { const f = (window as any).__fakeWa; f.hangStack = false; f.releaseStack?.(); });
+    }
+  }, 15_000);
+
+  it('does not accept when a busy page returns the stack after the deadline but before the timer could run', async () => {
+    await page.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL2'); f.stackBusyMs = 700; f.accepts = 0; });
+    try {
+      await expect(page.evaluate(answerActiveCall, 'CALL2', 400)).rejects.toThrow('Call did not connect in time');
+      expect(await page.evaluate(() => (window as any).__fakeWa.accepts)).toBe(0); // the clock decides, not the late timer
+    } finally {
+      await page.evaluate(() => { (window as any).__fakeWa.stackBusyMs = 0; });
+    }
+  }, 15_000);
+
+  it('refuses a call that is not the one WhatsApp Web tracks as ours (_multiwaCallId), without accepting it', async () => {
+    await page.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL3'); f.accepts = 0; (window as any)._multiwaCallId = 'CALL9'; });
+    try {
+      // CALL3 IS the active call and IS ringing: only the _multiwaCallId guard can refuse it
+      await expect(page.evaluate(answerActiveCall, 'CALL3', 2000)).rejects.toThrow('Call is not the active call');
+      expect(await page.evaluate(() => (window as any).__fakeWa.accepts)).toBe(0);
+    } finally {
+      await page.evaluate(() => { (window as any)._multiwaCallId = 'CALL3'; });
+    }
+  });
+
+  it('an announcement that never ends rejects after its length + 5 s, and gives the line back', async () => {
+    const line = () => page.evaluate(() => { const c = (window as any).__mwCall; return { gain: c.inputs.agent.gain.value, announcing: c.announcing }; });
+    // A suspended context never reaches the end of the buffer. call.ensure() would resume it at once, so
+    // resume() is shadowed (own property) for the duration of the test.
+    await page.evaluate(async () => { const ctx = (window as any).__mwCall.ctx; await ctx.suspend(); ctx.resume = () => Promise.resolve(); });
+    try {
+      const t0 = Date.now();
+      const outcome = Promise.race([
+        page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64')).then(() => 'resolved', (e: Error) => e.message),
+        new Promise<string>((r) => setTimeout(() => r('still pending after 9 s'), 9000)), // a hang is a failure, not a test timeout
+      ]);
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(await line()).toEqual({ gain: 0, announcing: true }); // held: the agent is silent while it "plays"
+      expect(await outcome).toContain('Announcement did not finish');
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(5200); // 0.3 s of audio + 5 s
+      expect(await line()).toEqual({ gain: 1, announcing: false }); // the finally ran: line back, guard released
+    } finally {
+      await page.evaluate(async () => { const ctx = (window as any).__mwCall.ctx; delete ctx.resume; await ctx.resume(); });
+    }
+    expect((await page.evaluate(playAnnouncementInPage, sineWav(660, 0.3).toString('base64'))).durationMs).toBe(300);
+  }, 25_000);
 }, 120_000);

@@ -45,9 +45,12 @@ const clean = (s: string) => String(s).replace(/[\r\n]/g, '');
 
 export class WebJsCallMedia implements CallMediaEngine {
   /**
-   * The recording binding per page object, as the PENDING `exposeFunction`. puppeteer throws "already exists"
-   * on a second `exposeFunction` of the same name, so each page gets exactly one attempt: concurrent callers
-   * share it instead of binding twice, and a failed attempt is dropped so the next call retries.
+   * The recording binding per page object, as the PENDING attempt: concurrent callers share one
+   * `exposeFunction` instead of binding twice. puppeteer takes the name BEFORE it awaits anything, so a failed
+   * attempt still leaves the name taken on that page object. Calling `exposeFunction` there again only throws
+   * "already exists" (a retry helps only on a new page object, i.e. after a relaunch), and that error means
+   * puppeteer still holds OUR binding: the page counts as bound. Any other failure drops the entry, so the
+   * next call looks again.
    */
   private readonly bindings = new WeakMap<object, Promise<void>>();
   private onChunk: ((chunk: Buffer) => void) | null = null;
@@ -63,7 +66,10 @@ export class WebJsCallMedia implements CallMediaEngine {
   async preparePage(): Promise<void> {
     const page = this.page();
     if (!page) return;
-    await this.bindRecording(page);
+    // The binding never blocks the rest: user activation and the mic permission are needed for every call.
+    await this.bindRecording(page).catch((e: any) => {
+      console.warn(`[WhatsApp-WebJS] call media recording binding for profile ${this.profileId}: ${clean(e?.message ?? e)}`);
+    });
     await page.keyboard.press('Shift').catch(() => undefined); // a trusted key press = user activation
     const r = await page.evaluate(prepareCallMediaPage);
     if (!r.hooks || !/^(granted|already granted)$/.test(r.micPermission)) {
@@ -134,16 +140,25 @@ export class WebJsCallMedia implements CallMediaEngine {
   private async bindRecording(page: any): Promise<void> {
     let bound = this.bindings.get(page);
     if (!bound) {
-      bound = page.exposeFunction('__mwRecordingChunk', (b64: string) => {
-        this.onChunk?.(Buffer.from(b64, 'base64'));
-      });
+      bound = this.exposeRecording(page);
       this.bindings.set(page, bound);
     }
     try {
       await bound;
     } catch (e) {
-      this.bindings.delete(page);
+      if (this.bindings.get(page) === bound) this.bindings.delete(page); // not a newer attempt's entry
       throw e;
+    }
+  }
+
+  private async exposeRecording(page: any): Promise<void> {
+    try {
+      await page.exposeFunction('__mwRecordingChunk', (b64: string) => {
+        this.onChunk?.(Buffer.from(b64, 'base64'));
+      });
+    } catch (e) {
+      // "already exists": an earlier attempt failed after puppeteer took the name, so it still holds our binding
+      if (!/already exists/.test(String((e as Error)?.message))) throw e;
     }
   }
 }
