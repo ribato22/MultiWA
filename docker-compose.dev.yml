@@ -126,7 +126,7 @@ services:
   # Admin Dashboard (Next.js)
   # ==============================================
   admin:
-    image: node:20-alpine
+    image: node:24-alpine
     container_name: multiwa-admin
     restart: unless-stopped
     working_dir: /app
