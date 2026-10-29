@@ -4,104 +4,124 @@ declare(strict_types=1);
 
 namespace MultiWA\Clients;
 
-use GuzzleHttp\Client as HttpClient;
 use MultiWA\Models\Profile;
+use MultiWA\MultiWA;
 
 /**
- * Profiles API Client
+ * Profiles API: the WhatsApp numbers connected to MultiWA.
+ *
+ * Linking a number: call connect(), then show the QR code that the WebSocket
+ * API pushes as the `qr:update` event (namespace /ws, join the profile first)
+ * until it is scanned. The REST API has no QR route.
  */
 class ProfilesClient
 {
     public function __construct(
-        private readonly HttpClient $http
-    ) {}
+        private readonly MultiWA $client,
+    ) {
+    }
 
+    /**
+     * @param string|null $engine whatsapp-web-js (the server default), baileys (experimental) or mock
+     */
     public function create(
         string $workspaceId,
         string $name,
-        string $engine = 'whatsapp-web-js',
+        ?string $engine = null,
+        ?string $webhookUrl = null,
+        ?string $webhookSecret = null,
     ): Profile {
-        $response = $this->http->post('profiles', [
-            'json' => [
+        return Profile::fromArray($this->client->request('POST', 'profiles', [
+            'json' => array_filter([
                 'workspaceId' => $workspaceId,
                 'name' => $name,
                 'engine' => $engine,
-            ],
-        ]);
-
-        return Profile::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
+                'webhookUrl' => $webhookUrl,
+                'webhookSecret' => $webhookSecret,
+            ], static fn ($v) => $v !== null),
+        ]));
     }
 
     public function get(string $profileId): Profile
     {
-        $response = $this->http->get("profiles/{$profileId}");
-        return Profile::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
+        return Profile::fromArray($this->client->request('GET', self::path($profileId)));
     }
 
-    public function list(
-        ?string $workspaceId = null,
-        int $limit = 50,
-        int $offset = 0,
-    ): array {
-        $response = $this->http->get('profiles', [
-            'query' => array_filter([
-                'workspaceId' => $workspaceId,
-                'limit' => $limit,
-                'offset' => $offset,
-            ], fn($v) => $v !== null),
+    /**
+     * Profiles of the API key's organization, newest first.
+     *
+     * @return list<Profile>
+     */
+    public function list(?string $workspaceId = null): array
+    {
+        $rows = $this->client->request('GET', 'profiles', [
+            'query' => ['workspaceId' => $workspaceId],
         ]);
 
-        $data = json_decode($response->getBody()->getContents(), true);
-        return array_map(fn($p) => Profile::fromArray($p), $data);
+        return array_values(array_map(static fn (array $row) => Profile::fromArray($row), $rows));
     }
 
+    /**
+     * Updates the given fields. An engine change applies on the next connect.
+     */
     public function update(
         string $profileId,
         ?string $name = null,
-        ?bool $isActive = null,
+        ?string $engine = null,
+        ?string $webhookUrl = null,
+        ?string $webhookSecret = null,
     ): Profile {
-        $data = array_filter([
-            'name' => $name,
-            'isActive' => $isActive,
-        ], fn($v) => $v !== null);
-
-        $response = $this->http->patch("profiles/{$profileId}", ['json' => $data]);
-        return Profile::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
+        return Profile::fromArray($this->client->request('PUT', self::path($profileId), [
+            'json' => array_filter([
+                'name' => $name,
+                'engine' => $engine,
+                'webhookUrl' => $webhookUrl,
+                'webhookSecret' => $webhookSecret,
+            ], static fn ($v) => $v !== null),
+        ]));
     }
 
+    /**
+     * Disconnects the profile, then deletes it with its messages, contacts and
+     * conversations.
+     *
+     * @return array{success: bool}
+     */
     public function delete(string $profileId): array
     {
-        $response = $this->http->delete("profiles/{$profileId}");
-        return json_decode($response->getBody()->getContents(), true);
+        return $this->client->request('DELETE', self::path($profileId));
     }
 
+    /**
+     * Starts the WhatsApp engine of the profile. Status `connecting`: the QR
+     * code follows as the WebSocket `qr:update` event. `already_connected`:
+     * nothing to scan.
+     *
+     * @return array{status: string, message?: string, phone?: string|null}
+     */
     public function connect(string $profileId): array
     {
-        $response = $this->http->post("profiles/{$profileId}/connect");
-        return json_decode($response->getBody()->getContents(), true);
+        return $this->client->request('POST', self::path($profileId) . '/connect');
     }
 
+    /**
+     * @return array{status: string}
+     */
     public function disconnect(string $profileId): array
     {
-        $response = $this->http->post("profiles/{$profileId}/disconnect");
-        return json_decode($response->getBody()->getContents(), true);
+        return $this->client->request('POST', self::path($profileId) . '/disconnect');
     }
 
-    public function getQr(string $profileId): array
-    {
-        $response = $this->http->get("profiles/{$profileId}/qr");
-        return json_decode($response->getBody()->getContents(), true);
-    }
-
+    /**
+     * @return array{id: string, name: string|null, status: string, phone: string|null, lastConnectedAt: string|null, engineConnected: bool}
+     */
     public function status(string $profileId): array
     {
-        $response = $this->http->get("profiles/{$profileId}/status");
-        return json_decode($response->getBody()->getContents(), true);
+        return $this->client->request('GET', self::path($profileId) . '/status');
+    }
+
+    private static function path(string $profileId): string
+    {
+        return 'profiles/' . rawurlencode($profileId);
     }
 }

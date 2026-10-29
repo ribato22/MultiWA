@@ -4,17 +4,18 @@ declare(strict_types=1);
 
 namespace MultiWA\Clients;
 
-use GuzzleHttp\Client as HttpClient;
 use MultiWA\Models\Webhook;
+use MultiWA\MultiWA;
 
 /**
- * Webhooks API Client
+ * Webhooks API: deliver a profile's events to your URL.
  */
 class WebhooksClient
 {
     public function __construct(
-        private readonly HttpClient $http
-    ) {}
+        private readonly MultiWA $client,
+    ) {
+    }
 
     /**
      * Verify a MultiWA webhook HMAC-SHA256 signature.
@@ -34,79 +35,89 @@ class WebhooksClient
         return hash_equals($expected, $signature);
     }
 
+    /**
+     * Subscribes a URL to events of a profile. The server generates the signing
+     * secret: keep Webhook::$secret to verify deliveries.
+     *
+     * @param string[]              $events  e.g. ['message.received', 'message.sent']
+     * @param array<string, string> $headers Extra headers sent with every delivery
+     */
     public function create(
         string $profileId,
         string $url,
         array $events,
-        ?string $secret = null,
+        array $headers = [],
     ): Webhook {
-        $response = $this->http->post('webhooks', [
+        return Webhook::fromArray($this->client->request('POST', 'webhooks', [
             'json' => array_filter([
                 'profileId' => $profileId,
                 'url' => $url,
                 'events' => $events,
-                'secret' => $secret,
-            ], fn($v) => $v !== null),
-        ]);
-
-        return Webhook::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
+                'headers' => $headers ? (object) $headers : null,
+            ], static fn ($v) => $v !== null),
+        ]));
     }
 
     public function get(string $webhookId): Webhook
     {
-        $response = $this->http->get("webhooks/{$webhookId}");
-        return Webhook::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
+        return Webhook::fromArray($this->client->request('GET', self::path($webhookId)));
     }
 
-    public function list(
-        string $profileId,
-        int $limit = 50,
-        int $offset = 0,
-    ): array {
-        $response = $this->http->get("webhooks/profile/{$profileId}", [
-            'query' => [
-                'limit' => $limit,
-                'offset' => $offset,
-            ],
+    /**
+     * @return list<Webhook>
+     */
+    public function list(string $profileId): array
+    {
+        $rows = $this->client->request('GET', 'webhooks', [
+            'query' => ['profileId' => $profileId],
         ]);
 
-        $data = json_decode($response->getBody()->getContents(), true);
-        return array_map(fn($w) => Webhook::fromArray($w), $data);
+        return array_values(array_map(static fn (array $row) => Webhook::fromArray($row), $rows));
     }
 
+    /**
+     * Updates the given fields; `events` and `headers` replace the current ones.
+     *
+     * @param string[]|null              $events
+     * @param array<string, string>|null $headers
+     */
     public function update(
         string $webhookId,
         ?string $url = null,
         ?array $events = null,
-        ?bool $isActive = null,
-        ?string $secret = null,
+        ?array $headers = null,
+        ?bool $enabled = null,
     ): Webhook {
-        $data = array_filter([
-            'url' => $url,
-            'events' => $events,
-            'isActive' => $isActive,
-            'secret' => $secret,
-        ], fn($v) => $v !== null);
-
-        $response = $this->http->patch("webhooks/{$webhookId}", ['json' => $data]);
-        return Webhook::fromArray(
-            json_decode($response->getBody()->getContents(), true)
-        );
+        return Webhook::fromArray($this->client->request('PUT', self::path($webhookId), [
+            'json' => array_filter([
+                'url' => $url,
+                'events' => $events,
+                'headers' => $headers === null ? null : (object) $headers,
+                'enabled' => $enabled,
+            ], static fn ($v) => $v !== null),
+        ]));
     }
 
+    /**
+     * @return array{success: bool}
+     */
     public function delete(string $webhookId): array
     {
-        $response = $this->http->delete("webhooks/{$webhookId}");
-        return json_decode($response->getBody()->getContents(), true);
+        return $this->client->request('DELETE', self::path($webhookId));
     }
 
+    /**
+     * Sends a signed sample event (`test`) to the webhook URL.
+     *
+     * @return array{success: bool, message: string}
+     */
     public function test(string $webhookId): array
     {
-        $response = $this->http->post("webhooks/{$webhookId}/test");
-        return json_decode($response->getBody()->getContents(), true);
+        return $this->client->request('POST', self::path($webhookId) . '/test');
+    }
+
+    private static function path(string $webhookId): string
+    {
+        return 'webhooks/' . rawurlencode($webhookId);
     }
 }

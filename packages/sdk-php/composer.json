@@ -3,10 +3,22 @@
   "description": "Official PHP SDK for the MultiWA WhatsApp Business API Gateway.",
   "type": "library",
   "license": "MIT",
+  "keywords": [
+    "whatsapp",
+    "whatsapp-api",
+    "whatsapp-gateway",
+    "api",
+    "sdk",
+    "messaging",
+    "automation",
+    "gateway",
+    "multiwa"
+  ],
   "homepage": "https://github.com/ribato22/MultiWA/tree/main/packages/sdk-php#readme",
   "support": {
     "issues": "https://github.com/ribato22/MultiWA/issues",
-    "source": "https://github.com/ribato22/MultiWA"
+    "source": "https://github.com/ribato22/MultiWA/tree/main/packages/sdk-php",
+    "docs": "https://ribato22.github.io/MultiWA/docs/sdks/php-sdk"
   },
   "authors": [
     {
@@ -15,12 +27,12 @@
     }
   ],
   "require": {
-    "php": ">=8.1",
+    "php": "^8.1",
     "guzzlehttp/guzzle": "^7.5"
   },
   "require-dev": {
-    "phpunit/phpunit": "^10.0",
-    "phpstan/phpstan": "^1.10"
+    "phpstan/phpstan": "^2.1",
+    "phpunit/phpunit": "^10.5"
   },
   "autoload": {
     "psr-4": {
@@ -34,16 +46,7 @@
   },
   "scripts": {
     "test": "phpunit",
-    "analyse": "phpstan analyse src"
+    "analyse": "phpstan analyse"
   },
-  "keywords": [
-    "whatsapp",
-    "api",
-    "messaging",
-    "automation",
-    "multiwa",
-    "whatsapp-api",
-    "gateway"
-  ],
   "minimum-stability": "stable"
 }

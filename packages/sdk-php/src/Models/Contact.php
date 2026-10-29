@@ -8,19 +8,30 @@ use DateTimeImmutable;
 
 class Contact
 {
+    /**
+     * @param string[]             $tags
+     * @param array<string, mixed> $metadata
+     */
     public function __construct(
         public readonly string $id,
         public readonly string $profileId,
         public readonly string $phone,
         public readonly ?string $name = null,
-        public readonly ?string $email = null,
-        public readonly ?string $avatar = null,
+        /** The name the contact set in WhatsApp. */
+        public readonly ?string $whatsappName = null,
+        public readonly ?string $avatarUrl = null,
         public readonly array $tags = [],
         public readonly array $metadata = [],
+        public readonly bool $isBlocked = false,
+        public readonly ?DateTimeImmutable $lastMessageAt = null,
         public readonly ?DateTimeImmutable $createdAt = null,
         public readonly ?DateTimeImmutable $updatedAt = null,
-    ) {}
+    ) {
+    }
 
+    /**
+     * @param array<mixed> $data
+     */
     public static function fromArray(array $data): self
     {
         return new self(
@@ -28,10 +39,12 @@ class Contact
             profileId: $data['profileId'],
             phone: $data['phone'],
             name: $data['name'] ?? null,
-            email: $data['email'] ?? null,
-            avatar: $data['avatar'] ?? null,
+            whatsappName: $data['whatsappName'] ?? null,
+            avatarUrl: $data['avatarUrl'] ?? null,
             tags: $data['tags'] ?? [],
             metadata: $data['metadata'] ?? [],
+            isBlocked: $data['isBlocked'] ?? false,
+            lastMessageAt: isset($data['lastMessageAt']) ? new DateTimeImmutable($data['lastMessageAt']) : null,
             createdAt: isset($data['createdAt']) ? new DateTimeImmutable($data['createdAt']) : null,
             updatedAt: isset($data['updatedAt']) ? new DateTimeImmutable($data['updatedAt']) : null,
         );
