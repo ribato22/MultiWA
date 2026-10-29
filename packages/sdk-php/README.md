@@ -13,8 +13,8 @@ Official PHP SDK for [MultiWA](https://github.com/ribato22/MultiWA), the self-ho
 composer require multiwa/multiwa-php
 ```
 
-The first Packagist release is 1.3.0. Until it is live, install from a clone of
-the MultiWA repository with a Composer `path` repository:
+To try a change that is not released yet, install from a clone of the MultiWA
+repository with a Composer `path` repository:
 
 ```json
 {
