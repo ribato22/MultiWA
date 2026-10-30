@@ -51,6 +51,28 @@ describe('CallMediaService', () => {
   };
   /** The transports the WebRtcServer still holds (mediasoup's test accessor). */
   const inServer = () => (service['server'] as any).webRtcTransportsForTesting.size as number;
+  /**
+   * The next worker starts, but its WebRtcServer is not made until `release()`, and then it is (or fails with `failWith`).
+   * `inWindow` settles when the start is waiting there; `worker` is that worker.
+   */
+  const holdNextWebRtcServer = async (failWith?: Error) => {
+    const { observer } = await import('mediasoup');
+    let reached!: () => void;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const hold = { worker: undefined as ms.Worker | undefined, inWindow: new Promise<void>((resolve) => (reached = resolve)), release: () => release() };
+    observer.once('newworker', (w) => {
+      hold.worker = w;
+      const createWebRtcServer = w.createWebRtcServer.bind(w);
+      vi.spyOn(w, 'createWebRtcServer').mockImplementationOnce(async (options) => {
+        reached();
+        await held;
+        if (failWith) throw failWith;
+        return createWebRtcServer(options);
+      });
+    });
+    return hold;
+  };
 
   it('stays off with the switch off: no worker, and no room can be opened', async () => {
     vi.stubEnv('CALLS_MEDIA_ENABLED', 'false');
@@ -233,6 +255,89 @@ describe('CallMediaService', () => {
     expect(await settle(queued)).toEqual({ ok: [], errors: Array(7).fill('Media room closed') });
   });
 
+  describe('closePeer voids what the peer had in flight', () => {
+    /**
+     * The next `obj[method]` call does its work at the worker, then waits for `release()` before it returns: the peer
+     * closes while the worker already has the request. `made` is what it made, with `close` spied on.
+     */
+    const finishLate = (obj: any, method: string) => {
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const real = obj[method].bind(obj);
+      const made: any[] = [];
+      vi.spyOn(obj, method).mockImplementationOnce(async (...args: unknown[]) => {
+        const resource = await real(...args);
+        vi.spyOn(resource, 'close');
+        made.push(resource);
+        await held;
+        return resource;
+      });
+      return { made, release, started: () => vi.waitFor(() => expect(made).toHaveLength(1)) };
+    };
+    const outcome = (p: Promise<unknown>) => p.then(() => 'done', (e: Error) => e.message);
+
+    it('a transport still being made, and an operation waiting behind it, leave no transport; the peer can rejoin', async () => {
+      switchOn();
+      await service.onModuleInit();
+      const room = await service.createRoom('CALL1');
+      const agent = room.signalingFor('agent');
+      const late = finishLate(room['router'], 'createWebRtcTransport');
+      const making = outcome(agent.createTransport('send'));
+      await late.started();
+      const waiting = outcome(agent.createTransport('recv')); // issued before the close, still waiting its turn
+      room.closePeer('agent'); // the agent's browser reconnected
+      late.release();
+      expect([await making, await waiting]).toEqual(['The agent was closed', 'The agent was closed']);
+      expect(late.made[0].close).toHaveBeenCalled(); // what the worker made is closed, not kept
+      expect(inServer()).toBe(0);
+      await expect(agent.createTransport('send')).resolves.toHaveProperty('iceParameters'); // not "already has a send transport"
+      await expect(agent.createTransport('recv')).resolves.toHaveProperty('iceParameters');
+      expect(inServer()).toBe(2);
+      room.close();
+    });
+
+    it('a producer still being made leaves no producer; the peer can produce again', async () => {
+      switchOn();
+      await service.onModuleInit();
+      const room = await service.createRoom('CALL1');
+      const agent = room.signalingFor('agent');
+      const send: any = await agent.createTransport('send');
+      const late = finishLate(room['transports'].get(send.id)!.transport, 'produce');
+      const producing = outcome(agent.produce(send.id, 'audio', OPUS(2222)));
+      await late.started();
+      room.closePeer('agent');
+      late.release();
+      expect(await producing).toBe('The agent was closed');
+      expect(late.made[0].close).toHaveBeenCalled();
+      expect(room.producerId('agent')).toBeNull();
+      const send2: any = await agent.createTransport('send');
+      await expect(agent.produce(send2.id, 'audio', OPUS(3333))).resolves.toHaveProperty('id'); // not "already produced"
+      room.close();
+    });
+
+    it('a consumer still being made leaves no consumer; the peer can consume again', async () => {
+      switchOn();
+      await service.onModuleInit();
+      const room = await service.createRoom('CALL1');
+      const page = room.signalingFor('page');
+      const agent = room.signalingFor('agent');
+      const caps = await page.rtpCapabilities();
+      const pageSend: any = await page.createTransport('send');
+      const caller = await page.produce(pageSend.id, 'audio', OPUS(1111));
+      const recv: any = await agent.createTransport('recv');
+      const late = finishLate(room['transports'].get(recv.id)!.transport, 'consume');
+      const consuming = outcome(agent.consume(recv.id, caller.id, caps));
+      await late.started();
+      room.closePeer('agent');
+      late.release();
+      expect(await consuming).toBe('The agent was closed');
+      expect(late.made[0].close).toHaveBeenCalled();
+      const recv2: any = await agent.createTransport('recv');
+      await expect(agent.consume(recv2.id, caller.id, caps)).resolves.toMatchObject({ producerId: caller.id }); // not "already consumes"
+      room.close();
+    });
+  });
+
   it('a dead worker closes its rooms, tells its listeners, counts it, and is replaced', async () => {
     switchOn();
     await service.onModuleInit();
@@ -267,6 +372,32 @@ describe('CallMediaService', () => {
     expect(lines.filter((l) => l.includes('boom'))).toHaveLength(2);
     expect(lines.some((l) => /[\r\n]/.test(l))).toBe(false);
   }, 20_000);
+
+  it("a 'worker-died' listener that throws does not keep the other listeners of the event from running", () => {
+    vi.useFakeTimers();
+    vi.spyOn(service as any, 'startWorker').mockResolvedValue(undefined);
+    const logged = vi.spyOn(service['logger'], 'error');
+    const throws = vi.fn(() => {
+      throw new Error('boom');
+    });
+    const behindOnce = vi.fn();
+    const behind = vi.fn();
+    service.events.on('worker-died', throws);
+    service.events.once('worker-died', behindOnce);
+    service.events.on('worker-died', behind);
+    const dies = () => {
+      const worker = { died: true } as any;
+      service['worker'] = worker;
+      service['startedAt'] = Date.now();
+      service['onWorkerDied'](worker, new Error('x'));
+    };
+    dies();
+    dies();
+    expect(throws).toHaveBeenCalledTimes(2);
+    expect(behind).toHaveBeenCalledTimes(2);
+    expect(behindOnce).toHaveBeenCalledTimes(1); // a once listener stays a once listener
+    expect(logged.mock.calls.filter(([message]) => String(message).includes('boom'))).toHaveLength(2);
+  });
 
   it('workers that die young are restarted with a growing delay; one that lived a minute starts the backoff over', () => {
     vi.useFakeTimers();
@@ -321,28 +452,35 @@ describe('CallMediaService', () => {
 
   it('a shutdown while the worker is still starting leaves no worker behind', async () => {
     switchOn();
-    const { observer } = await import('mediasoup');
-    let worker!: ms.Worker;
-    let reached!: () => void;
-    let release!: () => void;
-    const inWindow = new Promise<void>((resolve) => (reached = resolve));
-    const held = new Promise<void>((resolve) => (release = resolve));
-    observer.once('newworker', (w) => {
-      worker = w;
-      const createWebRtcServer = w.createWebRtcServer.bind(w);
-      vi.spyOn(w, 'createWebRtcServer').mockImplementationOnce(async (options) => {
-        reached();
-        await held;
-        return createWebRtcServer(options);
-      });
-    });
+    const hold = await holdNextWebRtcServer();
     const starting = service.onModuleInit();
-    await inWindow; // the worker runs; its WebRtcServer is not made yet
+    await hold.inWindow; // the worker runs; its WebRtcServer is not made yet
     await service.onModuleDestroy(); // the api shuts down in that window
-    release();
+    hold.release();
     await starting;
     expect(service.status().worker).toBe('down');
     expect(service.workerPid()).toBeNull();
-    expect(await until(() => !alive(worker.pid), 5000)).toBe(true); // the worker process is gone
+    expect(await until(() => !alive(hold.worker!.pid), 5000)).toBe(true); // the worker process is gone
+  }, 15_000);
+
+  it('a start that fails after the shutdown schedules no restart, and no worker is spawned later', async () => {
+    switchOn();
+    const { observer } = await import('mediasoup');
+    const hold = await holdNextWebRtcServer(new Error('port taken'));
+    const spawned = vi.fn();
+    const starting = service.onModuleInit();
+    await hold.inWindow;
+    await service.onModuleDestroy(); // the api shuts down while the start waits...
+    observer.on('newworker', spawned); // (the held worker is spawned already)
+    try {
+      hold.release(); // ...and the start then fails
+      await starting;
+      const restartScheduled = service['restartTimer'] !== null;
+      await new Promise((r) => setTimeout(r, 2600)); // longer than the 2 s backoff of a first failed start, and a worker's start
+      expect({ restartScheduled, spawned: spawned.mock.calls.length }).toEqual({ restartScheduled: false, spawned: 0 });
+      expect(service.status().worker).toBe('down');
+    } finally {
+      observer.off('newworker', spawned);
+    }
   }, 15_000);
 });

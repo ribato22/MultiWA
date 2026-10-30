@@ -56,6 +56,7 @@ describe('readCallMediaConfig', () => {
     ['an empty URL', [{ urls: '' }]],
     ['an empty URL among others', [{ urls: ['stun:stun.example.com:3478', ''] }]],
     ['a web URL', [{ urls: 'https://turn.example.com' }]],
+    ['a scheme that does not start the URL', [{ urls: 'https://turn:3478' }]],
     ['a turn URL without credentials', [{ urls: 'turn:turn.example.com:3478' }]],
     ['a turns URL without a username', [{ urls: 'turns:turn.example.com:5349', credential: 'hunter2' }]],
     ['a turn URL without a credential', [{ urls: 'turn:turn.example.com:3478', username: 'admin' }]],

@@ -31,7 +31,7 @@ export interface CallMediaStatus {
 @Injectable()
 export class CallMediaService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CallMediaService.name);
-  /** 'worker-died' (callIds: string[]): the rooms the dead worker closed. */
+  /** 'worker-died' (callIds: string[]): the rooms the dead worker closed. Each listener runs on its own: one that throws is logged and the others still run. */
   readonly events = new EventEmitter();
   private config: CallMediaConfig | null = null;
   private worker: ms.Worker | null = null;
@@ -135,6 +135,11 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
     if (this.worker !== worker) return;
     this.worker = null;
     this.server = null;
+    // Upstream leak (mediasoup 3.32): Worker.close() removes the worker's process.once('SIGINT'/'SIGTERM') listeners, but
+    // workerDied(), the path that brought us here, leaves them, and a later close() returns early. Two listeners stay on
+    // `process` per dead worker, each keeping its dead Worker reachable, and nothing here can remove them. The restart
+    // backoff (up to MAX_RESTART_DELAY_MS between starts) bounds the growth.
+
     // A worker that dies soon after it started counts as a failed restart: a crash loop backs off instead of restarting
     // every second for ever.
     this.failedRestarts = Date.now() - this.startedAt >= HEALTHY_UPTIME_MS ? 0 : this.failedRestarts + 1;
@@ -144,8 +149,14 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
     this.rooms.clear();
     this.logger.error(`Call media worker died (${clean(error?.message ?? error)}); ${callIds.length} call(s) lost their media; restarting`);
     const payload: CallsMediaWorkerDiedPayload = { calls: callIds.length };
+    // The bus stays ONE emit. It is an EventEmitter2: its emit also runs the onAny listeners (the plugin loader's, the
+    // webhook dispatcher's), which listeners(name) does not return, so isolating its listeners one by one would mean
+    // copying its emit. A throw there costs only the listeners behind it, on this one event; the @OnEvent ones (the
+    // metrics counter) are async and never throw into the emit.
     this.emitSafely('event bus', () => this.eventEmitter.emit(InternalEvents.CALLS_MEDIA_WORKER_DIED, payload));
-    this.emitSafely('worker-died', () => this.events.emit('worker-died', callIds));
+    // `events` is ours (the coordinator listens here): each listener gets its own try, so none depends on the ones before
+    // it not throwing. rawListeners, not listeners, so that a once() listener stays a once() listener.
+    for (const listener of this.events.rawListeners('worker-died')) this.emitSafely('worker-died', () => listener.call(this.events, callIds));
   }
 
   /** Plugins can listen to every event: a listener that throws is logged, and goes no further. */

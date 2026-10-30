@@ -5,7 +5,8 @@
 // caller and consumes the agent. The "agent" peer is the agent's browser; it produces the agent and consumes the
 // caller. Each peer has at most one send and one receive transport, produces at most one track, and may consume only
 // the other peer's track, so a client can never reach another peer's or another call's media. A peer's signalling runs
-// one operation at a time, so these limits hold for calls made together too.
+// one operation at a time, so these limits hold for calls made together too. Closing a peer (closePeer) voids every
+// operation it had issued before, also one still at the worker, so that the peer can join again.
 // The signalling API speaks mediasoup's JSON: `signalingFor(peer)` binds it to one peer.
 import type { types as ms } from 'mediasoup';
 import type { CallMediaSignaling } from '@multiwa/engines';
@@ -22,6 +23,8 @@ export class CallMediaRoom {
   private readonly consumers = new Map<string, { peer: MediaPeer; consumer: ms.Consumer }>();
   /** Where each peer's signalling operations queue (see `run`). The two peers are independent of each other. */
   private readonly chains: Record<MediaPeer, Promise<unknown>> = { page: Promise.resolve(), agent: Promise.resolve() };
+  /** Counts each peer's closePeer calls: an operation issued under an older count belongs to a peer that was closed. */
+  private readonly generations: Record<MediaPeer, number> = { page: 0, agent: 0 };
   private isClosed = false;
 
   constructor(
@@ -51,13 +54,13 @@ export class CallMediaRoom {
           this.assertOpen();
           return this.router.rtpCapabilities;
         }),
-      createTransport: (direction) => this.run(peer, () => this.createTransport(peer, direction)),
+      createTransport: (direction) => this.run(peer, (generation) => this.createTransport(peer, generation, direction)),
       connectTransport: (transportId, dtlsParameters) =>
         this.run(peer, () => this.connectTransport(peer, transportId, dtlsParameters as ms.DtlsParameters)),
       produce: (transportId, kind, rtpParameters) =>
-        this.run(peer, () => this.produce(peer, transportId, kind, rtpParameters as ms.RtpParameters)),
+        this.run(peer, (generation) => this.produce(peer, generation, transportId, kind, rtpParameters as ms.RtpParameters)),
       consume: (transportId, producerId, rtpCapabilities) =>
-        this.run(peer, () => this.consume(peer, transportId, producerId, rtpCapabilities as ms.RtpCapabilities)),
+        this.run(peer, (generation) => this.consume(peer, generation, transportId, producerId, rtpCapabilities as ms.RtpCapabilities)),
       resumeConsumer: (consumerId) => this.run(peer, async () => this.ownConsumer(peer, consumerId).resume()),
       closeConsumer: (consumerId) => this.run(peer, async () => this.ownConsumer(peer, consumerId).close()),
     };
@@ -67,9 +70,12 @@ export class CallMediaRoom {
    * Run `op` once the peer's earlier operations are done. Every limit is checked before an `await` and recorded after
    * it, so concurrent calls would all pass the check: one operation at a time per peer makes check and record atomic.
    * A failed operation does not stop the next one. The chain never rejects, so `then(op)` is enough.
+   * `op` gets the peer's generation as of the moment it was ISSUED, not of its turn: an operation that waits in the chain
+   * while the peer is closed was issued by the peer that was closed, and must not run as the next one's.
    */
-  private run<T>(peer: MediaPeer, op: () => Promise<T>): Promise<T> {
-    const result = this.chains[peer].then(op);
+  private run<T>(peer: MediaPeer, op: (generation: number) => Promise<T>): Promise<T> {
+    const generation = this.generations[peer];
+    const result = this.chains[peer].then(() => op(generation));
     this.chains[peer] = result.catch(() => undefined);
     return result;
   }
@@ -86,17 +92,15 @@ export class CallMediaRoom {
     this.onClose();
   }
 
-  private async createTransport(peer: MediaPeer, direction: 'send' | 'recv') {
-    this.assertOpen();
+  private async createTransport(peer: MediaPeer, generation: number, direction: 'send' | 'recv') {
+    this.assertCurrent(peer, generation);
     if (direction !== 'send' && direction !== 'recv') throw new Error('A transport is send or recv');
     if ([...this.transports.values()].some((t) => t.peer === peer && t.direction === direction)) {
       throw new Error(`The ${peer} already has a ${direction} transport`);
     }
-    const transport = await this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true });
-    if (this.isClosed) {
-      transport.close(); // the room closed meanwhile and close() could not know this transport: the server would keep it
-      throw new Error('Media room closed');
-    }
+    const transport = await this.keepIfCurrent(peer, generation, () =>
+      this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true }),
+    );
     this.transports.set(transport.id, { peer, direction, transport });
     return {
       id: transport.id,
@@ -110,12 +114,13 @@ export class CallMediaRoom {
     await this.own(peer, transportId).transport.connect({ dtlsParameters });
   }
 
-  private async produce(peer: MediaPeer, transportId: string, kind: string, rtpParameters: ms.RtpParameters): Promise<{ id: string }> {
+  private async produce(peer: MediaPeer, generation: number, transportId: string, kind: string, rtpParameters: ms.RtpParameters): Promise<{ id: string }> {
+    this.assertCurrent(peer, generation);
     const { transport } = this.own(peer, transportId, 'send');
     if (kind !== 'audio') throw new Error('Audio only');
     const role = PRODUCES[peer];
     if (this.producers[role]) throw new Error(`The ${role} is already produced`);
-    const producer = await transport.produce({ kind: 'audio', rtpParameters, appData: { role } });
+    const producer = await this.keepIfCurrent(peer, generation, () => transport.produce({ kind: 'audio', rtpParameters, appData: { role } }));
     this.producers[role] = producer;
     // A closed producer (its transport closed: closePeer, a dropped agent) can be produced again.
     producer.observer.once('close', () => {
@@ -126,9 +131,12 @@ export class CallMediaRoom {
 
   /**
    * Close every transport of `peer`, and with them its producer and consumers, so that it can join again: e.g. an
-   * agent whose browser reconnected (Plan 4's agent-lost grace).
+   * agent whose browser reconnected (Plan 4's agent-lost grace). Immediate. Every operation the peer issued before is
+   * void: one still waiting in its chain, or already at the worker, fails with "The ${peer} was closed" and keeps
+   * nothing it made, so it cannot stand in the way of the peer's next join.
    */
   closePeer(peer: MediaPeer): void {
+    this.generations[peer]++;
     for (const [id, t] of [...this.transports]) {
       if (t.peer !== peer) continue;
       this.transports.delete(id);
@@ -136,14 +144,15 @@ export class CallMediaRoom {
     }
   }
 
-  private async consume(peer: MediaPeer, transportId: string, producerId: string, rtpCapabilities: ms.RtpCapabilities) {
+  private async consume(peer: MediaPeer, generation: number, transportId: string, producerId: string, rtpCapabilities: ms.RtpCapabilities) {
+    this.assertCurrent(peer, generation);
     const { transport } = this.own(peer, transportId, 'recv');
     const producer = this.producers[CONSUMES[peer]];
     if (!producer || producer.id !== producerId) throw new Error('Not allowed to consume this producer');
     // One live consumer per peer: the page's own scripts can reach the bridge's signalling, and the worker is shared.
     if ([...this.consumers.values()].some((c) => c.peer === peer)) throw new Error(`The ${peer} already consumes`);
     if (!this.router.canConsume({ producerId, rtpCapabilities })) throw new Error('Cannot consume this producer with these capabilities');
-    const consumer = await transport.consume({ producerId, rtpCapabilities, paused: true });
+    const consumer = await this.keepIfCurrent(peer, generation, () => transport.consume({ producerId, rtpCapabilities, paused: true }));
     this.consumers.set(consumer.id, { peer, consumer });
     consumer.observer.once('close', () => this.consumers.delete(consumer.id));
     return { id: consumer.id, producerId, kind: consumer.kind, rtpParameters: consumer.rtpParameters };
@@ -165,5 +174,28 @@ export class CallMediaRoom {
 
   private assertOpen(): void {
     if (this.isClosed) throw new Error('Media room closed');
+  }
+
+  /** The room is open, and the peer was not closed (closePeer) since `generation`, when the operation was issued. */
+  private assertCurrent(peer: MediaPeer, generation: number): void {
+    this.assertOpen();
+    if (this.generations[peer] !== generation) throw new Error(`The ${peer} was closed`);
+  }
+
+  /**
+   * Run `create`, which makes a transport, producer or consumer at the worker, and hand it back only if the room is still
+   * open and the peer was not closed meanwhile. Else close it and refuse: closing the room or the peer could not know
+   * it yet, so it would stay at the worker (the WebRtcServer keeps a transport) or be registered, and block the peer's
+   * next join ("already has a send transport", "is already produced", "already consumes").
+   */
+  private async keepIfCurrent<T extends { close(): void }>(peer: MediaPeer, generation: number, create: () => Promise<T>): Promise<T> {
+    const made = await create();
+    try {
+      this.assertCurrent(peer, generation);
+    } catch (e) {
+      made.close();
+      throw e;
+    }
+    return made;
   }
 }
