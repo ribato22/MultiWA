@@ -9,10 +9,12 @@ import { CALL_MEDIA_CHROME_ARGS } from '@multiwa/engines';
 export const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..');
 export const engines = createRequire(path.join(REPO_ROOT, 'packages/engines/package.json'));
 export const puppeteer = createRequire(engines.resolve('whatsapp-web.js'))('puppeteer');
+/** The user agent whatsapp-web.js gives WhatsApp Web (a Mac Chrome 101), so a fake page looks to its scripts like the engine's. */
+export const WWEBJS_USER_AGENT: string = createRequire(engines.resolve('whatsapp-web.js'))('whatsapp-web.js').DefaultOptions.userAgent;
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-/** Polls `ok` until it holds or `ms` passed; returns whether it held. */
-export const until = async (ok: () => boolean, ms: number) => {
-  for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await sleep(50);
+/** Polls `ok` (sync or async) until it holds or `ms` passed; returns whether it held. */
+export const until = async (ok: () => boolean | Promise<boolean>, ms: number) => {
+  for (const end = Date.now() + ms; !(await ok()) && Date.now() < end; ) await sleep(50);
   return ok();
 };
 
@@ -142,4 +144,77 @@ export async function openFakeWhatsAppPage(browser: any, url: string, initScript
   await p.goto(url);
   await p.keyboard.press('Shift');
   return p;
+}
+
+/**
+ * In the agent's page (mediasoup-client evaluated in): consume the caller, and produce a `hz` tone as the agent's
+ * voice. Signalling goes through the page binding `__agentSignal(op, json)` to the room's agent peer.
+ */
+export async function startAgentPeerInPage(callerProducerId: string, hz: number): Promise<{ agentProducerId: string }> {
+  const w = window as any;
+  const signal = async (op: string, args: unknown = {}) => JSON.parse(await w.__agentSignal(op, JSON.stringify(args)));
+  const device = new w.mediasoupClient.Device({ handlerName: 'Chrome111' }); // a headless user agent is not detected
+  await device.load({ routerRtpCapabilities: await signal('rtpCapabilities') });
+  const wire = (t: any) => {
+    t.on('connect', ({ dtlsParameters }: any, ok: () => void, fail: (e: Error) => void) => {
+      signal('connectTransport', { transportId: t.id, dtlsParameters }).then(() => ok(), fail);
+    });
+    return t;
+  };
+  const recv = wire(device.createRecvTransport(await signal('createTransport', { direction: 'recv' })));
+  const consumer = await recv.consume(
+    await signal('consume', { transportId: recv.id, producerId: callerProducerId, rtpCapabilities: device.rtpCapabilities }),
+  );
+  await signal('resumeConsumer', { consumerId: consumer.id });
+  const ctx = new AudioContext();
+  const heard = new MediaStream([consumer.track]);
+  const keepAlive = new Audio(); // Chrome feeds a remote track to Web Audio only while a media element plays it
+  keepAlive.muted = true;
+  keepAlive.srcObject = heard;
+  keepAlive.play().catch(() => {});
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 8192;
+  ctx.createMediaStreamSource(heard).connect(analyser);
+  const send = wire(device.createSendTransport(await signal('createTransport', { direction: 'send' })));
+  send.on('produce', ({ kind, rtpParameters }: any, ok: (r: { id: string }) => void, fail: (e: Error) => void) => {
+    signal('produce', { transportId: send.id, kind, rtpParameters }).then(ok, fail);
+  });
+  const osc = ctx.createOscillator();
+  osc.frequency.value = hz;
+  const out = ctx.createMediaStreamDestination();
+  osc.connect(out);
+  osc.start();
+  const producer = await send.produce({ track: out.stream.getAudioTracks()[0] });
+  w.__agent = { analyser, keepAlive, recv, send };
+  return { agentProducerId: producer.id };
+}
+
+/** Amplitude of `hz` in what the agent hears (single-bin DFT over the analyser window). */
+export function agentHearsInPage(hz: number): number {
+  const a: AnalyserNode = (window as any).__agent.analyser;
+  const x = new Float32Array(a.fftSize);
+  a.getFloatTimeDomainData(x);
+  const k = (2 * Math.PI * hz) / a.context.sampleRate;
+  let re = 0;
+  let im = 0;
+  for (let i = 0; i < x.length; i++) { re += x[i] * Math.cos(k * i); im -= x[i] * Math.sin(k * i); }
+  return Math.hypot(re, im) / x.length;
+}
+
+/** Amplitude of `hz` on WhatsApp Web's microphone in the fake page, i.e. what the caller hears. Needs an answered call. */
+export function micCarriesInPage(hz: number): number {
+  const f = (window as any).__fakeWa;
+  if (!f.micAnalyser) {
+    f.micAnalyser = f.capture.createAnalyser();
+    f.micAnalyser.fftSize = 8192;
+    f.capture.createMediaStreamSource(f.gumStream).connect(f.micAnalyser);
+  }
+  const a: AnalyserNode = f.micAnalyser;
+  const x = new Float32Array(a.fftSize);
+  a.getFloatTimeDomainData(x);
+  const k = (2 * Math.PI * hz) / a.context.sampleRate;
+  let re = 0;
+  let im = 0;
+  for (let i = 0; i < x.length; i++) { re += x[i] * Math.cos(k * i); im -= x[i] * Math.sin(k * i); }
+  return Math.hypot(re, im) / x.length;
 }
