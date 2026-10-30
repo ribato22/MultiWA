@@ -5,6 +5,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER } from '@multiwa/core';
 import { CallsController } from './calls.controller';
 import { CallsService } from './calls.service';
+import { CallMediaService } from './media/call-media.service';
 import { EventsGateway } from '../events/events.gateway';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { MessagesModule } from '../messages/messages.module';
@@ -18,9 +19,11 @@ import { MessagesModule } from '../messages/messages.module';
   controllers: [CallsController],
   providers: [
     CallsService,
+    CallMediaService,
     // The token CallsService pushes call.updated to Socket.IO through. ProfilesModule binds it too, but does not
     // export it, so it is not visible here.
     { provide: REALTIME_EMITTER, useExisting: EventsGateway },
   ],
+  exports: [CallMediaService],
 })
 export class CallsModule {}

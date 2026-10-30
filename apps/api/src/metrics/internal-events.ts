@@ -26,6 +26,12 @@ export const InternalEvents = {
    * resolvable message id — the signature of a WhatsApp Web key rename.
    */
   ENGINE_ACK_DROPPED: 'internal.engine.ack_dropped',
+
+  /**
+   * Emitted when the call media server's mediasoup worker dies: every call it carried lost its media, and the
+   * service starts a new worker. Any occurrence is worth an alert.
+   */
+  CALLS_MEDIA_WORKER_DIED: 'internal.calls_media.worker_died',
 } as const;
 
 export interface EngineGroupFetchPayload {
@@ -38,4 +44,9 @@ export interface EngineGroupFetchPayload {
 export interface EngineAckDroppedPayload {
   profileId: string;
   status: string;
+}
+
+export interface CallsMediaWorkerDiedPayload {
+  /** Calls whose media the dead worker carried. */
+  calls: number;
 }

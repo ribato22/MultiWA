@@ -1,0 +1,155 @@
+// The call media server with a REAL mediasoup worker, no browser: it starts only when switched on, gives each call
+// one room, and the room lets each peer do only its own part. A dead worker closes its rooms and is replaced.
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { CallMediaService } from './call-media.service';
+import { InternalEvents } from '../../../metrics/internal-events';
+
+const OPUS = (ssrc: number) => ({
+  codecs: [{ mimeType: 'audio/opus', payloadType: 100, clockRate: 48000, channels: 2, parameters: {}, rtcpFeedback: [] }],
+  headerExtensions: [],
+  encodings: [{ ssrc }],
+  rtcp: { cname: `c${ssrc}`, reducedSize: true },
+});
+const until = async (ok: () => boolean, ms: number) => {
+  for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));
+  return ok();
+};
+
+describe('CallMediaService', () => {
+  let service: CallMediaService;
+  let bus: EventEmitter2;
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    bus = new EventEmitter2();
+    service = new CallMediaService(bus);
+  });
+  afterEach(async () => {
+    await service.onModuleDestroy();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+  const switchOn = () => {
+    vi.stubEnv('CALLS_MEDIA_ENABLED', 'true');
+    vi.stubEnv('CALLS_MEDIA_ANNOUNCED_ADDRESS', '127.0.0.1');
+    vi.stubEnv('CALLS_MEDIA_LISTEN_IP', '127.0.0.1');
+    vi.stubEnv('CALLS_MEDIA_PORT', String(42000 + Math.floor(Math.random() * 3000)));
+  };
+
+  it('stays off with the switch off: no worker, and no room can be opened', async () => {
+    vi.stubEnv('CALLS_MEDIA_ENABLED', 'false');
+    await service.onModuleInit();
+    expect(service.status()).toEqual({ enabled: false, worker: 'down', port: null, announcedAddressSet: false, activeRooms: 0 });
+    await expect(service.createRoom('CALL1')).rejects.toThrow('Call media server unavailable');
+  });
+
+  it('fails the boot with the variable name when switched on without an announced address', async () => {
+    vi.stubEnv('CALLS_MEDIA_ENABLED', 'true');
+    vi.stubEnv('CALLS_MEDIA_ANNOUNCED_ADDRESS', '');
+    await expect(service.onModuleInit()).rejects.toThrow(/CALLS_MEDIA_ANNOUNCED_ADDRESS/);
+  });
+
+  it('switched on: one worker; one room per call, whose transports announce the configured address', async () => {
+    switchOn();
+    await service.onModuleInit();
+    expect(service.status()).toMatchObject({ enabled: true, worker: 'up', announcedAddressSet: true, activeRooms: 0 });
+    const room = await service.createRoom('CALL1');
+    await expect(service.createRoom('CALL1')).rejects.toThrow('already has a media room');
+    const t: any = await room.signalingFor('page').createTransport('send');
+    expect(t.iceCandidates.map((c: any) => c.address)).toContain('127.0.0.1');
+    expect(service.status().activeRooms).toBe(1);
+    expect(service.room('CALL1')).toBe(room);
+    room.close();
+    expect(service.status().activeRooms).toBe(0);
+    expect(service.room('CALL1')).toBeNull();
+  });
+
+  it('the room lets each peer do only its own part', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1');
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const caps = await page.rtpCapabilities();
+    const pageSend: any = await page.createTransport('send');
+    const pageRecv: any = await page.createTransport('recv');
+    const agentSend: any = await agent.createTransport('send');
+    const agentRecv: any = await agent.createTransport('recv');
+    await expect(page.createTransport('send')).rejects.toThrow('already has a send transport');
+    await expect(page.createTransport('sideways' as any)).rejects.toThrow('send or recv');
+    // a peer cannot use the other peer's transport
+    await expect(agent.produce(pageSend.id, 'audio', OPUS(1))).rejects.toThrow("Not this peer's transport");
+    await expect(page.produce(pageSend.id, 'video', OPUS(1))).rejects.toThrow('Audio only');
+    const caller = await page.produce(pageSend.id, 'audio', OPUS(1111));
+    await expect(page.produce(pageSend.id, 'audio', OPUS(1112))).rejects.toThrow('caller is already produced');
+    const agentP = await agent.produce(agentSend.id, 'audio', OPUS(2222));
+    expect(room.producerId('caller')).toBe(caller.id);
+    expect(room.producerId('agent')).toBe(agentP.id);
+    // the page consumes only the agent, the agent only the caller, each on its own receive transport
+    await expect(page.consume(pageRecv.id, caller.id, caps)).rejects.toThrow('Not allowed to consume');
+    await expect(agent.consume(agentRecv.id, agentP.id, caps)).rejects.toThrow('Not allowed to consume');
+    await expect(agent.consume(agentSend.id, caller.id, caps)).rejects.toThrow("Not this peer's transport");
+    const c: any = await agent.consume(agentRecv.id, caller.id, caps);
+    expect(c).toMatchObject({ producerId: caller.id, kind: 'audio' });
+    await expect(page.resumeConsumer(c.id)).rejects.toThrow("Not this peer's consumer");
+    await agent.resumeConsumer(c.id);
+    await agent.closeConsumer(c.id);
+    room.close();
+    await expect(page.rtpCapabilities()).rejects.toThrow('Media room closed');
+  });
+
+  it('one live consumer per peer; a closed producer can be produced again; closePeer lets a peer rejoin', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1');
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const caps = await page.rtpCapabilities();
+    const pageSend: any = await page.createTransport('send');
+    const caller = await page.produce(pageSend.id, 'audio', OPUS(1111));
+    let agentRecv: any = await agent.createTransport('recv');
+    const c1: any = await agent.consume(agentRecv.id, caller.id, caps);
+    await expect(agent.consume(agentRecv.id, caller.id, caps)).rejects.toThrow('The agent already consumes');
+    await agent.closeConsumer(c1.id);
+    const c2: any = await agent.consume(agentRecv.id, caller.id, caps);
+    expect(c2.id).not.toBe(c1.id);
+    // the agent's browser reconnected: it rejoins with new transports and produces again
+    const agentSend: any = await agent.createTransport('send');
+    const first = await agent.produce(agentSend.id, 'audio', OPUS(2222));
+    room.closePeer('agent');
+    expect(room.producerId('agent')).toBeNull();
+    const agentSend2: any = await agent.createTransport('send');
+    agentRecv = await agent.createTransport('recv');
+    const second = await agent.produce(agentSend2.id, 'audio', OPUS(3333));
+    expect(second.id).not.toBe(first.id);
+    await expect(agent.consume(agentRecv.id, caller.id, caps)).resolves.toBeDefined();
+    room.close();
+  });
+
+  it('a dead worker closes its rooms, tells its listeners, counts it, and is replaced', async () => {
+    switchOn();
+    await service.onModuleInit();
+    await service.createRoom('CALL7');
+    const died = new Promise<string[]>((resolve) => service.events.once('worker-died', resolve));
+    const counted = vi.fn();
+    bus.on(InternalEvents.CALLS_MEDIA_WORKER_DIED, counted);
+    const pid = service.workerPid()!;
+    process.kill(pid, 'SIGKILL');
+    expect(await died).toEqual(['CALL7']);
+    expect(counted).toHaveBeenCalledWith({ calls: 1 });
+    expect(service.status()).toMatchObject({ worker: 'down', activeRooms: 0 });
+    expect(await until(() => service.status().worker === 'up', 10_000)).toBe(true);
+    expect(service.workerPid()).not.toBe(pid);
+    await expect(service.createRoom('CALL8')).resolves.toBeDefined();
+  }, 20_000);
+
+  it('shuts down for good: no restart after onModuleDestroy', async () => {
+    switchOn();
+    await service.onModuleInit();
+    await service.onModuleDestroy();
+    expect(service.status().worker).toBe('down');
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(service.status().worker).toBe('down');
+  });
+});
