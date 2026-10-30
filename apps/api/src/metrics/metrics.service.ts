@@ -36,6 +36,13 @@ export class MetricsService {
   readonly engineAckDroppedTotal: Counter;
   // The call media server's mediasoup worker died: every call it carried lost its media. Any non-zero rate needs attention.
   readonly callsMediaWorkerDeathsTotal: Counter;
+  // Calls answered in the dashboard: offered to agents, answered (with the speed of answer), media failures by reason
+  // (a call whose audio did not connect, or broke), and how the answered calls ended.
+  readonly callsDashboardRingsTotal: Counter;
+  readonly callsDashboardAnswersTotal: Counter;
+  readonly callsDashboardAnswerSeconds: Histogram;
+  readonly callsMediaFailuresTotal: Counter<'reason'>;
+  readonly callsDashboardEndedTotal: Counter<'reason'>;
 
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
@@ -128,6 +135,44 @@ export class MetricsService {
         new Counter({
           name: 'multiwa_calls_media_worker_deaths_total',
           help: "Deaths of the call media server's mediasoup worker. Each one cut the media of every call it carried; the server restarts it.",
+          registers: [this.registry],
+        }),
+    );
+    this.callsDashboardRingsTotal = this.getOrCreate(
+      'multiwa_calls_dashboard_rings_total',
+      () => new Counter({ name: 'multiwa_calls_dashboard_rings_total', help: 'Incoming calls offered to agents in the dashboard.', registers: [this.registry] }),
+    );
+    this.callsDashboardAnswersTotal = this.getOrCreate(
+      'multiwa_calls_dashboard_answers_total',
+      () => new Counter({ name: 'multiwa_calls_dashboard_answers_total', help: 'Incoming calls answered in the dashboard.', registers: [this.registry] }),
+    );
+    this.callsDashboardAnswerSeconds = this.getOrCreate(
+      'multiwa_calls_dashboard_answer_seconds',
+      () =>
+        new Histogram({
+          name: 'multiwa_calls_dashboard_answer_seconds',
+          help: 'Speed of answer of the calls answered in the dashboard: from the first ring to WhatsApp connecting the agent.',
+          buckets: [1, 2, 5, 10, 15, 20, 30, 45, 60, 90],
+          registers: [this.registry],
+        }),
+    );
+    this.callsMediaFailuresTotal = this.getOrCreate(
+      'multiwa_calls_media_failures_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_media_failures_total',
+          help: "Calls answered in the dashboard whose audio did not connect or broke, by reason (the call rang again, or was ended).",
+          labelNames: ['reason'] as const,
+          registers: [this.registry],
+        }),
+    );
+    this.callsDashboardEndedTotal = this.getOrCreate(
+      'multiwa_calls_dashboard_ended_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_dashboard_ended_total',
+          help: 'Calls answered in the dashboard that ended, by end reason.',
+          labelNames: ['reason'] as const,
           registers: [this.registry],
         }),
     );

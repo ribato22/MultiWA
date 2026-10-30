@@ -32,6 +32,22 @@ export const InternalEvents = {
    * service starts a new worker. Any occurrence is worth an alert.
    */
   CALLS_MEDIA_WORKER_DIED: 'internal.calls_media.worker_died',
+
+  /**
+   * Every call signal of an engine hosted in this process (`state` 'ringing' for an offer), for the call coordinator:
+   * whatsapp-web.js reports a call answered in the dashboard as `ended` when it is over, which no longer moves the
+   * stored outcome (answered is final), so nothing else would tell the coordinator the caller hung up.
+   */
+  CALL_ENGINE_SIGNAL: 'internal.calls.engine_signal',
+
+  /** A dashboard user's first socket joined /ws. */
+  WS_USER_ONLINE: 'internal.ws.user_online',
+
+  /** A dashboard user's last socket left /ws: the call coordinator starts the agent-lost grace of their call. */
+  WS_USER_OFFLINE: 'internal.ws.user_offline',
+
+  /** The call coordinator, for the counters: a call offered to agents, answered, a media failure, an answered call ended. */
+  CALLS_SESSION: 'internal.calls.session',
 } as const;
 
 export interface EngineGroupFetchPayload {
@@ -50,3 +66,20 @@ export interface CallsMediaWorkerDiedPayload {
   /** Calls whose media the dead worker carried. */
   calls: number;
 }
+
+export interface CallEngineSignalPayload {
+  profileId: string;
+  /** The engine's call id (calls.waCallId). */
+  waCallId: string;
+  state: 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
+}
+
+export interface WsUserPayload {
+  userId: string;
+}
+
+export type CallsSessionPayload =
+  | { kind: 'rung'; agents: number }
+  | { kind: 'answered'; answerSeconds: number }
+  | { kind: 'media_failed'; reason: string }
+  | { kind: 'ended'; endReason: string };

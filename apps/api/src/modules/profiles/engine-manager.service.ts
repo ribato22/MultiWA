@@ -955,6 +955,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         handleEngineCall(call, this.callDeps(profileId, settings)).catch((e) =>
           this.logger.warn(`onCall handler failed: ${(e as Error).message}`),
         );
+        // After the hand-over, never before it (see above). The call coordinator follows the calls it answers through
+        // these: once a call is answered in the dashboard its `ended` no longer moves the stored outcome.
+        this.emitEvent(InternalEvents.CALL_ENGINE_SIGNAL, { profileId, waCallId: call.id, state: call.state ?? 'ringing' });
       },
       onCallLog: (entry) => {
         handleCallLog(entry, this.callDeps(profileId, null)).catch((e) =>

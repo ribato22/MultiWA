@@ -13,6 +13,7 @@ import { MetricsService } from './metrics.service';
 import {
   InternalEvents,
   type CallsMediaWorkerDiedPayload,
+  type CallsSessionPayload,
   type EngineAckDroppedPayload,
   type EngineGroupFetchPayload,
 } from './internal-events';
@@ -95,6 +96,29 @@ export class MetricsEventsListener implements OnModuleInit {
       this.metrics.callsMediaWorkerDeathsTotal.inc();
     } catch (err) {
       this.logger.debug(`callsMediaWorkerDied metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.CALLS_SESSION)
+  onCallsSession(payload: CallsSessionPayload): void {
+    try {
+      switch (payload.kind) {
+        case 'rung':
+          this.metrics.callsDashboardRingsTotal.inc();
+          break;
+        case 'answered':
+          this.metrics.callsDashboardAnswersTotal.inc();
+          this.metrics.callsDashboardAnswerSeconds.observe(payload.answerSeconds);
+          break;
+        case 'media_failed':
+          this.metrics.callsMediaFailuresTotal.inc({ reason: payload.reason });
+          break;
+        case 'ended':
+          this.metrics.callsDashboardEndedTotal.inc({ reason: payload.endReason });
+          break;
+      }
+    } catch (err) {
+      this.logger.debug(`callsSession metric failed: ${(err as Error).message}`);
     }
   }
 }
