@@ -9,13 +9,16 @@ import {
   OnGatewayDisconnect,
   ConnectedSocket,
   MessageBody,
+  GatewayMetadata,
 } from '@nestjs/websockets';
-import { Server, Socket } from 'socket.io';
+import { Namespace, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
 import type { RealtimeEmitter } from '@multiwa/core';
 import * as crypto from 'crypto';
+import { InternalEvents } from '../../metrics/internal-events';
 
 // CORS origins are driven by env so production isn't pinned to localhost.
 const WS_CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3001,http://localhost:3000')
@@ -23,21 +26,32 @@ const WS_CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3001,http
   .map((o) => o.trim())
   .filter(Boolean);
 
-@WebSocketGateway({
+/** The /ws namespace's options: every gateway on it (this one, CallsGateway) declares the same. */
+export const WS_GATEWAY_OPTIONS: GatewayMetadata = {
   namespace: '/ws',
   cors: {
     origin: WS_CORS_ORIGINS,
     credentials: true,
   },
   transports: ['websocket', 'polling'],
-})
+};
+
+/** Who a socket is: its user and organization, and its API key's scopes (absent for a JWT login). */
+export interface SocketPrincipal {
+  userId: string;
+  organizationId: string;
+  apiKeyScopes?: string[];
+}
+
+@WebSocketGateway(WS_GATEWAY_OPTIONS)
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, RealtimeEmitter {
   private readonly logger = new Logger(EventsGateway.name);
 
-  constructor(private readonly jwt: JwtService) {}
+  constructor(private readonly jwt: JwtService, private readonly eventEmitter: EventEmitter2) {}
 
+  // With a namespace, Nest injects the namespace (not the root Server): its adapter holds the rooms.
   @WebSocketServer()
-  server: Server;
+  server: Namespace;
 
   // Track connected clients by profile ID
   private clients: Map<string, Set<string>> = new Map();
@@ -46,18 +60,21 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     // Authenticate the socket in the handshake. An unauthenticated client must
     // never receive another tenant's pairing QR codes or messages.
     // Nest does not await this hook before it dispatches the client's messages,
-    // so handleJoin awaits the same promise.
-    client.data.auth = this.authenticate(client);
-    const auth = await client.data.auth;
+    // so every handler awaits the same promise (authOf).
+    const auth = await this.authOf(client);
     if (!auth) {
       this.logger.warn(`Rejected unauthenticated socket: ${client.id}`);
       client.disconnect(true);
       return;
     }
+    // The user's room: the call coordinator rings, and talks to, a user on every socket they have open.
+    const room = `user:${auth.userId}`;
+    client.join(room);
+    if (this.server?.adapter?.rooms.get(room)?.size === 1) this.emitInternal(InternalEvents.WS_USER_ONLINE, { userId: auth.userId });
     this.logger.log(`Client connected to /ws: ${client.id} (org ${auth.organizationId})`);
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
     // Clean up client from all profile rooms
     this.clients.forEach((clientSet, profileId) => {
@@ -66,6 +83,17 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         this.clients.delete(profileId);
       }
     });
+    // socket.io has taken the socket out of its rooms by now: an empty user room means the user's last socket left.
+    const auth = await client.data?.auth;
+    if (auth && !this.isUserOnline(auth.userId)) this.emitInternal(InternalEvents.WS_USER_OFFLINE, { userId: auth.userId });
+  }
+
+  /**
+   * The socket's principal, authenticated ONCE per socket: the promise is kept on the socket and shared by every
+   * gateway on /ws, since Nest runs their connection hooks in no set order and dispatches messages before they end.
+   */
+  authOf(client: Socket): Promise<SocketPrincipal | null> {
+    return (client.data.auth ??= this.authenticate(client));
   }
 
   // Handle 'join' event (frontend: socket.emit('join', { profileId }))
@@ -75,7 +103,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     @MessageBody() data: { profileId: string },
   ) {
     const { profileId } = data || ({} as any);
-    const organizationId = (await client.data?.auth)?.organizationId;
+    const organizationId = (await this.authOf(client))?.organizationId;
 
     if (!organizationId || !profileId || !(await this.ownsProfile(profileId, organizationId))) {
       this.logger.warn(`Client ${client.id} denied join for profile ${profileId}`);
@@ -122,10 +150,10 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     return { success: true, profileId };
   }
 
-  /** Resolve { userId, organizationId } from a JWT or API key in the handshake. */
+  /** Resolve the socket's principal from a JWT or API key in the handshake. */
   private async authenticate(
     client: Socket,
-  ): Promise<{ userId: string; organizationId: string } | null> {
+  ): Promise<SocketPrincipal | null> {
     const handshake: any = client.handshake || {};
     const bearer =
       typeof handshake.headers?.authorization === 'string'
@@ -157,7 +185,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         include: { user: { select: { id: true, organizationId: true, isActive: true } } },
       });
       if (key && (!key.expiresAt || new Date() <= key.expiresAt) && key.user?.isActive) {
-        return { userId: key.user.id, organizationId: key.user.organizationId };
+        return { userId: key.user.id, organizationId: key.user.organizationId, apiKeyScopes: key.permissions ?? [] };
       }
     }
 
@@ -170,6 +198,30 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       where: { id: profileId, workspace: { organizationId } },
       select: { id: true },
     }));
+  }
+
+  /** Emit to every socket of these users (a socket in several of their rooms gets it once). */
+  emitToUsers(userIds: string[], event: string, payload: unknown): void {
+    if (userIds.length) this.server.to(userIds.map((id) => `user:${id}`)).emit(event, payload);
+  }
+
+  /** The users with at least one authenticated socket on /ws (the adapter drops a room with its last socket). */
+  onlineUserIds(): string[] {
+    const rooms = this.server?.adapter?.rooms;
+    return rooms ? [...rooms.keys()].filter((r) => r.startsWith('user:')).map((r) => r.slice('user:'.length)) : [];
+  }
+
+  isUserOnline(userId: string): boolean {
+    return !!this.server?.adapter?.rooms.get(`user:${userId}`)?.size;
+  }
+
+  /** The internal bus never breaks a socket hook. */
+  private emitInternal(event: string, payload: Record<string, unknown>): void {
+    try {
+      this.eventEmitter?.emit(event, payload);
+    } catch (e) {
+      this.logger.warn(`Failed to emit '${event}': ${String((e as Error)?.message ?? e).replace(/[\r\n]/g, '')}`);
+    }
   }
 
   // Emit QR code update (frontend: socket.on('qr:update', data))
