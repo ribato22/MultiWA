@@ -22,6 +22,8 @@
   "devDependencies": {
     "@types/hapi__boom": "^9.0.1",
     "@types/node": "^24.19.2",
+    "esbuild": "0.28.2",
+    "mediasoup-client": "3.25.3",
     "typescript": "^5.7.0"
   }
 }
