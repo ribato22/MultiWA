@@ -38,6 +38,12 @@ export interface CallRecord {
   assignedUserId: string | null;
   autoReplySentAt: Date | null;
   conversationId: string | null;
+  /** Answered in the dashboard: the claim, then the answering agent (see the calls schema). */
+  answeredByUserId?: string | null;
+  answeredAt?: Date | null;
+  endedBy?: string | null;
+  endReason?: string | null;
+  talkSeconds?: number | null;
   metadata?: unknown;
 }
 
@@ -114,6 +120,11 @@ export function toCallPayload(row: CallRecord): Record<string, unknown> {
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
     followUp: row.followUp,
     assignedUserId: row.assignedUserId,
+    answeredByUserId: row.answeredByUserId ?? null,
+    answeredAt: row.answeredAt ? row.answeredAt.toISOString() : null,
+    endedBy: row.endedBy ?? null,
+    endReason: row.endReason ?? null,
+    talkSeconds: row.talkSeconds ?? null,
   };
 }
 

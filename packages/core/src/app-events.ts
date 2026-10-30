@@ -35,6 +35,7 @@ export const AppEvents = {
   },
   CALL: {
     RECEIVED: 'call.received',
+    ANSWERED: 'call.answered',
     REJECTED: 'call.rejected',
     ENDED: 'call.ended',
     UPDATED: 'call.updated',
