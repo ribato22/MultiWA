@@ -77,7 +77,7 @@ describe('MetricsEventsListener: the dashboard call counters', () => {
   });
 
   it('counts the dashboard calls: rings, answers with their speed, media failures and ends by reason', async () => {
-    listener.onCallsSession({ kind: 'rung', agents: 3 });
+    listener.onCallsSession({ kind: 'rung' });
     listener.onCallsSession({ kind: 'answered', answerSeconds: 4.2 });
     listener.onCallsSession({ kind: 'media_failed', reason: 'connect_timeout' });
     listener.onCallsSession({ kind: 'ended', endReason: 'hangup' });
@@ -87,5 +87,12 @@ describe('MetricsEventsListener: the dashboard call counters', () => {
     expect(text).toMatch(/multiwa_calls_dashboard_answer_seconds_count\{app="multiwa-api"\} 1/);
     expect(text).toMatch(/multiwa_calls_media_failures_total\{reason="connect_timeout",app="multiwa-api"\} 1/);
     expect(text).toMatch(/multiwa_calls_dashboard_ended_total\{reason="hangup",app="multiwa-api"\} 1/);
+  });
+
+  it('labels its series from closed sets: a reason outside them does not compile', () => {
+    // @ts-expect-error: not a media failure reason
+    listener.onCallsSession({ kind: 'media_failed', reason: 'timeout' });
+    // @ts-expect-error: not an end reason
+    listener.onCallsSession({ kind: 'ended', endReason: 'bye' });
   });
 });

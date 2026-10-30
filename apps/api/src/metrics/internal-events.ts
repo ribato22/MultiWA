@@ -13,6 +13,9 @@
 // a metric, so monitoring could not see them — a user reported them ~10 days later.
 // Surfacing both as counters is what turns the next occurrence into an alert.
 
+import type { CallState } from '@multiwa/engines';
+import type { CallEndReason } from '@multiwa/engine-runtime';
+
 export const InternalEvents = {
   /**
    * Emitted once per group-list fetch with `source: 'live' | 'fallback'`.
@@ -40,10 +43,10 @@ export const InternalEvents = {
    */
   CALL_ENGINE_SIGNAL: 'internal.calls.engine_signal',
 
-  /** A dashboard user's first socket joined /ws. */
+  /** A user's first dashboard socket (a JWT login; API-key sockets do not count) joined /ws. */
   WS_USER_ONLINE: 'internal.ws.user_online',
 
-  /** A dashboard user's last socket left /ws: the call coordinator starts the agent-lost grace of their call. */
+  /** A user's last dashboard socket left /ws: the call coordinator starts the agent-lost grace of their call. */
   WS_USER_OFFLINE: 'internal.ws.user_offline',
 
   /** The call coordinator, for the counters: a call offered to agents, answered, a media failure, an answered call ended. */
@@ -71,15 +74,26 @@ export interface CallEngineSignalPayload {
   profileId: string;
   /** The engine's call id (calls.waCallId). */
   waCallId: string;
-  state: 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
+  state: CallState;
 }
 
 export interface WsUserPayload {
   userId: string;
 }
 
+/** Why the audio of a call answered in the dashboard did not connect, or broke (the media-failure counter's label). */
+export type CallMediaFailureReason =
+  | 'page_start_failed'
+  | 'connect_timeout'
+  | 'answer_failed'
+  | 'attach_failed'
+  | 'agent_connect_failed'
+  | 'worker_died'
+  | 'engine_lost';
+
+// Closed label sets: a counter's series cannot multiply on a typo.
 export type CallsSessionPayload =
-  | { kind: 'rung'; agents: number }
+  | { kind: 'rung' }
   | { kind: 'answered'; answerSeconds: number }
-  | { kind: 'media_failed'; reason: string }
-  | { kind: 'ended'; endReason: string };
+  | { kind: 'media_failed'; reason: CallMediaFailureReason }
+  | { kind: 'ended'; endReason: CallEndReason };

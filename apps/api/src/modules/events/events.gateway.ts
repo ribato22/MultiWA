@@ -36,10 +36,11 @@ export const WS_GATEWAY_OPTIONS: GatewayMetadata = {
   transports: ['websocket', 'polling'],
 };
 
-/** Who a socket is: its user and organization, and its API key's scopes (absent for a JWT login). */
+/** Who a socket is: its user and organization, and how it logged in. */
 export interface SocketPrincipal {
   userId: string;
   organizationId: string;
+  /** Present for an API-key socket (`[]` or `['*']` means full access), absent for a dashboard login (JWT). */
   apiKeyScopes?: string[];
 }
 
@@ -62,19 +63,27 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     // Nest does not await this hook before it dispatches the client's messages,
     // so every handler awaits the same promise (authOf).
     const auth = await this.authOf(client);
+    // Left while it was being authenticated: its handleDisconnect has run already and socket.io ignores a closed
+    // socket's join, so it must not touch presence.
+    if (!client.connected) return;
     if (!auth) {
       this.logger.warn(`Rejected unauthenticated socket: ${client.id}`);
       client.disconnect(true);
       return;
     }
-    // The user's room: the call coordinator rings, and talks to, a user on every socket they have open.
-    const room = `user:${auth.userId}`;
-    client.join(room);
-    if (this.server?.adapter?.rooms.get(room)?.size === 1) this.emitInternal(InternalEvents.WS_USER_ONLINE, { userId: auth.userId });
+    // A dashboard login joins its user's room: the call coordinator rings, and talks to, a user on every dashboard socket
+    // they have open, and the room is their presence. An API-key socket joins none: an integration that stays connected
+    // would keep its user online for ever, always rung and never lost.
+    if (!auth.apiKeyScopes) {
+      const room = this.userRoom(auth.userId);
+      client.join(room);
+      client.data.userId = auth.userId; // read by handleDisconnect: only a socket that joined can take its user offline
+      if (this.server?.adapter?.rooms.get(room)?.size === 1) this.emitInternal(InternalEvents.WS_USER_ONLINE, { userId: auth.userId });
+    }
     this.logger.log(`Client connected to /ws: ${client.id} (org ${auth.organizationId})`);
   }
 
-  async handleDisconnect(client: Socket) {
+  handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
     // Clean up client from all profile rooms
     this.clients.forEach((clientSet, profileId) => {
@@ -83,17 +92,23 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         this.clients.delete(profileId);
       }
     });
-    // socket.io has taken the socket out of its rooms by now: an empty user room means the user's last socket left.
-    const auth = await client.data?.auth;
-    if (auth && !this.isUserOnline(auth.userId)) this.emitInternal(InternalEvents.WS_USER_OFFLINE, { userId: auth.userId });
+    // socket.io has taken the socket out of its rooms by now: an empty user room means the user's last dashboard
+    // socket left.
+    const userId: string | undefined = client.data?.userId;
+    if (userId && !this.isUserOnline(userId)) this.emitInternal(InternalEvents.WS_USER_OFFLINE, { userId });
   }
 
   /**
    * The socket's principal, authenticated ONCE per socket: the promise is kept on the socket and shared by every
    * gateway on /ws, since Nest runs their connection hooks in no set order and dispatches messages before they end.
+   * A lookup that throws (the database is down) refuses the socket like a bad credential: Nest drops the hooks'
+   * promises, so a rejection would reach the process's rejection guard, which rethrows it and the api exits.
    */
   authOf(client: Socket): Promise<SocketPrincipal | null> {
-    return (client.data.auth ??= this.authenticate(client));
+    return (client.data.auth ??= this.authenticate(client).catch((e) => {
+      this.logger.warn(`Could not authenticate socket ${client.id}: ${String((e as Error)?.message ?? e).replace(/[\r\n]/g, '')}`);
+      return null;
+    }));
   }
 
   // Handle 'join' event (frontend: socket.emit('join', { profileId }))
@@ -185,7 +200,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         include: { user: { select: { id: true, organizationId: true, isActive: true } } },
       });
       if (key && (!key.expiresAt || new Date() <= key.expiresAt) && key.user?.isActive) {
-        return { userId: key.user.id, organizationId: key.user.organizationId, apiKeyScopes: key.permissions ?? [] };
+        return { userId: key.user.id, organizationId: key.user.organizationId, apiKeyScopes: key.permissions };
       }
     }
 
@@ -200,25 +215,30 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     }));
   }
 
-  /** Emit to every socket of these users (a socket in several of their rooms gets it once). */
+  /** Emit to every dashboard socket of these users (a socket in several of their rooms gets it once). */
   emitToUsers(userIds: string[], event: string, payload: unknown): void {
-    if (userIds.length) this.server.to(userIds.map((id) => `user:${id}`)).emit(event, payload);
+    if (userIds.length) this.server.to(userIds.map((id) => this.userRoom(id))).emit(event, payload);
   }
 
-  /** The users with at least one authenticated socket on /ws (the adapter drops a room with its last socket). */
+  /** The users with at least one dashboard socket on /ws (the adapter drops a room with its last socket). */
   onlineUserIds(): string[] {
+    const prefix = this.userRoom('');
     const rooms = this.server?.adapter?.rooms;
-    return rooms ? [...rooms.keys()].filter((r) => r.startsWith('user:')).map((r) => r.slice('user:'.length)) : [];
+    return rooms ? [...rooms.keys()].filter((r) => r.startsWith(prefix)).map((r) => r.slice(prefix.length)) : [];
   }
 
   isUserOnline(userId: string): boolean {
-    return !!this.server?.adapter?.rooms.get(`user:${userId}`)?.size;
+    return !!this.server?.adapter?.rooms.get(this.userRoom(userId))?.size;
+  }
+
+  private userRoom(userId: string): string {
+    return `user:${userId}`;
   }
 
   /** The internal bus never breaks a socket hook. */
   private emitInternal(event: string, payload: Record<string, unknown>): void {
     try {
-      this.eventEmitter?.emit(event, payload);
+      this.eventEmitter.emit(event, payload);
     } catch (e) {
       this.logger.warn(`Failed to emit '${event}': ${String((e as Error)?.message ?? e).replace(/[\r\n]/g, '')}`);
     }

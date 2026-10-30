@@ -167,7 +167,7 @@ export class CallMediaRoom {
     }
   }
 
-  /** Whether `peer` has transports and every one of them is linked, i.e. its media can flow both ways. */
+  /** Whether `peer` has transports and every one of them is linked. */
   linkUp(peer: MediaPeer): boolean {
     let any = false;
     for (const [id, t] of this.transports) {
@@ -184,6 +184,9 @@ export class CallMediaRoom {
   }
 
   private linkChanged(peer: MediaPeer): void {
+    // A closing room tells nothing: close() closes its transports while they are still listed, and a dead worker closes
+    // them before their router's close reaches the room.
+    if (this.isClosed || this.router.closed) return;
     const up = this.linkUp(peer);
     if (up === this.linkTold[peer]) return;
     this.linkTold[peer] = up;

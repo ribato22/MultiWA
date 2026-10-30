@@ -18,7 +18,7 @@ import { EventsGateway } from './events.gateway';
 const db = prisma as any;
 
 const fakeClient = () =>
-  ({ id: 's1', handshake: { auth: { token: 't' } }, data: {}, join: vi.fn(), disconnect: vi.fn() }) as any;
+  ({ id: 's1', handshake: { auth: { token: 't' } }, data: {}, connected: true, join: vi.fn(), disconnect: vi.fn() }) as any;
 
 describe('EventsGateway join during the handshake', () => {
   let gateway: EventsGateway;
@@ -79,16 +79,27 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
   let gateway: EventsGateway;
   let verify: ReturnType<typeof vi.fn>;
   // socket.io's in-memory adapter: join adds the socket to the room; the room goes when its last socket leaves
-  const socket = (id: string, auth: Record<string, unknown> = { token: 't' }) =>
-    ({
+  const socket = (id: string, auth: Record<string, unknown> = { token: 't' }) => {
+    const s: any = {
       id,
       handshake: { auth },
       data: {},
-      join: vi.fn((room: string) => (rooms.get(room) ?? rooms.set(room, new Set()).get(room)!).add(id)),
+      connected: true,
+      join: vi.fn((room: string) => s.connected && (rooms.get(room) ?? rooms.set(room, new Set()).get(room)!).add(id)),
       disconnect: vi.fn(),
-    }) as any;
+    };
+    return s;
+  };
+  // socket.io closing a socket, before its 'disconnect': out of its rooms, its join made a no-op, no longer connected
   const leave = (s: any) => {
     for (const [room, ids] of rooms) if (ids.delete(s.id) && !ids.size) rooms.delete(room);
+    s.connected = false;
+  };
+  /** The next JWT check ends only when the returned function is called. */
+  const pendingVerify = () => {
+    let finish!: () => void;
+    verify.mockReturnValueOnce(new Promise((resolve) => (finish = () => resolve({ sub: 'u1' }))));
+    return finish;
   };
 
   beforeEach(() => {
@@ -121,10 +132,10 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(gateway.isUserOnline('u1')).toBe(true);
     expect(bus.emit.mock.calls).toEqual([['internal.ws.user_online', { userId: 'u1' }]]); // the first socket only
     leave(s1); // socket.io takes a socket out of its rooms before 'disconnect'
-    await gateway.handleDisconnect(s1);
+    gateway.handleDisconnect(s1);
     expect(bus.emit).toHaveBeenCalledTimes(1); // u1 still has s2
     leave(s2);
-    await gateway.handleDisconnect(s2);
+    gateway.handleDisconnect(s2);
     expect(bus.emit).toHaveBeenLastCalledWith('internal.ws.user_offline', { userId: 'u1' });
     expect(gateway.isUserOnline('u1')).toBe(false);
   });
@@ -148,7 +159,74 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     await gateway.handleConnection(s);
     expect(s.join).not.toHaveBeenCalled();
     expect(s.disconnect).toHaveBeenCalledWith(true);
-    await gateway.handleDisconnect(s);
+    gateway.handleDisconnect(s);
     expect(bus.emit).not.toHaveBeenCalled();
+  });
+
+  it('a socket whose authentication throws (the database is down) is refused like an unauthenticated one; nothing rejects', async () => {
+    db.apiKey.findUnique.mockRejectedValue(new Error('connection refused\nforged line'));
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    const s = socket('s7', { apiKey: 'k' });
+    await expect(gateway.authOf(s)).resolves.toBeNull();
+    await expect(gateway.handleConnection(s)).resolves.toBeUndefined();
+    expect(s.disconnect).toHaveBeenCalledWith(true);
+    expect(s.join).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection refusedforged line'));
+    await expect(gateway.handleJoin(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Forbidden' });
+  });
+
+  it("an API-key socket (an integration) joins no user room and keeps no one online; the same user's dashboard login does", async () => {
+    db.apiKey.findUnique.mockResolvedValue({ expiresAt: null, permissions: [], user: { id: 'u1', organizationId: 'o1', isActive: true } });
+    const integration = socket('s5', { apiKey: 'k' });
+    await gateway.handleConnection(integration);
+    expect(integration.join).not.toHaveBeenCalled();
+    expect(integration.disconnect).not.toHaveBeenCalled();
+    expect(gateway.isUserOnline('u1')).toBe(false);
+    const dashboard = socket('s6');
+    await gateway.handleConnection(dashboard);
+    expect(dashboard.join).toHaveBeenCalledWith('user:u1');
+    expect(gateway.onlineUserIds()).toEqual(['u1']);
+    leave(dashboard);
+    gateway.handleDisconnect(dashboard);
+    expect(gateway.isUserOnline('u1')).toBe(false); // the integration's socket is still open
+    leave(integration);
+    gateway.handleDisconnect(integration);
+    expect(bus.emit.mock.calls).toEqual([
+      ['internal.ws.user_online', { userId: 'u1' }],
+      ['internal.ws.user_offline', { userId: 'u1' }],
+    ]);
+  });
+
+  it('a socket that leaves while it is being authenticated changes no presence (the user has no other socket)', async () => {
+    const finish = pendingVerify();
+    const s = socket('s8');
+    const connecting = gateway.handleConnection(s); // not awaited, as in Nest
+    leave(s);
+    gateway.handleDisconnect(s);
+    finish();
+    await connecting;
+    expect(s.join).not.toHaveBeenCalled();
+    expect(gateway.isUserOnline('u1')).toBe(false);
+    expect(bus.emit).not.toHaveBeenCalled();
+  });
+
+  it("a socket that leaves while it is being authenticated changes no presence (the user's other socket stays)", async () => {
+    const s1 = socket('s1');
+    await gateway.handleConnection(s1);
+    const finish = pendingVerify();
+    const s2 = socket('s2');
+    const connecting = gateway.handleConnection(s2);
+    leave(s2);
+    gateway.handleDisconnect(s2);
+    finish();
+    await connecting;
+    expect(s2.join).not.toHaveBeenCalled();
+    expect(bus.emit.mock.calls).toEqual([['internal.ws.user_online', { userId: 'u1' }]]); // s1's, once
+    leave(s1);
+    gateway.handleDisconnect(s1);
+    expect(bus.emit.mock.calls).toEqual([
+      ['internal.ws.user_online', { userId: 'u1' }],
+      ['internal.ws.user_offline', { userId: 'u1' }],
+    ]);
   });
 });

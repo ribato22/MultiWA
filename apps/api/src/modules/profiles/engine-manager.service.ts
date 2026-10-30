@@ -19,7 +19,7 @@ import * as QRCode from 'qrcode';
 import { RuleEngineService } from '../automation/rule-engine.service';
 import { MessagesService } from '../messages/messages.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
-import { InternalEvents } from '../../metrics/internal-events';
+import { InternalEvents, type CallEngineSignalPayload } from '../../metrics/internal-events';
 
 
 interface EngineInstance {
@@ -957,7 +957,11 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
         );
         // After the hand-over, never before it (see above). The call coordinator follows the calls it answers through
         // these: once a call is answered in the dashboard its `ended` no longer moves the stored outcome.
-        this.emitEvent(InternalEvents.CALL_ENGINE_SIGNAL, { profileId, waCallId: call.id, state: call.state ?? 'ringing' });
+        this.emitEvent(InternalEvents.CALL_ENGINE_SIGNAL, {
+          profileId,
+          waCallId: call.id,
+          state: call.state ?? 'ringing',
+        } satisfies CallEngineSignalPayload);
       },
       onCallLog: (entry) => {
         handleCallLog(entry, this.callDeps(profileId, null)).catch((e) =>

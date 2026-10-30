@@ -70,8 +70,9 @@ describe('answered (a call answered in the dashboard)', () => {
     }
   });
 
-  it('a ringing call can become answered', () => {
+  it('is reached only from ringing: a call that stopped ringing (unknown) is never answered', () => {
     expect(nextOutcome('ringing', 'answered')).toBe('answered');
+    expect(nextOutcome('unknown', 'answered')).toBeNull();
   });
 
   it('needs no follow-up, like a call answered on the phone (an open follow-up becomes done; others stay)', () => {

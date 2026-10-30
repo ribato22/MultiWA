@@ -558,6 +558,39 @@ describe('CallMediaService', () => {
     expect(told).toEqual([['agent', true], ['agent', false], ['agent', true], ['agent', false]]);
   });
 
+  /** A room whose agent is linked (both its transports ICE-connected), and a link listener added after that. */
+  const roomWithLinkedAgent = async (callId: string) => {
+    const room = await service.createRoom(callId);
+    const agent = room.signalingFor('agent');
+    for (const direction of ['send', 'recv'] as const) {
+      const t: any = await agent.createTransport(direction);
+      (room as any).transports.get(t.id).transport.emit('icestatechange', 'connected');
+    }
+    expect(room.linkUp('agent')).toBe(true);
+    const told = vi.fn();
+    room.onLinkChange(told);
+    return { room, told };
+  };
+
+  it('a room being closed tells no link changes: its linked agent does not go down for the listeners', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const { room, told } = await roomWithLinkedAgent('CALL-LINK4');
+    room.close();
+    expect(told).not.toHaveBeenCalled();
+  });
+
+  it("nor does a room whose worker died: mediasoup closes the router's transports before the router's close reaches the room", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const { room, told } = await roomWithLinkedAgent('CALL-LINK5');
+    const died = new Promise((resolve) => service.events.once('worker-died', resolve));
+    process.kill(service.workerPid()!, 'SIGKILL');
+    await died;
+    expect(room.closed).toBe(true);
+    expect(told).not.toHaveBeenCalled();
+  }, 15_000);
+
   it('a link listener that throws stops neither the room nor the other listeners', async () => {
     switchOn();
     await service.onModuleInit();
