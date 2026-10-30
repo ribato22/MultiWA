@@ -109,6 +109,9 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET:-multiwa}
       S3_REGION: ${S3_REGION:-us-east-1}
+      # Where the WhatsApp engines run. The api and the worker must agree: with 'worker' the api hands its engine work
+      # to the worker, and must not open the sessions itself (each profile would run twice, on the same sessions volume).
+      ENGINE_HOST: ${ENGINE_HOST:-api}
       WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-whatsapp-web.js}
       CHROMIUM_PATH: /usr/bin/chromium
       # WhatsApp sessions are written under SESSIONS_DIR (see engine-manager +

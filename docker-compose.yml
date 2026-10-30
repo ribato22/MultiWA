@@ -77,6 +77,9 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://localhost:3333}
+      # Where the WhatsApp engines run. The api and the worker must agree: with 'worker' the api hands its engine work
+      # to the worker, and must not open the sessions itself (each profile would run twice, on the same sessions volume).
+      ENGINE_HOST: ${ENGINE_HOST:-api}
       WHATSAPP_ENGINE: ${DEFAULT_ENGINE:-whatsapp-web-js}
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"

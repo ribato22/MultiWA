@@ -6,28 +6,16 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, it, expect } from 'vitest';
-
-const REPO_ROOT = path.join(__dirname, '..', '..', '..');
-const read = (file: string) => readFileSync(path.join(REPO_ROOT, file), 'utf8');
+import { composeService, readCompose } from './testing/compose';
 
 /** Every CALLS_MEDIA_* variable the media server reads. */
 const SETTINGS = [
   ...new Set([...readFileSync(path.join(__dirname, 'modules/calls/media/media-config.ts'), 'utf8').matchAll(/env\.(CALLS_MEDIA_[A-Z_]+)/g)].map((m) => m[1])),
 ];
 
-/** The `api:` service block of a compose file (two-space service indent). */
-function apiBlock(file: string): string {
-  const text = read(file);
-  const start = text.search(/^ {2}api:\s*$/m);
-  expect(start, `${file} has no api service`).toBeGreaterThanOrEqual(0);
-  const rest = text.slice(start + 1);
-  const next = rest.search(/^ {2}[a-z][\w-]*:\s*$/m);
-  return next < 0 ? rest : rest.slice(0, next);
-}
-
 describe.each(['docker-compose.yml', 'docker-compose.production.yml', 'docker-compose.dev.yml'])('%s', (file) => {
   it('passes every call media setting to the api (off by default)', () => {
-    const api = apiBlock(file);
+    const api = composeService(file, 'api') ?? '';
     expect(SETTINGS).toEqual(expect.arrayContaining(['CALLS_MEDIA_ENABLED', 'CALLS_MEDIA_LISTEN_IP', 'CALLS_MEDIA_ICE_SERVERS']));
     for (const name of SETTINGS) expect(api, name).toMatch(new RegExp(`^ +${name}: \\$\\{${name}:-`, 'm'));
     expect(api).toMatch(/CALLS_MEDIA_ENABLED: \$\{CALLS_MEDIA_ENABLED:-false\}/);
@@ -35,12 +23,12 @@ describe.each(['docker-compose.yml', 'docker-compose.production.yml', 'docker-co
   });
 
   it('does not publish the media port: docker-compose.calls-media.yml does, on request', () => {
-    expect(read(file)).not.toMatch(/CALLS_MEDIA_PORT[^\n]*\/(udp|tcp)/);
+    expect(readCompose(file)).not.toMatch(/CALLS_MEDIA_PORT[^\n]*\/(udp|tcp)/);
   });
 });
 
 it('docker-compose.calls-media.yml publishes the api media port on the same number, UDP and TCP', () => {
-  const api = apiBlock('docker-compose.calls-media.yml');
+  const api = composeService('docker-compose.calls-media.yml', 'api') ?? '';
   expect(api).toContain('"${CALLS_MEDIA_PORT:-40000}:${CALLS_MEDIA_PORT:-40000}/udp"');
   expect(api).toContain('"${CALLS_MEDIA_PORT:-40000}:${CALLS_MEDIA_PORT:-40000}/tcp"');
 });
