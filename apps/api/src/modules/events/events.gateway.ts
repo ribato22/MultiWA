@@ -26,6 +26,9 @@ const WS_CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3001,http
   .map((o) => o.trim())
   .filter(Boolean);
 
+// CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
+const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
+
 /** The /ws namespace's options: every gateway on it (this one, CallsGateway) declares the same. */
 export const WS_GATEWAY_OPTIONS: GatewayMetadata = {
   namespace: '/ws',
@@ -74,7 +77,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     // A dashboard login joins its user's room: the call coordinator rings, and talks to, a user on every dashboard socket
     // they have open, and the room is their presence. An API-key socket joins none: an integration that stays connected
     // would keep its user online for ever, always rung and never lost.
-    if (!auth.apiKeyScopes) {
+    if (auth.apiKeyScopes === undefined) {
       const room = this.userRoom(auth.userId);
       client.join(room);
       client.data.userId = auth.userId; // read by handleDisconnect: only a socket that joined can take its user offline
@@ -106,7 +109,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
    */
   authOf(client: Socket): Promise<SocketPrincipal | null> {
     return (client.data.auth ??= this.authenticate(client).catch((e) => {
-      this.logger.warn(`Could not authenticate socket ${client.id}: ${String((e as Error)?.message ?? e).replace(/[\r\n]/g, '')}`);
+      this.logger.warn(`Could not authenticate socket ${client.id}: ${clean((e as Error)?.message ?? e)}`);
       return null;
     }));
   }
@@ -118,14 +121,17 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     @MessageBody() data: { profileId: string },
   ) {
     const { profileId } = data || ({} as any);
-    const organizationId = (await this.authOf(client))?.organizationId;
+    const auth = await this.authOf(client);
+    // Left while it was being authenticated: its handleDisconnect has cleaned up already, so record nothing.
+    if (!client.connected) return { success: false, error: 'Disconnected' };
+    const organizationId = auth?.organizationId;
 
     if (!organizationId || !profileId || !(await this.ownsProfile(profileId, organizationId))) {
-      this.logger.warn(`Client ${client.id} denied join for profile ${profileId}`);
+      this.logger.warn(`Client ${client.id} denied join for profile ${clean(profileId)}`);
       return { success: false, error: 'Forbidden' };
     }
 
-    this.logger.log(`Client ${client.id} joining profile room: ${profileId}`);
+    this.logger.log(`Client ${client.id} joining profile room: ${clean(profileId)}`);
     client.join(`profile:${profileId}`);
 
     if (!this.clients.has(profileId)) {
@@ -150,7 +156,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     @MessageBody() data: { profileId: string },
   ) {
     const { profileId } = data;
-    this.logger.log(`Client ${client.id} leaving profile room: ${profileId}`);
+    this.logger.log(`Client ${client.id} leaving profile room: ${clean(profileId)}`);
 
     client.leave(`profile:${profileId}`);
 
@@ -200,7 +206,8 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         include: { user: { select: { id: true, organizationId: true, isActive: true } } },
       });
       if (key && (!key.expiresAt || new Date() <= key.expiresAt) && key.user?.isActive) {
-        return { userId: key.user.id, organizationId: key.user.organizationId, apiKeyScopes: key.permissions };
+        // Always an array for an API key, also when its column holds NULL: its absence is what marks a dashboard login.
+        return { userId: key.user.id, organizationId: key.user.organizationId, apiKeyScopes: key.permissions ?? [] };
       }
     }
 
@@ -240,7 +247,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     try {
       this.eventEmitter.emit(event, payload);
     } catch (e) {
-      this.logger.warn(`Failed to emit '${event}': ${String((e as Error)?.message ?? e).replace(/[\r\n]/g, '')}`);
+      this.logger.warn(`Failed to emit '${event}': ${clean((e as Error)?.message ?? e)}`);
     }
   }
 

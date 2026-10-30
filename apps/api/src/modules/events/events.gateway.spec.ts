@@ -182,6 +182,10 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(integration.join).not.toHaveBeenCalled();
     expect(integration.disconnect).not.toHaveBeenCalled();
     expect(gateway.isUserOnline('u1')).toBe(false);
+    // ...yet it still gets its profiles' events
+    db.profile.findFirst.mockResolvedValue({ id: 'p1' });
+    expect(await gateway.handleJoin(integration, { profileId: 'p1' })).toEqual({ success: true, profileId: 'p1' });
+    expect(integration.join).toHaveBeenCalledWith('profile:p1');
     const dashboard = socket('s6');
     await gateway.handleConnection(dashboard);
     expect(dashboard.join).toHaveBeenCalledWith('user:u1');
@@ -195,6 +199,28 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
       ['internal.ws.user_online', { userId: 'u1' }],
       ['internal.ws.user_offline', { userId: 'u1' }],
     ]);
+  });
+
+  it('a key whose scopes column is NULL still makes an API-key socket: it joins no user room', async () => {
+    db.apiKey.findUnique.mockResolvedValue({ expiresAt: null, permissions: null, user: { id: 'u1', organizationId: 'o1', isActive: true } });
+    const s = socket('s9', { apiKey: 'k' });
+    expect(await gateway.authOf(s)).toEqual({ userId: 'u1', organizationId: 'o1', apiKeyScopes: [] });
+    await gateway.handleConnection(s);
+    expect(s.join).not.toHaveBeenCalled();
+    expect(gateway.isUserOnline('u1')).toBe(false);
+  });
+
+  it('a profile join whose socket left while it was being authenticated joins and records nothing', async () => {
+    const finish = pendingVerify();
+    const s = socket('s10');
+    db.profile.findFirst.mockResolvedValue({ id: 'p1' });
+    const joined = gateway.handleJoin(s, { profileId: 'p1' });
+    leave(s);
+    gateway.handleDisconnect(s);
+    finish();
+    expect(await joined).toEqual({ success: false, error: 'Disconnected' });
+    expect(s.join).not.toHaveBeenCalled();
+    expect((gateway as any).clients.has('p1')).toBe(false);
   });
 
   it('a socket that leaves while it is being authenticated changes no presence (the user has no other socket)', async () => {
