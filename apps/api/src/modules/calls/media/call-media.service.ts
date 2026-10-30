@@ -107,13 +107,19 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
       worker.close();
       return;
     }
+    let server: ms.WebRtcServer;
     try {
       const listen = { ip: config.listenIp, announcedAddress: config.announcedAddress, port: config.port, exposeInternalIp: true };
-      this.server = await worker.createWebRtcServer({ listenInfos: [{ protocol: 'udp', ...listen }, { protocol: 'tcp', ...listen }] });
+      server = await worker.createWebRtcServer({ listenInfos: [{ protocol: 'udp', ...listen }, { protocol: 'tcp', ...listen }] });
     } catch (e) {
       worker.close();
       throw e;
     }
+    if (this.stopped) {
+      worker.close(); // the api shut down meanwhile; closing the worker closes its WebRtcServer too
+      return;
+    }
+    this.server = server;
     worker.on('died', (error) => this.onWorkerDied(worker, error));
     this.worker = worker;
     this.logger.log(`Call media server up: worker pid ${worker.pid}, port ${config.port}`);

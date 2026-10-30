@@ -3,7 +3,7 @@
 //
 // A mediasoup Router with two peers. The "page" peer is the WhatsApp Web page's media bridge; it produces the
 // caller and consumes the agent. The "agent" peer is the agent's browser; it produces the agent and consumes the
-// caller. Each peer has at most one send and one receive transport, produces exactly one track, and may consume only
+// caller. Each peer has at most one send and one receive transport, produces at most one track, and may consume only
 // the other peer's track, so a client can never reach another peer's or another call's media. A peer's signalling runs
 // one operation at a time, so these limits hold for calls made together too.
 // The signalling API speaks mediasoup's JSON: `signalingFor(peer)` binds it to one peer.
@@ -11,14 +11,14 @@ import type { types as ms } from 'mediasoup';
 import type { CallMediaSignaling } from '@multiwa/engines';
 
 export type MediaPeer = 'page' | 'agent';
-type Role = 'caller' | 'agent';
+export type MediaRole = 'caller' | 'agent';
 /** What each peer produces, and what it may consume. */
-const PRODUCES: Record<MediaPeer, Role> = { page: 'caller', agent: 'agent' };
-const CONSUMES: Record<MediaPeer, Role> = { page: 'agent', agent: 'caller' };
+const PRODUCES: Record<MediaPeer, MediaRole> = { page: 'caller', agent: 'agent' };
+const CONSUMES: Record<MediaPeer, MediaRole> = { page: 'agent', agent: 'caller' };
 
 export class CallMediaRoom {
   private readonly transports = new Map<string, { peer: MediaPeer; direction: 'send' | 'recv'; transport: ms.WebRtcTransport }>();
-  private readonly producers: Partial<Record<Role, ms.Producer>> = {};
+  private readonly producers: Partial<Record<MediaRole, ms.Producer>> = {};
   private readonly consumers = new Map<string, { peer: MediaPeer; consumer: ms.Consumer }>();
   /** Where each peer's signalling operations queue (see `run`). The two peers are independent of each other. */
   private readonly chains: Record<MediaPeer, Promise<unknown>> = { page: Promise.resolve(), agent: Promise.resolve() };
@@ -39,7 +39,7 @@ export class CallMediaRoom {
   }
 
   /** The producer id of `role`, once produced. */
-  producerId(role: Role): string | null {
+  producerId(role: MediaRole): string | null {
     return this.producers[role]?.id ?? null;
   }
 
@@ -74,10 +74,14 @@ export class CallMediaRoom {
     return result;
   }
 
-  /** Close the room: its router, and with it every transport, producer and consumer. Idempotent. */
+  /** Close the room: every transport, producer and consumer, and its router. Idempotent. */
   close(): void {
     if (this.isClosed) return;
     this.isClosed = true;
+    // Router.close() never tells the WebRtcServer that its transports are gone, so the server would keep all of them
+    // (some 27 KiB a call) for the life of the process: close them first.
+    for (const { transport } of this.transports.values()) transport.close();
+    this.transports.clear();
     this.router.close();
     this.onClose();
   }
@@ -89,6 +93,10 @@ export class CallMediaRoom {
       throw new Error(`The ${peer} already has a ${direction} transport`);
     }
     const transport = await this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true });
+    if (this.isClosed) {
+      transport.close(); // the room closed meanwhile and close() could not know this transport: the server would keep it
+      throw new Error('Media room closed');
+    }
     this.transports.set(transport.id, { peer, direction, transport });
     return {
       id: transport.id,

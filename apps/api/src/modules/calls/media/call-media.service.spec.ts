@@ -1,7 +1,10 @@
 // The call media server with a REAL mediasoup worker, no browser: it starts only when switched on, gives each call
-// one room, and the room lets each peer do only its own part. A dead worker closes its rooms and is replaced.
+// one room, and the room lets each peer do only its own part. A closed room leaves nothing behind in the WebRtcServer.
+// A dead worker closes its rooms and is replaced; a stopped service never starts another worker.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ConsoleLogger, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import type { types as ms } from 'mediasoup';
 import { CallMediaService } from './call-media.service';
 import { InternalEvents } from '../../../metrics/internal-events';
 
@@ -15,13 +18,21 @@ const until = async (ok: () => boolean, ms: number) => {
   for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));
   return ok();
 };
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 describe('CallMediaService', () => {
   let service: CallMediaService;
   let bus: EventEmitter2;
 
   beforeEach(() => {
-    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    Logger.overrideLogger(false); // the service logs through Nest's static Logger, which writes to stdout
     bus = new EventEmitter2();
     service = new CallMediaService(bus);
   });
@@ -29,6 +40,7 @@ describe('CallMediaService', () => {
     await service.onModuleDestroy();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+    Logger.overrideLogger(new ConsoleLogger());
   });
   const switchOn = () => {
     vi.stubEnv('CALLS_MEDIA_ENABLED', 'true');
@@ -36,6 +48,8 @@ describe('CallMediaService', () => {
     vi.stubEnv('CALLS_MEDIA_LISTEN_IP', '127.0.0.1');
     vi.stubEnv('CALLS_MEDIA_PORT', String(42000 + Math.floor(Math.random() * 3000)));
   };
+  /** The transports the WebRtcServer still holds (mediasoup's test accessor). */
+  const inServer = () => (service['server'] as any).webRtcTransportsForTesting.size as number;
 
   it('stays off with the switch off: no worker, and no room can be opened', async () => {
     vi.stubEnv('CALLS_MEDIA_ENABLED', 'false');
@@ -127,6 +141,38 @@ describe('CallMediaService', () => {
     room.close();
   });
 
+  it("closing a room releases its transports from the WebRtcServer, and only that room's", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const rooms = [await service.createRoom('CALL1'), await service.createRoom('CALL2')];
+    for (const room of rooms) {
+      for (const peer of ['page', 'agent'] as const) {
+        await room.signalingFor(peer).createTransport('send');
+        await room.signalingFor(peer).createTransport('recv');
+      }
+    }
+    expect(inServer()).toBe(8);
+    rooms[0].close();
+    expect(inServer()).toBe(4);
+    rooms[1].close();
+    expect(inServer()).toBe(0);
+  });
+
+  it('a transport still being created when its room closes is not handed out, and does not stay in the WebRtcServer', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1');
+    const router = room['router'];
+    const createWebRtcTransport = router.createWebRtcTransport.bind(router);
+    vi.spyOn(router, 'createWebRtcTransport').mockImplementationOnce((options) => {
+      const created = createWebRtcTransport(options); // the worker has the request...
+      room.close(); // ...when the room closes
+      return created;
+    });
+    await expect(room.signalingFor('page').createTransport('send')).rejects.toThrow('Media room closed');
+    expect(inServer()).toBe(0);
+  });
+
   it("concurrent signalling cannot bypass a peer's limits; peers do not wait for each other; a closing room refuses what waits", async () => {
     switchOn();
     await service.onModuleInit();
@@ -201,12 +247,47 @@ describe('CallMediaService', () => {
     await expect(service.createRoom('CALL8')).resolves.toBeDefined();
   }, 20_000);
 
-  it('shuts down for good: no restart after onModuleDestroy', async () => {
+  it('shuts down for good: a restart still waiting on its timer never happens', async () => {
     switchOn();
     await service.onModuleInit();
+    const { observer } = await import('mediasoup');
+    const spawned = vi.fn();
+    observer.on('newworker', spawned);
+    const died = new Promise((resolve) => service.events.once('worker-died', resolve));
+    process.kill(service.workerPid()!, 'SIGKILL');
+    await died; // the restart is on its timer now
     await service.onModuleDestroy();
+    await new Promise((r) => setTimeout(r, 2500)); // longer than the backoff
+    observer.off('newworker', spawned);
     expect(service.status().worker).toBe('down');
-    await new Promise((r) => setTimeout(r, 1500));
+    expect(service.workerPid()).toBeNull();
+    expect(spawned).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('a shutdown while the worker is still starting leaves no worker behind', async () => {
+    switchOn();
+    const { observer } = await import('mediasoup');
+    let worker!: ms.Worker;
+    let reached!: () => void;
+    let release!: () => void;
+    const inWindow = new Promise<void>((resolve) => (reached = resolve));
+    const held = new Promise<void>((resolve) => (release = resolve));
+    observer.once('newworker', (w) => {
+      worker = w;
+      const createWebRtcServer = w.createWebRtcServer.bind(w);
+      vi.spyOn(w, 'createWebRtcServer').mockImplementationOnce(async (options) => {
+        reached();
+        await held;
+        return createWebRtcServer(options);
+      });
+    });
+    const starting = service.onModuleInit();
+    await inWindow; // the worker runs; its WebRtcServer is not made yet
+    await service.onModuleDestroy(); // the api shuts down in that window
+    release();
+    await starting;
     expect(service.status().worker).toBe('down');
-  });
+    expect(service.workerPid()).toBeNull();
+    expect(await until(() => !alive(worker.pid), 5000)).toBe(true); // the worker process is gone
+  }, 15_000);
 });
