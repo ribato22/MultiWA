@@ -59,7 +59,12 @@ export async function startBridgeInPage(callId: string): Promise<{ callerProduce
   if (typeof w.__mwBridgeSignal !== 'function') throw new Error('Media bridge binding missing');
   if (w.__mwBridge) throw new Error('Media bridge already running');
   const call = w.__mwCall.ensure();
-  const signal = async (op: string, args: unknown = {}) => JSON.parse(await w.__mwBridgeSignal(callId, op, JSON.stringify(args)));
+  // The binding serves whichever bridge slot is current, by call id. A start the coordinator gave up on (and a retry
+  // of the same call replaced) must not signal into the retry's room: once closed, its next message fails here.
+  const signal = async (op: string, args: unknown = {}) => {
+    if (w.__mwBridge !== b) throw new Error('Media bridge closed');
+    return JSON.parse(await w.__mwBridgeSignal(callId, op, JSON.stringify(args)));
+  };
   // A destination without input sends no frames at all: a silent constant source keeps "caller" a live stream.
   const dest = call.ctx.createMediaStreamDestination();
   (dest.stream as any).__mwOwn = true;

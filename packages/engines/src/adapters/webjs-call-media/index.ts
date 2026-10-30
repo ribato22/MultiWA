@@ -242,10 +242,12 @@ export class WebJsCallMedia implements CallMediaEngine {
   }
 
   /**
-   * Takes the bridge slot before the first await. A start the coordinator stopped waiting for can still finish: once
-   * closeCallMedia freed its slot, the late start closes its page bridge and rejects "Media bridge closed" instead of
-   * keeping the page. The handle acts only while its slot is current, so a stale one never drives a newer bridge of the
-   * same call. A failed start frees the slot only while it is still its own, for the same reason.
+   * Takes the bridge slot before the first await. A start the coordinator stopped waiting for can still go on: once
+   * closeCallMedia freed its slot, the late start does not start a page bridge (or closes the one it started) and
+   * rejects, "Media bridge closed" or whatever its room or the page said first, instead of keeping the page; and the
+   * page bridge it already started signals nothing more (bridge-page). The handle acts only while its slot is current,
+   * so a stale one never drives a newer bridge of the same call. A failed start frees the slot only while it is still
+   * its own, for the same reason.
    */
   async startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle> {
     const page = this.requirePage();
@@ -255,28 +257,35 @@ export class WebJsCallMedia implements CallMediaEngine {
     try {
       await this.bindBridge(page);
       if (!(await page.evaluate(hasMediasoupClient))) await page.evaluate(mediasoupClientBundle());
+      if (this.bridge !== slot) throw new Error('Media bridge closed'); // given up on while the page loaded: the page is the retry's
       const { callerProducerId } = await page.evaluate(startBridgeInPage, callId);
       if (this.bridge !== slot) {
         await page.evaluate(closeBridgeInPage, callId).catch(() => undefined); // closeCallMedia ran while the page started
         throw new Error('Media bridge closed');
       }
-      // The handle's operations run one at a time, in call order: a disconnect sent while a connect is pending would
-      // find no agent yet. A failure does not break the chain. Whether the bridge is still ours is checked when an
-      // operation's turn comes. close() stays outside the chain: it must not wait behind a hung operation.
-      let chain: Promise<unknown> = Promise.resolve();
-      const inOrder = <T>(op: () => Promise<T>): Promise<T> => {
-        const result = chain.then(() => {
-          if (this.bridge !== slot) throw new Error('Media bridge closed');
-          return op();
-        });
-        chain = result.catch(() => undefined);
-        return result;
+      // The handle's operations run one at a time, in call order, per piece of page state: attachCaller touches the
+      // caller (`b.caller`), connectAgent and disconnectAgent the agent (`b.agent`). A disconnect sent while a connect is
+      // pending would find no agent yet, but it must not wait for a caller tap (up to 5 s) with the agent on the
+      // microphone. A failure does not break a queue. Whether the bridge is still ours is checked when an operation's
+      // turn comes. close() stays outside the queues: it must not wait behind a hung operation.
+      const queue = () => {
+        let chain: Promise<unknown> = Promise.resolve();
+        return <T>(op: () => Promise<T>): Promise<T> => {
+          const result = chain.then(() => {
+            if (this.bridge !== slot) throw new Error('Media bridge closed');
+            return op();
+          });
+          chain = result.catch(() => undefined);
+          return result;
+        };
       };
+      const callerQueue = queue();
+      const agentQueue = queue();
       return {
         callerProducerId,
-        attachCaller: () => inOrder(() => page.evaluate(attachCallerInPage, callId)),
-        connectAgent: (producerId: string) => inOrder(() => page.evaluate(connectAgentInPage, callId, producerId)),
-        disconnectAgent: () => inOrder(() => page.evaluate(disconnectAgentInPage, callId)),
+        attachCaller: () => callerQueue(() => page.evaluate(attachCallerInPage, callId)),
+        connectAgent: (producerId: string) => agentQueue(() => page.evaluate(connectAgentInPage, callId, producerId)),
+        disconnectAgent: () => agentQueue(() => page.evaluate(disconnectAgentInPage, callId)),
         close: async () => {
           if (this.bridge !== slot) return;
           try {

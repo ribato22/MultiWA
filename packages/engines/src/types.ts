@@ -217,11 +217,13 @@ export interface CallMediaSignaling {
 }
 
 /**
- * The call's media bridge in the page (CallMediaEngine.startCallMedia). attachCaller, connectAgent and disconnectAgent
- * run one at a time, in call order, and a failure does not stop the next one; each rejects "Media bridge closed" once
- * the bridge is closed. The page refuses attachCaller and connectAgent for a call that is not WhatsApp's active call
- * ("Call is not the active call"), and releases the whole bridge by itself 250-500 ms after its call is over. The
- * engine's slot stays held until close() or closeCallMedia().
+ * The call's media bridge in the page (CallMediaEngine.startCallMedia). Its operations run in call order, one at a time,
+ * in two queues: attachCaller on its own, connectAgent and disconnectAgent together. A failure does not stop the next
+ * one; each rejects "Media bridge closed" once the bridge is closed. An operation the coordinator stopped waiting for is
+ * NOT cancelled: it still runs when its turn comes, unless the slot was closed, so a disconnectAgent() queued after a
+ * timed-out connectAgent() undoes it. The page refuses attachCaller and connectAgent for a call that is not WhatsApp's
+ * active call ("Call is not the active call"), and releases the whole bridge by itself 250-500 ms after its call is
+ * over. The engine's slot stays held until close() or closeCallMedia().
  */
 export interface CallMediaHandle {
   /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
@@ -235,10 +237,16 @@ export interface CallMediaHandle {
   attachCaller(): Promise<{ via: 'element' | 'destination'; freshCandidates: number; fallback: boolean }>;
   /**
    * Feed the agent's producer into the call's microphone (`inputs.agent`). One agent at a time. A connect that fails
-   * undoes itself in the page and in the room (no consumer is left behind), so a retry starts clean.
+   * undoes itself in the page and in the room (no consumer is left behind), so a retry starts clean. To connect an
+   * agent again (its browser reconnected and produced anew), call disconnectAgent() first: the page is not told when
+   * the room closes the agent's producer, so connectAgent() would otherwise reject "Agent already connected".
    */
   connectAgent(agentProducerId: string): Promise<void>;
-  /** Take the agent off the microphone, by disconnecting it (not by gain). Does nothing when no agent is connected. */
+  /**
+   * Take the agent off the microphone, by disconnecting it (not by gain). Does nothing when no agent is connected.
+   * Rejects "No media bridge for this call" once the page has released the bridge (the call already ended, say): treat
+   * that as done.
+   */
   disconnectAgent(): Promise<void>;
   /**
    * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
@@ -315,7 +323,8 @@ export interface CallMediaEngine {
    * releases what it created in the page, but the ROOM keeps the transports the page opened: a retry needs a new room.
    * Like every method here it runs in the page, so the coordinator bounds it with a deadline. A start it stopped
    * waiting for can still finish: `closeCallMedia(callId)` then frees the slot at once, and the late start closes its
-   * page bridge and rejects "Media bridge closed".
+   * page bridge and rejects, with "Media bridge closed", "No media bridge for this call" or a room error: do not
+   * depend on which.
    */
   startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle>;
   /**

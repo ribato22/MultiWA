@@ -697,6 +697,21 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       expect(page.evaluate).toHaveBeenCalledWith(closeBridgeInPage, 'c1'); // nothing of it stays in the page
       await expect(media.startCallMedia('c3', fakeSignaling())).rejects.toThrow('Media bridge already running'); // c2's slot is intact
     });
+
+    it("a start given up on while the page loads mediasoup-client never starts a page bridge, and leaves its retry's alone", async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      const release = page.holdNext(mediasoupClientBundle());
+      const abandoned = media.startCallMedia('c1', fakeSignaling()).then(() => 'resolved', (e: Error) => e.message);
+      await vi.waitFor(() => expect(page.sent()).toContain('bundle'));
+      await media.closeCallMedia('c1'); // the coordinator's deadline fired...
+      const retry = await media.startCallMedia('c1', fakeSignaling()); // ...and it tries the call again
+      page.evaluate.mockClear();
+      release(); // the first start's page load ends after all
+      expect(await abandoned).toBe('Media bridge closed');
+      expect(page.sent()).toEqual([]); // no second bridge started in the page, and the retry's not closed
+      expect(await retry.disconnectAgent()).toEqual({ fn: 'disconnectAgentInPage', args: ['c1'] });
+    });
   });
 
   describe("the handle's operations", () => {
@@ -716,17 +731,31 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       expect(page.sent()).toEqual(['connectAgentInPage', 'disconnectAgentInPage']);
     });
 
-    it('attach, connect and disconnect issued together run in that order', async () => {
+    it('an attach waiting for the caller tap holds up neither connect nor disconnect: they touch other state', async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling());
+      const release = page.holdNext(attachCallerInPage); // the tap wait
+      page.evaluate.mockClear();
+      const all = Promise.all([handle.attachCaller(), handle.connectAgent('P-agent'), handle.disconnectAgent()]);
+      await tick();
+      await tick();
+      expect(page.sent()).toEqual(['attachCallerInPage', 'connectAgentInPage', 'disconnectAgentInPage']); // connect, then disconnect, while the attach waits
+      release();
+      await all;
+    });
+
+    it('attaches run one at a time, in call order', async () => {
       const page = bridgePage();
       const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling());
       const release = page.holdNext(attachCallerInPage);
       page.evaluate.mockClear();
-      const all = Promise.all([handle.attachCaller(), handle.connectAgent('P-agent'), handle.disconnectAgent()]);
+      const both = Promise.all([handle.attachCaller(), handle.attachCaller()]);
       await tick();
-      expect(page.sent()).toEqual(['attachCallerInPage']);
+      await tick();
+      expect(page.sent()).toEqual(['attachCallerInPage']); // the second waits for the first
       release();
-      await all;
-      expect(page.sent()).toEqual(['attachCallerInPage', 'connectAgentInPage', 'disconnectAgentInPage']);
+      await both;
+      expect(page.sent()).toEqual(['attachCallerInPage', 'attachCallerInPage']);
     });
 
     it('a failed operation does not break the chain: the next one runs, each caller sees its own outcome', async () => {

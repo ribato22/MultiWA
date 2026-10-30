@@ -1115,11 +1115,14 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
 
     /**
      * The coordinator's room reduced to what the bridge needs: CallMediaSignaling over the real router, with knobs for
-     * a late or refused operation. `ops` is what it was asked, `consumers` what it created (each says if it was closed).
+     * a late or refused operation. `ops` is what it was asked, `directions` the transports and `producers` and
+     * `consumers` what it created (a consumer says if it was closed).
      */
     const makeRoom = (knobs: Knobs = {}) => {
       const transports = new Map<string, mediasoup.types.WebRtcTransport>();
       const consumers: mediasoup.types.Consumer[] = [];
+      const producers: mediasoup.types.Producer[] = [];
+      const directions: string[] = [];
       const ops: Op[] = [];
       const gate = async (op: Op) => {
         ops.push(op);
@@ -1133,11 +1136,14 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       return {
         ops,
         consumers,
+        producers,
+        directions,
         async rtpCapabilities() { await gate('rtpCapabilities'); return router.rtpCapabilities; },
-        async createTransport(_direction: 'send' | 'recv') {
+        async createTransport(direction: 'send' | 'recv') {
           await gate('createTransport');
           const t = await router.createWebRtcTransport({ listenInfos: [{ protocol: 'udp', ip: '127.0.0.1' }] });
           transports.set(t.id, t);
+          directions.push(direction);
           return { id: t.id, iceParameters: t.iceParameters, iceCandidates: t.iceCandidates, dtlsParameters: t.dtlsParameters };
         },
         async connectTransport(id: string, dtlsParameters: unknown) {
@@ -1147,6 +1153,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         async produce(id: string, kind: string, rtpParameters: unknown) {
           await gate('produce');
           const producer = await transport(id).produce({ kind: kind as mediasoup.types.MediaKind, rtpParameters: rtpParameters as mediasoup.types.RtpParameters });
+          producers.push(producer);
           return { id: producer.id };
         },
         async consume(id: string, producerId: string, rtpCapabilities: unknown) {
@@ -1381,14 +1388,14 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     });
 
     it.each([
-      ['creates the consumer', { delay: { consume: 600 } }],
-      ['resumes it', { delay: { resumeConsumer: 600 } }],
-    ] as [string, Knobs][])('a connect whose call ends while the room %s is rolled back: no agent, the room consumer closed', async (_when, knobs) => {
-      await withBridge({ knobs, before: holdPolls }, async ({ p, media, room, handle }) => {
+      ['creates the consumer', 'consume'],
+      ['resumes it', 'resumeConsumer'],
+    ] as [string, Op][])('a connect whose call ends while the room %s is rolled back: no agent, the room consumer closed', async (_when, busyOp) => {
+      await withBridge({ knobs: { delay: { [busyOp]: 600 } }, before: holdPolls }, async ({ p, media, room, handle }) => {
         await media.answer('CALL1');
         await handle.attachCaller();
         const connecting = handle.connectAgent(agentProducerId).then(() => 'connected', (e: Error) => e.message);
-        await sleep(300);
+        await vi.waitFor(() => expect(room.ops).toContain(busyOp), { timeout: 10_000 }); // the room has the operation, and keeps it for 600 ms
         await ring(p, 'CALL2'); // the call ends while the room is still busy with it
         expect(await connecting).toBe('Call is not the active call');
         expect(room.consumers.map((c) => c.closed)).toEqual([true]);
@@ -1430,12 +1437,35 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
           w.__audios = [];
           w.Audio = function (...args: any[]) { const el = new A(...args); w.__audios.push(el); return el; };
         });
+      // What the page itself holds for the agent: mediasoup-client's consumers (the room's are `room.consumers`), and how
+      // often each agent source node was disconnected.
+      const watchAgent = (p: any) =>
+        p.evaluate(() => {
+          const w = window as any;
+          w.__watch = { consumers: [] as any[], sources: [] as { disconnects: number }[] };
+          const recv = w.__mwBridge.recv;
+          const consume = recv.consume.bind(recv);
+          recv.consume = async (options: unknown) => { const c = await consume(options); w.__watch.consumers.push(c); return c; };
+          const ctx = w.__mwCall.ctx;
+          const createSource = ctx.createMediaStreamSource.bind(ctx);
+          ctx.createMediaStreamSource = (stream: MediaStream) => {
+            const source = createSource(stream);
+            const seen = { disconnects: 0 };
+            const disconnect = source.disconnect.bind(source);
+            source.disconnect = (...args: unknown[]) => { seen.disconnects++; return disconnect(...args); };
+            w.__watch.sources.push(seen);
+            return source;
+          };
+        });
       await withBridge({ knobs: { failOnce: { resumeConsumer: true } }, before: audits }, async ({ p, media, room, handle }) => {
         await media.answer('CALL1');
         await handle.attachCaller();
+        await watchAgent(p);
         await expect(handle.connectAgent(agentProducerId)).rejects.toThrow('resumeConsumer refused');
         expect(await p.evaluate(() => (window as any).__mwBridge.agent)).toBeNull();
         expect(await p.evaluate(() => (window as any).__audios.map((a: HTMLAudioElement) => a.srcObject))).toEqual([null]); // the keep-alive let go of its stream
+        expect(await p.evaluate(() => (window as any).__watch.sources.map((s: { disconnects: number }) => s.disconnects > 0))).toEqual([true]); // the source node left the microphone
+        expect(await p.evaluate(() => (window as any).__watch.consumers.map((c: any) => c.closed))).toEqual([true]); // mediasoup-client's consumer is closed, not only the room's
         expect(room.consumers.map((c) => c.closed)).toEqual([true]);
         await handle.connectAgent(agentProducerId); // not "Agent already connected"
         expect(await heard(p, 5000)).toBe(true);
@@ -1514,6 +1544,34 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       }
     });
 
+    it.each([
+      ['answers the capabilities late', 'rtpCapabilities'],
+      ['creates its first transport late', 'createTransport'],
+    ] as [string, Op][])('a start the coordinator gave up on never signals into the retry of the same call, when its room %s', async (_when, slowOp) => {
+      const p = await openPage();
+      const media = new WebJsCallMedia(() => p, () => true, 'p1');
+      const slow = makeRoom({ delay: { [slowOp]: 800 } });
+      const retry = makeRoom();
+      try {
+        const abandoned = media.startCallMedia('CALL1', slow).then(() => 'started', (e: Error) => e.message);
+        await vi.waitFor(() => expect(slow.ops).toContain(slowOp), { timeout: 10_000 }); // the old start waits for its room
+        await media.closeCallMedia('CALL1'); // the coordinator's deadline fired...
+        slow.close();
+        const handle = await media.startCallMedia('CALL1', retry); // ...and it tries the call again, on a new room
+        const outcome = await abandoned; // the old start ends once its room answered, and signals nothing more
+        expect(retry.directions).toEqual(['send', 'recv']); // the retry's own two transports, none of the old start's
+        expect(retry.producers).toHaveLength(1);
+        expect(retry.ops).toEqual(['rtpCapabilities', 'createTransport', 'createTransport', 'connectTransport', 'produce']);
+        expect(outcome).toBe('Media bridge closed');
+        expect(await hasBridge(p)).toBe(true); // the retry's bridge is the page's
+        await handle.close();
+      } finally {
+        slow.close();
+        retry.close();
+        await p.close();
+      }
+    });
+
     it('a disconnect issued while a connect is pending runs after it: the agent ends up off the microphone', async () => {
       await withBridge({ knobs: { delay: { consume: 800 } } }, async ({ p, media, handle }) => {
         await media.answer('CALL1');
@@ -1524,6 +1582,20 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await connecting;
         expect(await p.evaluate(() => (window as any).__mwBridge.agent)).toBeNull();
         expect(await micPeak(p, 500, 300)).toBeLessThan(0.01);
+      });
+    });
+
+    it('a disconnect issued while an attach waits for the caller tap does not wait for it: the agent is off the microphone at once', async () => {
+      await withBridge({}, async ({ p, media, handle }) => {
+        await p.evaluate(() => { (window as any).__fakeWa.autoPlayback = false; }); // no caller audio yet: the attach waits for a tap, up to 5 s
+        await media.answer('CALL1');
+        await handle.connectAgent(agentProducerId);
+        expect(await heard(p, 5000)).toBe(true);
+        let attachEnded = false;
+        void handle.attachCaller().then(() => { attachEnded = true; }, () => { attachEnded = true; });
+        await handle.disconnectAgent();
+        expect(attachEnded).toBe(false); // the attach is still waiting for its tap
+        expect(await micPeak(p, 400, 300)).toBeLessThan(0.01);
       });
     });
 
