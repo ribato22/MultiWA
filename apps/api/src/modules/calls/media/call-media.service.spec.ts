@@ -508,4 +508,67 @@ describe('CallMediaService', () => {
       observer.off('newworker', spawned);
     }
   }, 15_000);
+
+  it("tells when a peer's link comes up and goes down: all its transports ICE-connected, none DTLS-failed", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL-LINK');
+    const told: Array<[string, boolean]> = [];
+    room.onLinkChange((peer, up) => told.push([peer, up]));
+    const agent = room.signalingFor('agent');
+    const send: any = await agent.createTransport('send');
+    const recv: any = await agent.createTransport('recv');
+    // No browser here: drive the transports' state events the way the worker's notifications do.
+    const transport = (id: string) => (room as any).transports.get(id).transport;
+    expect(room.linkUp('agent')).toBe(false);
+    transport(send.id).emit('icestatechange', 'connected');
+    expect(room.linkUp('agent')).toBe(false); // the recv transport is not linked yet
+    transport(recv.id).emit('icestatechange', 'completed');
+    expect(room.linkUp('agent')).toBe(true);
+    transport(recv.id).emit('icestatechange', 'disconnected');
+    expect(room.linkUp('agent')).toBe(false);
+    transport(recv.id).emit('icestatechange', 'connected');
+    transport(send.id).emit('dtlsstatechange', 'failed');
+    expect(room.linkUp('agent')).toBe(false);
+    transport(send.id).emit('dtlsstatechange', 'connected');
+    expect(room.linkUp('agent')).toBe(true);
+    room.closePeer('agent'); // no transports: down
+    expect(room.linkUp('agent')).toBe(false);
+    expect(room.linkUp('page')).toBe(false);
+    expect(told).toEqual([['agent', true], ['agent', false], ['agent', true], ['agent', false], ['agent', true], ['agent', false]]);
+  });
+
+  it('tells only what linkUp says: a transport that joins unlinked takes the link down; a closing peer is not up meanwhile', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL-LINK3');
+    const told: Array<[string, boolean]> = [];
+    room.onLinkChange((peer, up) => told.push([peer, up]));
+    const agent = room.signalingFor('agent');
+    const transport = (id: string) => (room as any).transports.get(id).transport;
+    const send: any = await agent.createTransport('send');
+    transport(send.id).emit('icestatechange', 'connected');
+    expect(told).toEqual([['agent', true]]); // its only transport is linked
+    const recv: any = await agent.createTransport('recv');
+    expect(told).toEqual([['agent', true], ['agent', false]]); // until one that is not joins it
+    transport(recv.id).emit('icestatechange', 'connected');
+    transport(send.id).emit('icestatechange', 'disconnected');
+    expect(told).toEqual([['agent', true], ['agent', false], ['agent', true], ['agent', false]]);
+    room.closePeer('agent'); // send closes first: recv, still linked, must not pass for the whole peer meanwhile
+    expect(told).toEqual([['agent', true], ['agent', false], ['agent', true], ['agent', false]]);
+  });
+
+  it('a link listener that throws stops neither the room nor the other listeners', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL-LINK2');
+    const seen = vi.fn();
+    room.onLinkChange(() => {
+      throw new Error('boom');
+    });
+    room.onLinkChange(seen);
+    const t: any = await room.signalingFor('page').createTransport('send');
+    (room as any).transports.get(t.id).transport.emit('icestatechange', 'connected');
+    expect(seen).toHaveBeenCalledWith('page', true);
+  });
 });
