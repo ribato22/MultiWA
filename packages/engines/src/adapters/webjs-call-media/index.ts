@@ -86,10 +86,21 @@ const DEFAULT_ANSWER_TIMEOUT_MS = 15_000;
 const HANG_UP_TIMEOUT_MS = 10_000;
 const PROBE_TIMEOUT_MS = 5_000;
 const RECORDING_TIMESLICE_MS = 5_000;
+/** The page's own scripts can call the bridge binding: real mediasoup messages are a few KB. */
+const MAX_SIGNAL_JSON = 64 * 1024;
 const KNOWN_REASONS: ReadonlySet<string> = new Set([
   'web_calling_disabled', 'voip_stack_unavailable', 'module_missing', 'hooks_missing', 'not_prepared',
 ]);
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
+/**
+ * A binding's error as the page sees it. puppeteer forwards `error.stack` into the page, and a Node stack names the
+ * server's files: a fresh Error whose stack is its message says only what went wrong.
+ */
+const forPage = (e: unknown): Error => {
+  const error = new Error(String((e as Error)?.message ?? e));
+  error.stack = error.message;
+  return error;
+};
 
 /**
  * One wrapper per page (the adapter makes one per client): the binding name is fixed and "already exists" counts as
@@ -110,7 +121,11 @@ export class WebJsCallMedia implements CallMediaEngine {
    * `started` settles when the start does (bound, and the in-page recorder running, or failed): a stop waits for it.
    */
   private recording: { callId: string; onChunk: (chunk: Buffer) => void; started: Promise<void> } | null = null;
-  /** The media bridge in progress (startCallMedia) and its room's signalling: the bridge binding serves only this. */
+  /**
+   * The media bridge in progress (startCallMedia) and its room's signalling: the bridge binding serves only this. Held
+   * from the start until close() or closeCallMedia(): the page ends its own bridge when its call is over, but the slot
+   * is the coordinator's to free.
+   */
   private bridge: { callId: string; signaling: CallMediaSignaling } | null = null;
   /** The bridge binding per page object, like `bindings` for the recording one. */
   private readonly bridgeBindings = new WeakMap<object, Promise<void>>();
@@ -226,6 +241,12 @@ export class WebJsCallMedia implements CallMediaEngine {
     }
   }
 
+  /**
+   * Takes the bridge slot before the first await. A start the coordinator stopped waiting for can still finish: once
+   * closeCallMedia freed its slot, the late start closes its page bridge and rejects "Media bridge closed" instead of
+   * keeping the page. The handle acts only while its slot is current, so a stale one never drives a newer bridge of the
+   * same call. A failed start frees the slot only while it is still its own, for the same reason.
+   */
   async startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle> {
     const page = this.requirePage();
     if (this.bridge) throw new Error('Media bridge already running');
@@ -235,12 +256,29 @@ export class WebJsCallMedia implements CallMediaEngine {
       await this.bindBridge(page);
       if (!(await page.evaluate(hasMediasoupClient))) await page.evaluate(mediasoupClientBundle());
       const { callerProducerId } = await page.evaluate(startBridgeInPage, callId);
+      if (this.bridge !== slot) {
+        await page.evaluate(closeBridgeInPage, callId).catch(() => undefined); // closeCallMedia ran while the page started
+        throw new Error('Media bridge closed');
+      }
+      // The handle's operations run one at a time, in call order: a disconnect sent while a connect is pending would
+      // find no agent yet. A failure does not break the chain. Whether the bridge is still ours is checked when an
+      // operation's turn comes. close() stays outside the chain: it must not wait behind a hung operation.
+      let chain: Promise<unknown> = Promise.resolve();
+      const inOrder = <T>(op: () => Promise<T>): Promise<T> => {
+        const result = chain.then(() => {
+          if (this.bridge !== slot) throw new Error('Media bridge closed');
+          return op();
+        });
+        chain = result.catch(() => undefined);
+        return result;
+      };
       return {
         callerProducerId,
-        attachCaller: () => page.evaluate(attachCallerInPage, callId),
-        connectAgent: (producerId: string) => page.evaluate(connectAgentInPage, callId, producerId),
-        disconnectAgent: () => page.evaluate(disconnectAgentInPage, callId),
+        attachCaller: () => inOrder(() => page.evaluate(attachCallerInPage, callId)),
+        connectAgent: (producerId: string) => inOrder(() => page.evaluate(connectAgentInPage, callId, producerId)),
+        disconnectAgent: () => inOrder(() => page.evaluate(disconnectAgentInPage, callId)),
         close: async () => {
+          if (this.bridge !== slot) return;
           try {
             await page.evaluate(closeBridgeInPage, callId);
           } finally {
@@ -249,9 +287,26 @@ export class WebJsCallMedia implements CallMediaEngine {
         },
       };
     } catch (e) {
-      if (this.bridge === slot) this.bridge = null;
-      await page.evaluate(closeBridgeInPage, callId).catch(() => undefined);
+      // While the slot is not ours any more, the page's bridge of this call may be a newer start's: leave it alone.
+      if (this.bridge === slot) {
+        this.bridge = null;
+        await page.evaluate(closeBridgeInPage, callId).catch(() => undefined);
+      }
       throw e;
+    }
+  }
+
+  /**
+   * The coordinator's teardown, with no handle, so it also covers a start it gave up on. Frees the slot at once when
+   * it belongs to `callId`, then closes the page's bridge of that call. It needs a page but no WhatsApp readiness
+   * (after a `disconnected` event the page can still hold the bridge), never rejects, and is idempotent.
+   */
+  async closeCallMedia(callId: string): Promise<void> {
+    if (this.bridge?.callId === callId) this.bridge = null;
+    try {
+      await this.page()?.evaluate(closeBridgeInPage, callId);
+    } catch {
+      // the page is gone or failing: the bridge goes with the document, and the slot is free already
     }
   }
 
@@ -273,11 +328,16 @@ export class WebJsCallMedia implements CallMediaEngine {
   private async exposeBridge(page: any): Promise<void> {
     try {
       // The whole page can call a binding, WhatsApp Web's own scripts included: it serves only the current bridge's
-      // call, and the room allows the page peer nothing beyond its own role.
+      // call, refuses a message no mediasoup peer would send, and the room allows the page peer nothing beyond its own role.
       await page.exposeFunction('__mwBridgeSignal', async (callId: string, op: string, json: string) => {
-        const slot = this.bridge;
-        if (!slot || slot.callId !== callId) throw new Error('No media bridge for this call');
-        return JSON.stringify((await runCallMediaSignal(slot.signaling, op, JSON.parse(json))) ?? null);
+        try {
+          const slot = this.bridge;
+          if (!slot || slot.callId !== callId) throw new Error('No media bridge for this call');
+          if (String(json).length > MAX_SIGNAL_JSON) throw new Error('Media signalling message too large');
+          return JSON.stringify((await runCallMediaSignal(slot.signaling, op, JSON.parse(json))) ?? null);
+        } catch (e) {
+          throw forPage(e);
+        }
       });
     } catch (e) {
       if (!/already exists/.test(String((e as Error)?.message))) throw e; // an earlier attempt still holds our binding
@@ -308,12 +368,16 @@ export class WebJsCallMedia implements CallMediaEngine {
   private async exposeRecording(page: any): Promise<void> {
     try {
       await page.exposeFunction('__mwRecordingChunk', (callId: string, b64: string) => {
-        // A chunk that returned normally would count as delivered, so a chunk with no sink throws: the page counts it as lost.
-        // Same for a chunk of another call: an earlier start that failed in Node after the page began leaves an orphan
-        // recorder, and its audio must never land in the recording that holds the slot now.
-        if (!this.recording) throw new Error('No recording in progress');
-        if (this.recording.callId !== callId) throw new Error('Not recording this call');
-        this.recording.onChunk(Buffer.from(b64, 'base64'));
+        try {
+          // A chunk that returned normally would count as delivered, so a chunk with no sink throws: the page counts it as lost.
+          // Same for a chunk of another call: an earlier start that failed in Node after the page began leaves an orphan
+          // recorder, and its audio must never land in the recording that holds the slot now.
+          if (!this.recording) throw new Error('No recording in progress');
+          if (this.recording.callId !== callId) throw new Error('Not recording this call');
+          this.recording.onChunk(Buffer.from(b64, 'base64'));
+        } catch (e) {
+          throw forPage(e);
+        }
       });
     } catch (e) {
       // "already exists": an earlier attempt failed after puppeteer took the name, so it still holds our binding

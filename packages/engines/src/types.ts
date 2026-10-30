@@ -216,21 +216,35 @@ export interface CallMediaSignaling {
   closeConsumer(consumerId: string): Promise<void>;
 }
 
-/** The call's media bridge in the page (CallMediaEngine.startCallMedia). */
+/**
+ * The call's media bridge in the page (CallMediaEngine.startCallMedia). attachCaller, connectAgent and disconnectAgent
+ * run one at a time, in call order, and a failure does not stop the next one; each rejects "Media bridge closed" once
+ * the bridge is closed. The page refuses attachCaller and connectAgent for a call that is not WhatsApp's active call
+ * ("Call is not the active call"), and releases the whole bridge by itself 250-500 ms after its call is over. The
+ * engine's slot stays held until close() or closeCallMedia().
+ */
 export interface CallMediaHandle {
   /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
   readonly callerProducerId: string;
   /**
    * Swap "caller" from silence to WhatsApp Web's playback of the caller (callerTap, waiting up to 5 s for it). Call it
    * once the call is connected: WhatsApp Web plays the caller only after it accepted. Resolves with how the tap was
-   * chosen; more than one fresh candidate, or the fallback, means the pick was a guess.
+   * chosen; more than one fresh candidate, or the fallback, means the pick was a guess. A tap whose track ends
+   * mid-call leaves the agent hearing silence: call attachCaller() again.
    */
-  attachCaller(): Promise<{ via: string; freshCandidates: number; fallback: boolean }>;
-  /** Feed the agent's producer into the call's microphone (`inputs.agent`). One agent at a time. */
+  attachCaller(): Promise<{ via: 'element' | 'destination'; freshCandidates: number; fallback: boolean }>;
+  /**
+   * Feed the agent's producer into the call's microphone (`inputs.agent`). One agent at a time. A connect that fails
+   * undoes itself in the page and in the room (no consumer is left behind), so a retry starts clean.
+   */
   connectAgent(agentProducerId: string): Promise<void>;
   /** Take the agent off the microphone, by disconnecting it (not by gain). Does nothing when no agent is connected. */
   disconnectAgent(): Promise<void>;
-  /** Close the bridge in the page and free the engine's bridge slot. Idempotent. The room closes its own side. */
+  /**
+   * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
+   * closed") and still frees the slot, so close the room regardless of the outcome: the room closes its own side. It
+   * does nothing once the bridge was closed (also by closeCallMedia), or when a newer bridge of the same call runs.
+   */
   close(): Promise<void>;
 }
 
@@ -298,9 +312,19 @@ export interface CallMediaEngine {
    * loads the room's capabilities, creates the bridge's send and receive transports, and produces "caller" on silence.
    * Call it while the call RINGS, before `answer`, so media is ready when the call connects; close the handle when
    * the call ends. One bridge at a time: a second start rejects "Media bridge already running". A start that fails
-   * releases what it created. Like every method here it runs in the page, so the coordinator bounds it with a deadline.
+   * releases what it created in the page, but the ROOM keeps the transports the page opened: a retry needs a new room.
+   * Like every method here it runs in the page, so the coordinator bounds it with a deadline. A start it stopped
+   * waiting for can still finish: `closeCallMedia(callId)` then frees the slot at once, and the late start closes its
+   * page bridge and rejects "Media bridge closed".
    */
   startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle>;
+  /**
+   * The coordinator's teardown on EVERY end path, handle-less, so it also covers a start it gave up waiting for (which
+   * never produced a handle). Frees the engine's bridge slot when it belongs to `callId`, then closes the page's
+   * bridge of that call. It needs no WhatsApp readiness (after a disconnect the page can still hold the bridge), never
+   * rejects, and is idempotent. The room is the coordinator's to close.
+   */
+  closeCallMedia(callId: string): Promise<void>;
 }
 
 /**

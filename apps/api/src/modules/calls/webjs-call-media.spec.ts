@@ -2,7 +2,8 @@
 // setup on EVERY ready) and the Node wrapper's arguments, guards and binding. The browser spec covers the page
 // functions, and the wrapper against a real page.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Script } from 'node:vm';
@@ -19,6 +20,7 @@ import {
 import type { CallMediaSignaling, EngineConfig } from '@multiwa/engines';
 
 const { prepareCallMediaPage, answerActiveCall, hangUpActiveCall, playAnnouncementInPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
+const { startBridgeInPage, attachCallerInPage, connectAgentInPage, closeBridgeInPage } = callMediaBridge;
 
 /** The launch args of the adapter before call media existed. */
 const DEFAULT_ARGS = [
@@ -80,11 +82,18 @@ describe('call media launch pieces', () => {
     );
   });
 
-  it('the mediasoup-client page bundle is built next to the module: one script that defines mediasoupClient', () => {
+  it('the mediasoup-client page bundle is built next to the module: one script that defines mediasoupClient, with its licenses', () => {
     const src = mediasoupClientBundle();
     expect(src.startsWith('"use strict";var mediasoupClient=')).toBe(true);
     expect(src).toContain('3.25.3'); // the pinned version (mediasoupClient.version)
     expect(() => new Script(src)).not.toThrow(); // compile only, never run in Node
+    // The licenses of everything bundled ship next to it, and the bundle points there.
+    const dist = path.dirname(createRequire(__filename).resolve('@multiwa/engines'));
+    const licenses = readFileSync(path.join(dist, 'adapters/webjs-call-media/mediasoup-client.iife.js.LICENSE.txt'), 'utf8');
+    expect(src.trimEnd().endsWith('/*! mediasoup-client 3.25.3 and its dependencies: licenses in mediasoup-client.iife.js.LICENSE.txt */')).toBe(true);
+    expect(licenses).toContain('=== mediasoup-client 3.25.3 (LICENSE) ===');
+    expect(licenses).toContain('Permission to use, copy, modify'); // the ISC text itself
+    expect(licenses).toMatch(/^=== debug \S+ \(LICENSE\) ===$/m); // and a dependency's
   });
 });
 
@@ -292,6 +301,23 @@ describe('WebJsCallMedia without a browser', () => {
     expect(got).toHaveLength(2);
   });
 
+  it('a recording binding error reaches the page as a fresh Error whose stack is its message, so no server path leaks', async () => {
+    const page = fakePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    await media.startRecording('c1', () => { throw new Error('sink down'); });
+    const binding = page.exposeFunction.mock.calls[0][1] as (callId: string, chunk: string) => void;
+    const errors: Error[] = [];
+    for (const chunk of [() => binding('c2', b64('x')), () => binding('c1', b64('x'))]) {
+      try {
+        chunk();
+      } catch (e) {
+        errors.push(e as Error);
+      }
+    }
+    expect(errors.map((e) => e.message)).toEqual(['Not recording this call', 'sink down']);
+    for (const e of errors) expect(e.stack).toBe(e.message);
+  });
+
   it('two callers on one page object bind once', async () => {
     const page = fakePage();
     let release!: () => void;
@@ -411,13 +437,25 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
     resumeConsumer: vi.fn(async () => undefined),
     closeConsumer: vi.fn(async () => undefined),
   });
-  /** A page that records what the wrapper evaluates; `signal` calls the binding the wrapper exposed. */
+  /**
+   * A page that records what the wrapper evaluates. `signal` calls the binding the wrapper exposed (`raw` with a ready
+   * string); `holdNext` and `failNext` act on the NEXT evaluate of one page function (an evaluate that already started
+   * is not touched).
+   */
   const bridgePage = (opts: { startFails?: boolean } = {}) => {
     let binding: ((callId: string, op: string, json: string) => Promise<string>) | null = null;
+    const held = new Map<unknown, Promise<void>>();
+    const failing = new Map<unknown, Error>();
     const page: any = {
       loaded: false,
       exposeFunction: vi.fn(async (name: string, fn: any) => { if (name === '__mwBridgeSignal') binding = fn; }),
       evaluate: vi.fn(async (fn: any, ...args: any[]) => {
+        const hold = held.get(fn);
+        const failure = failing.get(fn);
+        held.delete(fn);
+        failing.delete(fn);
+        await hold;
+        if (failure) throw failure;
         if (typeof fn === 'string') { page.loaded = true; return undefined; } // the mediasoup-client bundle
         if (fn === callMediaBridge.hasMediasoupClient) return page.loaded;
         if (fn === callMediaBridge.startBridgeInPage) {
@@ -428,6 +466,15 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
         return { fn: fn.name, args };
       }),
       signal: (callId: string, op: string, a: unknown) => binding!(callId, op, JSON.stringify(a)),
+      raw: (callId: string, op: string, json: string) => binding!(callId, op, json),
+      holdNext: (fn: unknown) => {
+        let release!: () => void;
+        held.set(fn, new Promise<void>((resolve) => { release = resolve; }));
+        return release;
+      },
+      failNext: (fn: unknown, error: Error) => { failing.set(fn, error); },
+      /** The page functions the wrapper sent so far, by name ("bundle" for the mediasoup-client script). */
+      sent: () => page.evaluate.mock.calls.map(([fn]: any[]) => (typeof fn === 'string' ? 'bundle' : fn.name)),
     };
     return page;
   };
@@ -500,5 +547,254 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
     expect((s as any).resumeConsumer).toHaveBeenCalledWith('C');
     expect((s as any).closeConsumer).toHaveBeenCalledWith('C');
     await expect(runCallMediaSignal(s, 'nope', {})).rejects.toThrow('Unknown media signalling operation');
+  });
+
+  it('two starts in the same tick: the second is refused, the first resolves untouched', async () => {
+    const page = bridgePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    const first = media.startCallMedia('c1', fakeSignaling());
+    const second = media.startCallMedia('c2', fakeSignaling()); // no await in between: the slot is taken before the first await
+    await expect(second).rejects.toThrow('Media bridge already running');
+    await expect(first).resolves.toMatchObject({ callerProducerId: 'P-caller' });
+    expect(page.sent()).not.toContain('closeBridgeInPage'); // the refused start did not close the running one
+    await expect(media.startCallMedia('c3', fakeSignaling())).rejects.toThrow('Media bridge already running'); // the first still holds the slot
+  });
+
+  it('close() frees the slot even when the page rejects, and surfaces that rejection', async () => {
+    const page = bridgePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    const handle = await media.startCallMedia('c1', fakeSignaling());
+    page.failNext(closeBridgeInPage, new Error('Protocol error: Target closed'));
+    await expect(handle.close()).rejects.toThrow('Target closed'); // the coordinator learns it, and closes the room regardless
+    await expect(media.startCallMedia('c2', fakeSignaling())).resolves.toBeDefined(); // not "Media bridge already running"
+  });
+
+  it('a binding attempt that failed with anything but "already exists" is forgotten: the next start binds again', async () => {
+    const page = bridgePage();
+    page.exposeFunction.mockRejectedValueOnce(new Error('Protocol error: Target closed'));
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Target closed');
+    await expect(media.startCallMedia('c1', fakeSignaling())).resolves.toBeDefined(); // the slot was freed, and the failure not remembered
+    expect(page.exposeFunction).toHaveBeenCalledTimes(2);
+  });
+
+  it('"already exists" from exposeFunction counts as bound: puppeteer holds our binding, and the start goes on', async () => {
+    const page = bridgePage();
+    page.exposeFunction.mockRejectedValueOnce(new Error("Failed to add page binding with name __mwBridgeSignal: window['__mwBridgeSignal'] already exists!"));
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    const handle = await media.startCallMedia('c1', fakeSignaling());
+    await handle.close();
+    await (await media.startCallMedia('c1', fakeSignaling())).close();
+    expect(page.exposeFunction).toHaveBeenCalledTimes(1); // bound for good on this page object
+  });
+
+  describe('a handle or a start that was let go of', () => {
+    it('a stale handle cannot drive or close a newer bridge of the same call', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      const stale = await media.startCallMedia('c1', fakeSignaling());
+      await stale.close();
+      const current = await media.startCallMedia('c1', fakeSignaling());
+      page.evaluate.mockClear();
+      await expect(stale.attachCaller()).rejects.toThrow('Media bridge closed');
+      await expect(stale.connectAgent('P-agent')).rejects.toThrow('Media bridge closed');
+      await expect(stale.disconnectAgent()).rejects.toThrow('Media bridge closed');
+      await stale.close(); // a no-op
+      expect(page.evaluate).not.toHaveBeenCalled(); // the newer bridge was not touched in the page
+      await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Media bridge already running'); // and still holds the slot
+      expect(await current.attachCaller()).toEqual({ fn: 'attachCallerInPage', args: ['c1'] });
+      await current.close();
+    });
+
+    it('a close() still waiting on the page does not free the slot of a newer bridge', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      const old = await media.startCallMedia('c1', fakeSignaling());
+      const release = page.holdNext(closeBridgeInPage);
+      const closing = old.close(); // waits for the page
+      await media.closeCallMedia('c1'); // the coordinator frees the slot meanwhile...
+      await media.startCallMedia('c1', fakeSignaling()); // ...and the call starts again
+      release();
+      await closing;
+      await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Media bridge already running');
+    });
+
+    it('a failed start frees the slot only while it is still its own, and leaves a newer bridge in the page alone', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      const release = page.holdNext(startBridgeInPage);
+      page.failNext(startBridgeInPage, new Error('Call is not the active call'));
+      const first = media.startCallMedia('c1', fakeSignaling()).then(() => 'resolved', (e: Error) => e.message);
+      await vi.waitFor(() => expect(page.sent()).toContain('startBridgeInPage'));
+      await media.closeCallMedia('c1'); // the coordinator gave up on the first start...
+      const retry = await media.startCallMedia('c1', fakeSignaling()); // ...and starts again, on a new room
+      page.evaluate.mockClear();
+      release(); // now the first start fails in the page
+      expect(await first).toBe('Call is not the active call');
+      expect(page.evaluate).not.toHaveBeenCalled(); // it did not close the retry's bridge in the page...
+      await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Media bridge already running'); // ...nor free its slot
+      expect(await retry.disconnectAgent()).toEqual({ fn: 'disconnectAgentInPage', args: ['c1'] });
+    });
+  });
+
+  describe('closeCallMedia', () => {
+    it('frees the slot of its call and closes that call\'s bridge in the page, with no handle', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      await media.startCallMedia('c1', fakeSignaling()); // the handle is gone: the coordinator never got it
+      await media.closeCallMedia('c1');
+      expect(page.evaluate).toHaveBeenLastCalledWith(closeBridgeInPage, 'c1');
+      await expect(media.startCallMedia('c2', fakeSignaling())).resolves.toBeDefined();
+    });
+
+    it('leaves the slot of another call alone, and asks the page to close the call it was given', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      await media.startCallMedia('c1', fakeSignaling());
+      await media.closeCallMedia('c2');
+      expect(page.evaluate).toHaveBeenLastCalledWith(closeBridgeInPage, 'c2');
+      await expect(media.startCallMedia('c3', fakeSignaling())).rejects.toThrow('Media bridge already running');
+      await media.closeCallMedia('c1');
+      await media.closeCallMedia('c1'); // idempotent
+      await expect(media.startCallMedia('c3', fakeSignaling())).resolves.toBeDefined();
+    });
+
+    it('never rejects: a failing page, no page, and a page getter that throws all read as done', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      await media.startCallMedia('c1', fakeSignaling());
+      page.failNext(closeBridgeInPage, new Error('Protocol error: Target closed'));
+      await expect(media.closeCallMedia('c1')).resolves.toBeUndefined();
+      await expect(media.startCallMedia('c2', fakeSignaling())).resolves.toBeDefined(); // the slot was freed all the same
+      await expect(new WebJsCallMedia(() => null, () => true, 'p1').closeCallMedia('c1')).resolves.toBeUndefined();
+      const broken = new WebJsCallMedia(() => { throw new Error('browser gone'); }, () => true, 'p1');
+      await expect(broken.closeCallMedia('c1')).resolves.toBeUndefined();
+    });
+
+    it('needs no WhatsApp readiness: after a disconnect the page can still hold the bridge', async () => {
+      let ready = true;
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => ready, 'p1');
+      await media.startCallMedia('c1', fakeSignaling());
+      ready = false;
+      await media.closeCallMedia('c1');
+      expect(page.evaluate).toHaveBeenLastCalledWith(closeBridgeInPage, 'c1');
+      ready = true;
+      await expect(media.startCallMedia('c2', fakeSignaling())).resolves.toBeDefined();
+    });
+
+    it('a start the coordinator stopped waiting for: its slot is free at once, and the late start closes its page bridge and rejects', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      const release = page.holdNext(startBridgeInPage);
+      const abandoned = media.startCallMedia('c1', fakeSignaling()).then(() => 'resolved', (e: Error) => e.message);
+      await vi.waitFor(() => expect(page.sent()).toContain('startBridgeInPage'));
+      await media.closeCallMedia('c1'); // the coordinator's deadline fired
+      await media.startCallMedia('c2', fakeSignaling()); // the slot is free at once: the next call is not blocked
+      page.evaluate.mockClear();
+      release(); // the abandoned start resolves in the page after all
+      expect(await abandoned).toBe('Media bridge closed');
+      expect(page.evaluate).toHaveBeenCalledWith(closeBridgeInPage, 'c1'); // nothing of it stays in the page
+      await expect(media.startCallMedia('c3', fakeSignaling())).rejects.toThrow('Media bridge already running'); // c2's slot is intact
+    });
+  });
+
+  describe("the handle's operations", () => {
+    it('run one at a time, in call order: a disconnect issued while a connect is pending runs after it', async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling());
+      const release = page.holdNext(connectAgentInPage);
+      page.evaluate.mockClear();
+      const connecting = handle.connectAgent('P-agent');
+      const disconnecting = handle.disconnectAgent();
+      await tick();
+      await tick();
+      expect(page.sent()).toEqual(['connectAgentInPage']); // the disconnect waits: it would find no agent yet
+      release();
+      await connecting;
+      await disconnecting;
+      expect(page.sent()).toEqual(['connectAgentInPage', 'disconnectAgentInPage']);
+    });
+
+    it('attach, connect and disconnect issued together run in that order', async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling());
+      const release = page.holdNext(attachCallerInPage);
+      page.evaluate.mockClear();
+      const all = Promise.all([handle.attachCaller(), handle.connectAgent('P-agent'), handle.disconnectAgent()]);
+      await tick();
+      expect(page.sent()).toEqual(['attachCallerInPage']);
+      release();
+      await all;
+      expect(page.sent()).toEqual(['attachCallerInPage', 'connectAgentInPage', 'disconnectAgentInPage']);
+    });
+
+    it('a failed operation does not break the chain: the next one runs, each caller sees its own outcome', async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling());
+      page.failNext(connectAgentInPage, new Error('resumeConsumer refused'));
+      const connecting = handle.connectAgent('P-agent');
+      const disconnecting = handle.disconnectAgent();
+      const attaching = handle.attachCaller();
+      await expect(connecting).rejects.toThrow('resumeConsumer refused');
+      await expect(disconnecting).resolves.toEqual({ fn: 'disconnectAgentInPage', args: ['c1'] });
+      await expect(attaching).resolves.toEqual({ fn: 'attachCallerInPage', args: ['c1'] });
+    });
+
+    it('an operation queued behind another is refused when the bridge was closed meanwhile', async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling());
+      const release = page.holdNext(connectAgentInPage);
+      const connecting = handle.connectAgent('P-agent');
+      const disconnecting = handle.disconnectAgent();
+      disconnecting.catch(() => undefined);
+      await handle.close();
+      release();
+      await connecting; // it was with the page already
+      await expect(disconnecting).rejects.toThrow('Media bridge closed'); // checked when its turn came
+      expect(page.sent()).not.toContain('disconnectAgentInPage');
+    });
+
+    it('close() and closeCallMedia() do not wait behind a hung operation', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      const handle = await media.startCallMedia('c1', fakeSignaling());
+      page.holdNext(connectAgentInPage); // never released
+      void handle.connectAgent('P-agent');
+      await tick(); // the connect is with the page, and hangs there
+      await handle.close(); // resolves although the connect hangs
+      expect(page.evaluate).toHaveBeenLastCalledWith(closeBridgeInPage, 'c1');
+      const second = await media.startCallMedia('c2', fakeSignaling());
+      page.holdNext(attachCallerInPage); // never released
+      void second.attachCaller();
+      await tick();
+      await media.closeCallMedia('c2');
+      expect(page.evaluate).toHaveBeenLastCalledWith(closeBridgeInPage, 'c2');
+    });
+  });
+
+  describe('what the page can send through the binding', () => {
+    it('refuses a message over 64 KB before parsing it, and takes one of exactly 64 KB', async () => {
+      const page = bridgePage();
+      const s = fakeSignaling();
+      await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', s);
+      const largest = `"${'x'.repeat(64 * 1024 - 2)}"`; // valid JSON, 65536 characters
+      expect(largest).toHaveLength(64 * 1024);
+      expect(JSON.parse(await page.raw('c1', 'rtpCapabilities', largest))).toEqual({ codecs: [] });
+      await expect(page.raw('c1', 'rtpCapabilities', `${largest} `)).rejects.toThrow('Media signalling message too large');
+      await expect(page.raw('c1', 'rtpCapabilities', '{'.repeat(100_000))).rejects.toThrow('Media signalling message too large'); // not a SyntaxError
+      expect(s.rtpCapabilities).toHaveBeenCalledTimes(1);
+    });
+
+    it('an error reaches the page as a fresh Error whose stack is its message, so no server path leaks', async () => {
+      const page = bridgePage();
+      await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling());
+      for (const failing of [() => page.signal('c1', 'deleteEverything', {}), () => page.signal('c2', 'rtpCapabilities', {}), () => page.raw('c1', 'rtpCapabilities', 'not json')]) {
+        const error = await failing().then(() => null, (e: Error) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect(error!.message).not.toBe('');
+        expect(error!.stack).toBe(error!.message);
+      }
+    });
   });
 });

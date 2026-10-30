@@ -7,7 +7,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc && node scripts/bundle-mediasoup-client.mjs",
-    "dev": "tsc --watch",
+    "dev": "node scripts/bundle-mediasoup-client.mjs && tsc --watch",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"

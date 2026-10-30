@@ -1352,6 +1352,15 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       });
     });
 
+    it('an attach on a call that is over is refused at once, not after the wait for a caller tap', async () => {
+      await withBridge({ before: holdPolls }, async ({ p, handle }) => {
+        await ring(p, 'CALL2'); // CALL1 is over, and there is no caller audio to wait for
+        const t0 = Date.now();
+        await expect(handle.attachCaller()).rejects.toThrow('Call is not the active call');
+        expect(Date.now() - t0).toBeLessThan(2000); // callerTap would wait 5 s for a tap
+      });
+    });
+
     it('an attach whose call ends while it waits for the caller tap leaves the caller on silence', async () => {
       await withBridge({ before: holdPolls }, async ({ p, handle }) => {
         // no playback yet: callerTap waits for one, and the call ends meanwhile
@@ -1385,6 +1394,31 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         expect(room.consumers.map((c) => c.closed)).toEqual([true]);
         expect(await p.evaluate(() => (window as any).__mwBridge.agent)).toBeNull();
         expect(await micPeak(p, 500, 300)).toBeLessThan(0.01);
+      });
+    });
+
+    it('a connect whose call ends while mediasoup-client sets the consumer up is refused before the agent is resumed', async () => {
+      await withBridge({ before: holdPolls }, async ({ p, media, room, handle }) => {
+        await media.answer('CALL1');
+        await handle.attachCaller();
+        // mediasoup-client takes a moment to set a consumer up: hold it there, end the call, then let it finish
+        await p.evaluate(() => {
+          const w = window as any;
+          const recv = w.__mwBridge.recv;
+          const consume = recv.consume.bind(recv);
+          recv.consume = async (options: unknown) => {
+            const consumer = await consume(options);
+            await new Promise<void>((resolve) => { w.__releaseConsume = resolve; });
+            return consumer;
+          };
+        });
+        const connecting = handle.connectAgent(agentProducerId).then(() => 'connected', (e: Error) => e.message);
+        while (!(await p.evaluate(() => !!(window as any).__releaseConsume))) await sleep(20);
+        await ring(p, 'CALL2');
+        await p.evaluate(() => (window as any).__releaseConsume());
+        expect(await connecting).toBe('Call is not the active call');
+        expect(room.ops).not.toContain('resumeConsumer'); // the agent was never resumed into CALL2's microphone, not even briefly
+        expect(room.consumers.map((c) => c.closed)).toEqual([true]);
       });
     });
 
@@ -1439,6 +1473,69 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await track(false); // WhatsApp Web has muted its own track
         expect((await handle.attachCaller()).via).toBe('element');
         expect(await track()).toBe(false); // ours leaves it so
+      });
+    });
+
+    it('closeCallMedia while the start is still loading: the start rejects, nothing is left in the page, the next start is not blocked', async () => {
+      const p = await openPage();
+      const media = new WebJsCallMedia(() => p, () => true, 'p1');
+      const rooms = [makeRoom(), makeRoom()];
+      try {
+        const start = media.startCallMedia('CALL1', rooms[0]).then(() => 'started', (e: Error) => e.message);
+        await media.closeCallMedia('CALL1'); // the coordinator's deadline, before the page even loaded mediasoup-client
+        // the binding no longer serves the closed slot, so the page start fails at its first signal (or, in the instant after
+        // its last signal, the wrapper closes it: "Media bridge closed"); it never resolves with a handle
+        expect(await start).toMatch(/^(No media bridge for this call|Media bridge closed)$/);
+        expect(await hasBridge(p)).toBe(false);
+        await (await media.startCallMedia('CALL1', rooms[1])).close(); // a retry, on a new room
+      } finally {
+        rooms.forEach((r) => r.close());
+        await p.close();
+      }
+    });
+
+    it('a start whose room is slow and that the coordinator gave up on ends without a bridge, and does not block the next one', async () => {
+      const p = await openPage();
+      const media = new WebJsCallMedia(() => p, () => true, 'p1');
+      const slow = makeRoom({ delay: { produce: 1500 } });
+      const next = makeRoom();
+      try {
+        const start = media.startCallMedia('CALL1', slow).then(() => 'started', (e: Error) => e.message);
+        await sleep(600); // the coordinator's deadline fires while the room still produces
+        slow.close(); // it closes its room...
+        await media.closeCallMedia('CALL1'); // ...and tears the engine down
+        expect(await start).not.toBe('started');
+        expect(await hasBridge(p)).toBe(false);
+        await (await media.startCallMedia('CALL1', next)).close(); // not "Media bridge already running"
+      } finally {
+        slow.close();
+        next.close();
+        await p.close();
+      }
+    });
+
+    it('a disconnect issued while a connect is pending runs after it: the agent ends up off the microphone', async () => {
+      await withBridge({ knobs: { delay: { consume: 800 } } }, async ({ p, media, handle }) => {
+        await media.answer('CALL1');
+        await handle.attachCaller();
+        const connecting = handle.connectAgent(agentProducerId);
+        await sleep(150);
+        await handle.disconnectAgent(); // it used to return early, and the connect then put the agent on the microphone
+        await connecting;
+        expect(await p.evaluate(() => (window as any).__mwBridge.agent)).toBeNull();
+        expect(await micPeak(p, 500, 300)).toBeLessThan(0.01);
+      });
+    });
+
+    it('the page sees no Node stack from either binding', async () => {
+      await withBridge({}, async ({ p, media }) => {
+        await media.preparePage(); // binds the recording binding too
+        const stacks = await p.evaluate(async () => {
+          const w = window as any;
+          const stackOf = (call: () => Promise<unknown>) => call().then(() => 'resolved', (e: Error) => e.stack);
+          return [await stackOf(() => w.__mwBridgeSignal('NOPE', 'rtpCapabilities', '{}')), await stackOf(() => w.__mwRecordingChunk('CALL0', btoa('x')))];
+        });
+        expect(stacks).toEqual(['No media bridge for this call', 'No recording in progress']);
       });
     });
 
