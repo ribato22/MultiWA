@@ -2,8 +2,10 @@
 // apps/api/src/modules/calls/media/media-config.ts
 //
 // Read once at boot. With CALLS_MEDIA_ENABLED anything but 'true' the media server never starts and nothing else is
-// read. Enabled, a missing or bad value fails the boot with the variable's name: a half-configured media server would
-// only show up later, as calls whose audio never connects. Values are never echoed (ICE servers carry credentials).
+// read; nor with ENGINE_HOST=worker, where the WhatsApp Web pages it serves run in the worker. Enabled, a missing or
+// bad value fails the boot with the variable's name: a half-configured media server would only show up later, as calls
+// whose audio never connects. Values are never echoed (ICE servers carry credentials).
+import { isIPv4 } from 'node:net';
 import { networkInterfaces } from 'node:os';
 
 export interface CallMediaIceServer {
@@ -26,12 +28,12 @@ export interface CallMediaConfig {
 
 type Interfaces = ReturnType<typeof networkInterfaces>;
 
-/** The settings when the server switch is on, else null; throws on a missing or invalid value. */
+/** The settings when the server switch is on and the api hosts the engines, else null; throws on a missing or invalid value. */
 export function readCallMediaConfig(
   env: NodeJS.ProcessEnv = process.env,
   interfaces: Interfaces = networkInterfaces(),
 ): CallMediaConfig | null {
-  if (env.CALLS_MEDIA_ENABLED !== 'true') return null;
+  if (env.CALLS_MEDIA_ENABLED !== 'true' || env.ENGINE_HOST === 'worker') return null;
   const port = env.CALLS_MEDIA_PORT ? Number(env.CALLS_MEDIA_PORT) : 40000;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('CALLS_MEDIA_PORT must be a port number (1-65535)');
   const announcedAddress = (env.CALLS_MEDIA_ANNOUNCED_ADDRESS ?? '').trim();
@@ -40,6 +42,7 @@ export function readCallMediaConfig(
   }
   if (!/^[A-Za-z0-9.:-]+$/.test(announcedAddress)) throw new Error('CALLS_MEDIA_ANNOUNCED_ADDRESS must be an IP address or a host name');
   const listenIp = (env.CALLS_MEDIA_LISTEN_IP ?? '').trim() || firstExternalIpv4(interfaces);
+  if (env.CALLS_MEDIA_LISTEN_IP?.trim() && !isIPv4(listenIp)) throw new Error('CALLS_MEDIA_LISTEN_IP must be an IPv4 address');
   if (!listenIp) throw new Error('CALLS_MEDIA_LISTEN_IP is not set and this host has no external IPv4 interface to listen on');
   return { port, announcedAddress, listenIp, iceServers: parseIceServers(env.CALLS_MEDIA_ICE_SERVERS) };
 }

@@ -13,6 +13,11 @@ describe('readCallMediaConfig', () => {
     expect(readCallMediaConfig({ CALLS_MEDIA_ENABLED: v }, IFACES)).toBeNull();
   });
 
+  it('is off with ENGINE_HOST=worker: the WhatsApp Web pages it would serve run in the worker', () => {
+    expect(readCallMediaConfig(on({ ENGINE_HOST: 'worker' }), IFACES)).toBeNull();
+    expect(readCallMediaConfig(on({ ENGINE_HOST: 'api' }), IFACES)).not.toBeNull();
+  });
+
   it('defaults: port 40000, listens on the first external IPv4, no ICE servers', () => {
     expect(readCallMediaConfig(on(), IFACES)).toEqual({ port: 40000, announcedAddress: '192.0.2.10', listenIp: '172.17.0.4', iceServers: [] });
   });
@@ -29,6 +34,10 @@ describe('readCallMediaConfig', () => {
 
   it.each(['0', '65536', 'abc', '40000.5'])('refuses port %s', (p) => {
     expect(() => readCallMediaConfig(on({ CALLS_MEDIA_PORT: p }), IFACES)).toThrow(/CALLS_MEDIA_PORT must be/);
+  });
+
+  it.each(['::1', '10.0.0', 'localhost', '127.0.0.1:40000'])('refuses listen IP %s: only an IPv4 address', (ip) => {
+    expect(() => readCallMediaConfig(on({ CALLS_MEDIA_LISTEN_IP: ip }), IFACES)).toThrow(/CALLS_MEDIA_LISTEN_IP must be an IPv4 address/);
   });
 
   it('fails when nothing to listen on is set or found', () => {

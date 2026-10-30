@@ -66,10 +66,11 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
       expect(await waPage.evaluate(() => (window as any).__mwBridge.device.handlerName)).toBe('Chrome111');
       // 2. the agent consumes the caller and produces its voice
       const { agentProducerId } = await agentPage.evaluate(startAgentPeerInPage, handle.callerProducerId, 660);
-      await sleep(1500);
-      expect(await agentPage.evaluate(agentHearsInPage, 440)).toBeLessThan(ABSENT); // silence until attached
-      // 3. answer (the fake connects after 300 ms and plays the caller at 440 Hz), then attach the caller
+      // 3. answer: the fake connects after 300 ms and plays the caller at 440 Hz, which the agent does not hear until
+      // the caller is attached
       await media.answer('CALL1');
+      await sleep(1500);
+      expect(await agentPage.evaluate(agentHearsInPage, 440)).toBeLessThan(ABSENT);
       const pick = await handle.attachCaller();
       expect(pick).toEqual({ via: 'destination', freshCandidates: 1, fallback: false });
       expect(await until(async () => (await agentPage.evaluate(agentHearsInPage, 440)) > PRESENT, 10_000)).toBe(true);

@@ -131,9 +131,10 @@ export class CallMediaRoom {
 
   /**
    * Close every transport of `peer`, and with them its producer and consumers, so that it can join again: e.g. an
-   * agent whose browser reconnected (Plan 4's agent-lost grace). Immediate. Every operation the peer issued before is
-   * void: one still waiting in its chain, or already at the worker, fails with "The ${peer} was closed" and keeps
-   * nothing it made, so it cannot stand in the way of the peer's next join.
+   * agent whose browser reconnected (the coordinator's agent-lost grace). Immediate. No operation the peer issued before
+   * can stand in the way of its next join. One that makes a transport, producer or consumer, still waiting in its chain
+   * or already at the worker, fails with "The ${peer} was closed" and keeps nothing it made. One on a transport or
+   * consumer acts on what is closed now: still waiting, it fails; already at the worker, it may still complete.
    */
   closePeer(peer: MediaPeer): void {
     this.generations[peer]++;

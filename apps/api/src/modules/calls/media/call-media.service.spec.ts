@@ -355,6 +355,29 @@ describe('CallMediaService', () => {
     await expect(service.createRoom('CALL8')).resolves.toBeDefined();
   }, 20_000);
 
+  it("mediasoup's own warnings and errors reach its log, without their line breaks", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1');
+    const warned = vi.spyOn(service['logger'], 'warn');
+    const logged = vi.spyOn(service['logger'], 'error');
+    // a producer the router does not know: mediasoup logs an error, and says no
+    expect(room['router'].canConsume({ producerId: 'no\nsuch', rtpCapabilities: room['router'].rtpCapabilities })).toBe(false);
+    expect(logged).toHaveBeenCalledWith('mediasoup:ERROR:Router canConsume() | Producer with id "nosuch" not found');
+    // a listener of a mediasoup event threw: an error that comes with the Error
+    const router = room['router'] as any;
+    router.once('probe', () => {
+      throw new Error('bad\nlistener');
+    });
+    router.safeEmit('probe');
+    expect(logged).toHaveBeenCalledWith('mediasoup:ERROR:Router event listener threw an error [eventName:probe]: badlistener');
+    // a request the worker refuses (its port is taken, by this very server): a warning
+    const listen = { protocol: 'udp' as const, ip: '127.0.0.1', port: service.status().port! };
+    await expect(service['worker']!.createWebRtcServer({ listenInfos: [listen] })).rejects.toThrow(/address already in use/);
+    expect(warned).toHaveBeenCalledWith(expect.stringMatching(/^mediasoup:WARN:Channel request failed .*address already in use/));
+    expect([...warned.mock.calls, ...logged.mock.calls].some(([line]) => /[\r\n]/.test(String(line)))).toBe(false);
+  });
+
   it('a listener that throws on a worker death cannot stop the replacement, and cannot forge a log line', async () => {
     switchOn();
     await service.onModuleInit();
@@ -424,8 +447,10 @@ describe('CallMediaService', () => {
       await expect(service.onModuleInit()).resolves.toBeUndefined(); // the port is taken: the gateway still boots
       expect(service.status()).toMatchObject({ enabled: true, worker: 'down' });
       expect(service.workerPid()).toBeNull();
-      expect(logged).toHaveBeenCalledTimes(1);
-      expect(String(logged.mock.calls[0][0])).not.toMatch(/[\r\n]/);
+      // once, with the reason; mediasoup's own error line (the worker could not bind) comes before it
+      const lines = logged.mock.calls.map(([message]) => String(message));
+      expect(lines.filter((l) => /^Call media worker start failed: .*address already in use/.test(l))).toHaveLength(1);
+      expect(lines.some((l) => /[\r\n]/.test(l))).toBe(false);
       await other.onModuleDestroy(); // the port is free again
       expect(await until(() => service.status().worker === 'up', 8000)).toBe(true);
     } finally {

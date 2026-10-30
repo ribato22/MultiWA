@@ -107,6 +107,13 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
   private async startWorker(): Promise<void> {
     const config = this.config!;
     const mediasoup = await import('mediasoup');
+    // mediasoup logs through the `debug` module, which prints nothing unless DEBUG names it: its warnings and errors, the
+    // worker's own among them, would never reach the api's log.
+    mediasoup.setLogEventListeners({
+      onwarn: (ns, log) => this.logger.warn(`${clean(ns)} ${clean(log)}`),
+      // a log that comes with an error ends with ':'
+      onerror: (ns, log, error) => this.logger.error(`${clean(ns)} ${clean(log)}${error ? ` ${clean(error.message ?? error)}` : ''}`),
+    });
     const worker = await mediasoup.createWorker({ logLevel: 'warn' });
     if (this.stopped) {
       worker.close();
