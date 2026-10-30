@@ -66,6 +66,14 @@ describe('call media launch pieces', () => {
     expect(() => new Script(CALL_MEDIA_INIT_SCRIPT)).not.toThrow(); // compiled only, never run
   });
 
+  // The same check for every bridge function, which puppeteer sends as source text. `w.require(...)` is WhatsApp Web's own
+  // module loader inside the page; only a bare `require(` would be a module reference.
+  it.each(Object.entries(callMediaBridge))('the bridge page function %s is self-contained: no downlevel helper, no module reference', (_name, fn) => {
+    const src = fn.toString();
+    expect(src).not.toMatch(/__awaiter|__assign|__rest|(?<![.\w])require\(|exports\./);
+    expect(() => new Script(`(${src})`)).not.toThrow(); // compiled only, never run
+  });
+
   it('the Chrome flags give fake devices, an accepted media prompt and no sound', () => {
     expect(CALL_MEDIA_CHROME_ARGS).toEqual(
       expect.arrayContaining(['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--mute-audio']),

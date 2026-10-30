@@ -15,11 +15,17 @@
 // signal) and clears its poll instead of recording the next call, and the real Node wrapper on its own page,
 // without WhatsApp: a stop never overtakes its start, a chunk with no sink counts as lost, a guessed caller tap
 // is warned about. It automates what was first proven by hand against live WhatsApp Web on 2026-10-29.
+// The media bridge runs against a REAL mediasoup router (a worker in this process): the agent is a mediasoup-client
+// peer in a second page producing a tone, and the injected microphone is read the way WhatsApp reads it. That proves
+// the bridge ends with its call, refuses a call that is over, rolls a failed agent connect back, and leaves
+// WhatsApp Web's own tracks alone.
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaPage } from '@multiwa/engines';
+import * as mediasoup from 'mediasoup';
+import { CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaBridge, callMediaPage, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
+import type { CallMediaHandle } from '@multiwa/engines';
 
 const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..', '..');
@@ -33,6 +39,19 @@ const until = async (ok: () => boolean, ms: number) => {
 };
 /** What startRecordingInPage reports on a normal call: the one tap that connected after the answer, no guessing. */
 const normalPick = (callerVia: 'destination' | 'element') => ({ callerVia, freshCandidates: 1, fallback: false });
+
+/**
+ * Page function: `__intervals` holds the ids of the intervals set since and not cleared, so a poll that stops reading
+ * but is never cleared would stay there (`liveIntervals`).
+ */
+function trackIntervals() {
+  const w = window as any;
+  const live = (w.__intervals = new Set<number>());
+  const setIt = w.setInterval.bind(w);
+  const clearIt = w.clearInterval.bind(w);
+  w.setInterval = (...args: any[]) => { const id = setIt(...args); live.add(id); return id; };
+  w.clearInterval = (id: number) => { live.delete(id); clearIt(id); };
+}
 
 /** A 16-bit mono WAV of a sine tone: the announcement fixture, built here so no binary lives in git. */
 function sineWav(hz: number, seconds: number, rate = 16000): Buffer {
@@ -157,8 +176,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
   /**
    * A fresh page with CALL1 answered (the fake caller, 440 Hz, plays from the accept) and a recording of it running;
    * its chunks go to `got`. `__reads` counts the page's looks at WhatsApp's active call: that is what the recorder's
-   * poll does, so `looks` tells whether it still runs. `__intervals` holds the ids of the intervals set since and not
-   * cleared: a poll that stops reading but is never cleared would stay there (`liveIntervals`).
+   * poll does, so `looks` tells whether it still runs. `trackIntervals` tells whether the poll is cleared (`liveIntervals`).
    */
   const openRecording = async (got: Buffer[] = []) => {
     const p = await openPage((pg) =>
@@ -169,12 +187,8 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       const lookUp = w.require;
       w.__reads = 0;
       w.require = (name: string) => { if (name === 'WAWebCallCollection') w.__reads++; return lookUp(name); };
-      const live = (w.__intervals = new Set<number>());
-      const setIt = w.setInterval.bind(w);
-      const clearIt = w.clearInterval.bind(w);
-      w.setInterval = (...args: any[]) => { const id = setIt(...args); live.add(id); return id; };
-      w.clearInterval = (id: number) => { live.delete(id); clearIt(id); };
     });
+    await p.evaluate(trackIntervals);
     await p.evaluate(answerActiveCall, 'CALL1', 5000);
     const startedAt = Date.now();
     await p.evaluate(startRecordingInPage, 'CALL1', 500);
@@ -1085,5 +1099,357 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  describe('the media bridge, against a real mediasoup router', () => {
+    type Op = 'rtpCapabilities' | 'createTransport' | 'connectTransport' | 'produce' | 'consume' | 'resumeConsumer' | 'closeConsumer';
+    interface Knobs {
+      delay?: Partial<Record<Op, number>>; // the room answers this operation late
+      failOnce?: Partial<Record<Op, boolean>>; // the room refuses this operation, once
+      badConsume?: boolean; // the room hands out consumer options mediasoup-client cannot use
+    }
+    let worker: mediasoup.types.Worker;
+    let router: mediasoup.types.Router;
+    let agentPage: any;
+    let agentProducerId = '';
+
+    /**
+     * The coordinator's room reduced to what the bridge needs: CallMediaSignaling over the real router, with knobs for
+     * a late or refused operation. `ops` is what it was asked, `consumers` what it created (each says if it was closed).
+     */
+    const makeRoom = (knobs: Knobs = {}) => {
+      const transports = new Map<string, mediasoup.types.WebRtcTransport>();
+      const consumers: mediasoup.types.Consumer[] = [];
+      const ops: Op[] = [];
+      const gate = async (op: Op) => {
+        ops.push(op);
+        if (knobs.failOnce?.[op]) {
+          delete knobs.failOnce[op];
+          throw new Error(`${op} refused`);
+        }
+        await sleep(knobs.delay?.[op] ?? 0);
+      };
+      const transport = (id: string) => transports.get(id)!;
+      return {
+        ops,
+        consumers,
+        async rtpCapabilities() { await gate('rtpCapabilities'); return router.rtpCapabilities; },
+        async createTransport(_direction: 'send' | 'recv') {
+          await gate('createTransport');
+          const t = await router.createWebRtcTransport({ listenInfos: [{ protocol: 'udp', ip: '127.0.0.1' }] });
+          transports.set(t.id, t);
+          return { id: t.id, iceParameters: t.iceParameters, iceCandidates: t.iceCandidates, dtlsParameters: t.dtlsParameters };
+        },
+        async connectTransport(id: string, dtlsParameters: unknown) {
+          await gate('connectTransport');
+          await transport(id).connect({ dtlsParameters: dtlsParameters as mediasoup.types.DtlsParameters });
+        },
+        async produce(id: string, kind: string, rtpParameters: unknown) {
+          await gate('produce');
+          const producer = await transport(id).produce({ kind: kind as mediasoup.types.MediaKind, rtpParameters: rtpParameters as mediasoup.types.RtpParameters });
+          return { id: producer.id };
+        },
+        async consume(id: string, producerId: string, rtpCapabilities: unknown) {
+          await gate('consume');
+          const c = await transport(id).consume({ producerId, rtpCapabilities: rtpCapabilities as mediasoup.types.RtpCapabilities, paused: true });
+          consumers.push(c);
+          return { id: c.id, producerId, kind: c.kind, rtpParameters: knobs.badConsume ? {} : c.rtpParameters };
+        },
+        async resumeConsumer(id: string) { await gate('resumeConsumer'); await consumers.find((c) => c.id === id)!.resume(); },
+        async closeConsumer(id: string) { await gate('closeConsumer'); consumers.find((c) => c.id === id)?.close(); },
+        close() { for (const t of transports.values()) t.close(); },
+      };
+    };
+    type Room = ReturnType<typeof makeRoom>;
+
+    /** A WhatsApp page whose CALL1 rings, with the bridge started on a room of its own through the real wrapper; always cleaned up. */
+    const withBridge = async (
+      opts: { knobs?: Knobs; before?: (p: any) => Promise<unknown> },
+      body: (b: { p: any; media: WebJsCallMedia; room: Room; handle: CallMediaHandle }) => Promise<void>,
+    ) => {
+      const p = await openPage();
+      const media = new WebJsCallMedia(() => p, () => true, 'p1');
+      const room = makeRoom(opts.knobs);
+      let handle: CallMediaHandle | undefined;
+      try {
+        await opts.before?.(p);
+        handle = await media.startCallMedia('CALL1', room);
+        await body({ p, media, room, handle });
+      } finally {
+        await handle?.close().catch(() => undefined);
+        room.close();
+        await p.close();
+      }
+    };
+
+    /** No backstop poll in this page: what the bridge does next is down to its own guards. */
+    const holdPolls = (p: any) =>
+      p.evaluate(() => {
+        const w = window as any;
+        const set = w.setInterval.bind(w);
+        w.setInterval = (...args: any[]) => (w.__holdPolls ? 0 : set(...args));
+        w.__holdPolls = true;
+      });
+    /** Whether the injected microphone, as WhatsApp captures it, carries sound within `ms`. */
+    const heard = (p: any, ms: number) =>
+      p.evaluate(async (wait: number) => {
+        const f = (window as any).__fakeWa;
+        for (const end = performance.now() + wait; performance.now() < end; ) {
+          if (f.level() > 0.05) return true;
+          await new Promise((r) => setTimeout(r, 25));
+        }
+        return false;
+      }, ms);
+    /** The loudest the injected microphone gets over `ms`, after `settleMs`: audio already in flight at a cut still plays out. */
+    const micPeak = (p: any, ms: number, settleMs = 0) =>
+      p.evaluate(async (wait: number, settle: number) => {
+        const f = (window as any).__fakeWa;
+        await new Promise((r) => setTimeout(r, settle));
+        let peak = 0;
+        for (const end = performance.now() + wait; performance.now() < end; ) {
+          peak = Math.max(peak, f.level());
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        return peak;
+      }, ms, settleMs);
+    const hasBridge = (p: any) => p.evaluate(() => !!(window as any).__mwBridge);
+    /** Waits up to `ms` for the page to let go of its bridge; whether it did. */
+    const bridgeGone = async (p: any, ms: number) => {
+      for (const end = Date.now() + ms; (await hasBridge(p)) && Date.now() < end; ) await sleep(50);
+      return !(await hasBridge(p));
+    };
+    const trackPolls = (p: any) => p.evaluate(trackIntervals);
+    const ring = (p: any, id: string) => p.evaluate((x: string) => (window as any).__fakeWa.ring(x), id);
+
+    beforeAll(async () => {
+      worker = await mediasoup.createWorker({ logLevel: 'warn' });
+      router = await worker.createRouter({ mediaCodecs: [{ kind: 'audio', mimeType: 'audio/opus', clockRate: 48000, channels: 2 }] });
+      // The agent: a plain mediasoup-client peer in a page of its own, producing a 660 Hz tone into the router.
+      const room = makeRoom();
+      agentPage = await browser.newPage();
+      await agentPage.goto(url);
+      await agentPage.exposeFunction('__agentSignal', async (op: string, json: string) => JSON.stringify((await runCallMediaSignal(room, op, JSON.parse(json))) ?? null));
+      await agentPage.evaluate(mediasoupClientBundle());
+      agentProducerId = await agentPage.evaluate(async () => {
+        const w = window as any;
+        const sig = async (op: string, args: unknown = {}) => JSON.parse(await w.__agentSignal(op, JSON.stringify(args)));
+        const device = new w.mediasoupClient.Device({ handlerName: 'Chrome111' });
+        await device.load({ routerRtpCapabilities: await sig('rtpCapabilities') });
+        const send = device.createSendTransport(await sig('createTransport', { direction: 'send' }));
+        send.on('connect', ({ dtlsParameters }: any, ok: () => void, fail: (e: Error) => void) => {
+          sig('connectTransport', { transportId: send.id, dtlsParameters }).then(ok, fail);
+        });
+        send.on('produce', ({ kind, rtpParameters }: any, ok: (r: { id: string }) => void, fail: (e: Error) => void) => {
+          sig('produce', { transportId: send.id, kind, rtpParameters }).then(ok, fail);
+        });
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 660;
+        const dest = ctx.createMediaStreamDestination();
+        osc.connect(dest);
+        osc.start();
+        return (await send.produce({ track: dest.stream.getAudioTracks()[0] })).id as string;
+      });
+    }, 30_000);
+
+    afterAll(async () => {
+      await agentPage?.close();
+      worker?.close();
+    });
+
+    it('the agent reaches the injected microphone through the bridge, and the caller side attaches', async () => {
+      await withBridge({}, async ({ p, media, handle }) => {
+        await media.answer('CALL1'); // the fake caller plays from the accept
+        expect(await handle.attachCaller()).toEqual({ via: 'destination', freshCandidates: 1, fallback: false });
+        await handle.connectAgent(agentProducerId);
+        expect(await heard(p, 5000)).toBe(true);
+        await handle.disconnectAgent();
+        expect(await micPeak(p, 400, 300)).toBeLessThan(0.01); // off the microphone by disconnecting, not by gain
+      });
+    });
+
+    it('the bridge ends with its call: everything it held in the page is released within a second, the agent is off the microphone', async () => {
+      await withBridge({ before: trackPolls }, async ({ p, media, handle }) => {
+        await media.answer('CALL1');
+        await handle.attachCaller();
+        await handle.connectAgent(agentProducerId);
+        expect(await heard(p, 5000)).toBe(true);
+        expect(await liveIntervals(p)).toBe(1); // the backstop poll
+        await p.evaluate(() => { (window as any).__held = (window as any).__mwBridge; });
+        await ring(p, 'CALL2'); // CALL1 is over: the next call rings
+        expect(await bridgeGone(p, 1500)).toBe(true);
+        expect(await p.evaluate(() => { const b = (window as any).__held; return { send: b.send.closed, recv: b.recv.closed, agent: b.agent }; })).toEqual({ send: true, recv: true, agent: null });
+        expect(await liveIntervals(p)).toBe(0); // the poll ended with the bridge
+        expect(await micPeak(p, 400, 300)).toBeLessThan(0.01); // and the microphone carries nothing of CALL1's agent
+      });
+    });
+
+    it('the engine slot stays held after the page let go, until the coordinator closes', async () => {
+      await withBridge({}, async ({ p, media, handle }) => {
+        await ring(p, 'CALL2');
+        expect(await bridgeGone(p, 1500)).toBe(true);
+        const next = makeRoom();
+        try {
+          await expect(media.startCallMedia('CALL2', next)).rejects.toThrow('Media bridge already running');
+          await handle.close(); // nothing left to close in the page; frees the slot
+          await (await media.startCallMedia('CALL2', next)).close();
+        } finally {
+          next.close();
+        }
+      });
+    });
+
+    it('close() clears the poll', async () => {
+      await withBridge({ before: trackPolls }, async ({ p, handle }) => {
+        expect(await liveIntervals(p)).toBe(1);
+        await handle.close();
+        expect(await liveIntervals(p)).toBe(0);
+        expect(await hasBridge(p)).toBe(false);
+      });
+    });
+
+    it.each([
+      ['the patch reports the call ended (it clears _multiwaCallId)', (p: any) => p.evaluate(() => { (window as any)._multiwaCallId = null; })],
+      ['the call state cannot be read', (p: any) => p.evaluate(() => { (window as any).require = () => { throw new Error('module registry gone'); }; })],
+    ])('the bridge also ends when %s', async (_when, end) => {
+      await withBridge({}, async ({ p }) => {
+        await sleep(600); // several polls: a live call keeps its bridge
+        expect(await hasBridge(p)).toBe(true);
+        await end(p);
+        expect(await bridgeGone(p, 1500)).toBe(true);
+      });
+    });
+
+    it('a call the patch never tracked is not ended by the unset id, and one poll that finds the call gone does not end the bridge', async () => {
+      await withBridge({ before: (p) => p.evaluate(() => { delete (window as any)._multiwaCallId; }) }, async ({ p }) => {
+        await sleep(1000); // several polls, with the id unset
+        expect(await hasBridge(p)).toBe(true); // judged by the call-id guard alone
+        // WhatsApp's active call reads empty ONCE, for exactly one poll: the getter puts the call back on its first read
+        await p.evaluate(() => {
+          const CC = (window as any).require('WAWebCallCollection');
+          const call = CC.activeCall;
+          Object.defineProperty(CC, 'activeCall', {
+            configurable: true,
+            get() { Object.defineProperty(CC, 'activeCall', { value: call, writable: true, configurable: true, enumerable: true }); return null; },
+          });
+        });
+        await sleep(1000);
+        expect(await p.evaluate(() => 'value' in Object.getOwnPropertyDescriptor((window as any).require('WAWebCallCollection'), 'activeCall')!)).toBe(true); // a poll did read the empty call...
+        expect(await hasBridge(p)).toBe(true); // ...and the bridge went on
+        await ring(p, 'CALL2'); // now the slot changes for good
+        expect(await bridgeGone(p, 1500)).toBe(true);
+      });
+    });
+
+    it('attach and connect refuse a call that is over, also when the next call has taken its place', async () => {
+      await withBridge({ before: holdPolls }, async ({ p, media, room, handle }) => {
+        await media.answer('CALL1');
+        await ring(p, 'CALL2'); // CALL1 is over; CALL2 is the active call
+        await expect(handle.attachCaller()).rejects.toThrow('Call is not the active call');
+        await expect(handle.connectAgent(agentProducerId)).rejects.toThrow('Call is not the active call');
+        expect(room.ops).not.toContain('consume'); // refused before the room was asked for anything
+        expect(await micPeak(p, 500)).toBeLessThan(0.01); // CALL2's microphone carries no agent
+      });
+    });
+
+    it('an attach whose call ends while it waits for the caller tap leaves the caller on silence', async () => {
+      await withBridge({ before: holdPolls }, async ({ p, handle }) => {
+        // no playback yet: callerTap waits for one, and the call ends meanwhile
+        await p.evaluate(() => {
+          const w = window as any;
+          const b = w.__mwBridge;
+          w.__replaced = 0;
+          const replace = b.caller.replaceTrack.bind(b.caller);
+          b.caller.replaceTrack = (...args: any[]) => { w.__replaced++; return replace(...args); };
+        });
+        const attaching = handle.attachCaller().then(() => 'attached', (e: Error) => e.message);
+        await sleep(300);
+        await ring(p, 'CALL2');
+        await p.evaluate(() => { (window as any).__fakeWa.play('destination'); }); // a tap turns up all the same
+        expect(await attaching).toBe('Call is not the active call');
+        expect(await p.evaluate(() => (window as any).__replaced)).toBe(0);
+      });
+    });
+
+    it.each([
+      ['creates the consumer', { delay: { consume: 600 } }],
+      ['resumes it', { delay: { resumeConsumer: 600 } }],
+    ] as [string, Knobs][])('a connect whose call ends while the room %s is rolled back: no agent, the room consumer closed', async (_when, knobs) => {
+      await withBridge({ knobs, before: holdPolls }, async ({ p, media, room, handle }) => {
+        await media.answer('CALL1');
+        await handle.attachCaller();
+        const connecting = handle.connectAgent(agentProducerId).then(() => 'connected', (e: Error) => e.message);
+        await sleep(300);
+        await ring(p, 'CALL2'); // the call ends while the room is still busy with it
+        expect(await connecting).toBe('Call is not the active call');
+        expect(room.consumers.map((c) => c.closed)).toEqual([true]);
+        expect(await p.evaluate(() => (window as any).__mwBridge.agent)).toBeNull();
+        expect(await micPeak(p, 500, 300)).toBeLessThan(0.01);
+      });
+    });
+
+    it('a connect whose resume fails is rolled back: no agent kept, the room consumer closed, and the retry connects', async () => {
+      const audits = (p: any) =>
+        p.evaluate(() => {
+          const w = window as any;
+          const A = w.Audio;
+          w.__audios = [];
+          w.Audio = function (...args: any[]) { const el = new A(...args); w.__audios.push(el); return el; };
+        });
+      await withBridge({ knobs: { failOnce: { resumeConsumer: true } }, before: audits }, async ({ p, media, room, handle }) => {
+        await media.answer('CALL1');
+        await handle.attachCaller();
+        await expect(handle.connectAgent(agentProducerId)).rejects.toThrow('resumeConsumer refused');
+        expect(await p.evaluate(() => (window as any).__mwBridge.agent)).toBeNull();
+        expect(await p.evaluate(() => (window as any).__audios.map((a: HTMLAudioElement) => a.srcObject))).toEqual([null]); // the keep-alive let go of its stream
+        expect(room.consumers.map((c) => c.closed)).toEqual([true]);
+        await handle.connectAgent(agentProducerId); // not "Agent already connected"
+        expect(await heard(p, 5000)).toBe(true);
+      });
+    });
+
+    it('a consume mediasoup-client cannot use leaves no consumer behind in the room', async () => {
+      await withBridge({ knobs: { badConsume: true } }, async ({ room, handle }) => {
+        await expect(handle.connectAgent(agentProducerId)).rejects.toThrow();
+        expect(room.consumers.map((c) => c.closed)).toEqual([true]);
+      });
+    });
+
+    it('connecting the agent wakes a suspended microphone context', async () => {
+      await withBridge({}, async ({ p, media, handle }) => {
+        await media.answer('CALL1');
+        await handle.attachCaller();
+        await p.evaluate(() => (window as any).__mwCall.ctx.suspend());
+        await handle.connectAgent(agentProducerId);
+        expect(await heard(p, 5000)).toBe(true);
+      });
+    });
+
+    it("attaching the caller never writes to WhatsApp Web's own track", async () => {
+      await withBridge({}, async ({ p, media, handle }) => {
+        // the caller's playback track, as WhatsApp Web owns it; `enabled` is read, or set when given
+        const track = (enabled?: boolean) =>
+          p.evaluate((x?: boolean) => {
+            const t = (window as any).__fakeWa.playbacks[0].el.srcObject.getAudioTracks()[0];
+            if (x !== undefined) t.enabled = x;
+            return t.enabled;
+          }, enabled);
+        await p.evaluate(() => { (window as any).__fakeWa.playbackVia = 'element'; }); // WhatsApp plays the caller through an <audio> element
+        await media.answer('CALL1');
+        await track(false); // WhatsApp Web has muted its own track
+        expect((await handle.attachCaller()).via).toBe('element');
+        expect(await track()).toBe(false); // ours leaves it so
+      });
+    });
+
+    it('refuses to start without our hooks, with a message instead of a TypeError', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(() => { delete (window as any).__mwCall; });
+        await expect(p.evaluate(callMediaBridge.startBridgeInPage, 'CALL1')).rejects.toThrow('Call media hooks missing');
+      } finally {
+        await p.close();
+      }
+    });
   });
 }, 120_000);

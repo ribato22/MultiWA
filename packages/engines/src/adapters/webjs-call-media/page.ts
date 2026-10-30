@@ -44,8 +44,8 @@ export interface MwTapPick {
 
 /**
  * `window.__mwCall`, published by installCallMediaHooks once all its hooks are in place: the state the page
- * functions share, and the API the media bridge builds on (it sends `await callerTap(5000)` to the agent and feeds
- * `inputs.agent`).
+ * functions share, and the API the media bridge builds on (its "caller" producer carries the stream of
+ * `await callerTap(5000)`, and it feeds `inputs.agent`).
  *
  * Our own streams carry `__mwOwn`, so the taps skip them. Mark a stream BEFORE setting it as an element's
  * srcObject (the media bridge: the muted keep-alive of the agent's track), or tap A takes it for the caller.
@@ -60,7 +60,7 @@ export interface MwCall {
    * (`answeredAfter`). WhatsApp Web starts playing the caller right after `acceptCall`, before the call reads as
    * connected (live: the tap was noted about 40 ms after the accept), and `answeredAfter` is recorded before the
    * accept, so that tap counts as noted after the answer. This waits up to `waitMs` for such a tap, then takes the
-   * newest in-use one; null when there is none. The recorder uses it, and so will the media bridge. The tap
+   * newest in-use one; null when there is none. The recorder uses it, and so does the media bridge. The tap
    * comes as a copy with how it was chosen (MwTapPick).
    */
   callerTap(waitMs: number): Promise<(MwTap & MwTapPick) | null>;
