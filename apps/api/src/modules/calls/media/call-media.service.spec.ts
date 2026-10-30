@@ -40,6 +40,7 @@ describe('CallMediaService', () => {
     await service.onModuleDestroy();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+    vi.useRealTimers();
     Logger.overrideLogger(new ConsoleLogger());
   });
   const switchOn = () => {
@@ -54,7 +55,8 @@ describe('CallMediaService', () => {
   it('stays off with the switch off: no worker, and no room can be opened', async () => {
     vi.stubEnv('CALLS_MEDIA_ENABLED', 'false');
     await service.onModuleInit();
-    expect(service.status()).toEqual({ enabled: false, worker: 'down', port: null, announcedAddressSet: false, activeRooms: 0 });
+    expect(service.status()).toEqual({ enabled: false, worker: 'down', port: null, activeRooms: 0 });
+    expect(service.publicStatus()).toEqual({ enabled: false, worker: 'down' });
     await expect(service.createRoom('CALL1')).rejects.toThrow('Call media server unavailable');
   });
 
@@ -67,7 +69,8 @@ describe('CallMediaService', () => {
   it('switched on: one worker; one room per call, whose transports announce the configured address', async () => {
     switchOn();
     await service.onModuleInit();
-    expect(service.status()).toMatchObject({ enabled: true, worker: 'up', announcedAddressSet: true, activeRooms: 0 });
+    expect(service.status()).toEqual({ enabled: true, worker: 'up', port: Number(process.env.CALLS_MEDIA_PORT), activeRooms: 0 });
+    expect(service.publicStatus()).toEqual({ enabled: true, worker: 'up' }); // the public /health: no port, no call counts
     const room = await service.createRoom('CALL1');
     await expect(service.createRoom('CALL1')).rejects.toThrow('already has a media room');
     const t: any = await room.signalingFor('page').createTransport('send');
@@ -247,6 +250,58 @@ describe('CallMediaService', () => {
     await expect(service.createRoom('CALL8')).resolves.toBeDefined();
   }, 20_000);
 
+  it('a listener that throws on a worker death cannot stop the replacement, and cannot forge a log line', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const logged = vi.spyOn(service['logger'], 'error');
+    const throws = vi.fn(() => {
+      throw new Error('boom\nERROR [Forged] a line that is not ours');
+    });
+    bus.on(InternalEvents.CALLS_MEDIA_WORKER_DIED, throws); // plugins can subscribe to every event
+    service.events.on('worker-died', throws);
+    const pid = service.workerPid()!;
+    process.kill(pid, 'SIGKILL');
+    expect(await until(() => service.status().worker === 'up' && service.workerPid() !== pid, 8000)).toBe(true);
+    expect(throws).toHaveBeenCalledTimes(2); // each emit ran, whatever the other did
+    const lines = logged.mock.calls.map(([message]) => String(message));
+    expect(lines.filter((l) => l.includes('boom'))).toHaveLength(2);
+    expect(lines.some((l) => /[\r\n]/.test(l))).toBe(false);
+  }, 20_000);
+
+  it('workers that die young are restarted with a growing delay; one that lived a minute starts the backoff over', () => {
+    vi.useFakeTimers();
+    vi.spyOn(service as any, 'startWorker').mockResolvedValue(undefined);
+    const dies = (livedMs: number) => {
+      const worker = { died: true } as any;
+      service['worker'] = worker;
+      service['startedAt'] = Date.now() - livedMs;
+      service['onWorkerDied'](worker, new Error('boom'));
+      const before = Date.now();
+      vi.advanceTimersToNextTimer(); // the restart
+      return Date.now() - before;
+    };
+    const delays = [1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 59_999, 60_000, 1_000].map(dies);
+    expect(delays).toEqual([2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 1_000, 2_000]);
+  });
+
+  it('a media server that cannot start does not fail the boot: it stays down, logs why, and retries until it can', async () => {
+    switchOn();
+    const other = new CallMediaService(new EventEmitter2());
+    try {
+      await other.onModuleInit(); // holds the port
+      const logged = vi.spyOn(service['logger'], 'error');
+      await expect(service.onModuleInit()).resolves.toBeUndefined(); // the port is taken: the gateway still boots
+      expect(service.status()).toMatchObject({ enabled: true, worker: 'down' });
+      expect(service.workerPid()).toBeNull();
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0][0])).not.toMatch(/[\r\n]/);
+      await other.onModuleDestroy(); // the port is free again
+      expect(await until(() => service.status().worker === 'up', 8000)).toBe(true);
+    } finally {
+      await other.onModuleDestroy();
+    }
+  }, 20_000);
+
   it('shuts down for good: a restart still waiting on its timer never happens', async () => {
     switchOn();
     await service.onModuleInit();
@@ -257,7 +312,7 @@ describe('CallMediaService', () => {
     process.kill(service.workerPid()!, 'SIGKILL');
     await died; // the restart is on its timer now
     await service.onModuleDestroy();
-    await new Promise((r) => setTimeout(r, 2500)); // longer than the backoff
+    await new Promise((r) => setTimeout(r, 3000)); // longer than the 2 s backoff and a worker's start
     observer.off('newworker', spawned);
     expect(service.status().worker).toBe('down');
     expect(service.workerPid()).toBeNull();

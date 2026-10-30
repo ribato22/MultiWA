@@ -22,7 +22,7 @@ export class HealthController {
       version: '3.0.0',
       service: 'multiwa-gateway-api',
       uptime: process.uptime(),
-      callsMedia: this.callMedia.status(),
+      callsMedia: this.callMedia.publicStatus(),
     };
   }
 

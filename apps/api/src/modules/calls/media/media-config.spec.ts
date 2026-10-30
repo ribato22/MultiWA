@@ -1,5 +1,6 @@
 // The call media server's settings, read once at boot. Off unless CALLS_MEDIA_ENABLED=true; on, a missing or bad
-// value fails with the variable's name, and never echoes a credential.
+// value (an ICE server URL that is not stun:/stuns:/turn:/turns:, a turn server without credentials) fails with the
+// variable's name, and never echoes a value.
 import { describe, it, expect } from 'vitest';
 import { readCallMediaConfig } from './media-config';
 
@@ -39,5 +40,35 @@ describe('readCallMediaConfig', () => {
     expect(() => readCallMediaConfig(on({ CALLS_MEDIA_ICE_SERVERS: secret }), IFACES)).toThrow(/CALLS_MEDIA_ICE_SERVERS must be/);
     try { readCallMediaConfig(on({ CALLS_MEDIA_ICE_SERVERS: secret }), IFACES); } catch (e) { expect(String(e)).not.toContain('hunter2'); }
     expect(() => readCallMediaConfig(on({ CALLS_MEDIA_ICE_SERVERS: '{not json' }), IFACES)).toThrow(/CALLS_MEDIA_ICE_SERVERS must be JSON/);
+  });
+
+  it('accepts stun servers without credentials, and turn servers with both', () => {
+    const servers = [
+      { urls: 'stun:stun.example.com:3478' },
+      { urls: ['stuns:stun.example.com:5349', 'stun:stun.example.com:3478'] },
+      { urls: ['turn:turn.example.com:3478?transport=udp', 'turns:turn.example.com:5349'], username: 'u', credential: 's' },
+    ];
+    expect(readCallMediaConfig(on({ CALLS_MEDIA_ICE_SERVERS: JSON.stringify(servers) }), IFACES)?.iceServers).toEqual(servers);
+  });
+
+  it.each([
+    ['a URL without a scheme', [{ urls: 'stun.example.com:3478' }]],
+    ['an empty URL', [{ urls: '' }]],
+    ['an empty URL among others', [{ urls: ['stun:stun.example.com:3478', ''] }]],
+    ['a web URL', [{ urls: 'https://turn.example.com' }]],
+    ['a turn URL without credentials', [{ urls: 'turn:turn.example.com:3478' }]],
+    ['a turns URL without a username', [{ urls: 'turns:turn.example.com:5349', credential: 'hunter2' }]],
+    ['a turn URL without a credential', [{ urls: 'turn:turn.example.com:3478', username: 'admin' }]],
+    ['a turn URL among stun URLs, without credentials', [{ urls: ['stun:stun.example.com:3478', 'turn:turn.example.com:3478'] }]],
+    ['empty credentials', [{ urls: 'turn:turn.example.com:3478', username: '', credential: '' }]],
+  ])('refuses ICE servers with %s, naming only the variable', (_, servers) => {
+    let message = '';
+    try {
+      readCallMediaConfig(on({ CALLS_MEDIA_ICE_SERVERS: JSON.stringify(servers) }), IFACES);
+    } catch (e) {
+      message = String(e);
+    }
+    expect(message).toMatch(/CALLS_MEDIA_ICE_SERVERS/);
+    expect(message).not.toMatch(/example\.com|admin|hunter2/);
   });
 });

@@ -69,5 +69,15 @@ function parseIceServers(raw: string | undefined): CallMediaIceServer[] {
         str(s.username) && str(s.credential),
     );
   if (!ok) throw new Error('CALLS_MEDIA_ICE_SERVERS must be a JSON array of { urls, username?, credential? }');
-  return value as CallMediaIceServer[];
+  const servers = value as CallMediaIceServer[];
+  for (const { urls, username, credential } of servers) {
+    const list = [urls].flat();
+    if (!list.every((u) => /^(stuns?|turns?):/.test(u))) {
+      throw new Error('CALLS_MEDIA_ICE_SERVERS: every url must start with stun:, stuns:, turn: or turns:');
+    }
+    if (list.some((u) => /^turns?:/.test(u)) && !(username && credential)) {
+      throw new Error('CALLS_MEDIA_ICE_SERVERS: a turn: or turns: server needs both a username and a credential');
+    }
+  }
+  return servers;
 }

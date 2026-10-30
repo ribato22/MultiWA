@@ -4,7 +4,9 @@
 // ONE mediasoup Worker and ONE WebRtcServer (a single UDP+TCP port for every media transport) per api process, and
 // one CallMediaRoom per call that is being answered. Off unless CALLS_MEDIA_ENABLED=true: then mediasoup is never
 // even loaded. A worker that dies closes every room it carried (those calls lost their media); the service tells its
-// listeners (`events`: 'worker-died' with the call ids), counts it, and starts a new worker with backoff.
+// listeners (`events`: 'worker-died' with the call ids), counts it, and starts a new worker with backoff (one that
+// died soon after it started counts as a failed restart). A bad setting fails the boot, but a worker that cannot start
+// (the port is taken) does not: messaging goes on, the media server stays down and the start is retried the same way.
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EventEmitter } from 'node:events';
@@ -15,13 +17,14 @@ import { readCallMediaConfig, type CallMediaConfig, type CallMediaIceServer } fr
 
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const MAX_RESTART_DELAY_MS = 30_000;
+/** A worker that lived this long was healthy: when it dies, the restart backoff starts over. */
+const HEALTHY_UPTIME_MS = 60_000;
 
-/** What /health shows: no addresses (the endpoint is public). */
+/** The media server's state, for authenticated readers. The public /health shows only `publicStatus()`. */
 export interface CallMediaStatus {
   enabled: boolean;
   worker: 'up' | 'down';
   port: number | null;
-  announcedAddressSet: boolean;
   activeRooms: number;
 }
 
@@ -35,6 +38,7 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
   private server: ms.WebRtcServer | null = null;
   private readonly rooms = new Map<string, CallMediaRoom>();
   private failedRestarts = 0;
+  private startedAt = 0;
   private restartTimer: NodeJS.Timeout | null = null;
   private stopped = false;
 
@@ -42,7 +46,9 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     this.config = readCallMediaConfig(); // throws on a bad setting: the boot fails with the variable's name
-    if (this.config) await this.startWorker();
+    // A worker that will not start (the port is taken, the binary will not run) must not keep the gateway from booting:
+    // messaging goes on, the media server stays down, and the start is retried with backoff.
+    if (this.config) await this.startWorker().catch((e) => this.startFailed(e));
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -55,13 +61,12 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
   }
 
   status(): CallMediaStatus {
-    return {
-      enabled: !!this.config,
-      worker: this.worker ? 'up' : 'down',
-      port: this.config?.port ?? null,
-      announcedAddressSet: !!this.config?.announcedAddress,
-      activeRooms: this.rooms.size,
-    };
+    return { ...this.publicStatus(), port: this.config?.port ?? null, activeRooms: this.rooms.size };
+  }
+
+  /** What the public /health shows: whether the server is on and its worker is up, and nothing else. */
+  publicStatus(): Pick<CallMediaStatus, 'enabled' | 'worker'> {
+    return { enabled: !!this.config, worker: this.worker ? 'up' : 'down' };
   }
 
   /** ICE servers for agents' browsers (CALLS_MEDIA_ICE_SERVERS). */
@@ -122,6 +127,7 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
     this.server = server;
     worker.on('died', (error) => this.onWorkerDied(worker, error));
     this.worker = worker;
+    this.startedAt = Date.now();
     this.logger.log(`Call media server up: worker pid ${worker.pid}, port ${config.port}`);
   }
 
@@ -129,14 +135,26 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
     if (this.worker !== worker) return;
     this.worker = null;
     this.server = null;
+    // A worker that dies soon after it started counts as a failed restart: a crash loop backs off instead of restarting
+    // every second for ever.
+    this.failedRestarts = Date.now() - this.startedAt >= HEALTHY_UPTIME_MS ? 0 : this.failedRestarts + 1;
+    this.scheduleRestart(); // first: nothing below may keep the media server down
     const callIds = [...this.rooms.keys()];
     for (const room of [...this.rooms.values()]) room.close();
     this.rooms.clear();
     this.logger.error(`Call media worker died (${clean(error?.message ?? error)}); ${callIds.length} call(s) lost their media; restarting`);
     const payload: CallsMediaWorkerDiedPayload = { calls: callIds.length };
-    this.eventEmitter.emit(InternalEvents.CALLS_MEDIA_WORKER_DIED, payload);
-    this.events.emit('worker-died', callIds);
-    this.scheduleRestart();
+    this.emitSafely('event bus', () => this.eventEmitter.emit(InternalEvents.CALLS_MEDIA_WORKER_DIED, payload));
+    this.emitSafely('worker-died', () => this.events.emit('worker-died', callIds));
+  }
+
+  /** Plugins can listen to every event: a listener that throws is logged, and goes no further. */
+  private emitSafely(what: string, emit: () => unknown): void {
+    try {
+      emit();
+    } catch (e) {
+      this.logger.error(`Call media ${what} listener threw: ${clean((e as Error)?.message ?? e)}`);
+    }
   }
 
   private scheduleRestart(): void {
@@ -144,14 +162,14 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
     const delay = Math.min(MAX_RESTART_DELAY_MS, 1000 * 2 ** this.failedRestarts);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
-      this.startWorker().then(
-        () => { this.failedRestarts = 0; },
-        (e) => {
-          this.failedRestarts++;
-          this.logger.error(`Call media worker restart failed: ${clean((e as Error)?.message ?? e)}`);
-          this.scheduleRestart();
-        },
-      );
+      this.startWorker().catch((e) => this.startFailed(e));
     }, delay);
+  }
+
+  /** A start that failed counts as a failed restart: try again, later. */
+  private startFailed(e: unknown): void {
+    this.failedRestarts++;
+    this.logger.error(`Call media worker start failed: ${clean((e as Error)?.message ?? e)}`);
+    this.scheduleRestart();
   }
 }
