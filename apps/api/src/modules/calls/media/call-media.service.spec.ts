@@ -127,6 +127,63 @@ describe('CallMediaService', () => {
     room.close();
   });
 
+  it("concurrent signalling cannot bypass a peer's limits; peers do not wait for each other; a closing room refuses what waits", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1');
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const caps = await page.rtpCapabilities();
+    // The page's own scripts can call the bridge as fast as they like: calls made together must end up as calls made in turn.
+    const settle = async (calls: Promise<any>[]) => {
+      const done = await Promise.allSettled(calls);
+      return {
+        ok: done.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : [])),
+        errors: done.flatMap((r) => (r.status === 'rejected' ? [r.reason.message as string] : [])),
+      };
+    };
+
+    const sends = await settle(Array.from({ length: 5 }, () => page.createTransport('send')));
+    const callers = await settle([1111, 1112].map((ssrc) => page.produce(sends.ok[0].id, 'audio', OPUS(ssrc))));
+    const agentRecv: any = await agent.createTransport('recv');
+    const consumers = await settle(Array.from({ length: 3 }, () => agent.consume(agentRecv.id, room.producerId('caller')!, caps)));
+    const counts = { transports: sends.ok.length, producers: callers.ok.length, consumers: consumers.ok.length };
+    expect(counts).toEqual({ transports: 1, producers: 1, consumers: 1 });
+    expect(sends.errors).toEqual(Array(4).fill('The page already has a send transport'));
+    expect(callers.errors).toEqual(['The caller is already produced']);
+    expect(consumers.errors).toEqual(Array(2).fill('The agent already consumes'));
+    expect(room.producerId('caller')).toBe(callers.ok[0].id); // no producer is left orphaned
+
+    // An agent operation held at the worker does not hold up the page.
+    const router = room['router'];
+    const createWebRtcTransport = router.createWebRtcTransport.bind(router);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(router, 'createWebRtcTransport').mockImplementationOnce(async (options) => {
+      await held;
+      return createWebRtcTransport(options);
+    });
+    const slow = agent.createTransport('send');
+    let pageDone = false;
+    void page.createTransport('recv').then(() => (pageDone = true));
+    expect(await until(() => pageDone, 2000)).toBe(true);
+    release();
+    await expect(slow).resolves.toHaveProperty('iceParameters');
+
+    // A room that closes while operations wait refuses each of them when its turn comes.
+    const queued = [
+      page.rtpCapabilities(),
+      page.createTransport('recv'),
+      page.connectTransport('t', {}),
+      page.produce('t', 'audio', OPUS(9)),
+      page.consume('t', 'p', caps),
+      page.resumeConsumer('c'),
+      page.closeConsumer('c'),
+    ];
+    room.close();
+    expect(await settle(queued)).toEqual({ ok: [], errors: Array(7).fill('Media room closed') });
+  });
+
   it('a dead worker closes its rooms, tells its listeners, counts it, and is replaced', async () => {
     switchOn();
     await service.onModuleInit();

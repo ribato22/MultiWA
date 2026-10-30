@@ -4,7 +4,8 @@
 // A mediasoup Router with two peers. The "page" peer is the WhatsApp Web page's media bridge; it produces the
 // caller and consumes the agent. The "agent" peer is the agent's browser; it produces the agent and consumes the
 // caller. Each peer has at most one send and one receive transport, produces exactly one track, and may consume only
-// the other peer's track, so a client can never reach another peer's or another call's media.
+// the other peer's track, so a client can never reach another peer's or another call's media. A peer's signalling runs
+// one operation at a time, so these limits hold for calls made together too.
 // The signalling API speaks mediasoup's JSON: `signalingFor(peer)` binds it to one peer.
 import type { types as ms } from 'mediasoup';
 import type { CallMediaSignaling } from '@multiwa/engines';
@@ -19,6 +20,8 @@ export class CallMediaRoom {
   private readonly transports = new Map<string, { peer: MediaPeer; direction: 'send' | 'recv'; transport: ms.WebRtcTransport }>();
   private readonly producers: Partial<Record<Role, ms.Producer>> = {};
   private readonly consumers = new Map<string, { peer: MediaPeer; consumer: ms.Consumer }>();
+  /** Where each peer's signalling operations queue (see `run`). The two peers are independent of each other. */
+  private readonly chains: Record<MediaPeer, Promise<unknown>> = { page: Promise.resolve(), agent: Promise.resolve() };
   private isClosed = false;
 
   constructor(
@@ -43,17 +46,32 @@ export class CallMediaRoom {
   /** The signalling API for one peer (the page's media bridge, or the agent's `call:media` socket commands). */
   signalingFor(peer: MediaPeer): CallMediaSignaling {
     return {
-      rtpCapabilities: async () => {
-        this.assertOpen();
-        return this.router.rtpCapabilities;
-      },
-      createTransport: (direction) => this.createTransport(peer, direction),
-      connectTransport: (transportId, dtlsParameters) => this.connectTransport(peer, transportId, dtlsParameters as ms.DtlsParameters),
-      produce: (transportId, kind, rtpParameters) => this.produce(peer, transportId, kind, rtpParameters as ms.RtpParameters),
-      consume: (transportId, producerId, rtpCapabilities) => this.consume(peer, transportId, producerId, rtpCapabilities as ms.RtpCapabilities),
-      resumeConsumer: async (consumerId) => this.ownConsumer(peer, consumerId).resume(),
-      closeConsumer: async (consumerId) => this.ownConsumer(peer, consumerId).close(),
+      rtpCapabilities: () =>
+        this.run(peer, async () => {
+          this.assertOpen();
+          return this.router.rtpCapabilities;
+        }),
+      createTransport: (direction) => this.run(peer, () => this.createTransport(peer, direction)),
+      connectTransport: (transportId, dtlsParameters) =>
+        this.run(peer, () => this.connectTransport(peer, transportId, dtlsParameters as ms.DtlsParameters)),
+      produce: (transportId, kind, rtpParameters) =>
+        this.run(peer, () => this.produce(peer, transportId, kind, rtpParameters as ms.RtpParameters)),
+      consume: (transportId, producerId, rtpCapabilities) =>
+        this.run(peer, () => this.consume(peer, transportId, producerId, rtpCapabilities as ms.RtpCapabilities)),
+      resumeConsumer: (consumerId) => this.run(peer, async () => this.ownConsumer(peer, consumerId).resume()),
+      closeConsumer: (consumerId) => this.run(peer, async () => this.ownConsumer(peer, consumerId).close()),
     };
+  }
+
+  /**
+   * Run `op` once the peer's earlier operations are done. Every limit is checked before an `await` and recorded after
+   * it, so concurrent calls would all pass the check: one operation at a time per peer makes check and record atomic.
+   * A failed operation does not stop the next one. The chain never rejects, so `then(op)` is enough.
+   */
+  private run<T>(peer: MediaPeer, op: () => Promise<T>): Promise<T> {
+    const result = this.chains[peer].then(op);
+    this.chains[peer] = result.catch(() => undefined);
+    return result;
   }
 
   /** Close the room: its router, and with it every transport, producer and consumer. Idempotent. */
