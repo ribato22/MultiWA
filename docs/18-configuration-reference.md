@@ -199,6 +199,9 @@ Selects the process that owns the WhatsApp engine sessions:
   operations over BullMQ. The worker must be running and share the API's
   sessions volume.
 
+The API and the worker must see the same value. The stock Compose files with a
+worker give both services the one in `.env`.
+
 ```env
 ENGINE_HOST=api
 ```
