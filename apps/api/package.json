@@ -17,10 +17,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1152.0",
+    "@aws-sdk/client-s3": "^3.1156.0",
     "@fastify/helmet": "^13.2.0",
-    "@fastify/multipart": "^10.1.4",
-    "@fastify/static": "^10.1.6",
+    "@fastify/multipart": "^10.1.6",
+    "@fastify/static": "^10.1.7",
     "@multiwa/core": "workspace:*",
     "@multiwa/database": "workspace:*",
     "@multiwa/engine-runtime": "workspace:*",
@@ -45,7 +45,7 @@
     "fastify": "5.12.5",
     "ioredis": "^6.0.0",
     "mediasoup": "3.32.0",
-    "nodemailer": "^10.1.4",
+    "nodemailer": "^10.2.1",
     "passport": "^0.7.0",
     "passport-custom": "^1.2.1",
     "passport-jwt": "^4.0.1",

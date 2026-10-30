@@ -16,7 +16,7 @@
     "@multiwa/database": "workspace:*",
     "@multiwa/engines": "workspace:*",
     "@nestjs/common": "^11.2.7",
-    "nodemailer": "^10.1.4",
+    "nodemailer": "^10.2.1",
     "web-push": "^3.6.7"
   },
   "devDependencies": {

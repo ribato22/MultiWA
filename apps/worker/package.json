@@ -26,7 +26,7 @@
     "@prisma/client": "^7.10.1",
     "bullmq": "6.1.1",
     "ioredis": "^6.0.0",
-    "nodemailer": "^10.1.4",
+    "nodemailer": "^10.2.1",
     "pino": "^10.4.0",
     "prom-client": "^15",
     "qrcode": "^1.5.3",
