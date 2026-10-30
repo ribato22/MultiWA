@@ -34,6 +34,8 @@ export class MetricsService {
   // `source="fallback"` on any sustained rate means the live chat Store is broken.
   readonly engineGroupFetchTotal: Counter<'source'>;
   readonly engineAckDroppedTotal: Counter;
+  // The call media server's mediasoup worker died: every call it carried lost its media. Any non-zero rate needs attention.
+  readonly callsMediaWorkerDeathsTotal: Counter;
 
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
@@ -116,6 +118,16 @@ export class MetricsService {
             'Delivery acks discarded because they carried no resolvable message id — ' +
             'the signature of a WhatsApp Web message-key rename. Sustained non-zero ' +
             'means outbound message status is frozen.',
+          registers: [this.registry],
+        }),
+    );
+
+    this.callsMediaWorkerDeathsTotal = this.getOrCreate(
+      'multiwa_calls_media_worker_deaths_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_media_worker_deaths_total',
+          help: "Deaths of the call media server's mediasoup worker. Each one cut the media of every call it carried; the server restarts it.",
           registers: [this.registry],
         }),
     );
