@@ -11,10 +11,12 @@ import {
   CALL_MEDIA_INIT_SCRIPT,
   WebJsCallMedia,
   WhatsAppWebJsAdapter,
+  callMediaBridge,
   callMediaPage,
   mediasoupClientBundle,
+  runCallMediaSignal,
 } from '@multiwa/engines';
-import type { EngineConfig } from '@multiwa/engines';
+import type { CallMediaSignaling, EngineConfig } from '@multiwa/engines';
 
 const { prepareCallMediaPage, answerActiveCall, hangUpActiveCall, playAnnouncementInPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 
@@ -383,5 +385,112 @@ describe('WebJsCallMedia without a browser', () => {
       expect(line).toContain('profile p1');
       expect(line).not.toMatch(/[\r\n]/);
     }
+  });
+});
+
+describe('WebJsCallMedia media bridge, without a browser', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const fakeSignaling = () => ({
+    rtpCapabilities: vi.fn(async () => ({ codecs: [] })),
+    createTransport: vi.fn(async (direction: string) => ({ id: `T-${direction}` })),
+    connectTransport: vi.fn(async () => undefined),
+    produce: vi.fn(async () => ({ id: 'P-caller' })),
+    consume: vi.fn(async () => ({ id: 'C-agent' })),
+    resumeConsumer: vi.fn(async () => undefined),
+    closeConsumer: vi.fn(async () => undefined),
+  });
+  /** A page that records what the wrapper evaluates; `signal` calls the binding the wrapper exposed. */
+  const bridgePage = (opts: { startFails?: boolean } = {}) => {
+    let binding: ((callId: string, op: string, json: string) => Promise<string>) | null = null;
+    const page: any = {
+      loaded: false,
+      exposeFunction: vi.fn(async (name: string, fn: any) => { if (name === '__mwBridgeSignal') binding = fn; }),
+      evaluate: vi.fn(async (fn: any, ...args: any[]) => {
+        if (typeof fn === 'string') { page.loaded = true; return undefined; } // the mediasoup-client bundle
+        if (fn === callMediaBridge.hasMediasoupClient) return page.loaded;
+        if (fn === callMediaBridge.startBridgeInPage) {
+          if (opts.startFails) throw new Error('Call is not the active call');
+          return { callerProducerId: 'P-caller' };
+        }
+        if (fn === callMediaBridge.closeBridgeInPage) return { closed: true };
+        return { fn: fn.name, args };
+      }),
+      signal: (callId: string, op: string, a: unknown) => binding!(callId, op, JSON.stringify(a)),
+    };
+    return page;
+  };
+
+  it('starts the bridge: one binding, the bundle only when missing, then the page start; the handle drives the page', async () => {
+    const page = bridgePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    const handle = await media.startCallMedia('c1', fakeSignaling());
+    expect(handle.callerProducerId).toBe('P-caller');
+    expect(page.exposeFunction).toHaveBeenCalledTimes(1);
+    expect(page.evaluate.mock.calls.filter(([fn]: any[]) => typeof fn === 'string')).toHaveLength(1);
+    expect(page.evaluate).toHaveBeenCalledWith(callMediaBridge.startBridgeInPage, 'c1');
+    expect(await handle.attachCaller()).toEqual({ fn: 'attachCallerInPage', args: ['c1'] });
+    expect(await handle.connectAgent('P-agent')).toEqual({ fn: 'connectAgentInPage', args: ['c1', 'P-agent'] });
+    expect(await handle.disconnectAgent()).toEqual({ fn: 'disconnectAgentInPage', args: ['c1'] });
+    await handle.close();
+    expect(page.evaluate).toHaveBeenCalledWith(callMediaBridge.closeBridgeInPage, 'c1');
+    // a second call on the same page: no second binding, no second bundle
+    await (await media.startCallMedia('c2', fakeSignaling())).close();
+    expect(page.exposeFunction).toHaveBeenCalledTimes(1);
+    expect(page.evaluate.mock.calls.filter(([fn]: any[]) => typeof fn === 'string')).toHaveLength(1);
+  });
+
+  it('refuses to start when WhatsApp is not ready, and touches nothing', async () => {
+    const page = bridgePage();
+    await expect(new WebJsCallMedia(() => page, () => false, 'p1').startCallMedia('c1', fakeSignaling())).rejects.toThrow('Client not ready');
+    expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  it('one bridge at a time: a second start is refused until the first one closes', async () => {
+    const media = new WebJsCallMedia(() => bridgePage(), () => true, 'p1');
+    const first = await media.startCallMedia('c1', fakeSignaling());
+    await expect(media.startCallMedia('c2', fakeSignaling())).rejects.toThrow('Media bridge already running');
+    await first.close();
+    await expect(media.startCallMedia('c2', fakeSignaling())).resolves.toBeDefined();
+  });
+
+  it('a start that fails frees the slot and closes what the page may have started', async () => {
+    const page = bridgePage({ startFails: true });
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Call is not the active call');
+    expect(page.evaluate).toHaveBeenCalledWith(callMediaBridge.closeBridgeInPage, 'c1');
+    page.evaluate.mockImplementation(async (fn: any) => (fn === callMediaBridge.startBridgeInPage ? { callerProducerId: 'P2' } : true));
+    await expect(media.startCallMedia('c1', fakeSignaling())).resolves.toMatchObject({ callerProducerId: 'P2' });
+  });
+
+  it('the page binding runs the room signalling of the CURRENT call only, as JSON both ways', async () => {
+    const page = bridgePage();
+    const s = fakeSignaling();
+    const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', s);
+    expect(JSON.parse(await page.signal('c1', 'createTransport', { direction: 'recv' }))).toEqual({ id: 'T-recv' });
+    expect(s.createTransport).toHaveBeenCalledWith('recv');
+    expect(await page.signal('c1', 'connectTransport', { transportId: 'T-send', dtlsParameters: { role: 'client' } })).toBe('null');
+    expect(s.connectTransport).toHaveBeenCalledWith('T-send', { role: 'client' });
+    await expect(page.signal('c2', 'rtpCapabilities', {})).rejects.toThrow('No media bridge for this call');
+    await expect(page.signal('c1', 'deleteEverything', {})).rejects.toThrow('Unknown media signalling operation');
+    await handle.close();
+    await expect(page.signal('c1', 'rtpCapabilities', {})).rejects.toThrow('No media bridge for this call');
+  });
+
+  it('runCallMediaSignal maps every operation of the protocol onto the signalling', async () => {
+    const s = fakeSignaling() as unknown as CallMediaSignaling;
+    await runCallMediaSignal(s, 'rtpCapabilities', {});
+    await runCallMediaSignal(s, 'produce', { transportId: 'T', kind: 'audio', rtpParameters: { codecs: [] } });
+    await runCallMediaSignal(s, 'consume', { transportId: 'T', producerId: 'P', rtpCapabilities: { codecs: [] } });
+    await runCallMediaSignal(s, 'resumeConsumer', { consumerId: 'C' });
+    await runCallMediaSignal(s, 'closeConsumer', { consumerId: 'C' });
+    expect((s as any).produce).toHaveBeenCalledWith('T', 'audio', { codecs: [] });
+    expect((s as any).consume).toHaveBeenCalledWith('T', 'P', { codecs: [] });
+    expect((s as any).resumeConsumer).toHaveBeenCalledWith('C');
+    expect((s as any).closeConsumer).toHaveBeenCalledWith('C');
+    await expect(runCallMediaSignal(s, 'nope', {})).rejects.toThrow('Unknown media signalling operation');
   });
 });

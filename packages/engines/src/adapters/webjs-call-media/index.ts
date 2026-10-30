@@ -1,14 +1,22 @@
 // MultiWA Gateway - call media for the whatsapp-web.js engine (Node side)
 // packages/engines/src/adapters/webjs-call-media/index.ts
 //
-// Thin wrapper: every method runs one function of ./page inside the profile's WhatsApp Web page, and those
-// functions check the call id themselves. The wrapper keeps only a little bookkeeping: the recording slot (which
-// sink gets the chunks, and the start in progress, so a stop can wait for it), the recording binding per page, and
-// the last probe and setup problem it logged (a problem that stays is logged once). Only used when
-// EngineConfig.callMedia.enabled (the server switch CALLS_MEDIA_ENABLED).
+// Thin wrapper: every method runs one function of ./page (the media bridge: ./bridge-page) inside the profile's
+// WhatsApp Web page, and those functions check the call id themselves. The wrapper keeps only a little bookkeeping:
+// the recording slot (which sink gets the chunks, and the start in progress, so a stop can wait for it), the
+// recording binding per page, the media bridge slot, and the last probe and setup problem it logged (a problem that
+// stays is logged once). Only used when EngineConfig.callMedia.enabled (the server switch CALLS_MEDIA_ENABLED).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CallMediaEngine, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
+import type { CallMediaEngine, CallMediaHandle, CallMediaSignaling, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
+import {
+  attachCallerInPage,
+  closeBridgeInPage,
+  connectAgentInPage,
+  disconnectAgentInPage,
+  hasMediasoupClient,
+  startBridgeInPage,
+} from './bridge-page';
 import {
   installCallMediaHooks,
   prepareCallMediaPage,
@@ -22,6 +30,26 @@ import {
 
 /** The in-page functions, under a namespace: they only work inside the page (page.evaluate), never in Node. */
 export * as callMediaPage from './page';
+
+/** The media bridge's in-page functions, under a namespace: they only work inside the page (page.evaluate). */
+export * as callMediaBridge from './bridge-page';
+
+/**
+ * Run one operation of the media signalling protocol on a room's signalling: the page bridge's binding uses it, and so
+ * does the agent's `call:media` socket command. Unknown operations are refused; the room checks everything else.
+ */
+export async function runCallMediaSignal(s: CallMediaSignaling, op: string, a: any): Promise<unknown> {
+  switch (op) {
+    case 'rtpCapabilities': return s.rtpCapabilities();
+    case 'createTransport': return s.createTransport(a?.direction);
+    case 'connectTransport': return s.connectTransport(a?.transportId, a?.dtlsParameters);
+    case 'produce': return s.produce(a?.transportId, a?.kind, a?.rtpParameters);
+    case 'consume': return s.consume(a?.transportId, a?.producerId, a?.rtpCapabilities);
+    case 'resumeConsumer': return s.resumeConsumer(a?.consumerId);
+    case 'closeConsumer': return s.closeConsumer(a?.consumerId);
+    default: throw new Error('Unknown media signalling operation');
+  }
+}
 
 /**
  * Chrome flags for call media:
@@ -82,6 +110,10 @@ export class WebJsCallMedia implements CallMediaEngine {
    * `started` settles when the start does (bound, and the in-page recorder running, or failed): a stop waits for it.
    */
   private recording: { callId: string; onChunk: (chunk: Buffer) => void; started: Promise<void> } | null = null;
+  /** The media bridge in progress (startCallMedia) and its room's signalling: the bridge binding serves only this. */
+  private bridge: { callId: string; signaling: CallMediaSignaling } | null = null;
+  /** The bridge binding per page object, like `bindings` for the recording one. */
+  private readonly bridgeBindings = new WeakMap<object, Promise<void>>();
   /** The probe error logged last: a probe that keeps failing the same way logs once. */
   private probeError: string | null = null;
   /** The setup problem warned about last: ready repeats 5-12 times per sync, so a problem that stays warns once. */
@@ -191,6 +223,64 @@ export class WebJsCallMedia implements CallMediaEngine {
       return await page.evaluate(stopRecordingInPage, callId);
     } finally {
       if (this.recording === slot) this.recording = null;
+    }
+  }
+
+  async startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle> {
+    const page = this.requirePage();
+    if (this.bridge) throw new Error('Media bridge already running');
+    const slot = { callId, signaling };
+    this.bridge = slot; // taken before the first await
+    try {
+      await this.bindBridge(page);
+      if (!(await page.evaluate(hasMediasoupClient))) await page.evaluate(mediasoupClientBundle());
+      const { callerProducerId } = await page.evaluate(startBridgeInPage, callId);
+      return {
+        callerProducerId,
+        attachCaller: () => page.evaluate(attachCallerInPage, callId),
+        connectAgent: (producerId: string) => page.evaluate(connectAgentInPage, callId, producerId),
+        disconnectAgent: () => page.evaluate(disconnectAgentInPage, callId),
+        close: async () => {
+          try {
+            await page.evaluate(closeBridgeInPage, callId);
+          } finally {
+            if (this.bridge === slot) this.bridge = null;
+          }
+        },
+      };
+    } catch (e) {
+      if (this.bridge === slot) this.bridge = null;
+      await page.evaluate(closeBridgeInPage, callId).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  /** One bridge binding per page object; puppeteer keeps it across navigations. Same pattern as bindRecording. */
+  private async bindBridge(page: any): Promise<void> {
+    let bound = this.bridgeBindings.get(page);
+    if (!bound) {
+      bound = this.exposeBridge(page);
+      this.bridgeBindings.set(page, bound);
+    }
+    try {
+      await bound;
+    } catch (e) {
+      if (this.bridgeBindings.get(page) === bound) this.bridgeBindings.delete(page);
+      throw e;
+    }
+  }
+
+  private async exposeBridge(page: any): Promise<void> {
+    try {
+      // The whole page can call a binding, WhatsApp Web's own scripts included: it serves only the current bridge's
+      // call, and the room allows the page peer nothing beyond its own role.
+      await page.exposeFunction('__mwBridgeSignal', async (callId: string, op: string, json: string) => {
+        const slot = this.bridge;
+        if (!slot || slot.callId !== callId) throw new Error('No media bridge for this call');
+        return JSON.stringify((await runCallMediaSignal(slot.signaling, op, JSON.parse(json))) ?? null);
+      });
+    } catch (e) {
+      if (!/already exists/.test(String((e as Error)?.message))) throw e; // an earlier attempt still holds our binding
     }
   }
 
