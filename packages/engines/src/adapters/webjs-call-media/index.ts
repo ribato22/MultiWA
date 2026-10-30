@@ -6,6 +6,8 @@
 // sink gets the chunks, and the start in progress, so a stop can wait for it), the recording binding per page, and
 // the last probe and setup problem it logged (a problem that stays is logged once). Only used when
 // EngineConfig.callMedia.enabled (the server switch CALLS_MEDIA_ENABLED).
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CallMediaEngine, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
 import {
   installCallMediaHooks,
@@ -42,6 +44,15 @@ export const CALL_MEDIA_CHROME_ARGS = [
  * but forwards it to puppeteer, which takes a string as well.)
  */
 export const CALL_MEDIA_INIT_SCRIPT = `(${installCallMediaHooks.toString()})();`;
+
+let mediasoupClientSource: string | null = null;
+/**
+ * The mediasoup-client browser bundle: one script that defines `mediasoupClient` (built by
+ * scripts/bundle-mediasoup-client.mjs at package build). The media bridge evaluates it into the page; read once.
+ */
+export function mediasoupClientBundle(): string {
+  return (mediasoupClientSource ??= readFileSync(join(__dirname, 'mediasoup-client.iife.js'), 'utf8'));
+}
 
 const DEFAULT_ANSWER_TIMEOUT_MS = 15_000;
 const HANG_UP_TIMEOUT_MS = 10_000;

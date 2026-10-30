@@ -6,7 +6,14 @@ import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Script } from 'node:vm';
-import { CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, WhatsAppWebJsAdapter, callMediaPage } from '@multiwa/engines';
+import {
+  CALL_MEDIA_CHROME_ARGS,
+  CALL_MEDIA_INIT_SCRIPT,
+  WebJsCallMedia,
+  WhatsAppWebJsAdapter,
+  callMediaPage,
+  mediasoupClientBundle,
+} from '@multiwa/engines';
 import type { EngineConfig } from '@multiwa/engines';
 
 const { prepareCallMediaPage, answerActiveCall, hangUpActiveCall, playAnnouncementInPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
@@ -61,6 +68,13 @@ describe('call media launch pieces', () => {
     expect(CALL_MEDIA_CHROME_ARGS).toEqual(
       expect.arrayContaining(['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--mute-audio']),
     );
+  });
+
+  it('the mediasoup-client page bundle is built next to the module: one script that defines mediasoupClient', () => {
+    const src = mediasoupClientBundle();
+    expect(src.startsWith('"use strict";var mediasoupClient=')).toBe(true);
+    expect(src).toContain('3.25.3'); // the pinned version (mediasoupClient.version)
+    expect(() => new Script(src)).not.toThrow(); // compile only, never run in Node
   });
 });
 
