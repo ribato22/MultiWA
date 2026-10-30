@@ -15,6 +15,7 @@ function makeMetrics() {
     messagesSentTotal: { inc: vi.fn() },
     messagesFailedTotal: { inc: vi.fn() },
     connectedProfiles: { inc: vi.fn(), dec: vi.fn(), set: vi.fn() },
+    callsMediaWorkerDeathsTotal: { inc: vi.fn() },
   } as any;
 }
 
@@ -56,5 +57,10 @@ describe('MetricsEventsListener', () => {
 
     listener.onConnectionDisconnected();
     expect(metrics.connectedProfiles.dec).toHaveBeenCalledOnce();
+  });
+
+  it('counts a death of the call media worker', () => {
+    listener.onCallsMediaWorkerDied({ calls: 2 });
+    expect(metrics.callsMediaWorkerDeathsTotal.inc).toHaveBeenCalledTimes(1);
   });
 });

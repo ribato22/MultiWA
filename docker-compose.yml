@@ -90,6 +90,13 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_BUCKET: ${S3_BUCKET:-multiwa-media}
+      # Calls answered in the dashboard (phase 2): off by default. Media is UDP+TCP straight to the api, never through
+      # the HTTP proxy: switched on, add docker-compose.calls-media.yml, which publishes the media port.
+      CALLS_MEDIA_ENABLED: ${CALLS_MEDIA_ENABLED:-false}
+      CALLS_MEDIA_PORT: ${CALLS_MEDIA_PORT:-40000}
+      CALLS_MEDIA_ANNOUNCED_ADDRESS: ${CALLS_MEDIA_ANNOUNCED_ADDRESS:-}
+      CALLS_MEDIA_LISTEN_IP: ${CALLS_MEDIA_LISTEN_IP:-}
+      CALLS_MEDIA_ICE_SERVERS: ${CALLS_MEDIA_ICE_SERVERS:-}
     ports:
       - "${API_PORT:-3333}:3333"
     volumes:

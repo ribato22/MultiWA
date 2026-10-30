@@ -12,6 +12,7 @@ import { AppEvents } from '@multiwa/core';
 import { MetricsService } from './metrics.service';
 import {
   InternalEvents,
+  type CallsMediaWorkerDiedPayload,
   type EngineAckDroppedPayload,
   type EngineGroupFetchPayload,
 } from './internal-events';
@@ -85,6 +86,15 @@ export class MetricsEventsListener implements OnModuleInit {
       this.metrics.engineAckDroppedTotal.inc();
     } catch (err) {
       this.logger.debug(`engineAckDropped metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.CALLS_MEDIA_WORKER_DIED)
+  onCallsMediaWorkerDied(_payload: CallsMediaWorkerDiedPayload): void {
+    try {
+      this.metrics.callsMediaWorkerDeathsTotal.inc();
+    } catch (err) {
+      this.logger.debug(`callsMediaWorkerDied metric failed: ${(err as Error).message}`);
     }
   }
 }

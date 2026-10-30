@@ -38,6 +38,27 @@ COPY packages/n8n-nodes-multiwa/package.json ./packages/n8n-nodes-multiwa/
 # puppeteer >= 20 reads PUPPETEER_SKIP_DOWNLOAD; the engine uses the system Chromium, so skip its ~600 MB Chrome download.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 
+# mediasoup (the call media server) downloads a prebuilt worker matched to the BUILD host's kernel, and the kernel-7
+# builds need glibc 2.38 (Debian 12 has 2.36). Pin the kernel-6 build by checksum and point mediasoup at it: its
+# postinstall then skips the download, and the runtime uses this binary. The image fails here if it does not run
+# (run bare it exits 41: "you don't seem to be my real father", i.e. it loaded). The ARG must not be called
+# MEDIASOUP_VERSION: an ARG is in the environment of every RUN, and the worker reads that variable to tell that
+# mediasoup spawned it, so the bare run would abort on its missing channel instead of exiting 41.
+ARG MEDIASOUP_WORKER_VERSION=3.32.0
+ARG TARGETARCH
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) arch=x64; sum=3d98dc6de751958c46dc5b058b3571c1fde1bf6d4f7ff876855d4246650ef5da ;; \
+      arm64) arch=arm64; sum=a62c8ebc8f2591e7c4f9bc697d52e7ea8c36dc12dd085e9b5694e0cd670c5612 ;; \
+      *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/versatica/mediasoup/releases/download/${MEDIASOUP_WORKER_VERSION}/mediasoup-worker-${MEDIASOUP_WORKER_VERSION}-linux-${arch}-kernel6.tgz"; \
+    node -e "fetch(process.argv[1]).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); }).then((b) => require('fs').writeFileSync('/tmp/mediasoup-worker.tgz', Buffer.from(b)))" "$url"; \
+    echo "${sum}  /tmp/mediasoup-worker.tgz" | sha256sum -c -; \
+    mkdir -p /opt/mediasoup && tar -xzf /tmp/mediasoup-worker.tgz -C /opt/mediasoup && rm /tmp/mediasoup-worker.tgz; \
+    /opt/mediasoup/mediasoup-worker >/dev/null 2>&1 || test $? -eq 41
+ENV MEDIASOUP_WORKER_BIN=/opt/mediasoup/mediasoup-worker
+
 # Install exactly what pnpm-lock.yaml pins
 RUN pnpm install --frozen-lockfile --filter @multiwa/api... --filter @multiwa/admin...
 
@@ -103,6 +124,11 @@ COPY --from=builder /app/packages/n8n-nodes-multiwa/package.json ./packages/n8n-
 
 # puppeteer >= 20 reads PUPPETEER_SKIP_DOWNLOAD; the engine uses the system Chromium, so skip its ~600 MB Chrome download.
 ENV PUPPETEER_SKIP_DOWNLOAD=true
+
+# The pinned mediasoup worker from the builder (see there): for the prod install's postinstall and the runtime.
+COPY --from=builder /opt/mediasoup /opt/mediasoup
+ENV MEDIASOUP_WORKER_BIN=/opt/mediasoup/mediasoup-worker
+RUN /opt/mediasoup/mediasoup-worker >/dev/null 2>&1 || test $? -eq 41
 
 # Install production deps only
 RUN pnpm install --frozen-lockfile --prod --filter @multiwa/api...

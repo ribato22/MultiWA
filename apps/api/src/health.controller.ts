@@ -5,10 +5,13 @@ import { Controller, Get, HttpStatus, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { FastifyReply } from 'fastify';
 import { prisma } from '@multiwa/database';
+import { CallMediaService } from './modules/calls/media/call-media.service';
 
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
+  constructor(private readonly callMedia: CallMediaService) {}
+
   @Get()
   @ApiOperation({ summary: 'Health check endpoint' })
   @ApiResponse({ status: 200, description: 'API is healthy' })
@@ -19,6 +22,7 @@ export class HealthController {
       version: '3.0.0',
       service: 'multiwa-gateway-api',
       uptime: process.uptime(),
+      callsMedia: this.callMedia.publicStatus(),
     };
   }
 

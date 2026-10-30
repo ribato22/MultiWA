@@ -201,9 +201,66 @@ export interface CallMediaSupport {
 }
 
 /**
+ * The call's media room as the WhatsApp Web page sees it: the server side of the in-page media bridge (a
+ * mediasoup-client peer). Values are mediasoup's JSON objects, opaque to the engine. The room decides what a peer
+ * may do: the page has one send and one receive transport, produces exactly one track (the caller), and may consume
+ * only the agent.
+ */
+export interface CallMediaSignaling {
+  rtpCapabilities(): Promise<unknown>;
+  createTransport(direction: 'send' | 'recv'): Promise<unknown>;
+  connectTransport(transportId: string, dtlsParameters: unknown): Promise<void>;
+  produce(transportId: string, kind: string, rtpParameters: unknown): Promise<{ id: string }>;
+  consume(transportId: string, producerId: string, rtpCapabilities: unknown): Promise<unknown>;
+  resumeConsumer(consumerId: string): Promise<void>;
+  closeConsumer(consumerId: string): Promise<void>;
+}
+
+/**
+ * The call's media bridge in the page (CallMediaEngine.startCallMedia). Its operations run in call order, one at a time,
+ * in two queues: attachCaller on its own, connectAgent and disconnectAgent together. A failure does not stop the next
+ * one; each rejects "Media bridge closed" once the bridge is closed. An operation the coordinator stopped waiting for is
+ * NOT cancelled: it still runs when its turn comes, unless the slot was closed, so a disconnectAgent() queued after a
+ * timed-out connectAgent() undoes it. The page refuses attachCaller and connectAgent for a call that is not WhatsApp's
+ * active call ("Call is not the active call"), and releases the whole bridge by itself 250-500 ms after its call is
+ * over. The engine's slot stays held until close() or closeCallMedia().
+ */
+export interface CallMediaHandle {
+  /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
+  readonly callerProducerId: string;
+  /**
+   * Swap "caller" from silence to WhatsApp Web's playback of the caller (callerTap, waiting up to 5 s for it). Call it
+   * once the call is connected: WhatsApp Web plays the caller only after it accepted. Resolves with how the tap was
+   * chosen; more than one fresh candidate, or the fallback, means the pick was a guess. A tap whose track ends
+   * mid-call leaves the agent hearing silence: call attachCaller() again.
+   */
+  attachCaller(): Promise<{ via: 'element' | 'destination'; freshCandidates: number; fallback: boolean }>;
+  /**
+   * Feed the agent's producer into the call's microphone (`inputs.agent`). One agent at a time. A connect that fails
+   * undoes itself in the page and in the room (no consumer is left behind), so a retry starts clean. To connect an
+   * agent again (its browser reconnected and produced anew), call disconnectAgent() first: the page is not told when
+   * the room closes the agent's producer, so connectAgent() would otherwise reject "Agent already connected".
+   */
+  connectAgent(agentProducerId: string): Promise<void>;
+  /**
+   * Take the agent off the microphone, by disconnecting it (not by gain). Does nothing when no agent is connected.
+   * Rejects "No media bridge for this call" once the page has released the bridge (the call already ended, say): treat
+   * that as done.
+   */
+  disconnectAgent(): Promise<void>;
+  /**
+   * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
+   * closed") and still frees the slot, so close the room regardless of the outcome: the room closes its own side. It
+   * does nothing once the bridge was closed (also by closeCallMedia), or when a newer bridge of the same call runs.
+   */
+  close(): Promise<void>;
+}
+
+/**
  * Call-media primitives of an engine that runs WhatsApp Web in a browser (whatsapp-web.js only).
- * Every method that takes a call id refuses another one: answer, hangUp, playAnnouncement and startRecording
- * act on WhatsApp's ACTIVE call only; stopRecording stops only the recording of that call (also after it ended).
+ * Every method that takes a call id refuses another one: answer, hangUp, playAnnouncement, startRecording and
+ * startCallMedia act on WhatsApp's ACTIVE call only; stopRecording stops only the recording of that call (also after
+ * it ended).
  * Every method runs in the browser page, and on a hung page any of them can wait up to puppeteer's protocol timeout
  * (the adapter sets 240 s), whatever deadline it has inside the page: the coordinator puts its own deadline around
  * these calls.
@@ -258,6 +315,25 @@ export interface CallMediaEngine {
    * It needs no WhatsApp readiness, so it also works after a disconnect, while the page still holds the recorder.
    */
   stopRecording(callId: string): Promise<{ durationMs: number }>;
+  /**
+   * Start the call's media bridge in the page. It evaluates mediasoup-client into the page (once per document),
+   * loads the room's capabilities, creates the bridge's send and receive transports, and produces "caller" on silence.
+   * Call it while the call RINGS, before `answer`, so media is ready when the call connects; close the handle when
+   * the call ends. One bridge at a time: a second start rejects "Media bridge already running". A start that fails
+   * releases what it created in the page, but the ROOM keeps the transports the page opened: a retry needs a new room.
+   * Like every method here it runs in the page, so the coordinator bounds it with a deadline. A start it stopped
+   * waiting for can still finish: `closeCallMedia(callId)` then frees the slot at once, and the late start closes its
+   * page bridge and rejects, with "Media bridge closed", "No media bridge for this call" or a room error: do not
+   * depend on which.
+   */
+  startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle>;
+  /**
+   * The coordinator's teardown on EVERY end path, handle-less, so it also covers a start it gave up waiting for (which
+   * never produced a handle). Frees the engine's bridge slot when it belongs to `callId`, then closes the page's
+   * bridge of that call. It needs no WhatsApp readiness (after a disconnect the page can still hold the bridge), never
+   * rejects, and is idempotent. The room is the coordinator's to close.
+   */
+  closeCallMedia(callId: string): Promise<void>;
 }
 
 /**
