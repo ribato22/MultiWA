@@ -413,6 +413,8 @@ Calls answered in the dashboard can be recorded (`PUT /profiles/:id/calls-settin
 
 The same nightly job deletes the recordings older than each profile's retention period (`retentionDays`, 90 by default). It also deletes the files nothing points at any more (for one, those of a deleted workspace or organization; a deleted profile's files are deleted with it). The stock Compose files pass all five settings below to the API.
 
+> ⚠️ **One recordings location per MultiWA database**: never point two installations, or a restored copy, at the same bucket and prefix or the same directory — each night each would delete the other's files.
+
 ### `CALL_RECORDINGS_STORAGE`
 **Optional** | `local` / `s3` | Default: `STORAGE_TYPE`, else `local`
 
