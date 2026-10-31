@@ -8,6 +8,7 @@ import { EngineManagerService } from './engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
 import { mergeProfileSettings } from './profile-settings';
+import { CallRecordingsService } from '../calls/recordings/call-recordings.service';
 
 /** The keys of the settings JSON a profile update sets (the call recording keys have routes of their own). */
 const SETTINGS_KEYS = ['autoRejectCalls', 'autoRejectCallMessage', 'callReplyMessage', 'quietAlarmHours', 'quietAlarmNotify'] as const;
@@ -20,6 +21,8 @@ export class ProfilesService {
     // Engine commands client — used to drive the worker-hosted engine when
     // ENGINE_HOST=worker; unused (idle) when ENGINE_HOST=api.
     private readonly engineCommands: EngineCommandsService,
+    // A profile's recording rows go with it (the cascade): their files, and the announcement, are deleted first.
+    private readonly recordings: CallRecordingsService,
   ) {}
 
   async findAll(organizationId: string, workspaceId?: string) {
@@ -152,7 +155,8 @@ export class ProfilesService {
     
     // Disconnect if connected
     await this.disconnect(id).catch(() => {});
-    
+
+    await this.recordings.purgeProfile(id);
     await prisma.profile.delete({ where: { id } });
     return { success: true };
   }

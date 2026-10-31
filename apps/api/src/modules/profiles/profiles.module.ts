@@ -9,6 +9,7 @@ import { EngineManagerService } from './engine-manager.service';
 import { EventsGateway } from '../events/events.gateway';
 import { AutomationModule } from '../automation/automation.module';
 import { MessagesModule } from '../messages/messages.module';
+import { CallRecordingsModule } from '../calls/recordings/call-recordings.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { MessagesModule } from '../messages/messages.module';
     // EngineManagerService sends the auto-reject reply of a call through MessagesService (send gate);
     // MessagesModule imports this module back, hence forwardRef on both sides.
     forwardRef(() => MessagesModule),
+    CallRecordingsModule,
   ],
   controllers: [ProfilesController],
   providers: [

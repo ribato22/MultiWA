@@ -8,7 +8,7 @@ vi.mock('@multiwa/database', () => ({
     user: { findUnique: vi.fn() },
     workspace: { create: vi.fn() },
     account: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
-    profile: { create: vi.fn() },
+    profile: { create: vi.fn(), delete: vi.fn() },
   },
 }));
 
@@ -24,7 +24,7 @@ describe('AccountsService', () => {
     vi.mocked(prisma.account.findMany).mockReset();
     vi.mocked(prisma.account.create).mockReset();
 
-    service = new AccountsService({} as any, {} as any);
+    service = new AccountsService({} as any, {} as any, {} as any);
   });
 
   describe('findAll', () => {
@@ -109,6 +109,16 @@ describe('AccountsService', () => {
     it('defaults to whatsapp-web-js when no engine is provided', async () => {
       await service.createProfile('a1', { displayName: 'x' });
       expect(createdEngine()).toBe('whatsapp-web-js');
+    });
+  });
+
+  describe('deleteProfile', () => {
+    it("deletes the profile's recording files first, then the profile", async () => {
+      const purgeProfile = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(prisma.profile.delete).mockReset().mockResolvedValue({ id: 'p1' } as any);
+      await new AccountsService({} as any, {} as any, { purgeProfile } as any).deleteProfile('a1', 'p1');
+      expect(purgeProfile).toHaveBeenCalledWith('p1');
+      expect(purgeProfile.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(prisma.profile.delete).mock.invocationCallOrder[0]);
     });
   });
 });

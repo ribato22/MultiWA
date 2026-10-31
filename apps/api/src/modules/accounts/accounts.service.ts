@@ -6,6 +6,7 @@ import { prisma } from '@multiwa/database';
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { CallRecordingsService } from '../calls/recordings/call-recordings.service';
 
 @Injectable()
 export class AccountsService {
@@ -15,6 +16,7 @@ export class AccountsService {
     @Inject(forwardRef(() => EngineManagerService))
     private readonly engineManager: EngineManagerService,
     private readonly engineCommands: EngineCommandsService,
+    private readonly recordings: CallRecordingsService,
   ) {}
 
   async findAll(userId: string) {
@@ -189,6 +191,8 @@ export class AccountsService {
   }
 
   async deleteProfile(accountId: string, profileId: string) {
+    // As DELETE /profiles/:id: the recording files and the announcement go before the rows that point at them.
+    await this.recordings.purgeProfile(profileId);
     return prisma.profile.delete({
       where: { id: profileId },
     });

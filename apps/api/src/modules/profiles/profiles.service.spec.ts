@@ -5,7 +5,7 @@ import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ValidationPipe } from '@nestjs/common';
 
-vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), update: vi.fn() } } }));
+vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() } } }));
 vi.mock('./engine-manager.service', () => ({ EngineManagerService: class {} }));
 vi.mock('./profile-settings', () => ({ mergeProfileSettings: vi.fn() }));
 
@@ -16,7 +16,7 @@ import { mergeProfileSettings } from './profile-settings';
 
 const db = prisma as any;
 const merge = vi.mocked(mergeProfileSettings);
-const update = (dto: UpdateProfileDto) => new ProfilesService({} as any, {} as any).update('p1', dto);
+const update = (dto: UpdateProfileDto) => new ProfilesService({} as any, {} as any, {} as any).update('p1', dto);
 const savedData = () => db.profile.update.mock.calls[0][0].data;
 
 beforeEach(() => {
@@ -70,5 +70,30 @@ describe('UpdateProfileDto callReplyMessage', () => {
     expect(await body({ callReplyMessage: 'Call back soon', unknownField: 1 })).toEqual({ callReplyMessage: 'Call back soon' });
     const refused: any = await body({ callReplyMessage: 42 }).then(() => null, (e) => e);
     expect(JSON.stringify(refused?.getResponse())).toContain('callReplyMessage must be a string');
+  });
+});
+
+// A profile's calls cascade with it, and so do their recordings' rows: their files (and the announcement) must go first,
+// or nothing would point at them any more (the nightly sweep would remove them within a day).
+describe('ProfilesService.delete', () => {
+  const make = (purgeProfile: ReturnType<typeof vi.fn>) => {
+    const service = new ProfilesService({} as any, {} as any, { purgeProfile } as any);
+    vi.spyOn(service, 'findOne').mockResolvedValue({} as any);
+    vi.spyOn(service, 'disconnect').mockResolvedValue({ status: 'disconnected' } as any);
+    return service;
+  };
+
+  it("deletes the profile's recording files and announcement first, then the profile", async () => {
+    const purgeProfile = vi.fn().mockResolvedValue(undefined);
+    db.profile.delete.mockReset().mockResolvedValue({});
+    expect(await make(purgeProfile).delete('p1')).toEqual({ success: true });
+    expect(purgeProfile).toHaveBeenCalledWith('p1');
+    expect(purgeProfile.mock.invocationCallOrder[0]).toBeLessThan(db.profile.delete.mock.invocationCallOrder[0]);
+  });
+
+  it('a purge that fails on the database leaves the profile in place', async () => {
+    db.profile.delete.mockReset();
+    await expect(make(vi.fn().mockRejectedValue(new Error('db down'))).delete('p1')).rejects.toThrow('db down');
+    expect(db.profile.delete).not.toHaveBeenCalled();
   });
 });
