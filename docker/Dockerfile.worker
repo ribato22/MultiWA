@@ -115,6 +115,12 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 # Install production dependencies only
 RUN pnpm install --frozen-lockfile --prod --filter @multiwa/worker...
 
+# The file-type check again (see the builder stage): what ships comes from this install, which applies the patch on
+# its own.
+RUN f="$(find /app/node_modules/.pnpm -path '*file-type@16.5.4*/core.js' | head -1)" \
+    && test -n "$f" && grep -qF 'if (!Number.isFinite(payload) || payload < 0) break;' "$f" \
+    || (echo "::error::file-type patch NOT applied (patches/file-type@16.5.4.patch)" && exit 1)
+
 # Copy built worker and workspace packages
 COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
 COPY --from=builder /app/packages/core ./packages/core
