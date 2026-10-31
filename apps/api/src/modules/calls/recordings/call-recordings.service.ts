@@ -4,8 +4,10 @@
 // A recording is personal data. It is read only through here, by an owner or admin of the call's organization, and a
 // play or a download is audited BEFORE a byte is sent: a read that cannot be audited is refused. It is deleted by an
 // admin or by its profile's retention period, the row claimed first (deletedAt) and the file after, so a file whose
-// delete failed is an orphan for the nightly sweep, never a recording that looks alive without its file.
-import { Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+// delete failed is an orphan for the nightly sweep, never a recording that looks alive without its file. A recording
+// in another storage than this server's is neither played nor deleted here: its row claimed, its file would stay for
+// good, as no sweep of this server lists it.
+import { ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { Readable } from 'stream';
 import { prisma } from '@multiwa/database';
@@ -14,14 +16,22 @@ import { AuditService } from '../../audit/audit.service';
 import { InternalEvents, type CallRecordingsPrivacyPayload } from '../../../metrics/internal-events';
 import { announcementOf, retentionDaysOf } from '../../profiles/profile-settings';
 import { parseByteRange } from './byte-range';
-import { RECORDING_STORE, isStoreKey, type PrivacyCheck, type PrivacyFailure, type RecordingStore, type StoredObject } from './recording-store';
+import {
+  RECORDING_STORE, isAnnouncementOf, isStoreKey, type PrivacyCheck, type PrivacyFailure, type RecordingStore, type StoredObject,
+} from './recording-store';
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const message = (e: unknown) => clean((e as Error)?.message ?? e);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_BATCH = 100;
-const SWEEP_BATCH = 500;
+/** The sweep looks up this many listed objects at a time. */
+export const SWEEP_BATCH = 500;
+/** A user's reads of one recording, by one action, are audited once in this time (see auditRead). */
+const AUDIT_WINDOW_MS = 10 * 60 * 1000;
+/** The audited reads remembered for the window; past it the oldest is forgotten, and its next read audited again. */
+const AUDIT_WINDOW_MAX = 10_000;
+const UNCONFIGURED = 'The recordings storage is not configured on this server';
 /**
  * An object younger than this may be a recording whose upload is done but whose row is not yet written (the upload
  * comes first), or an announcement whose settings are being written: the sweep leaves it for the next night.
@@ -45,10 +55,20 @@ interface RecordingRef {
   storageKey: string;
 }
 
+/** Who reads a recording, and from where (as AuditService.fromRequest has it). */
+export interface RecordingReader {
+  userId: string;
+  organizationId: string;
+  ip?: string;
+  userAgent?: string;
+}
+
 @Injectable()
 export class CallRecordingsService {
   private readonly logger = new Logger(CallRecordingsService.name);
   private lastCheck: { at: string; ok: boolean; reason?: PrivacyFailure } | null = null;
+  /** `${userId}:${recordingId}:${action}` → when that read was audited. In insertion order: the first is the oldest. */
+  private readonly audited = new Map<string, number>();
 
   constructor(
     @Inject(RECORDING_STORE) private readonly store: RecordingStore,
@@ -65,28 +85,44 @@ export class CallRecordingsService {
   async checkStorage(at = new Date()): Promise<PrivacyCheck> {
     const check = await this.store.checkPrivate();
     this.lastCheck = check.ok ? { at: at.toISOString(), ok: true } : { at: at.toISOString(), ok: false, reason: check.reason };
+    // An unconfigured storage is no check: neither counted nor warned about, or an install without recordings would
+    // warn every night.
     if (check.ok || check.reason !== 'recordings_storage_unset') {
       const payload: CallRecordingsPrivacyPayload = { result: check.ok ? 'ok' : check.reason === 'storage_not_private' ? 'not_private' : 'check_failed' };
       this.emit(InternalEvents.CALL_RECORDINGS_PRIVACY, payload);
+      if (!check.ok) this.logger.warn(`The call recordings storage check failed (${check.reason}): ${clean(check.detail)}`);
     }
-    if (!check.ok) this.logger.warn(`The call recordings storage check failed (${check.reason}): ${clean(check.detail)}`);
     return check;
   }
 
-  /** Why the profile cannot record now (its announcement, then the storage); empty when it can. */
-  async recordingReasons(settings: Record<string, unknown>): Promise<RecordingReason[]> {
+  /**
+   * Why the profile cannot record now (its announcement, then the storage); empty when it can. An unconfigured storage
+   * is the one reason then, and a storage that cannot even say whether the announcement is there fails the check
+   * without a probe: the storage is the problem, not the announcement.
+   */
+  async recordingReasons(profileId: string, settings: Record<string, unknown>): Promise<RecordingReason[]> {
+    if (this.store.problem) return ['recordings_storage_unset'];
     const reasons: RecordingReason[] = [];
-    const announcement = announcementOf(settings);
-    const stored = announcement && !this.store.problem ? await this.store.size(announcement.storageKey).catch(() => null) : null;
-    if (stored === null) reasons.push('no_announcement');
+    const key = announcementOf(settings)?.storageKey;
+    // A key read back from the settings counts only when it is the profile's own announcement.
+    if (!key || !isAnnouncementOf(key, profileId)) reasons.push('no_announcement');
+    else {
+      const size = await this.store.size(key).catch((e: unknown) => {
+        this.logger.warn(`The announcement of profile ${clean(profileId)} could not be looked up in the call recordings storage: ${message(e)}`);
+        return undefined;
+      });
+      if (size === undefined) return ['storage_check_failed'];
+      if (size === null) reasons.push('no_announcement');
+    }
     const check = await this.checkStorage();
     if (!check.ok) reasons.push(check.reason);
     return reasons;
   }
 
   /** A call's recording for playback or a download: the audit first, then the bytes (or one range of them). */
-  async play(callId: string, actor: { userId: string; organizationId: string }, rangeHeader: string | undefined, download: boolean): Promise<Playback> {
+  async play(callId: string, actor: RecordingReader, rangeHeader: string | undefined, download: boolean): Promise<Playback> {
     const rec = await this.liveRecording(callId);
+    if (this.store.problem) throw new ServiceUnavailableException(UNCONFIGURED);
     if (rec.storageType !== this.store.type) throw new NotFoundException(`The recording is in ${rec.storageType} storage, which this server does not use now`);
     const size = await this.store.size(rec.storageKey);
     if (size === null) throw new NotFoundException('The recording file is missing');
@@ -100,32 +136,26 @@ export class CallRecordingsService {
     };
     if (range === 'unsatisfiable') return { status: 416, headers: { ...headers, 'Content-Range': `bytes */${size}` }, body: null };
     const { start, end } = range ?? { start: 0, end: size - 1 };
-    // A player reads in ranges as it seeks: a play or a download starts at the first byte, and is audited there, once.
-    if (start === 0) {
-      await this.audit
-        .log({
-          action: download ? 'call.recording.download' : 'call.recording.play',
-          userId: actor.userId,
-          organizationId: actor.organizationId,
-          resourceType: 'call',
-          resourceId: rec.callId,
-          metadata: { recordingId: rec.id, profileId: rec.profileId },
-        })
-        .catch((e) => {
-          this.logger.warn(`The recording of call ${rec.callId} was not served: its audit failed: ${message(e)}`);
-          throw new ServiceUnavailableException('The access could not be audited; try again');
-        });
-    }
+    await this.auditRead(rec, actor, download ? 'call.recording.download' : 'call.recording.play');
+    const body = await this.store.read(rec.storageKey, range ?? undefined).catch((e: unknown) => {
+      if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') throw new NotFoundException('The recording file is missing'); // gone since its size was read
+      throw e;
+    });
     return {
       status: range ? 206 : 200,
       headers: { ...headers, 'Content-Length': String(end - start + 1), ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}) },
-      body: await this.store.read(rec.storageKey, range ?? undefined),
+      body,
     };
   }
 
   /** An admin deletes a call's recording (DELETE /calls/:id/recording; the interceptor audits it). */
   async deleteByAdmin(callId: string, userId: string) {
     const rec = await this.liveRecording(callId);
+    // Before the row is claimed: claimed, a file this server cannot reach would stay for good.
+    if (this.store.problem) throw new ServiceUnavailableException(UNCONFIGURED);
+    if (rec.storageType !== this.store.type) {
+      throw new ConflictException(`The recording is in ${rec.storageType} storage, which this server does not use now: it cannot be deleted from here`);
+    }
     const deletedAt = await this.remove(rec, 'admin', userId);
     if (!deletedAt) throw new NotFoundException('This call has no recording'); // deleted meanwhile
     return { callId, recordingId: rec.id, deletedAt: deletedAt.toISOString() };
@@ -133,25 +163,37 @@ export class CallRecordingsService {
 
   /**
    * Before a profile is deleted: its recording files and its announcement. Its rows go with the profile (the cascade).
-   * A file whose delete fails is left to the nightly sweep, and the profile is deleted all the same.
+   * A file whose delete fails is left to the nightly sweep, and the profile is deleted all the same. A file in another
+   * storage than this server's is out of reach: its key goes to the log, for whoever can reach that storage.
    */
   async purgeProfile(profileId: string): Promise<void> {
     if (this.store.problem) return;
     const [rows, profile] = await Promise.all([
-      prisma.callRecording.findMany({ where: { profileId, deletedAt: null }, select: { storageKey: true } }),
+      prisma.callRecording.findMany({ where: { profileId, deletedAt: null }, select: { storageKey: true, storageType: true } }),
       prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } }),
     ]);
-    const keys = rows.map((r) => r.storageKey);
-    const announcement = announcementOf(profile?.settings);
-    if (announcement) keys.push(announcement.storageKey);
+    const elsewhere = rows.filter((r) => r.storageType !== this.store.type).map((r) => r.storageKey);
+    if (elsewhere.length) {
+      this.logger.warn(`Profile ${clean(profileId)} is deleted with recording files in another storage than this server's, which are left there: ${clean(elsewhere.join(', '))}`);
+    }
+    const keys = rows.filter((r) => r.storageType === this.store.type).map((r) => r.storageKey);
+    // A key read back from the settings is deleted only when it is the profile's own announcement.
+    const announcement = announcementOf(profile?.settings)?.storageKey;
+    if (announcement && isAnnouncementOf(announcement, profileId)) keys.push(announcement);
     for (const key of keys) {
       await this.store.delete(key).catch((e) => this.logger.warn(`A recording file of profile ${clean(profileId)} was not deleted (the nightly sweep will): ${message(e)}`));
     }
   }
 
-  /** Nightly: every recording older than its profile's retention period (callsRecordingRetentionDays, 90 days by default). */
+  /**
+   * Nightly: every recording older than its profile's retention period (callsRecordingRetentionDays, 90 days by
+   * default), of those in this server's storage: the others are counted in the log, as nothing here can delete them.
+   */
   async applyRetention(now: Date): Promise<number> {
-    const groups = await prisma.callRecording.groupBy({ by: ['profileId'], where: { deletedAt: null } });
+    if (this.store.problem) return 0;
+    const elsewhere = await prisma.callRecording.count({ where: { deletedAt: null, storageType: { not: this.store.type } } });
+    if (elsewhere) this.logger.warn(`${elsewhere} live call recording(s) are in another storage than this server's: retention cannot delete them`);
+    const groups = await prisma.callRecording.groupBy({ by: ['profileId'], where: { deletedAt: null, storageType: this.store.type } });
     if (!groups.length) return 0;
     const profiles = await prisma.profile.findMany({
       where: { id: { in: groups.map((g) => g.profileId) } },
@@ -162,7 +204,7 @@ export class CallRecordingsService {
       const before = new Date(now.getTime() - retentionDaysOf(profile.settings) * DAY_MS);
       for (;;) {
         const batch = await prisma.callRecording.findMany({
-          where: { profileId: profile.id, deletedAt: null, createdAt: { lt: before } },
+          where: { profileId: profile.id, deletedAt: null, storageType: this.store.type, createdAt: { lt: before } },
           orderBy: { createdAt: 'asc' },
           take: RETENTION_BATCH,
         });
@@ -206,7 +248,7 @@ export class CallRecordingsService {
           await this.store.delete(o.key);
           swept++;
         } catch (e) {
-          this.logger.warn(`An orphaned recording file was not deleted: ${message(e)}`);
+          this.logger.warn(`An orphaned recording file (${clean(o.key)}) was not deleted: ${message(e)}`);
         }
       }
       batch = [];
@@ -234,6 +276,39 @@ export class CallRecordingsService {
     const rec = await prisma.callRecording.findUnique({ where: { callId } });
     if (!rec || rec.deletedAt) throw new NotFoundException('This call has no recording');
     return rec;
+  }
+
+  // Every read is audited, as a player reads in ranges as it seeks: auditing only the reads from byte 0 would let
+  // `bytes=1-` and the known first byte rebuild the file unaudited. But once per user, recording and action in
+  // AUDIT_WINDOW_MS, so one listen is one entry. A read is remembered only once its audit is written (the retry of a
+  // refused one is audited again), and the window runs from the audited read: the reads within it never move it.
+  private async auditRead(rec: Omit<RecordingRef, 'storageKey'>, actor: RecordingReader, action: string): Promise<void> {
+    const key = `${actor.userId}:${rec.id}:${action}`;
+    const now = Date.now();
+    const at = this.audited.get(key);
+    if (at !== undefined && now - at < AUDIT_WINDOW_MS) return;
+    await this.audit
+      .log({
+        action,
+        userId: actor.userId,
+        organizationId: actor.organizationId,
+        resourceType: 'call',
+        resourceId: rec.callId,
+        metadata: { recordingId: rec.id, profileId: rec.profileId },
+        ip: actor.ip,
+        userAgent: actor.userAgent,
+      })
+      .catch((e) => {
+        this.logger.warn(`The recording of call ${rec.callId} was not served: its audit failed: ${message(e)}`);
+        throw new ServiceUnavailableException('The access could not be audited; try again');
+      });
+    // Taken out and put back, so the first entry stays the oldest; the bound forgets it, never an audit.
+    this.audited.delete(key);
+    if (this.audited.size >= AUDIT_WINDOW_MAX) {
+      const [oldest] = this.audited.keys();
+      this.audited.delete(oldest);
+    }
+    this.audited.set(key, now);
   }
 
   /** Claims the row, then deletes the file. When the recording was deleted, or null when another delete came first. */
