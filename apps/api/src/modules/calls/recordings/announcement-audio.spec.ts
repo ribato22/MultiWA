@@ -60,9 +60,52 @@ describe('inspectAnnouncement', () => {
     expect(refused.message).toContain('does not say how long it is');
   });
 
+  it('422 for a negative length (an Ogg Opus whose pre-skip passes its last granule position)', async () => {
+    const ogg = fixture('tone.ogg');
+    ogg.writeBigUInt64LE(0n, ogg.lastIndexOf('OggS') + 6); // the last page's granule, under the 312 samples of pre-skip
+    const refused = await inspectAnnouncement(ogg).catch((e) => e);
+    expect(refused).toBeInstanceOf(UnprocessableEntityException);
+    expect(refused.message).toContain('does not say how long it is');
+  });
+
   it('422 for longer than 30 seconds, saying how long it is', async () => {
     const refused = await inspectAnnouncement(fixture('long.mp3')).catch((e) => e);
     expect(refused).toBeInstanceOf(UnprocessableEntityException);
     expect(refused.message).toBe('The announcement must be at most 30 seconds; this one is 31 seconds');
+  });
+
+  it('30 s as an encoder writes it is not longer than 30 s; 0.15 s more is', async () => {
+    // 30 s of tone at 8 kbps: 30.17 s by its Info header, 30.38 s by its bytes (the header frame counts as audio).
+    expect((await inspectAnnouncement(fixture('thirty.mp3'))).durationSec).toBe(30.4);
+    const refused = await inspectAnnouncement(Buffer.concat([fixture('thirty.mp3'), Buffer.alloc(150)])).catch((e) => e);
+    expect(refused).toBeInstanceOf(UnprocessableEntityException);
+  });
+
+  it("422 for two mp3 files back to back: the first one's header says 30.2 s, the bytes 62 s", async () => {
+    const refused = await inspectAnnouncement(Buffer.concat([fixture('thirty.mp3'), fixture('long.mp3')])).catch((e) => e);
+    expect(refused).toBeInstanceOf(UnprocessableEntityException);
+    expect(refused.message).toBe('The announcement must be at most 30 seconds; this one is 62 seconds');
+  });
+
+  it('an ID3 tag (where a cover goes) is not counted as audio: the tone behind 64 KB of tag still reads 1.2 s', async () => {
+    // ID3v2.4 with 65536 bytes of padding (its size, 7 bits a byte: 0 4 0 0), in place of the tone's own 44-byte tag.
+    const tag = Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 4, 0, 0, 0, 4, 0, 0]), Buffer.alloc(65536)]);
+    expect((await inspectAnnouncement(Buffer.concat([tag, fixture('tone.mp3').subarray(44)]))).durationSec).toBe(1.2);
+  });
+
+  it("a WAV's length from its bytes too: a fact chunk saying 0.01 s of a 1-s file reads 1 s", async () => {
+    const wav = fixture('alaw.wav');
+    wav.writeUInt32LE(80, wav.indexOf('fact') + 8); // 80 samples at 8000 Hz
+    expect((await inspectAnnouncement(wav)).durationSec).toBe(1);
+  });
+
+  it('reads in a worker thread: a file that keeps the parser busy past the time limit is refused, and timers still fire', async () => {
+    let ticked = false;
+    setTimeout(() => (ticked = true), 20);
+    // 2 MB of 0xFF: the MPEG parser resyncs on every byte, ~1.8 s of CPU.
+    const refused = await inspectAnnouncement(Buffer.alloc(2 * 1024 * 1024, 0xff), { timeoutMs: 50 }).catch((e) => e);
+    expect(ticked).toBe(true);
+    expect(refused).toBeInstanceOf(UnsupportedMediaTypeException);
+    expect(refused.message).toContain('could not be read');
   });
 });
