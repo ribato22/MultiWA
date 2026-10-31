@@ -254,7 +254,15 @@ describe('CallRecordingsService.play: the audit window', () => {
     const { service, audit } = stored();
     await service.play(CALL, { ...ACTOR, userAgent: 'x'.repeat(16_000) }, undefined, false);
     expect(audit.log.mock.calls[0][0].userAgent).toHaveLength(16_000); // the audit keeps it whole
-    expect([...(service as any).audited.keys()]).toEqual([`u1::${'x'.repeat(512)}:r1:call.recording.play`]);
+    expect([...(service as any).audited.keys()]).toEqual([JSON.stringify(['u1', '', 'x'.repeat(512), 'r1', 'call.recording.play'])]);
+  });
+
+  // Joined with a separator, an IPv6 address and a user agent holding that separator could run together the same way.
+  it('two devices whose address and user agent run together alike are audited each', async () => {
+    const { service, audit } = stored();
+    await service.play(CALL, { ...ACTOR, ip: '2001:db8::1', userAgent: 'ab:Mozilla/5.0' }, 'bytes=0-3', false);
+    await service.play(CALL, { ...ACTOR, ip: '2001:db8::1:ab', userAgent: 'Mozilla/5.0' }, 'bytes=4-', false);
+    expect(audit.log.mock.calls.map(([e]) => e.ip)).toEqual(['2001:db8::1', '2001:db8::1:ab']);
   });
 
   it('a read whose audit failed (503) is not remembered: its retry is audited', async () => {
@@ -268,12 +276,13 @@ describe('CallRecordingsService.play: the audit window', () => {
   it('at 10 000 remembered reads the oldest is forgotten, and a new read is audited all the same', async () => {
     const { service, audit } = stored();
     const audited: Map<string, number> = (service as any).audited;
-    for (let i = 0; i < 10_000; i++) audited.set(`user${i}:::r1:call.recording.play`, NOW.getTime());
+    const key = (userId: string) => JSON.stringify([userId, '', '', 'r1', 'call.recording.play']);
+    for (let i = 0; i < 10_000; i++) audited.set(key(`user${i}`), NOW.getTime());
     await service.play(CALL, ACTOR, undefined, false);
     expect(audit.log).toHaveBeenCalledTimes(1);
     expect(audited.size).toBe(10_000);
-    expect(audited.has('user0:::r1:call.recording.play')).toBe(false);
-    expect(audited.has('u1:::r1:call.recording.play')).toBe(true);
+    expect(audited.has(key('user0'))).toBe(false);
+    expect(audited.has(key('u1'))).toBe(true);
   });
 });
 

@@ -916,6 +916,15 @@ describe('CallsService: call settings and status', () => {
     await expect(svc.updateCallSettings('p1', { recording: true })).rejects.toMatchObject({ status: 409, response: { reasons: ['no_announcement'] } });
   });
 
+  // The conditional write gives null for both: the profile is looked up again to tell them apart.
+  it('404, not 409, when the profile was deleted between the check and the write of recording on', async () => {
+    const { svc } = make();
+    mergeIfAnnounced.mockResolvedValueOnce(null);
+    db.profile.findUnique.mockResolvedValueOnce({ settings: {} }).mockResolvedValueOnce(null);
+    await expect(svc.updateCallSettings('p1', { recording: true })).rejects.toMatchObject({ status: 404 });
+    expect(mergeIfAnnounced).toHaveBeenCalledWith('p1', { callsRecording: true });
+  });
+
   // A form that always sends every field would re-run the check of a value already on, and while that check fails for a
   // while (the storage check, a phone offline) nothing else could change. Nothing is written for it either, so a value
   // the nightly privacy check turned off (false then) never comes back on this way.

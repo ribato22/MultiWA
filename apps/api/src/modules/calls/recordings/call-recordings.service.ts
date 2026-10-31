@@ -73,7 +73,7 @@ export class CallRecordingsService {
   private readonly logger = new Logger(CallRecordingsService.name);
   private lastCheck: { at: string; ok: boolean; reason?: PrivacyFailure } | null = null;
   /**
-   * `${userId}:${ip}:${userAgent}:${recordingId}:${action}` → when that read was audited. In insertion order: the first
+   * `[userId, ip, userAgent, recordingId, action]` as JSON → when that read was audited. In insertion order: the first
    * is the oldest.
    */
   private readonly audited = new Map<string, number>();
@@ -310,7 +310,8 @@ export class CallRecordingsService {
   // audited again), and the window runs from the audited read: the reads within it never move it. Date.now() is the
   // wall clock: one stepped back is no window, or reads would go unaudited for the step and ten minutes more.
   private async auditRead(rec: Omit<RecordingRef, 'storageKey'>, actor: RecordingReader, action: string): Promise<void> {
-    const key = `${actor.userId}:${actor.ip ?? ''}:${(actor.userAgent ?? '').slice(0, 512)}:${rec.id}:${action}`;
+    // JSON, as joined with a separator an IPv6 address and a user agent holding it could run together alike.
+    const key = JSON.stringify([actor.userId, actor.ip ?? '', (actor.userAgent ?? '').slice(0, 512), rec.id, action]);
     const now = Date.now();
     const at = this.audited.get(key);
     if (at !== undefined && now >= at && now - at < AUDIT_WINDOW_MS) return;
