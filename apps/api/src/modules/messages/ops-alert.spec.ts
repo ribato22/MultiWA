@@ -34,6 +34,12 @@ describe('sendOpsAlert', () => {
     expect(messages.sendText.mock.calls).toEqual([[{ profileId: 'p2', to: '628222000222', text: 'hi' }]]);
   });
 
+  // The numbers are kept as typed: one phone entered on two profiles, or twice on one, would get the alert again each time.
+  it('one phone typed several ways gets it once', async () => {
+    await sendOpsAlert(messages as any, logger, { ...alert, ownPhone: null, recipients: ['628222000222', '+62 822-2000-222', '08222000222', '628333000333'] });
+    expect(messages.sendText.mock.calls.map(([m]) => m.to)).toEqual(['628222000222', '628333000333']);
+  });
+
   it('no recipients: nothing is looked up; no other profile: the bell only, said once', async () => {
     await sendOpsAlert(messages as any, logger, { ...alert, recipients: undefined });
     expect(findFirst).not.toHaveBeenCalled();

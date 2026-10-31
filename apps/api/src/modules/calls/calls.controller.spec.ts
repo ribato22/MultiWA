@@ -1,21 +1,28 @@
 // CallsController is a thin shell over CallsService, so what is pinned here is the contract at the HTTP edge:
-// the eight routes with their guards and tenant checks (a wrong resource or key there is a cross-tenant hole),
+// the ten routes with their guards and tenant checks (a wrong resource or key there is a cross-tenant hole),
 // the request DTOs as the API-wide ValidationPipe applies them (the options of app.factory.ts), and the
 // hand-over to the service. The service itself is pinned by calls.service.spec.ts.
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { BadRequestException, RequestMethod, ValidationPipe, type ArgumentMetadata, type Type } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { Readable } from 'stream';
+import { lastValueFrom, of } from 'rxjs';
+import Fastify from 'fastify';
 
 vi.mock('@multiwa/database', () => ({ prisma: {} }));
 vi.mock('../profiles/engine-manager.service', () => ({ EngineManagerService: class {} }));
 vi.mock('../messages/messages.service', () => ({ MessagesService: class {} }));
+vi.mock('./recordings/call-recordings.service', () => ({ CallRecordingsService: class {} }));
 
 import { TENANT_CHECK, type TenantCheck } from '../../common/tenant/require-tenant.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { API_KEY_SCOPE } from '../auth/decorators/require-scope.decorator';
+import { ROLES_KEY } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { AuditInterceptor } from '../audit/audit.interceptor';
 import { CallsController } from './calls.controller';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto, UpdateCallSettingsDto } from './dto';
 
@@ -32,6 +39,8 @@ const ROUTES: Array<[string, RequestMethod, string, TenantCheck[] | null]> = [
   ['reject', RequestMethod.POST, ':id/reject', [BY_ID]],
   ['reply', RequestMethod.POST, ':id/reply', [BY_ID]],
   ['callLink', RequestMethod.POST, ':id/call-link', [BY_ID]],
+  ['recording', RequestMethod.GET, ':id/recording', [BY_ID]],
+  ['deleteRecording', RequestMethod.DELETE, ':id/recording', [BY_ID]],
 ];
 
 describe('CallsController routes', () => {
@@ -41,20 +50,56 @@ describe('CallsController routes', () => {
   });
 
   // The two routes that send a message to the caller need what every other send route needs (MessagesController:
-  // the `messages:write` scope the admin UI issues as "Send Messages"). Reject and the reads are not sends: like
-  // the conversations routes they ask nothing of an API key's scopes.
-  it('asks an API key for messages:write on the routes that send a message, and for nothing on the others', () => {
+  // the `messages:write` scope the admin UI issues as "Send Messages"). Reject and the other reads are not sends: like
+  // the conversations routes they ask nothing of an API key's scopes. A recording is personal data: its own scopes.
+  it('asks an API key for messages:write on the routes that send a message, for recordings:read and recordings:delete on the recording, and for nothing on the others', () => {
     const scopes = Object.fromEntries(ROUTES.map(([name]) => [name, Reflect.getMetadata(API_KEY_SCOPE, proto[name])]));
     expect(scopes).toEqual({
       list: undefined, openCount: undefined, mediaStatus: undefined, get: undefined, update: undefined, reject: undefined,
-      reply: ['messages:write'], callLink: ['messages:write'],
+      reply: ['messages:write'], callLink: ['messages:write'], recording: ['recordings:read'], deleteRecording: ['recordings:delete'],
     });
     expect(Reflect.getMetadata(API_KEY_SCOPE, CallsController)).toBeUndefined();
   });
 
-  it('serves exactly these eight routes', () => {
+  it('serves exactly these ten routes', () => {
     const served = Object.getOwnPropertyNames(proto).filter((n) => n !== 'constructor' && Reflect.getMetadata(PATH_METADATA, proto[n]) !== undefined);
     expect(served.sort()).toEqual(ROUTES.map(([name]) => name).sort());
+  });
+
+  // A recording is personal data: owner and admin only (RolesGuard on the two routes, after the class's guards).
+  it('the recording routes are for owners and admins only', () => {
+    for (const name of ['recording', 'deleteRecording']) {
+      expect(Reflect.getMetadata(ROLES_KEY, proto[name])).toEqual(['owner', 'admin']);
+      expect(Reflect.getMetadata(GUARDS_METADATA, proto[name])).toEqual([RolesGuard]);
+    }
+  });
+
+  // What a client must handle besides the 200: a range, a range past the end, a storage this server cannot use or a
+  // read it cannot audit, a recording stored where this server cannot delete it.
+  it('the recording routes document their other answers', () => {
+    const documented = (name: string) => Object.keys(Reflect.getMetadata('swagger/apiResponse', proto[name]) ?? {}).sort();
+    expect(documented('recording')).toEqual(['206', '404', '416', '503']);
+    expect(documented('deleteRecording')).toEqual(['404', '409', '503']);
+  });
+
+  // The service audits it (resourceType call, the recording's id), as it audits a play and retention's deletes: the
+  // interceptor's entry would be a second one, under resourceType calls and without the recording.
+  it("the interceptor writes nothing for an admin's delete of a recording", async () => {
+    const audit = { log: vi.fn().mockResolvedValue(undefined) };
+    const req = { method: 'DELETE', params: { id: 'c1' }, user: { id: 'u1', organizationId: 'o1' }, headers: {} };
+    const context = { switchToHttp: () => ({ getRequest: () => req }), getClass: () => CallsController, getHandler: () => proto.deleteRecording };
+    await lastValueFrom(new AuditInterceptor(audit as any).intercept(context as any, { handle: () => of({}) }));
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  // Fastify answers a HEAD with the GET route's handler: a read, which the interceptor never audits. For the recording,
+  // the service has audited it as a play, and an interceptor entry would be a second one.
+  it('the interceptor writes nothing for a HEAD, as for a GET', async () => {
+    const audit = { log: vi.fn().mockResolvedValue(undefined) };
+    const req = { method: 'HEAD', params: { id: 'c1' }, user: { id: 'u1', organizationId: 'o1' }, headers: {} };
+    const context = { switchToHttp: () => ({ getRequest: () => req }), getClass: () => CallsController, getHandler: () => proto.recording };
+    await lastValueFrom(new AuditInterceptor(audit as any).intercept(context as any, { handle: () => of({}) }));
+    expect(audit.log).not.toHaveBeenCalled();
   });
 
   it.each(ROUTES)('%s: verb, path and tenant check', (name, method, path, checks) => {
@@ -75,7 +120,8 @@ describe('CallsController hands over to the service', () => {
   function make() {
     const service = { list: vi.fn(), openCount: vi.fn(), mediaStatus: vi.fn(), get: vi.fn(), update: vi.fn(), reject: vi.fn(), reply: vi.fn(), sendCallLink: vi.fn() };
     for (const fn of Object.values(service)) fn.mockResolvedValue('result');
-    return { service, controller: new CallsController(service as any) };
+    const recordings = { play: vi.fn(), deleteByAdmin: vi.fn().mockResolvedValue('deleted') };
+    return { service, recordings, controller: new CallsController(service as any, recordings as any) };
   }
 
   it('list: the validated query as it is', async () => {
@@ -116,6 +162,73 @@ describe('CallsController hands over to the service', () => {
     const { service, controller } = make();
     await controller.callLink('c1', Object.assign(new CallLinkDto(), { type: 'video', text: 'Join here' }));
     expect(service.sendCallLink).toHaveBeenCalledWith('c1', 'video', 'Join here');
+  });
+
+  const fakeReply = () => {
+    const reply: any = {};
+    reply.code = vi.fn(() => reply);
+    reply.headers = vi.fn(() => reply);
+    reply.send = vi.fn(() => reply);
+    return reply;
+  };
+
+  it('recording: the caller as the actor, the Range header, the download flag, not a HEAD; the reply gets the status, headers and body', async () => {
+    const { recordings, controller } = make();
+    const audio = Readable.from(['x']);
+    recordings.play.mockResolvedValue({ status: 206, headers: { 'Content-Range': 'bytes 0-0/1' }, body: audio });
+    const reply = fakeReply();
+    await controller.recording('c1', '1', { method: 'GET', user: { id: 'u1', organizationId: 'o1' }, ip: '203.0.113.7', headers: { range: 'bytes=0-0', 'user-agent': 'test-agent' } }, reply);
+    expect(recordings.play).toHaveBeenCalledWith('c1', { userId: 'u1', organizationId: 'o1', ip: '203.0.113.7', userAgent: 'test-agent' }, 'bytes=0-0', true, false);
+    expect(reply.code).toHaveBeenCalledWith(206);
+    expect(reply.headers).toHaveBeenCalledWith({ 'Content-Range': 'bytes 0-0/1' });
+    expect(reply.send).toHaveBeenCalledWith(audio);
+  });
+
+  it.each([[undefined, false], ['0', false], ['true', true]])('recording: ?download=%s is a download: %s; no body is an empty one', async (download, expected) => {
+    const { recordings, controller } = make();
+    recordings.play.mockResolvedValue({ status: 416, headers: {}, body: null });
+    const reply = fakeReply();
+    await controller.recording('c1', download, { user: { id: 'u1', organizationId: 'o1' }, headers: {} }, reply);
+    expect(recordings.play.mock.calls[0][3]).toBe(expected);
+    expect(reply.send).toHaveBeenCalledWith('');
+  });
+
+  // Fastify answers a HEAD with the GET handler. The service checks, sizes and audits a HEAD as the GET (it asks for the
+  // recording too) and reads none of it; handed no stream, Fastify would answer Content-Length: 0.
+  it.each([
+    ['a range', 206, { 'Content-Type': 'audio/webm', 'Content-Length': '4', 'Content-Range': 'bytes 0-3/10' }, '0123'],
+    ['a range past the end', 416, { 'Content-Type': 'audio/webm', 'Content-Length': '0', 'Content-Range': 'bytes */10' }, null],
+  ] as const)('recording: a HEAD of %s asks the service for no bytes, and answers with the headers of the GET', async (_what, status, headers, bytes) => {
+    const { recordings, controller } = make();
+    recordings.play.mockImplementation(async (_id, _reader, _range, _download, head) => ({
+      status, headers, body: head || bytes === null ? null : Readable.from([Buffer.from(bytes)]),
+    }));
+    const app = Fastify();
+    app.addHook('onRequest', async (req) => { (req as any).user = { id: 'u1', organizationId: 'o1' }; });
+    // Waiting for the reply, as Nest's route handler does: resolved before a streamed body is under way, Fastify would
+    // send the reply again, empty.
+    app.get('/calls/:id/recording', async (req, reply) => {
+      await controller.recording('c1', undefined, req, reply);
+      return reply;
+    });
+    try {
+      const head = await app.inject({ method: 'HEAD', url: '/calls/c1/recording' });
+      const get = await app.inject({ method: 'GET', url: '/calls/c1/recording' });
+      expect(recordings.play.mock.calls.map((call) => call[4])).toEqual([true, false]);
+      const { date: _headDate, ...headHeaders } = head.headers;
+      const { date: _getDate, ...getHeaders } = get.headers;
+      expect([head.statusCode, headHeaders, head.rawPayload.length]).toEqual([status, getHeaders, 0]);
+      expect([get.statusCode, get.headers['content-length'], get.rawPayload.toString()]).toEqual([status, headers['Content-Length'], bytes ?? '']);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('deleteRecording: the call, and the admin who deletes it, from where, as for a play', async () => {
+    const { recordings, controller } = make();
+    const req = { user: { id: 'u1', organizationId: 'o1' }, ip: '203.0.113.7', headers: { 'user-agent': 'test-agent' } };
+    await expect(controller.deleteRecording('c1', req)).resolves.toBe('deleted');
+    expect(recordings.deleteByAdmin).toHaveBeenCalledWith('c1', { userId: 'u1', organizationId: 'o1', ip: '203.0.113.7', userAgent: 'test-agent' });
   });
 });
 
@@ -237,22 +350,34 @@ describe('POST /calls/:id/call-link body', () => {
   });
 });
 
-// Turning answering on lets agents talk to the callers: only a real boolean may do it. The API-wide pipe converts
-// implicitly, and Boolean('false') is true.
+// Turning answering or recording on changes who hears the callers: only a real boolean may do it (the API-wide pipe
+// converts implicitly, and Boolean('false') is true). The retention is a whole number of days.
 describe('PUT /profiles/:id/calls-settings body', () => {
-  // The property's type, as tsc emits it in the app (emitDecoratorMetadata). The specs' transform emits none, and
-  // without it the pipe would convert nothing here.
-  beforeAll(() => Reflect.defineMetadata('design:type', Boolean, UpdateCallSettingsDto.prototype, 'answerInDashboard'));
-
-  it.each([true, false])('takes %s', async (answerInDashboard) => {
-    expect(await body(UpdateCallSettingsDto, { answerInDashboard })).toEqual({ answerInDashboard });
+  // The properties' types, as tsc emits them in the app (emitDecoratorMetadata). The specs' transform emits none, and
+  // without them the pipe would convert nothing here.
+  beforeAll(() => {
+    for (const [key, type] of [['answerInDashboard', Boolean], ['recording', Boolean], ['retentionDays', Number]] as const) {
+      Reflect.defineMetadata('design:type', type, UpdateCallSettingsDto.prototype, key);
+    }
   });
 
-  it.each(['false', 'true', 0, 1, null])('400 for %j, never read as a boolean', async (answerInDashboard) => {
-    await refused(body(UpdateCallSettingsDto, { answerInDashboard }), 'answerInDashboard');
+  it('takes any of its fields, alone or together', async () => {
+    expect(await body(UpdateCallSettingsDto, { answerInDashboard: true })).toEqual({ answerInDashboard: true });
+    expect(await body(UpdateCallSettingsDto, { recording: false })).toEqual({ recording: false });
+    expect(await body(UpdateCallSettingsDto, { retentionDays: 3650 })).toEqual({ retentionDays: 3650 });
+    expect(await body(UpdateCallSettingsDto, { answerInDashboard: false, recording: true, retentionDays: 1 })).toEqual({ answerInDashboard: false, recording: true, retentionDays: 1 });
   });
 
-  it('400 without it', async () => {
-    await refused(body(UpdateCallSettingsDto, {}), 'answerInDashboard');
+  it.each(['false', 'true', 0, 1, null])('400 for %j, never read as a boolean', async (value) => {
+    await refused(body(UpdateCallSettingsDto, { answerInDashboard: value }), 'answerInDashboard');
+    await refused(body(UpdateCallSettingsDto, { recording: value }), 'recording');
+  });
+
+  it.each([0, 3651, 7.5, '30', null])('400 for a retention of %j days', async (retentionDays) => {
+    await refused(body(UpdateCallSettingsDto, { retentionDays }), 'retentionDays');
+  });
+
+  it('an empty body passes the pipe: the service refuses it (400, nothing to change)', async () => {
+    expect(await body(UpdateCallSettingsDto, {})).toEqual({});
   });
 });

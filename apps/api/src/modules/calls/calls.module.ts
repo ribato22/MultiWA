@@ -13,19 +13,22 @@ import { CallsGateway } from './calls.gateway';
 import { EventsGateway } from '../events/events.gateway';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { MessagesModule } from '../messages/messages.module';
+import { CallRecordingsModule } from './recordings/call-recordings.module';
+import { CallRecordingsCron } from './recordings/call-recordings.cron';
 
 // EventsModule and EngineCommandsModule are @Global (EventsGateway, EngineCommandsService); the event bus comes from
 // the app-wide EventEmitterModule.
 @Module({
   // EngineManagerService (ProfilesModule) and MessagesService (MessagesModule) are exported; the two import each
   // other, hence forwardRef.
-  imports: [forwardRef(() => ProfilesModule), forwardRef(() => MessagesModule)],
+  imports: [forwardRef(() => ProfilesModule), forwardRef(() => MessagesModule), CallRecordingsModule],
   controllers: [CallsController, ProfileCallsController],
   providers: [
     CallsService,
     CallMediaService,
     CallSessionService,
     CallAlerts,
+    CallRecordingsCron,
     CallsGateway,
     // The token CallsService and the coordinator push call.updated (and the dashboard answer's events) to Socket.IO
     // through. ProfilesModule binds it too, but does not export it, so it is not visible here.

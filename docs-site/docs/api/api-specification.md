@@ -113,7 +113,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/accounts/:accountId/profiles` | List profiles inside an account |
 | `POST` | `/accounts/:accountId/profiles` | Create a profile in an account |
 | `GET` | `/accounts/:accountId/profiles/:profileId` | Get profile (account-scoped) |
-| `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped) |
+| `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped; owner or admin) |
 | `POST` | `/accounts/:accountId/profiles/:profileId/connect` | Start WhatsApp connection |
 | `POST` | `/accounts/:accountId/profiles/:profileId/disconnect` | Disconnect |
 | `GET` | `/accounts/:accountId/profiles/:profileId/qr` | Retrieve current QR code |
@@ -126,8 +126,11 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/profiles` | Create profile |
 | `GET` | `/profiles/:id` | Get profile |
 | `PUT` | `/profiles/:id` | Update profile |
-| `PUT` | `/profiles/:id/calls-settings` | Turn answering the profile's calls in the dashboard on or off (`answerInDashboard`); owner or admin; 409 with `reasons` when the profile is not ready |
-| `DELETE` | `/profiles/:id` | Delete profile |
+| `PUT` | `/profiles/:id/calls-settings` | The profile's call settings (owner or admin): `answerInDashboard`, `recording`, `retentionDays` (1-3650); 409 with `reasons` when one cannot be turned on |
+| `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (owner or admin; multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds; half a second more is allowed for encoders' padding) |
+| `GET` | `/profiles/:id/calls-announcement` | The profile's announcement, to listen to (owner or admin) |
+| `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (owner or admin; 409 while recording is on; its file goes at a nightly sweep once it is an hour old) |
+| `DELETE` | `/profiles/:id` | Delete profile (owner or admin) |
 | `POST` | `/profiles/:id/connect` | Start WhatsApp connection |
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
 | `GET` | `/profiles/:id/status` | Get connection status |
@@ -229,18 +232,20 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Calls (`/calls`)
 
-Incoming WhatsApp calls, recorded per profile and published as the `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated` [webhook events](<webhook-events.md>).
+Incoming WhatsApp calls, stored per profile and published as the `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated` [webhook events](<webhook-events.md>); deleting a call's recording sends `call.recording.deleted`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/calls` | List calls of a profile, newest first (`profileId` required; filters `outcome`, `followUp`, `from` (caller JID or phone number, e.g. `628111000111`), `since` (ISO 8601 date); paging `limit` 1-100, `cursor`) |
 | `GET` | `/calls/open-count` | Open call follow-ups across the org |
-| `GET` | `/calls/media/status` | Readiness of answering calls in the dashboard: the media server and every profile of the organization (owner or admin) |
+| `GET` | `/calls/media/status` | Readiness of answering calls in the dashboard and of recording them: the media server, the recordings storage and every profile of the organization (owner or admin) |
 | `GET` | `/calls/:id` | Get a call |
 | `PATCH` | `/calls/:id` | Update the follow-up status (`open`, `in_progress`, `done`) or the assignee |
 | `POST` | `/calls/:id/reject` | Reject a call that is still ringing |
 | `POST` | `/calls/:id/reply` | Send a text to the caller (default: the profile's `callReplyMessage`) |
 | `POST` | `/calls/:id/call-link` | Create a WhatsApp call link (`voice` / `video`) and send it to the caller |
+| `GET` | `/calls/:id/recording` | The call's recording, `audio/webm` (owner or admin; HTTP Range; `?download=1` as an attachment; audited) |
+| `DELETE` | `/calls/:id/recording` | Delete the call's recording (owner or admin) |
 
 `reply` and `call-link` send a WhatsApp message to the caller, so they behave like a send from `/messages`:
 
@@ -257,6 +262,35 @@ Other errors of the call actions:
 | `504` | `reject` or the creation of the call link: WhatsApp did not answer in time (about 30 seconds) |
 
 **Auto-reject.** A profile with `autoRejectCalls` on (set with `PUT /profiles/:id`) rejects a ringing call at once (`rejectedBy` is `auto`). A non-blank `autoRejectCallMessage` is then sent to the caller, also when the reject failed because the caller had already hung up. That reply goes through the same send gate and is sent at most once per caller per 24 hours; it is never sent for a group call or for a call known only from its call log. A reply the gate refuses or the engine fails to send is not retried and does not use up the 24 hours, so the caller's next call can try again.
+
+**Recordings.** Calls are not recorded yet: the recorder that writes the recordings is still being built. This release has the settings, the announcement, the private storage and its check, and playing, deleting and expiring recordings. Once the recorder is in, a call answered in the dashboard on a profile with `recording` on is recorded after the profile's announcement. Each call in `GET /calls` and `GET /calls/:id` has `recording`: `null`, or the recording's facts:
+
+- `id`, `durationSec`, `bytes`, `announcementPlayed`, `createdAt`;
+- `partial`: cut short by a restart;
+- once its file is deleted, `deletedAt` and `deleteReason` (`admin` or `retention`). The row stays as evidence.
+
+The audio itself:
+
+- **Owner or admin only**, on a call of their organization. An API key with an explicit scope list needs `recordings:read` to play or download and `recordings:delete` to delete. Such a key also needs `profiles:write` for `PUT /profiles/:id/calls-settings`, the announcement routes and deleting a profile (`DELETE /profiles/:id`, `DELETE /accounts/:accountId/profiles/:profileId`, which delete its recordings too), and `recordings:delete` as well to change `retentionDays` (a shorter period deletes recordings). Keys with no scopes or with `*` skip these checks.
+- **`GET /calls/:id/recording`** answers `200`, or `206` for a `Range: bytes=…` request, with `Accept-Ranges: bytes` and `Cache-Control: private, no-store`.
+  - Only one range is served: a list is answered whole. A range past the end is `416`.
+  - `?download=1` adds `Content-Disposition: attachment`.
+  - Every read is audited (`call.recording.play`, `call.recording.download`, with the IP and user agent) before its first byte: once every 10 minutes per user, address, user agent, recording and action, whatever range it asks for, so a player's seeks do not flood the audit log and no range escapes it. A request that cannot be audited is refused with `503`.
+  - A `HEAD` answers the same headers without the audio, and is audited as a read.
+  - `404` when the call has no recording, it was deleted, its file is missing, or it is stored in another location than this server uses now (see [Call recordings](<../operations/configuration-reference.md#call-recordings>)). `503` while the recordings storage is not configured, or when it does not answer (try again).
+- **`DELETE /calls/:id/recording`** deletes the file and answers `{ callId, recordingId, deletedAt }`. It is audited as `call.recording.delete` and sends the `call.recording.deleted` webhook. A recording already deleted is `404`, and one stored in another location `409`; while the recordings storage is not configured, the answer is `503`.
+- **A browser player** cannot point an `<audio>` element at this route: the route needs the `Authorization` (or `x-api-key`) header. Fetch the file with the header, then play what was fetched.
+
+Turning `recording` on answers `409` with `reasons` when it cannot be on:
+
+- `no_announcement`;
+- `recordings_storage_unset` (see [Call recordings](<../operations/configuration-reference.md#call-recordings>));
+- `storage_not_private`: the storage serves its files without credentials, and recording is turned off on every profile;
+- `storage_check_failed`: the check proved nothing; try again.
+
+A `true` sent for a setting that is already on (`recording` or `answerInDashboard`) is left as it is, without a check, so a form may send every field.
+
+The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples; half a second more is allowed for encoders' padding) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read or the recordings storage does not answer (as `GET /profiles/:id/calls-announcement` does then). It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
 
 ### Contacts (`/contacts`)
 
@@ -439,7 +473,7 @@ Other errors of the call actions:
 | `POST` | `/workspaces` | Create workspace |
 | `GET` | `/workspaces/:id` | Get workspace |
 | `PUT` | `/workspaces/:id` | Update workspace |
-| `DELETE` | `/workspaces/:id` | Delete workspace |
+| `DELETE` | `/workspaces/:id` | Delete workspace (owner or admin) |
 
 ### RBAC (`/rbac`)
 

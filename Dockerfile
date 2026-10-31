@@ -62,6 +62,13 @@ ENV MEDIASOUP_WORKER_BIN=/opt/mediasoup/mediasoup-worker
 # Install exactly what pnpm-lock.yaml pins
 RUN pnpm install --frozen-lockfile --filter @multiwa/api... --filter @multiwa/admin...
 
+# Fail the build if the file-type patch did not apply. Unpatched, file-type 16.5.4 (music-metadata's format sniffer:
+# an uploaded call announcement, and Baileys reading a voice note's length) loops forever on an ASF object smaller
+# than its own header: a 64-byte file freezes the process, timers and health checks included.
+RUN f="$(find /app/node_modules/.pnpm -path '*file-type@16.5.4*/core.js' | head -1)" \
+    && test -n "$f" && grep -qF 'if (!Number.isFinite(payload) || payload < 0) break;' "$f" \
+    || (echo "::error::file-type patch NOT applied (patches/file-type@16.5.4.patch)" && exit 1)
+
 # Copy prisma schema + Prisma 7 CLI config, and generate with the workspace's prisma
 COPY packages/database/prisma ./packages/database/prisma
 COPY packages/database/prisma.config.ts ./packages/database/
@@ -132,6 +139,12 @@ RUN /opt/mediasoup/mediasoup-worker >/dev/null 2>&1 || test $? -eq 41
 
 # Install production deps only
 RUN pnpm install --frozen-lockfile --prod --filter @multiwa/api...
+
+# The file-type check again (see the builder stage): what ships comes from this install, which applies the patch on
+# its own.
+RUN f="$(find /app/node_modules/.pnpm -path '*file-type@16.5.4*/core.js' | head -1)" \
+    && test -n "$f" && grep -qF 'if (!Number.isFinite(payload) || payload < 0) break;' "$f" \
+    || (echo "::error::file-type patch NOT applied (patches/file-type@16.5.4.patch)" && exit 1)
 
 # Copy built artifacts
 COPY --from=builder /app/apps/api/dist ./apps/api/dist

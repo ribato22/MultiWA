@@ -6,6 +6,17 @@ import { Reflector } from '@nestjs/core';
 import { API_KEY_SCOPE } from '../decorators/require-scope.decorator';
 
 /**
+ * Whether `user` is an API key whose explicit scope list does not grant `scope`. A JWT login (no apiKeyScopes) never
+ * lacks one: its authorization is RolesGuard/RbacGuard/TenantGuard's. Backward-compat: an unscoped (`[]`) or wildcard
+ * (`*`) key is full-access. Exported for the routes that need a scope for only some of their input.
+ */
+export function apiKeyLacksScope(user: { apiKeyScopes?: string[] } | undefined, scope: string): boolean {
+  const scopes = user?.apiKeyScopes;
+  if (scopes === undefined || scopes.length === 0 || scopes.includes('*')) return false;
+  return !scopes.includes(scope);
+}
+
+/**
  * Enforces `@RequireScope(...)` for API-key-authenticated requests. Must run AFTER
  * an auth guard that populates `req.user` (e.g. JwtOrApiKeyGuard).
  *
@@ -27,21 +38,9 @@ export class ApiKeyScopeGuard implements CanActivate {
       return true; // route declares no scope
     }
 
+    // ANY of the listed scopes will do.
     const req = context.switchToHttp().getRequest();
-    const scopes: string[] | undefined = req.user?.apiKeyScopes;
-
-    // JWT auth (or no principal): API-key scopes don't apply. JWT authorization is
-    // handled by RolesGuard/RbacGuard/TenantGuard, not here.
-    if (scopes === undefined) {
-      return true;
-    }
-
-    // Backward-compat: an unscoped or wildcard key is full-access.
-    if (scopes.length === 0 || scopes.includes('*')) {
-      return true;
-    }
-
-    if (!required.some((s) => scopes.includes(s))) {
+    if (required.every((s) => apiKeyLacksScope(req.user, s))) {
       throw new ForbiddenException(`API key missing required scope(s): ${required.join(', ')}`);
     }
     return true;

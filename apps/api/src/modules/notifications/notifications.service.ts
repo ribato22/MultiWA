@@ -63,11 +63,12 @@ export class NotificationsService {
   }
 
   /**
-   * Create notifications for all users in an organization
+   * Create notifications for all users in an organization, or only for those of the `roles` given (an alert only an
+   * owner or admin can act on)
    */
-  async createForOrg(orgId: string, type: NotificationType, title: string, body: string, metadata?: Record<string, any>) {
+  async createForOrg(orgId: string, type: NotificationType, title: string, body: string, metadata?: Record<string, any>, roles?: string[]) {
     const users = await prisma.user.findMany({
-      where: { organizationId: orgId, isActive: true },
+      where: { organizationId: orgId, isActive: true, ...(roles ? { role: { in: roles } } : {}) },
       select: { id: true, email: true, preferences: true },
     });
 

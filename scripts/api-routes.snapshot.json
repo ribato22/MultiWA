@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 226,
+  "routeCount": 231,
   "routes": [
     {
       "method": "DELETE",
@@ -360,6 +360,14 @@
     {
       "method": "POST",
       "path": "/api/v1/calls/:id/call-link"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/calls/:id/recording"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls/:id/recording"
     },
     {
       "method": "POST",
@@ -724,6 +732,18 @@
     {
       "method": "PUT",
       "path": "/api/v1/profiles/:id"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/profiles/:id/calls-announcement"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles/:id/calls-announcement"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles/:id/calls-announcement"
     },
     {
       "method": "PUT",

@@ -5,6 +5,8 @@
 // alarm's channel: the bell for every user of each organization that answers calls in the dashboard, told only of its
 // own calls, and WhatsApp to the alarm numbers (quietAlarmNotify) of the profiles whose calls were cut, through
 // another connected profile.
+// And the recordings storage failing its privacy check: the same channel, per organization, the bell for its owner and
+// admins only.
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { NotificationsService, NotificationType } from '../../notifications/notifications.service';
@@ -69,5 +71,73 @@ export class CallAlerts {
         this.logger.warn(`Call media alert for ${p.id} failed: ${clean((e as Error)?.message ?? e)}`);
       }
     }
+  }
+
+  /**
+   * A privacy check of the recordings storage failed. `not_private` (any check): anyone can read the recordings, and
+   * recording was turned off for `turnedOff`. `check_failed` (the nightly check): the check proved nothing, and recording
+   * stays on. One bell per organization concerned, for its owners and admins: they are the ones who can act on it
+   * (recording is theirs to turn on again). And WhatsApp to the alarm numbers of its profiles concerned, which any user
+   * who may edit a profile can set: so the text, like the bell, names no address of the storage (the server log has
+   * it). The storage serves every organization of the server, so only whoever runs the server can fix it.
+   *
+   * Each failure is only logged, so it resolves all the same: with whether at least one bell went out, for the caller
+   * not to count an alert that reached nobody (every bell failing, the database down after the profiles were read).
+   */
+  async recordingStorage(kind: 'not_private' | 'check_failed', profileIds: string[], turnedOff: string[]): Promise<boolean> {
+    if (!profileIds.length) return false;
+    const profiles = await prisma.profile.findMany({
+      where: { id: { in: profileIds } },
+      select: { id: true, displayName: true, settings: true, workspace: { select: { organizationId: true } } },
+    });
+    const byOrg = new Map<string, typeof profiles>();
+    for (const p of profiles) {
+      const orgId = p.workspace?.organizationId;
+      // Grouped under undefined, the bell and the WhatsApp alert would lose their organization filter (Prisma drops an
+      // undefined condition): the admins of every organization would get the bell, and any organization's profile could
+      // send the alert.
+      if (orgId) byOrg.set(orgId, [...(byOrg.get(orgId) ?? []), p]);
+      else this.logger.warn(`Call recordings storage alert for ${clean(p.id)} skipped: the profile has no organization`);
+    }
+    const nameOf = (p: (typeof profiles)[number]) => p.displayName || p.id;
+    let told = false;
+    for (const [orgId, own] of byOrg) {
+      const off = own.filter((p) => turnedOff.includes(p.id)).map(nameOf);
+      const title = kind === 'not_private' ? 'Call recordings can be read without a login' : 'Call recordings storage could not be checked';
+      const text =
+        kind === 'not_private'
+          ? 'The storage of call recordings serves its files without credentials: anyone who has an address can read them. ' +
+            (off.length ? `Recording was turned off for ${off.join(', ')}. ` : '') +
+            'Whoever runs this MultiWA server must make the storage private; recording can then be turned on again.'
+          : `MultiWA could not check that the storage of call recordings refuses requests without credentials. Recording stays on for ${own.map(nameOf).join(', ')}. ` +
+            'If this repeats, ask whoever runs this MultiWA server to check the storage.';
+      try {
+        await this.notifications.createForOrg(orgId, NotificationType.SYSTEM, title, text, { kind: 'call_recordings_storage', status: kind }, ['owner', 'admin']);
+        told = true;
+      } catch (e) {
+        this.logger.warn(`Call recordings storage bell for ${orgId} failed: ${clean((e as Error)?.message ?? e)}`);
+      }
+      const recipients = [
+        ...new Set(
+          own.flatMap((p) => {
+            const notify = (p.settings as Record<string, unknown> | null)?.quietAlarmNotify;
+            return Array.isArray(notify) ? notify.filter((n): n is string => typeof n === 'string') : [];
+          }),
+        ),
+      ];
+      try {
+        await sendOpsAlert(this.messages, this.logger, {
+          what: `Call recordings storage alert for ${orgId}`,
+          organizationId: orgId,
+          excludeProfileId: '', // about the storage, not a profile: any connected profile may send it
+          ownPhone: null,
+          recipients,
+          text: `⚠️ ${title}. ${text}`,
+        });
+      } catch (e) {
+        this.logger.warn(`Call recordings storage alert for ${orgId} failed: ${clean((e as Error)?.message ?? e)}`);
+      }
+    }
+    return told;
   }
 }
