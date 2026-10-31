@@ -1,6 +1,7 @@
 // The announcement callers hear before a recorded call: its type and length read from the file, stored under the
-// profile's own key, one per profile (the previous one deleted), served only from the profile's own key, and never
-// removed while recording is on. The rule lives in the settings write itself (mocked here; the e2e spec races it).
+// profile's own key, one per profile (a replaced or removed file left to the nightly sweep), served only from the
+// profile's own key, and never removed while recording is on. The rule lives in the settings write itself (mocked
+// here; the e2e spec races it).
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { Readable } from 'stream';
@@ -42,9 +43,11 @@ beforeEach(() => {
 });
 
 describe('CallAnnouncementService.upload', () => {
-  it("stores the file under the profile's own key, sets it in the settings, then deletes the previous one", async () => {
+  // A call that has just read the previous key can still play its file: the nightly sweep deletes it, an hour old.
+  it("stores the file under the profile's own key and sets it in the settings; the previous file is left to the sweep", async () => {
     const store = new MemoryRecordingStore();
     store.file(OLD);
+    const del = vi.spyOn(store, 'delete');
     const out = await new CallAnnouncementService(store).upload(PROFILE, MP3);
     expect(out).toEqual({ profileId: PROFILE, announcement: { mimeType: 'audio/mpeg', durationSec: expect.any(Number) } });
     const [[profileId, patch]] = merge.mock.calls;
@@ -56,7 +59,8 @@ describe('CallAnnouncementService.upload', () => {
       durationSec: out.announcement.durationSec,
     });
     expect(store.files.get(stored.storageKey)?.body.equals(MP3)).toBe(true);
-    expect(store.files.has(OLD)).toBe(false);
+    expect(store.files.has(OLD)).toBe(true);
+    expect(del).not.toHaveBeenCalled();
   });
 
   it('415 for what is not one of the formats: nothing stored, nothing set', async () => {
@@ -72,13 +76,14 @@ describe('CallAnnouncementService.upload', () => {
     await expect(new CallAnnouncementService(store).upload(PROFILE, MP3)).rejects.toMatchObject({ status: 409, response: { reasons: ['recordings_storage_unset'] } });
   });
 
-  it('404 for a profile that is gone, also one deleted while the file was stored (that file deleted again)', async () => {
+  it('404 for a profile that is gone, also one deleted while the file was stored (that file left to the sweep)', async () => {
     const store = new MemoryRecordingStore();
     db.profile.findUnique.mockResolvedValueOnce(null);
     await expect(new CallAnnouncementService(store).upload(PROFILE, MP3)).rejects.toBeInstanceOf(NotFoundException);
+    expect(store.files.size).toBe(0);
     merge.mockResolvedValueOnce(null);
     await expect(new CallAnnouncementService(store).upload(PROFILE, MP3)).rejects.toBeInstanceOf(NotFoundException);
-    expect(store.files.size).toBe(0);
+    expect([...store.files.keys()]).toEqual([expect.stringMatching(new RegExp(`^announcements/${ORG}/${PROFILE}/`))]);
   });
 });
 
@@ -107,12 +112,14 @@ describe('CallAnnouncementService.read', () => {
 });
 
 describe('CallAnnouncementService.remove', () => {
-  it('removes it from the settings, then deletes its file', async () => {
+  it('removes it from the settings; its file is left to the sweep', async () => {
     const store = new MemoryRecordingStore();
     store.file(OLD);
+    const del = vi.spyOn(store, 'delete');
     expect(await new CallAnnouncementService(store).remove(PROFILE)).toEqual({ profileId: PROFILE, announcement: null });
     expect(remove).toHaveBeenCalledWith(PROFILE);
-    expect(store.files.has(OLD)).toBe(false);
+    expect(store.files.has(OLD)).toBe(true);
+    expect(del).not.toHaveBeenCalled();
   });
 
   it('409 recording_on while recording is on: the file is kept', async () => {
