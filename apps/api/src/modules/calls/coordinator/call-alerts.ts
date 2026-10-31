@@ -76,10 +76,10 @@ export class CallAlerts {
   /**
    * A privacy check of the recordings storage failed. `not_private` (any check): anyone can read the recordings, and
    * recording was turned off for `turnedOff`. `check_failed` (the nightly check): the check proved nothing, and recording
-   * stays on. One bell per organization concerned, for its owner and admins only (a member or viewer can do nothing
-   * about it, and should not be told that the recordings can be read), and WhatsApp to the alarm numbers of its profiles
-   * concerned. The storage's address is never in the alert (the server log has it): the storage serves every
-   * organization of the server, so only whoever runs the server can fix it.
+   * stays on. One bell per organization concerned, for its owners and admins: they are the ones who can act on it
+   * (recording is theirs to turn on again). And WhatsApp to the alarm numbers of its profiles concerned, which any user
+   * who may edit a profile can set: so the text, like the bell, names no address of the storage (the server log has
+   * it). The storage serves every organization of the server, so only whoever runs the server can fix it.
    *
    * Each failure is only logged, so it resolves all the same: with whether at least one bell went out, for the caller
    * not to count an alert that reached nobody (every bell failing, the database down after the profiles were read).

@@ -140,6 +140,8 @@ A call still ringing when MultiWA restarts skips part of this: it is closed as `
 
 ### Call recording events
 
+No call is recorded yet: the recorder that writes the recordings comes in a later release, and this event does not fire until then.
+
 `call.recording.deleted` names the recording, never its audio (that is fetched through `GET /calls/:id/recording`):
 
 ```json

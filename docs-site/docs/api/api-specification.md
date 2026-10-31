@@ -127,7 +127,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/profiles/:id` | Get profile |
 | `PUT` | `/profiles/:id` | Update profile |
 | `PUT` | `/profiles/:id/calls-settings` | The profile's call settings (owner or admin): `answerInDashboard`, `recording`, `retentionDays` (1-3650); 409 with `reasons` when one cannot be turned on |
-| `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (owner or admin; multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds) |
+| `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (owner or admin; multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds; half a second more is allowed for encoders' padding) |
 | `GET` | `/profiles/:id/calls-announcement` | The profile's announcement, to listen to (owner or admin) |
 | `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (owner or admin; 409 while recording is on; its file goes at a nightly sweep once it is an hour old) |
 | `DELETE` | `/profiles/:id` | Delete profile (owner or admin) |
@@ -290,7 +290,7 @@ Turning `recording` on answers `409` with `reasons` when it cannot be on:
 
 A `true` sent for a setting that is already on (`recording` or `answerInDashboard`) is left as it is, without a check, so a form may send every field.
 
-The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read or the recordings storage does not answer (as `GET /profiles/:id/calls-announcement` does then). It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
+The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples; half a second more is allowed for encoders' padding) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read or the recordings storage does not answer (as `GET /profiles/:id/calls-announcement` does then). It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
 
 ### Contacts (`/contacts`)
 
