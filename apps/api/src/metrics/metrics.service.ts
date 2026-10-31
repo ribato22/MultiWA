@@ -43,6 +43,8 @@ export class MetricsService {
   readonly callsDashboardAnswerSeconds: Histogram;
   readonly callsMediaFailuresTotal: Counter<'reason'>;
   readonly callsDashboardEndedTotal: Counter<'reason'>;
+  // The recordings storage's privacy check, by result: any not_private means anyone can read the recordings.
+  readonly callsRecordingsPrivacyChecksTotal: Counter<'result'>;
 
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
@@ -173,6 +175,16 @@ export class MetricsService {
           name: 'multiwa_calls_dashboard_ended_total',
           help: 'Calls answered in the dashboard that ended, by end reason.',
           labelNames: ['reason'] as const,
+          registers: [this.registry],
+        }),
+    );
+    this.callsRecordingsPrivacyChecksTotal = this.getOrCreate(
+      'multiwa_calls_recordings_privacy_checks_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_recordings_privacy_checks_total',
+          help: 'Checks that the call recordings storage refuses reads without credentials, by result (not_private: anyone can read the recordings).',
+          labelNames: ['result'] as const,
           registers: [this.registry],
         }),
     );

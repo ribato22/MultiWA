@@ -51,6 +51,9 @@ export const InternalEvents = {
 
   /** The call coordinator, for the counters: a call offered to agents, answered, a media failure, an answered call ended. */
   CALLS_SESSION: 'internal.calls.session',
+
+  /** The privacy check of the call recordings storage ran (CallRecordingsService.checkStorage), with its result. */
+  CALL_RECORDINGS_PRIVACY: 'internal.calls.recordings_privacy',
 } as const;
 
 export interface EngineGroupFetchPayload {
@@ -97,3 +100,8 @@ export type CallsSessionPayload =
   | { kind: 'answered'; answerSeconds: number }
   | { kind: 'media_failed'; reason: CallMediaFailureReason }
   | { kind: 'ended'; endReason: CallEndReason };
+
+/** `not_private`: anyone can read the recordings. `check_failed`: the check proved nothing. */
+export interface CallRecordingsPrivacyPayload {
+  result: 'ok' | 'not_private' | 'check_failed';
+}

@@ -89,10 +89,20 @@ describe('MetricsEventsListener: the dashboard call counters', () => {
     expect(text).toMatch(/multiwa_calls_dashboard_ended_total\{reason="hangup",app="multiwa-api"\} 1/);
   });
 
+  it('counts the privacy checks of the recordings storage by result', async () => {
+    listener.onCallRecordingsPrivacy({ result: 'ok' });
+    listener.onCallRecordingsPrivacy({ result: 'not_private' });
+    const text = await metrics.registry.metrics();
+    expect(text).toMatch(/multiwa_calls_recordings_privacy_checks_total\{result="ok",app="multiwa-api"\} 1/);
+    expect(text).toMatch(/multiwa_calls_recordings_privacy_checks_total\{result="not_private",app="multiwa-api"\} 1/);
+  });
+
   it('labels its series from closed sets: a reason outside them does not compile', () => {
     // @ts-expect-error: not a media failure reason
     listener.onCallsSession({ kind: 'media_failed', reason: 'timeout' });
     // @ts-expect-error: not an end reason
     listener.onCallsSession({ kind: 'ended', endReason: 'bye' });
+    // @ts-expect-error: not a privacy check result
+    listener.onCallRecordingsPrivacy({ result: 'public' });
   });
 });
