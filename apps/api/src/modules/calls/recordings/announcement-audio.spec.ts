@@ -35,6 +35,16 @@ describe('inspectAnnouncement', () => {
     await expect(inspectAnnouncement(Buffer.alloc(0))).rejects.toBeInstanceOf(UnsupportedMediaTypeException);
   });
 
+  it('415 for 64 bytes of ASF whose one object says it is 0 bytes long, read to the end (file-type 16.5.4 looped on it forever)', async () => {
+    const asf = Buffer.alloc(64);
+    Buffer.from('3026B2758E66CF11A6D900AA0062CE6C', 'hex').copy(asf, 0); // the ASF Header Object
+    asf.writeUInt32LE(1, 24); // with one object, whose size (at byte 46) stays 0
+    Buffer.from('8CABDCA1A94711CF8EE400C00C205365', 'hex').copy(asf, 30);
+    const refused = await inspectAnnouncement(asf).catch((e) => e);
+    expect(refused).toBeInstanceOf(UnsupportedMediaTypeException);
+    expect(refused.message).toContain('must be an mp3');
+  });
+
   it('422 for a file that does not say how long it is (WebM as a browser records it)', async () => {
     const refused = await inspectAnnouncement(fixture('no-duration.webm')).catch((e) => e);
     expect(refused).toBeInstanceOf(UnprocessableEntityException);
