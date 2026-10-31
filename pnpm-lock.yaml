@@ -337,6 +337,9 @@ importers:
       '@vitest/coverage-v8':
         specifier: ^3.2.7
         version: 3.2.7(vitest@3.2.7(@types/debug@4.1.13)(@types/node@24.19.2)(jiti@2.7.0)(terser@5.46.0)(tsx@4.23.15))
+      socket.io-client:
+        specifier: 4.8.4
+        version: 4.8.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

@@ -204,7 +204,9 @@ export function agentHearsInPage(hz: number): number {
 /** Amplitude of `hz` on WhatsApp Web's microphone in the fake page, i.e. what the caller hears. Needs an answered call. */
 export function micCarriesInPage(hz: number): number {
   const f = (window as any).__fakeWa;
-  if (!f.micAnalyser) {
+  // Each answer captures a new microphone stream: a page that takes several calls is listened to on the current one.
+  if (f.micStream !== f.gumStream) {
+    f.micStream = f.gumStream;
     f.micAnalyser = f.capture.createAnalyser();
     f.micAnalyser.fftSize = 8192;
     f.capture.createMediaStreamSource(f.gumStream).connect(f.micAnalyser);
