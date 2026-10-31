@@ -136,7 +136,7 @@ What the engine reports decides which event carries the final outcome (see [Engi
 - Auto-rejected: `call.received`, then `call.rejected` with `rejectedBy: "auto"`.
 - Missed on whatsapp-web.js, which cannot tell how a call ended: `call.received`, `call.ended` with `outcome: "unknown"`, and moments later `call.updated` with `outcome: "missed"`, once WhatsApp's call log arrives.
 - Missed on Baileys: `call.received`, then `call.ended` with `outcome: "missed"` when the call rang out. A caller who hangs up first ends as `unknown`, and Baileys reports no call log to settle it.
-- Answered in the dashboard: `call.received`, `call.answered`, then `call.ended` with `outcome: "answered"` when it is over. A call cut by a restart of MultiWA gets its `call.ended` at the next start, with `endReason: "server_restart"` and `talkSeconds: null` (unknown).
+- Answered in the dashboard: `call.received`, `call.answered`, then `call.ended` with `outcome: "answered"` when it is over. A restart of MultiWA ends it with `endReason: "server_restart"`: a normal stop sends its `call.ended` as it shuts down, with the talk time up to then; a crash leaves it to the next start, which sends it with `talkSeconds: null` (unknown).
 
 A call still ringing when MultiWA restarts skips part of this: it is closed as `unknown` at the next start, without a `call.ended`, and stays `unknown`, since an engine passes on only the call log of a call it saw ringing since it last connected.
 

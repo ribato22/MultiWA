@@ -113,7 +113,7 @@ The call with the same fields as the `data` of the [`call.*` webhooks](<webhook-
 
 ### Calls answered in the dashboard
 
-When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), its incoming calls ring the agents online on `/ws`: every active owner, admin and member of its organization who is available and not on a call. These events go to all of an agent's sockets, whatever profiles they subscribed to. Every command is acked `{ ok: true, … }` or `{ ok: false, reason }`. Calls are answered in the dashboard: only dashboard logins (JWT) are rung, count as online, and may send these commands. A socket on an API key gets none of these events, and its commands are refused.
+When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), its incoming calls ring the agents online on `/ws`: every active owner, admin and member of its organization who is available and not on a call. These events go to all of an agent's sockets, whatever profiles they subscribed to. Every command is acked `{ ok: true, … }` or `{ ok: false, reason }`; besides each command's own reasons, any command can answer `error` (it failed on the server). Calls are answered in the dashboard: only dashboard logins (JWT) are rung, count as online, and may send these commands. A socket on an API key gets none of these events, and its commands are refused.
 
 | Direction | Event | Payload / ack |
 |---|---|---|
@@ -126,7 +126,7 @@ When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), 
 | client → server | `call:media` | `{ callId, op, … }`, mediasoup signalling (`rtpCapabilities`, `createTransport`, `connectTransport`, `produce`, `consume`, `resumeConsumer`, `closeConsumer`) → `{ ok: true, result }`, or a reason: `not_allowed`, `not_in_call`, `media_error` (with `message`) |
 | client → server | `call:rejoin` | `{ callId }` after a page reload → like `call:answer` |
 | client → server | `call:hangup` | `{ callId }` → `{ ok: true }` |
-| client → server | `call:availability` | `{ available }` → `{ ok: true, available }` |
+| client → server | `call:availability` | `{ available }` → `{ ok: true, available }`, or `not_allowed`, or `invalid` when `available` is not a boolean |
 
 The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`).
 
