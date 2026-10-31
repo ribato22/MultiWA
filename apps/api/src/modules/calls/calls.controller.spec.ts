@@ -1,5 +1,5 @@
 // CallsController is a thin shell over CallsService, so what is pinned here is the contract at the HTTP edge:
-// the seven routes with their guards and tenant checks (a wrong resource or key there is a cross-tenant hole),
+// the eight routes with their guards and tenant checks (a wrong resource or key there is a cross-tenant hole),
 // the request DTOs as the API-wide ValidationPipe applies them (the options of app.factory.ts), and the
 // hand-over to the service. The service itself is pinned by calls.service.spec.ts.
 import 'reflect-metadata';
@@ -26,6 +26,7 @@ const BY_ID: TenantCheck = { from: 'param', key: 'id', resource: 'call' };
 const ROUTES: Array<[string, RequestMethod, string, TenantCheck[] | null]> = [
   ['list', RequestMethod.GET, '/', [{ from: 'query', key: 'profileId', resource: 'profile' }]],
   ['openCount', RequestMethod.GET, 'open-count', null],
+  ['mediaStatus', RequestMethod.GET, 'media/status', null],
   ['get', RequestMethod.GET, ':id', [BY_ID]],
   ['update', RequestMethod.PATCH, ':id', [BY_ID]],
   ['reject', RequestMethod.POST, ':id/reject', [BY_ID]],
@@ -45,13 +46,13 @@ describe('CallsController routes', () => {
   it('asks an API key for messages:write on the routes that send a message, and for nothing on the others', () => {
     const scopes = Object.fromEntries(ROUTES.map(([name]) => [name, Reflect.getMetadata(API_KEY_SCOPE, proto[name])]));
     expect(scopes).toEqual({
-      list: undefined, openCount: undefined, get: undefined, update: undefined, reject: undefined,
+      list: undefined, openCount: undefined, mediaStatus: undefined, get: undefined, update: undefined, reject: undefined,
       reply: ['messages:write'], callLink: ['messages:write'],
     });
     expect(Reflect.getMetadata(API_KEY_SCOPE, CallsController)).toBeUndefined();
   });
 
-  it('serves exactly these seven routes', () => {
+  it('serves exactly these eight routes', () => {
     const served = Object.getOwnPropertyNames(proto).filter((n) => n !== 'constructor' && Reflect.getMetadata(PATH_METADATA, proto[n]) !== undefined);
     expect(served.sort()).toEqual(ROUTES.map(([name]) => name).sort());
   });
@@ -62,16 +63,17 @@ describe('CallsController routes', () => {
     expect(Reflect.getMetadata(TENANT_CHECK, proto[name])).toEqual(checks ?? undefined);
   });
 
-  // Express would match ':id' first; keep the literal path ahead of it whatever the router.
-  it('declares open-count before :id', () => {
+  // Express would match ':id' first; keep the literal paths ahead of it whatever the router.
+  it('declares open-count and media/status before :id', () => {
     const order = Object.getOwnPropertyNames(proto);
     expect(order.indexOf('openCount')).toBeLessThan(order.indexOf('get'));
+    expect(order.indexOf('mediaStatus')).toBeLessThan(order.indexOf('get'));
   });
 });
 
 describe('CallsController hands over to the service', () => {
   function make() {
-    const service = { list: vi.fn(), openCount: vi.fn(), get: vi.fn(), update: vi.fn(), reject: vi.fn(), reply: vi.fn(), sendCallLink: vi.fn() };
+    const service = { list: vi.fn(), openCount: vi.fn(), mediaStatus: vi.fn(), get: vi.fn(), update: vi.fn(), reject: vi.fn(), reply: vi.fn(), sendCallLink: vi.fn() };
     for (const fn of Object.values(service)) fn.mockResolvedValue('result');
     return { service, controller: new CallsController(service as any) };
   }
@@ -83,10 +85,12 @@ describe('CallsController hands over to the service', () => {
     expect(service.list).toHaveBeenCalledWith(query);
   });
 
-  it('open-count: the organization of the caller, nothing from the request', async () => {
+  it('open-count and media/status: the organization of the caller, nothing from the request', async () => {
     const { service, controller } = make();
     await controller.openCount({ user: { organizationId: 'org1' } });
     expect(service.openCount).toHaveBeenCalledWith('org1');
+    await controller.mediaStatus({ user: { organizationId: 'org1' }, query: { organizationId: 'org2' } });
+    expect(service.mediaStatus).toHaveBeenCalledWith('org1');
   });
 
   it('get, update, reject: the call id, and the body of update', async () => {

@@ -28,6 +28,7 @@ import { AutoreplyController } from '../../modules/autoreply/autoreply.controlle
 import { BroadcastController } from '../../modules/broadcast/broadcast.controller';
 import { BulkController } from '../../modules/bulk/bulk.controller';
 import { CallsController } from '../../modules/calls/calls.controller';
+import { ProfileCallsController } from '../../modules/calls/profile-calls.controller';
 import { ContactsController } from '../../modules/contacts/contacts.controller';
 import { ConversationsController } from '../../modules/conversations/conversations.controller';
 import { GroupsController } from '../../modules/groups/groups.controller';
@@ -42,7 +43,7 @@ import { WorkspacesController } from '../../modules/workspaces/workspaces.contro
 const TENANT_CONTROLLERS = [
   AccountsController, KnowledgeBaseController, AutomationController, AutoreplyController,
   BroadcastController, BulkController, CallsController, ContactsController, ConversationsController,
-  GroupsController, MessagesController, ProfilesController, RbacController,
+  GroupsController, MessagesController, ProfileCallsController, ProfilesController, RbacController,
   StatisticsController, TemplatesController, WebhooksController, WorkspacesController,
 ];
 
@@ -57,6 +58,7 @@ const ORG_DERIVED_ALLOWLIST = new Set<string>([
   'WorkspacesController.create',
   'ConversationsController.unreadCount',
   'CallsController.openCount',
+  'CallsController.mediaStatus',
   'StatisticsController.getDashboard',
   // RbacController derives org from the token and never trusts client-supplied
   // ids (see the controller header) — every route is org-scoped internally.

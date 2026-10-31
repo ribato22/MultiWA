@@ -38,7 +38,9 @@ import { EngineManagerService } from '../profiles/engine-manager.service';
 import { MessagesService } from '../messages/messages.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
-import { CALLS_MAX_LIMIT } from './dto';
+import { CALLS_MAX_LIMIT, UpdateCallSettingsDto } from './dto';
+import { CallSessionService } from './coordinator/call-session.service';
+import { CallMediaService } from './media/call-media.service';
 
 export interface ListCallsQuery {
   profileId: string;
@@ -53,6 +55,7 @@ export interface ListCallsQuery {
 const DEFAULT_LIMIT = 50;
 const CALL_INCLUDE = {
   assignedUser: { select: { id: true, name: true } },
+  answeredBy: { select: { id: true, name: true } },
   conversation: { select: { id: true, name: true } },
 } as const;
 // A stuck WhatsApp Web page would otherwise hold the request for puppeteer's 240 s protocol timeout. The engine
@@ -74,6 +77,8 @@ export class CallsService {
     private readonly eventEmitter: EventEmitter2,
     // The Socket.IO gateway in the API, whichever process hosts the engine (the same alias the engine manager injects).
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
+    private readonly sessions: CallSessionService,
+    private readonly callMedia: CallMediaService,
   ) {}
 
   async list(q: ListCallsQuery) {
@@ -202,6 +207,43 @@ export class CallsService {
     if (!organizationId) throw new ForbiddenException('Missing organization context');
     const count = await prisma.call.count({ where: { followUp: 'open', profile: { workspace: { organizationId } } } });
     return { count };
+  }
+
+  /** Turn answering the profile's calls in the dashboard on (only when it is ready: 409 with the reasons) or off. */
+  async updateCallSettings(profileId: string, dto: UpdateCallSettingsDto) {
+    const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
+    if (!profile) throw new NotFoundException('Profile not found');
+    // The settings JSON is shared with the other profile settings: merge, never replace.
+    const settings = { ...((profile.settings as Record<string, unknown> | null) ?? {}) };
+    if (dto.answerInDashboard) {
+      const readiness = await this.sessions.readiness(profileId, settings);
+      if (!readiness.ready) {
+        throw new ConflictException({ message: 'Answering calls in the dashboard is not available for this profile', reasons: readiness.reasons });
+      }
+    }
+    settings.callsAnswerInDashboard = dto.answerInDashboard;
+    await prisma.profile.update({ where: { id: profileId }, data: { settings: settings as any } });
+    return { profileId, answerInDashboard: dto.answerInDashboard };
+  }
+
+  /** Readiness of answering calls in the dashboard: the media server's, and each profile of the organization. */
+  async mediaStatus(organizationId: string) {
+    // As for openCount: `organizationId: undefined` is no filter to Prisma, and would list every tenant's profiles.
+    if (!organizationId) throw new ForbiddenException('Missing organization context');
+    const profiles = await prisma.profile.findMany({
+      where: { workspace: { organizationId } },
+      select: { id: true, displayName: true, settings: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    return {
+      server: { ...this.callMedia.status(), engineHost: isWorkerEngine() ? 'worker' : 'api', activeSessions: this.sessions.activeSessionCount() },
+      profiles: await Promise.all(
+        profiles.map(async (p) => {
+          const settings = (p.settings as Record<string, unknown> | null) ?? {};
+          return { profileId: p.id, name: p.displayName ?? p.id, answerInDashboard: settings.callsAnswerInDashboard === true, ...(await this.sessions.readiness(p.id, settings)) };
+        }),
+      ),
+    };
   }
 
   private async assignableUser(profileId: string, userId: string): Promise<string> {

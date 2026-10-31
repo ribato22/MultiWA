@@ -4,6 +4,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER } from '@multiwa/core';
 import { CallsController } from './calls.controller';
+import { ProfileCallsController } from './profile-calls.controller';
 import { CallsService } from './calls.service';
 import { CallMediaService } from './media/call-media.service';
 import { CallSessionService } from './coordinator/call-session.service';
@@ -19,7 +20,7 @@ import { MessagesModule } from '../messages/messages.module';
   // EngineManagerService (ProfilesModule) and MessagesService (MessagesModule) are exported; the two import each
   // other, hence forwardRef.
   imports: [forwardRef(() => ProfilesModule), forwardRef(() => MessagesModule)],
-  controllers: [CallsController],
+  controllers: [CallsController, ProfileCallsController],
   providers: [
     CallsService,
     CallMediaService,

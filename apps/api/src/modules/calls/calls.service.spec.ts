@@ -12,7 +12,7 @@ vi.mock('@multiwa/database', () => ({
   prisma: {
     call: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), count: vi.fn() },
     conversation: { findFirst: vi.fn() },
-    profile: { findUnique: vi.fn() },
+    profile: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     user: { findFirst: vi.fn() },
   },
 }));
@@ -47,8 +47,10 @@ function make() {
   const engineCommands = { rejectCall: vi.fn().mockResolvedValue({ callId: 'c1' }), createCallLink: vi.fn().mockResolvedValue(LINK) };
   const eventEmitter = { emit: vi.fn() };
   const realtime = { emitCallUpdate: vi.fn() };
-  const svc = new CallsService(engineManager as any, messages as any, engineCommands as any, eventEmitter as any, realtime as any);
-  return { svc, engine, engineManager, messages, engineCommands, eventEmitter, realtime };
+  const sessions = { readiness: vi.fn().mockResolvedValue({ ready: true, reasons: [] }), activeSessionCount: vi.fn(() => 1) };
+  const callMedia = { status: vi.fn(() => ({ enabled: true, worker: 'up', port: 40000, activeRooms: 1 })) };
+  const svc = new CallsService(engineManager as any, messages as any, engineCommands as any, eventEmitter as any, realtime as any, sessions as any, callMedia as any);
+  return { svc, engine, engineManager, messages, engineCommands, eventEmitter, realtime, sessions, callMedia };
 }
 type Ctx = ReturnType<typeof make>;
 
@@ -81,7 +83,7 @@ const linkTarget = (t: Ctx, mode: Mode) => (mode === 'worker' ? t.engineCommands
 beforeEach(() => {
   for (const m of Object.values(db.call)) (m as any).mockReset();
   db.conversation.findFirst.mockReset();
-  db.profile.findUnique.mockReset();
+  for (const m of Object.values(db.profile)) (m as any).mockReset();
   db.user.findFirst.mockReset();
 });
 afterEach(() => {
@@ -178,12 +180,16 @@ describe('CallsService.list', () => {
 });
 
 describe('CallsService.get', () => {
-  it('returns the call with its assignee and conversation', async () => {
+  it('returns the call with its assignee, the agent who answered it, and its conversation', async () => {
     db.call.findUnique.mockResolvedValue(row());
     await expect(make().svc.get('c1')).resolves.toMatchObject({ id: 'c1' });
     expect(db.call.findUnique).toHaveBeenCalledWith({
       where: { id: 'c1' },
-      include: { assignedUser: { select: { id: true, name: true } }, conversation: { select: { id: true, name: true } } },
+      include: {
+        assignedUser: { select: { id: true, name: true } },
+        answeredBy: { select: { id: true, name: true } },
+        conversation: { select: { id: true, name: true } },
+      },
     });
   });
 
@@ -802,5 +808,56 @@ describe('CallsService.openCount', () => {
   it.each([undefined, null, ''])('is forbidden without an organization (%j), and counts nothing', async (organizationId) => {
     await expect(make().svc.openCount(organizationId as any)).rejects.toBeInstanceOf(ForbiddenException);
     expect(db.call.count).not.toHaveBeenCalled();
+  });
+});
+
+describe('CallsService: dashboard answering settings and status', () => {
+  it('turning answering on needs a ready profile: 409 with the reasons, the settings untouched', async () => {
+    const { svc, sessions } = make();
+    db.profile.findUnique.mockResolvedValue({ settings: { autoRejectCalls: false, quietAlarmHours: 2 } });
+    sessions.readiness.mockResolvedValueOnce({ ready: false, reasons: ['media_disabled', 'profile_not_connected'] });
+    await expect(svc.updateCallSettings('p1', { answerInDashboard: true })).rejects.toMatchObject({
+      status: 409,
+      response: { message: 'Answering calls in the dashboard is not available for this profile', reasons: ['media_disabled', 'profile_not_connected'] },
+    });
+    expect(db.profile.update).not.toHaveBeenCalled();
+  });
+
+  it('turns it on for a ready profile and off at any time, keeping the other settings', async () => {
+    const { svc, sessions } = make();
+    db.profile.findUnique.mockResolvedValue({ settings: { autoRejectCalls: false, quietAlarmHours: 2 } });
+    expect(await svc.updateCallSettings('p1', { answerInDashboard: true })).toEqual({ profileId: 'p1', answerInDashboard: true });
+    expect(db.profile.update).toHaveBeenLastCalledWith({ where: { id: 'p1' }, data: { settings: { autoRejectCalls: false, quietAlarmHours: 2, callsAnswerInDashboard: true } } });
+    sessions.readiness.mockClear();
+    expect(await svc.updateCallSettings('p1', { answerInDashboard: false })).toEqual({ profileId: 'p1', answerInDashboard: false });
+    expect(sessions.readiness).not.toHaveBeenCalled(); // off needs no readiness
+  });
+
+  it('an unknown profile is 404', async () => {
+    const { svc } = make();
+    db.profile.findUnique.mockResolvedValue(null);
+    await expect(svc.updateCallSettings('nope', { answerInDashboard: false })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("status: the media server's, and each profile of the organization with its readiness", async () => {
+    const { svc } = make();
+    db.profile.findMany.mockResolvedValue([
+      { id: 'p1', displayName: 'Line 1', settings: { callsAnswerInDashboard: true } },
+      { id: 'p2', displayName: null, settings: {} },
+    ]);
+    expect(await svc.mediaStatus('o1')).toEqual({
+      server: { enabled: true, worker: 'up', port: 40000, activeRooms: 1, engineHost: 'api', activeSessions: 1 },
+      profiles: [
+        { profileId: 'p1', name: 'Line 1', answerInDashboard: true, ready: true, reasons: [] },
+        { profileId: 'p2', name: 'p2', answerInDashboard: false, ready: true, reasons: [] },
+      ],
+    });
+    expect(db.profile.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspace: { organizationId: 'o1' } } }));
+  });
+
+  // As for openCount: without an organization the profile query would list every tenant's profiles.
+  it.each([undefined, null, ''])('status is forbidden without an organization (%j), and lists nothing', async (organizationId) => {
+    await expect(make().svc.mediaStatus(organizationId as any)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(db.profile.findMany).not.toHaveBeenCalled();
   });
 });
