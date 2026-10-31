@@ -29,11 +29,10 @@ function positiveIntEnv(name: string, fallback: number): number {
 }
 
 /**
- * Events the API produces itself (agent actions on calls). With ENGINE_HOST=worker the
- * worker dispatches the engine's events, but these never reach the worker, so the API
- * keeps dispatching them.
+ * Events the API produces itself (agent actions on calls, recordings deleted). With ENGINE_HOST=worker the worker
+ * dispatches the engine's events, but these never reach the worker, so the API keeps dispatching them.
  */
-export const API_ORIGINATED_EVENTS: ReadonlySet<string> = new Set<string>([AppEvents.CALL.UPDATED]);
+export const API_ORIGINATED_EVENTS: ReadonlySet<string> = new Set<string>([AppEvents.CALL.UPDATED, AppEvents.CALL.RECORDING_DELETED]);
 
 @Injectable()
 export class WebhookDispatcherService implements OnModuleInit {
