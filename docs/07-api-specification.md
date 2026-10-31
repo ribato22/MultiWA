@@ -266,7 +266,7 @@ Other errors of the call actions:
 
 The audio itself:
 
-- **Owner or admin only**, on a call of their organization. An API key with an explicit scope list needs `recordings:read` to play or download and `recordings:delete` to delete. Such a key also needs `profiles:write` for `PUT /profiles/:id/calls-settings` and the announcement routes, and `recordings:delete` as well to change `retentionDays` (a shorter period deletes recordings). Keys with no scopes or with `*` skip these checks.
+- **Owner or admin only**, on a call of their organization. An API key with an explicit scope list needs `recordings:read` to play or download and `recordings:delete` to delete. Such a key also needs `profiles:write` for `PUT /profiles/:id/calls-settings`, the announcement routes and deleting a profile (`DELETE /profiles/:id`, `DELETE /accounts/:accountId/profiles/:profileId`, which delete its recordings too), and `recordings:delete` as well to change `retentionDays` (a shorter period deletes recordings). Keys with no scopes or with `*` skip these checks.
 - **`GET /calls/:id/recording`** answers `200`, or `206` for a `Range: bytes=…` request, with `Accept-Ranges: bytes` and `Cache-Control: private, no-store`.
   - Only one range is served: a list is answered whole. A range past the end is `416`.
   - `?download=1` adds `Content-Disposition: attachment`.
