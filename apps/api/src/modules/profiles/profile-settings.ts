@@ -17,7 +17,8 @@ type Written = { settings: ProfileSettings }[];
 /** Merges `patch` into the profile's settings. The settings as written, or null when there is no such profile. */
 export async function mergeProfileSettings(profileId: string, patch: ProfileSettings): Promise<ProfileSettings | null> {
   // The recording rule is kept by the two conditional statements below: a plain merge never turns recording on, and sets
-  // an announcement only whole (what mergeProfileSettingsIfAnnounced counts as one).
+  // an announcement only whole. mergeProfileSettingsIfAnnounced counts any object as one, so every object written here
+  // must be one the readers count too.
   if (patch.callsRecording === true) throw new Error('Recording is turned on with mergeProfileSettingsIfAnnounced');
   if ('callsAnnouncement' in patch && !announcementOf(patch)) {
     throw new Error('callsAnnouncement must be a whole announcement (removeAnnouncementUnlessRecording removes it)');
@@ -28,6 +29,8 @@ export async function mergeProfileSettings(profileId: string, patch: ProfileSett
 
 /** As mergeProfileSettings, only while the profile has an announcement (turning recording on). Null otherwise. */
 export async function mergeProfileSettingsIfAnnounced(profileId: string, patch: ProfileSettings): Promise<ProfileSettings | null> {
+  // Its condition reads the announcement already stored: one in the patch would be written without being checked.
+  if ('callsAnnouncement' in patch) throw new Error('Turning recording on never sets the announcement (mergeProfileSettings does)');
   const rows = await prisma.$queryRaw<Written>`UPDATE profiles SET settings = (CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END) || ${JSON.stringify(patch)}::jsonb, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE id = ${profileId} AND jsonb_typeof(settings->'callsAnnouncement') = 'object' RETURNING settings`;
   return rows[0]?.settings ?? null;
 }
@@ -59,7 +62,7 @@ const field = (settings: unknown, key: string): unknown =>
 
 export function announcementOf(settings: unknown): CallAnnouncement | null {
   const a = field(settings, 'callsAnnouncement') as Partial<CallAnnouncement> | null | undefined;
-  return a && typeof a.storageKey === 'string' && typeof a.mimeType === 'string' && typeof a.durationSec === 'number'
+  return a && typeof a.storageKey === 'string' && typeof a.mimeType === 'string' && typeof a.durationSec === 'number' && Number.isFinite(a.durationSec)
     ? { storageKey: a.storageKey, mimeType: a.mimeType, durationSec: a.durationSec }
     : null;
 }

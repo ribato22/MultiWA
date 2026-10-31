@@ -40,6 +40,7 @@ describe('profile settings writes', () => {
     await expect(mergeProfileSettings('p1', { callsRecording: true })).rejects.toThrow('mergeProfileSettingsIfAnnounced');
     await expect(mergeProfileSettings('p1', { callsAnnouncement: null })).rejects.toThrow('whole announcement');
     await expect(mergeProfileSettings('p1', { callsAnnouncement: { storageKey: 'k' } })).rejects.toThrow('whole announcement');
+    await expect(mergeProfileSettingsIfAnnounced('p1', { callsRecording: true, callsAnnouncement: null })).rejects.toThrow('never sets the announcement');
     expect(db.$queryRaw).not.toHaveBeenCalled();
     await mergeProfileSettings('p1', { callsRecording: false, callsAnnouncement: { storageKey: 'k', mimeType: 'audio/mpeg', durationSec: 2 } });
     expect(db.$queryRaw).toHaveBeenCalledTimes(1);
@@ -67,7 +68,7 @@ describe('call settings readers', () => {
 
   it('an announcement only when it is whole', () => {
     expect(announcementOf({ callsAnnouncement: { ...ANNOUNCEMENT, extra: 1 } })).toEqual(ANNOUNCEMENT);
-    for (const settings of [null, undefined, 'x', {}, { callsAnnouncement: null }, { callsAnnouncement: 'k' }, { callsAnnouncement: { ...ANNOUNCEMENT, durationSec: '4' } }]) {
+    for (const settings of [null, undefined, 'x', {}, { callsAnnouncement: null }, { callsAnnouncement: 'k' }, { callsAnnouncement: { ...ANNOUNCEMENT, durationSec: '4' } }, { callsAnnouncement: { ...ANNOUNCEMENT, durationSec: NaN } }, { callsAnnouncement: { ...ANNOUNCEMENT, durationSec: Infinity } }]) {
       expect(announcementOf(settings)).toBeNull();
     }
   });
