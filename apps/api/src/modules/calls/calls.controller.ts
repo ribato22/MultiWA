@@ -2,7 +2,7 @@
 // apps/api/src/modules/calls/calls.controller.ts
 
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, Res, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiProduces, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { CallsService } from './calls.service';
 import { CallRecordingsService } from './recordings/call-recordings.service';
@@ -110,6 +110,9 @@ export class CallsController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: "The call's recording (audio/webm): HTTP Range for seeking, ?download=1 as an attachment; audited" })
   @ApiProduces('audio/webm')
+  @ApiResponse({ status: 206, description: 'One byte range of the recording, with Content-Range' })
+  @ApiResponse({ status: 416, description: 'The range starts past the end: `Content-Range: bytes */<size>`' })
+  @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server, or the access could not be audited: nothing is sent' })
   @ApiNotFound('Recording')
   async recording(@Param('id') id: string, @Query('download') download: string | undefined, @Request() req: any, @Res() reply: FastifyReply): Promise<void> {
     // Who read it, from where: the audit of a read carries the IP and user agent, like every other audit entry.
@@ -124,6 +127,8 @@ export class CallsController {
   @RequireScope('recordings:delete')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: "Delete the call's recording: the file goes, the row stays marked deleted as evidence" })
+  @ApiResponse({ status: 409, description: 'The recording is in another storage location than this server uses now: it cannot be deleted from here' })
+  @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server' })
   @ApiNotFound('Recording')
   deleteRecording(@Param('id') id: string, @Request() req: any) {
     return this.recordings.deleteByAdmin(id, req.user.id);

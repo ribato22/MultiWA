@@ -73,6 +73,14 @@ describe('CallsController routes', () => {
     }
   });
 
+  // What a client must handle besides the 200: a range, a range past the end, a storage this server cannot use or a
+  // read it cannot audit, a recording stored where this server cannot delete it.
+  it('the recording routes document their other answers', () => {
+    const documented = (name: string) => Object.keys(Reflect.getMetadata('swagger/apiResponse', proto[name]) ?? {}).sort();
+    expect(documented('recording')).toEqual(['206', '404', '416', '503']);
+    expect(documented('deleteRecording')).toEqual(['404', '409', '503']);
+  });
+
   it('a recording deleted by an admin is audited as call.recording.delete', async () => {
     const audit = { log: vi.fn().mockResolvedValue(undefined) };
     const req = { method: 'DELETE', params: { id: 'c1' }, user: { id: 'u1', organizationId: 'o1' }, headers: {} };
