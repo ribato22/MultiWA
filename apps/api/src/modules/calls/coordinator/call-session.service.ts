@@ -249,9 +249,11 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   /**
    * The agent's Hang up. While connecting it gives the call up: before WhatsApp was asked to answer, the call rings again
    * for everyone; once it was asked, the call is hung up and rings nowhere. Also for an agent deactivated or demoted
-   * since the answer: every other command refuses them, and their call would run on to the cap.
+   * since the answer: every other command refuses them, and their call would run on to the cap. Not for a login that
+   * was logged out or revoked: its sockets are disconnected within a minute, and its call is hung up as agent_lost.
    */
   async hangup(principal: SocketPrincipal, callId: unknown): Promise<CallCommandReply> {
+    if (!(await this.sessionLive(principal))) return { ok: false, reason: 'not_allowed' };
     const session = this.sessionOf(principal, callId);
     if (!session) return { ok: false, reason: (await this.agentOf(principal)) ? 'not_in_call' : 'not_allowed' };
     if (session.phase === 'connecting') await this.stopConnecting(session, { reRing: true });
@@ -678,17 +680,31 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   }
 
   /**
-   * The principal as an agent: an active owner, admin or member of its organization (read fresh on every command), on a
-   * dashboard login. An API-key socket (an integration) never answers calls: it is not rung, nor counted as online.
+   * The principal as an agent: an active owner, admin or member of its organization, on a dashboard login whose session
+   * is still live (both read fresh on every command). An API-key socket (an integration) never answers calls: it is not
+   * rung, nor counted as online.
    */
   private async agentOf(principal: SocketPrincipal | null): Promise<{ id: string; name: string; organizationId: string } | null> {
     if (!principal || principal.apiKeyScopes !== undefined) return null;
-    const user = await prisma.user.findUnique({
-      where: { id: principal.userId },
-      select: { id: true, name: true, role: true, isActive: true, organizationId: true },
-    });
-    if (!user?.isActive || user.organizationId !== principal.organizationId || !AGENT_ROLES.includes(user.role)) return null;
+    const [user, live] = await Promise.all([
+      prisma.user.findUnique({
+        where: { id: principal.userId },
+        select: { id: true, name: true, role: true, isActive: true, organizationId: true },
+      }),
+      this.sessionLive(principal),
+    ]);
+    if (!live || !user?.isActive || user.organizationId !== principal.organizationId || !AGENT_ROLES.includes(user.role)) return null;
     return { id: user.id, name: user.name, organizationId: user.organizationId };
+  }
+
+  /**
+   * The login's session still exists and has not expired, as the HTTP API requires (JwtStrategy): a socket is
+   * authenticated once, and a logout or a revoked session deletes the row. Only a dashboard login has one.
+   */
+  private async sessionLive(principal: SocketPrincipal | null): Promise<boolean> {
+    if (!principal?.sessionTokenHash) return false;
+    const session = await prisma.session.findUnique({ where: { tokenHash: principal.sessionTokenHash }, select: { expiresAt: true } });
+    return !!session && session.expiresAt > new Date();
   }
 
   /** The counters; they never stop a call. */

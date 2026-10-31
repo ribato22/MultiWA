@@ -2,13 +2,15 @@
 // client's messages, and every admin page emits `join` on `connect`. A join that
 // arrives while the handshake is still being authenticated must wait for it.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 
 vi.mock('@multiwa/database', () => ({
   prisma: {
     user: { findUnique: vi.fn() },
     apiKey: { findUnique: vi.fn() },
     profile: { findFirst: vi.fn() },
+    session: { findUnique: vi.fn(), findMany: vi.fn() },
   },
 }));
 
@@ -16,6 +18,10 @@ import { prisma } from '@multiwa/database';
 import { EventsGateway } from './events.gateway';
 
 const db = prisma as any;
+/** The sessions table's key of an access token (SessionsService.hashToken). */
+const hash = (token: string) => createHash('sha256').update(token).digest('hex');
+/** A session that is still live: it expires in a week. */
+const liveSession = () => ({ expiresAt: new Date(Date.now() + 7 * 24 * 3_600_000) });
 
 const fakeClient = () =>
   ({ id: 's1', handshake: { auth: { token: 't' } }, data: {}, connected: true, join: vi.fn(), disconnect: vi.fn() }) as any;
@@ -32,6 +38,7 @@ describe('EventsGateway join during the handshake', () => {
     db.user.findUnique.mockReset().mockResolvedValue({ id: 'u1', organizationId: 'o1', isActive: true });
     db.apiKey.findUnique.mockReset().mockResolvedValue(null);
     db.profile.findFirst.mockReset().mockResolvedValue({ id: 'p1' });
+    db.session.findUnique.mockReset().mockResolvedValue(liveSession());
   });
 
   it('a join sent before the handshake is authenticated waits for it and joins', async () => {
@@ -74,6 +81,7 @@ describe('EventsGateway join during the handshake', () => {
 
 describe('EventsGateway users: one authentication per socket, a room per user, presence', () => {
   const rooms = new Map<string, Set<string>>();
+  const sockets = new Map<string, any>(); // the namespace's connected sockets
   const emitted = vi.fn();
   let bus: { emit: ReturnType<typeof vi.fn> };
   let gateway: EventsGateway;
@@ -88,11 +96,13 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
       join: vi.fn((room: string) => s.connected && (rooms.get(room) ?? rooms.set(room, new Set()).get(room)!).add(id)),
       disconnect: vi.fn(),
     };
+    sockets.set(id, s);
     return s;
   };
   // socket.io closing a socket, before its 'disconnect': out of its rooms, its join made a no-op, no longer connected
   const leave = (s: any) => {
     for (const [room, ids] of rooms) if (ids.delete(s.id) && !ids.size) rooms.delete(room);
+    sockets.delete(s.id);
     s.connected = false;
   };
   /** The next JWT check ends only when the returned function is called. */
@@ -104,22 +114,48 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
 
   beforeEach(() => {
     rooms.clear();
+    sockets.clear();
     emitted.mockReset();
     bus = { emit: vi.fn() };
     verify = vi.fn().mockResolvedValue({ sub: 'u1' });
     gateway = new EventsGateway({ verifyAsync: verify } as any, bus as any);
-    gateway.server = { adapter: { rooms }, to: vi.fn(() => ({ emit: emitted })) } as any;
+    gateway.server = { adapter: { rooms }, sockets, to: vi.fn(() => ({ emit: emitted })) } as any;
     db.user.findUnique.mockReset().mockResolvedValue({ id: 'u1', organizationId: 'o1', isActive: true });
     db.apiKey.findUnique.mockReset().mockResolvedValue(null);
+    db.session.findUnique.mockReset().mockResolvedValue(liveSession());
+    db.session.findMany.mockReset();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('authenticates a socket once, whichever gateway asks first (Nest runs the gateways\' hooks in no set order)', async () => {
     const s = socket('s1');
     const [a, b] = await Promise.all([gateway.authOf(s), gateway.authOf(s)]);
     await gateway.handleConnection(s);
-    expect(a).toEqual({ userId: 'u1', organizationId: 'o1' });
+    expect(a).toEqual({ userId: 'u1', organizationId: 'o1', sessionTokenHash: hash('t') });
     expect(b).toBe(a);
     expect(verify).toHaveBeenCalledTimes(1);
+  });
+
+  it("a JWT whose session is gone (logged out, revoked) or expired opens no socket, as on the HTTP API", async () => {
+    db.session.findUnique.mockResolvedValueOnce(null);
+    const revoked = socket('s11');
+    await gateway.handleConnection(revoked);
+    expect(revoked.disconnect).toHaveBeenCalledWith(true);
+    expect(revoked.join).not.toHaveBeenCalled();
+    db.session.findUnique.mockResolvedValueOnce({ expiresAt: new Date(Date.now() - 1_000) });
+    expect(await gateway.authOf(socket('s12'))).toBeNull();
+    expect(gateway.isUserOnline('u1')).toBe(false);
+    expect(bus.emit).not.toHaveBeenCalled();
+  });
+
+  it("a JWT socket's principal carries its session's hash, never the token", async () => {
+    const token = 'eyJ.the-access-token.sig';
+    const principal = await gateway.authOf(socket('s13', { token }));
+    expect(principal).toEqual({ userId: 'u1', organizationId: 'o1', sessionTokenHash: hash(token) });
+    expect(JSON.stringify(principal)).not.toContain(token);
+    expect(db.session.findUnique).toHaveBeenCalledWith({ where: { tokenHash: hash(token) }, select: { expiresAt: true } });
   });
 
   it("puts every socket in its user's room, and says when the user comes online and goes offline", async () => {
@@ -254,5 +290,51 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
       ['internal.ws.user_online', { userId: 'u1' }],
       ['internal.ws.user_offline', { userId: 'u1' }],
     ]);
+  });
+
+  it("the sweep disconnects exactly the dashboard sockets whose session is gone or whose user was deactivated, with one query", async () => {
+    const sweep = () => (gateway as any).sweepSessions();
+    await sweep();
+    expect(db.session.findMany).not.toHaveBeenCalled(); // nobody to check
+    // s2 is the same login's second tab
+    const tokens: Record<string, string> = { s1: 'live', s2: 'live', s3: 'revoked', s4: 'deactivated' };
+    const dashboards = Object.entries(tokens).map(([id, token]) => socket(id, { token }));
+    for (const s of dashboards) await gateway.handleConnection(s);
+    db.apiKey.findUnique.mockResolvedValue({ expiresAt: null, permissions: [], user: { id: 'u1', organizationId: 'o1', isActive: true } });
+    const integration = socket('s5', { apiKey: 'k' });
+    await gateway.handleConnection(integration);
+    db.session.findMany.mockResolvedValue([{ tokenHash: hash('live') }]);
+    await sweep();
+    expect(db.session.findMany.mock.calls).toEqual([[{
+      where: { tokenHash: { in: [hash('live'), hash('revoked'), hash('deactivated')] }, expiresAt: { gt: expect.any(Date) }, user: { isActive: true } },
+      select: { tokenHash: true },
+    }]]);
+    expect(Object.fromEntries([...dashboards, integration].map((s) => [s.id, s.disconnect.mock.calls]))).toEqual({
+      s1: [], s2: [], s3: [[true]], s4: [[true]], s5: [],
+    });
+  });
+
+  it('a sweep whose query fails disconnects nobody, and says why on one line', async () => {
+    const s = socket('s1', { token: 'live' });
+    await gateway.handleConnection(s);
+    db.session.findMany.mockRejectedValue(new Error('connection refused\nforged line'));
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    await expect((gateway as any).sweepSessions()).resolves.toBeUndefined();
+    expect(s.disconnect).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection refusedforged line'));
+  });
+
+  it('sweeps once a minute from module init to module destroy, on a timer that does not hold the process open', async () => {
+    vi.useFakeTimers();
+    const sweep = vi.spyOn(gateway as any, 'sweepSessions').mockResolvedValue(undefined);
+    gateway.onModuleInit();
+    expect((gateway as any).sweepTimer.hasRef()).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sweep).toHaveBeenCalledTimes(2);
+    gateway.onModuleDestroy();
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(sweep).toHaveBeenCalledTimes(2);
   });
 });

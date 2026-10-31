@@ -12,7 +12,7 @@ import {
   GatewayMetadata,
 } from '@nestjs/websockets';
 import { Namespace, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
@@ -28,6 +28,12 @@ const WS_CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3001,http
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
+
+/** An access token's key in the sessions table: the same hash as SessionsService.hashToken (the token is never stored). */
+const sessionTokenHash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
+
+/** How often the dashboard sockets' sessions are checked again: a revoked device stops being rung within this. */
+const SESSION_SWEEP_MS = 60_000;
 
 /** The /ws namespace's options: every gateway on it (this one, CallsGateway) declares the same. */
 export const WS_GATEWAY_OPTIONS: GatewayMetadata = {
@@ -45,13 +51,24 @@ export interface SocketPrincipal {
   organizationId: string;
   /** Present for an API-key socket (`[]` or `['*']` means full access), absent for a dashboard login (JWT). */
   apiKeyScopes?: string[];
+  /** A dashboard login's session (`sessions.tokenHash`, never the token itself): its sockets last only as long as it does. */
+  sessionTokenHash?: string;
 }
 
 @WebSocketGateway(WS_GATEWAY_OPTIONS)
-export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, RealtimeEmitter {
+export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy, RealtimeEmitter {
   private readonly logger = new Logger(EventsGateway.name);
+  private sweepTimer?: NodeJS.Timeout;
 
   constructor(private readonly jwt: JwtService, private readonly eventEmitter: EventEmitter2) {}
+
+  onModuleInit(): void {
+    this.sweepTimer = setInterval(() => void this.sweepSessions(), SESSION_SWEEP_MS).unref();
+  }
+
+  onModuleDestroy(): void {
+    clearInterval(this.sweepTimer);
+  }
 
   // With a namespace, Nest injects the namespace (not the root Server): its adapter holds the rooms.
   @WebSocketServer()
@@ -81,6 +98,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       const room = this.userRoom(auth.userId);
       client.join(room);
       client.data.userId = auth.userId; // read by handleDisconnect: only a socket that joined can take its user offline
+      client.data.sessionTokenHash = auth.sessionTokenHash; // checked again by the sweep
       if (this.server?.adapter?.rooms.get(room)?.size === 1) this.emitInternal(InternalEvents.WS_USER_ONLINE, { userId: auth.userId });
     }
     this.logger.log(`Client connected to /ws: ${client.id} (org ${auth.organizationId})`);
@@ -187,12 +205,15 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     if (token && typeof token === 'string') {
       try {
         const payload: any = await this.jwt.verifyAsync(token, { secret: process.env.JWT_SECRET });
-        const user = await prisma.user.findUnique({
-          where: { id: payload.sub },
-          select: { id: true, organizationId: true, isActive: true },
-        });
-        if (user && user.isActive) {
-          return { userId: user.id, organizationId: user.organizationId };
+        // As on the HTTP API (JwtStrategy), the token needs a live session: a login that was logged out or revoked
+        // keeps a valid token for days, and must not open a socket that is rung and answers calls.
+        const tokenHash = sessionTokenHash(token);
+        const [user, session] = await Promise.all([
+          prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, organizationId: true, isActive: true } }),
+          prisma.session.findUnique({ where: { tokenHash }, select: { expiresAt: true } }),
+        ]);
+        if (user && user.isActive && session && session.expiresAt > new Date()) {
+          return { userId: user.id, organizationId: user.organizationId, sessionTokenHash: tokenHash };
         }
       } catch {
         /* fall through to API key */
@@ -212,6 +233,27 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     }
 
     return null;
+  }
+
+  /**
+   * A socket is authenticated once, at its handshake. Every minute, the dashboard sockets whose session is gone
+   * (logged out, revoked, expired) or whose user was deactivated are disconnected, in one query for all of them: a
+   * revoked device stops being rung within a minute. Their disconnect runs the usual path: the user goes offline, and
+   * the call coordinator hangs up the call of an agent lost for longer than its grace. A sweep that fails changes nothing.
+   */
+  private async sweepSessions(): Promise<void> {
+    try {
+      const sockets = [...(this.server?.sockets?.values() ?? [])].filter((s) => s.data?.sessionTokenHash);
+      if (!sockets.length) return;
+      const live = await prisma.session.findMany({
+        where: { tokenHash: { in: [...new Set(sockets.map((s) => s.data.sessionTokenHash as string))] }, expiresAt: { gt: new Date() }, user: { isActive: true } },
+        select: { tokenHash: true },
+      });
+      const kept = new Set(live.map((s) => s.tokenHash));
+      for (const s of sockets) if (!kept.has(s.data.sessionTokenHash)) s.disconnect(true);
+    } catch (e) {
+      this.logger.warn(`Could not check the sockets' sessions: ${clean((e as Error)?.message ?? e)}`);
+    }
   }
 
   /** True when the profile belongs to the given organization. */

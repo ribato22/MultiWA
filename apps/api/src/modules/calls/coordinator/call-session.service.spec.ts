@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-vi.mock('@multiwa/database', () => ({ prisma: { user: { findUnique: vi.fn(), findMany: vi.fn() } } }));
+vi.mock('@multiwa/database', () => ({ prisma: { user: { findUnique: vi.fn(), findMany: vi.fn() }, session: { findUnique: vi.fn() } } }));
 vi.mock('./call-session-store', () => ({
   findCallForAnswer: vi.fn(),
   claimCall: vi.fn(),
@@ -30,7 +30,10 @@ const USERS: Record<string, any> = {
   u4: { id: 'u4', name: 'Dewi', role: 'member', isActive: true, organizationId: 'o2' },
   u5: { id: 'u5', name: 'Eko', role: 'admin', isActive: false, organizationId: 'o1' },
 };
-const as = (userId: string, apiKeyScopes?: string[]) => ({ userId, organizationId: USERS[userId].organizationId, ...(apiKeyScopes !== undefined ? { apiKeyScopes } : {}) });
+/** A socket's principal: a dashboard login (its session's hash), or an API key's (its scopes). */
+const as = (userId: string, apiKeyScopes?: string[]) => ({
+  userId, organizationId: USERS[userId].organizationId, ...(apiKeyScopes !== undefined ? { apiKeyScopes } : { sessionTokenHash: `session-of-${userId}` }),
+});
 const ringing = (call: Record<string, unknown> = {}, settings: Record<string, unknown> = {}) => ({
   call: { id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false, outcome: 'ringing', answeredByUserId: null, startedAt: STARTED, ...call },
   profile: { id: 'p1', displayName: 'Line 1', settings: { callsAnswerInDashboard: true, ...settings }, organizationId: 'o1' },
@@ -108,6 +111,8 @@ beforeEach(() => {
       .filter((u) => where.id.in.includes(u.id) && u.organizationId === where.organizationId && u.isActive === where.isActive && where.role.in.includes(u.role))
       .map((u) => ({ id: u.id })),
   );
+  // Every login's session is live (it expires in a week)
+  db.session.findUnique.mockReset().mockImplementation(async () => ({ expiresAt: new Date(Date.now() + 7 * 24 * 3_600_000) }));
   for (const fn of Object.values(S)) fn.mockReset();
   S.findCallForAnswer.mockResolvedValue(ringing());
   S.claimCall.mockResolvedValue(true);
@@ -583,6 +588,29 @@ describe("CallSessionService: the agent's media and Hang up", () => {
     expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: true });
     expect(S.markEnded.mock.calls).toEqual([['c1', 'agent', 'hangup', expect.any(Date)]]);
     expect(h.media.hangUp).toHaveBeenCalledWith('W1');
+  });
+
+  it('a login logged out, revoked or expired since its socket connected may send no command, not even Hang up on its own call', async () => {
+    const h = harness();
+    await answered(h);
+    db.session.findUnique.mockResolvedValue(null); // logged out or revoked: the session row is deleted
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.media(as('u1'), 'c1', 'rtpCapabilities', {})).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.setAvailability(as('u1'), false)).toEqual({ ok: false, reason: 'not_allowed' });
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ id: 'c2', waCallId: 'W2' }));
+    expect(await h.service.answer(as('u2'), 'c2')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(db.session.findUnique).toHaveBeenCalledWith({ where: { tokenHash: 'session-of-u1' }, select: { expiresAt: true } });
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() - 1_000) }); // expired
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    db.session.findUnique.mockResolvedValue({ expiresAt: new Date(Date.now() + 3_600_000) });
+    const withoutSession = { userId: 'u1', organizationId: 'o1' }; // a dashboard principal always carries its session
+    expect(await h.service.hangup(withoutSession, 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.setAvailability(withoutSession, false)).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(S.claimCall).toHaveBeenCalledTimes(1); // the answer of c1 only
+    expect(S.markEnded).not.toHaveBeenCalled();
+    expect(h.service.activeSessionCount()).toBe(1);
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: true }); // the live login still can
   });
 
   it('the end is stored as of the moment it happened, not once the hang-up and the teardown are over', async () => {

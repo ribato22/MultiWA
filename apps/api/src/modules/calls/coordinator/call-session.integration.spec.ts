@@ -2,8 +2,9 @@
 // CallsGateway on /ws, wired by hand the way Nest's adapter wires them; socket.io-client agents on JWTs; and two
 // headless Chrome pages: the engine's WhatsApp Web page (fake WhatsApp Web + the engine's hooks, driven through the
 // real WebJsCallMedia) and an agent's browser (mediasoup-client), whose signalling goes through the agent's socket.
-// The calls table and the users are in-memory stand-ins that keep the store's compare-and-set rules.
+// The calls table, the users and their login sessions are in-memory stand-ins that keep the store's compare-and-set rules.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { Server } from 'socket.io';
 import { io, type Socket as ClientSocket } from 'socket.io-client';
@@ -21,7 +22,8 @@ import {
   WWEBJS_USER_AGENT, agentHearsInPage, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, startAgentPeerInPage, until,
 } from '../../../testing/call-media-browser';
 
-const db = vi.hoisted(() => ({ calls: new Map<string, any>(), users: new Map<string, any>() }));
+// sessions: by tokenHash, as the sessions table keys them
+const db = vi.hoisted(() => ({ calls: new Map<string, any>(), users: new Map<string, any>(), sessions: new Map<string, { userId: string; expiresAt: Date }>() }));
 vi.mock('@multiwa/database', () => ({
   prisma: {
     user: {
@@ -30,6 +32,13 @@ vi.mock('@multiwa/database', () => ({
         [...db.users.values()]
           .filter((u) => where.id.in.includes(u.id) && u.organizationId === where.organizationId && u.isActive && where.role.in.includes(u.role))
           .map((u) => ({ id: u.id })),
+    },
+    session: {
+      findUnique: async ({ where }: any) => db.sessions.get(where.tokenHash) ?? null,
+      findMany: async ({ where }: any) =>
+        [...db.sessions.entries()]
+          .filter(([hash, s]) => where.tokenHash.in.includes(hash) && s.expiresAt > where.expiresAt.gt && db.users.get(s.userId)?.isActive)
+          .map(([tokenHash]) => ({ tokenHash })),
     },
     apiKey: { findUnique: async () => null },
   },
@@ -147,9 +156,11 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     vi.unstubAllEnvs();
   });
 
-  /** An agent's socket (JWT login) and everything it was sent. */
+  /** An agent's socket (JWT login, with its session) and everything it was sent. */
   const agent = async (userId: string) => {
-    const socket = io(url, { auth: { token: jwt.sign({ sub: userId }, { secret: SECRET }) }, transports: ['websocket'], forceNew: true });
+    const token = jwt.sign({ sub: userId }, { secret: SECRET });
+    db.sessions.set(createHash('sha256').update(token).digest('hex'), { userId, expiresAt: new Date(Date.now() + 3_600_000) });
+    const socket = io(url, { auth: { token }, transports: ['websocket'], forceNew: true });
     userSockets.set(userId, [...(userSockets.get(userId) ?? []), socket]);
     const got: Array<[string, any]> = [];
     socket.onAny((event: string, payload: any) => got.push([event, payload]));

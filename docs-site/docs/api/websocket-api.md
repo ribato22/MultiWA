@@ -23,9 +23,9 @@ Credentials go in the handshake, as one of:
 - **JWT** — the `accessToken` from `POST /api/v1/auth/login`: `auth: { token }`, an `Authorization: Bearer <token>` header, or `?token=`.
 - **API key** — `auth: { apiKey }`, an `X-API-Key` header, or `?apiKey=`.
 
-The user must be active and an API key must not have expired. API-key scopes are not checked here: any valid key of the organization can listen.
+The user must be active, a JWT's login session must still be live (as on the REST API, logging out or revoking the session ends it), and an API key must not have expired. API-key scopes are not checked here: any valid key of the organization can listen.
 
-A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one.
+A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one. Its session is checked again every minute: a JWT socket whose session was logged out, revoked or has expired, or whose user was deactivated, is disconnected the same way, so a revoked device stops receiving calls within a minute.
 
 ---
 
