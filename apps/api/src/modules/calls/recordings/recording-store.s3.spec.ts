@@ -43,16 +43,28 @@ describe('S3RecordingStore', () => {
     ]);
   });
 
-  it('lists every page under the prefix, with keys relative to it', async () => {
+  it('a missing object rejects a read with ENOENT, as the local store does; another error is thrown as it is', async () => {
+    const failing = (status: number) => Object.assign(new Error(`status ${status}`), { $metadata: { httpStatusCode: status } });
+    const store = (e: Error) => new S3RecordingStore(client(() => { throw e; }), CONFIG);
+    await expect(store(failing(404)).read('a/b.webm')).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(store(failing(403)).read('a/b.webm')).rejects.toThrow('status 403');
+    await expect(store(failing(403)).read('a/b.webm')).rejects.not.toHaveProperty('code');
+  });
+
+  it('lists every page under the prefix, with keys relative to it; an object without a time counts as new', async () => {
     const at = new Date('2026-10-01T00:00:00Z');
     const pages = [
       { Contents: [{ Key: 'call-recordings/probe/a', Size: 1, LastModified: at }], IsTruncated: true, NextContinuationToken: 't2' },
-      { Contents: [{ Key: 'call-recordings/b', Size: 2, LastModified: at }], IsTruncated: false },
+      { Contents: [{ Key: 'call-recordings/b', Size: 2, LastModified: at }, { Key: 'call-recordings/c', Size: 3 }], IsTruncated: false },
     ];
     const s3 = client(() => pages.shift());
     const listed = [];
+    const before = Date.now();
     for await (const o of new S3RecordingStore(s3, CONFIG).list()) listed.push(o);
-    expect(listed).toEqual([{ key: 'probe/a', size: 1, lastModified: at }, { key: 'b', size: 2, lastModified: at }]);
+    expect(listed.slice(0, 2)).toEqual([{ key: 'probe/a', size: 1, lastModified: at }, { key: 'b', size: 2, lastModified: at }]);
+    // Never old enough for the sweep: a missing time must not make an object look old.
+    expect(listed[2]).toMatchObject({ key: 'c', size: 3 });
+    expect(listed[2].lastModified.getTime()).toBeGreaterThanOrEqual(before);
     expect(sent(s3)).toEqual([
       [ListObjectsV2Command, { Bucket: 'recs', Prefix: 'call-recordings/', ContinuationToken: undefined }],
       [ListObjectsV2Command, { Bucket: 'recs', Prefix: 'call-recordings/', ContinuationToken: 't2' }],
@@ -85,8 +97,8 @@ describe('S3RecordingStore.checkPrivate', () => {
     const key = sent(s3)[0][1].Key;
     expect(key).toMatch(/^call-recordings\/probe\/[0-9a-f-]{36}$/);
     expect(fetchFn.mock.calls.map(([url]) => url)).toEqual([`http://minio:9000/recs/${key}`, `https://cdn.example.com/recs/${key}`]);
-    expect(fetchFn.mock.calls[0][1]).toMatchObject({ redirect: 'follow' });
-    expect(fetchFn.mock.calls[0][1]).not.toHaveProperty('headers'); // no credentials of any kind
+    // Following redirects, within a time limit, and with no credentials of any kind.
+    expect(fetchFn.mock.calls[0][1]).toEqual({ redirect: 'follow', signal: expect.any(AbortSignal) });
     expect(sent(s3).pop()).toEqual([DeleteObjectCommand, { Bucket: 'recs', Key: key }]);
   });
 
@@ -111,6 +123,33 @@ describe('S3RecordingStore.checkPrivate', () => {
     ['no answer', () => { throw new TypeError('fetch failed'); }, 'fetch failed'],
   ])('unchecked on %s', async (_what, answer, detail) => {
     expect(await setup(answer as any).store.checkPrivate()).toEqual({ ok: false, reason: 'storage_check_failed', detail: expect.stringContaining(detail) });
+  });
+
+  // An address that cannot be checked proves nothing either way: the others are fetched all the same, and one that
+  // serves the probe outweighs it.
+  it.each([
+    ['answers 503', () => new Response('', { status: 503 })],
+    ['does not answer', () => { throw new TypeError('fetch failed'); }],
+  ])('not private when the first address %s and the second serves the probe', async (_what, first) => {
+    const { fetchFn, store } = setup((url, probe) => (url.startsWith('http://minio') ? first() : new Response(probe, { status: 200 })));
+    expect(await store.checkPrivate()).toEqual({
+      ok: false, reason: 'storage_not_private', detail: expect.stringContaining('https://cdn.example.com/recs/call-recordings/probe/'),
+    });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('not private when the first address serves the probe and the second answers 503', async () => {
+    const { store } = setup((url, probe) => (url.startsWith('http://minio') ? new Response(probe, { status: 200 }) : new Response('', { status: 503 })));
+    expect(await store.checkPrivate()).toEqual({
+      ok: false, reason: 'storage_not_private', detail: expect.stringContaining('http://minio:9000/recs/call-recordings/probe/'),
+    });
+  });
+
+  it('unchecked, naming the first address, when it answers 503 and the second refuses', async () => {
+    const { fetchFn, store } = setup((url) => new Response('', { status: url.startsWith('http://minio') ? 503 : 403 }));
+    const check = await store.checkPrivate();
+    expect(check).toEqual({ ok: false, reason: 'storage_check_failed', detail: expect.stringMatching(/^http:\/\/minio:9000\/recs\/call-recordings\/probe\/\S+ answered 503$/) });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
   });
 
   it('unchecked when the probe cannot be stored, and nothing is fetched', async () => {
@@ -146,13 +185,37 @@ describe('createRecordingStore: S3', () => {
     expect(configOf({ CALL_RECORDINGS_PREFIX: '/' })).toMatchObject({ prefix: 'call-recordings/' });
   });
 
+  // The SDK percent-encodes the key it puts, but the probe's URL is joined as a string, which fetch reads its own way
+  // (%41 decoded, cut at # or ?, \ turned into /): the probe would be fetched at another key, and a public bucket pass.
+  it.each(['rec%41', 'rec#1', 'rec?x', 'rec\\x', 'a/../b', 'a/./b', 'a b'])('a prefix of unsafe characters is refused: %s', (prefix) => {
+    expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_PREFIX: prefix }, () => client())).toMatchObject({
+      type: 's3', problem: expect.stringContaining('CALL_RECORDINGS_PREFIX may hold only letters, digits, ".", "_", "-" and "/"'),
+    });
+  });
+
+  it.each([['a/b', 'a/b/'], ['call_recordings-2', 'call_recordings-2/'], ['v1.2/rec', 'v1.2/rec/']])('a prefix of safe characters is kept: %s', (prefix, kept) => {
+    expect(configOf({ CALL_RECORDINGS_PREFIX: prefix })).toMatchObject({ prefix: kept });
+  });
+
+  // From inside the api's container, a loopback host is the container itself: the dev compose's
+  // http://localhost:9000 is the browser's way to the MinIO the endpoint already reaches.
+  it.each(['http://localhost:9000', 'http://127.0.0.1:9000/', 'http://127.1.2.3', 'http://[::1]:9000'])('a loopback S3_PUBLIC_URL is not fetched: %s', (url) => {
+    expect(configOf({ S3_PUBLIC_URL: url }).publicBases).toEqual(['http://minio:9000']);
+  });
+
   it.each([
-    [{ S3_ENDPOINT: '' }, 'S3_ENDPOINT'],
-    [{ S3_SECRET_KEY: ' ' }, 'S3_SECRET_KEY'],
-    [{ S3_BUCKET: '' }, 'CALL_RECORDINGS_BUCKET'],
-    [{ CALL_RECORDINGS_SSE: 'des' }, 'CALL_RECORDINGS_SSE must be AES256 or aws:kms'],
-  ])('a store that says what is wrong: %j', (env, problem) => {
-    expect(createRecordingStore({ ...S3_ENV, ...env }, () => client())).toMatchObject({ type: 's3', problem: expect.stringContaining(problem) });
+    [{ S3_ENDPOINT: '' }, 'S3 recordings need S3_ENDPOINT'],
+    [{ S3_SECRET_KEY: ' ' }, 'S3 recordings need S3_SECRET_KEY'],
+    [{ S3_BUCKET: '' }, 'S3 recordings need CALL_RECORDINGS_BUCKET (or S3_BUCKET)'],
+    [{ S3_ACCESS_KEY: '' }, 'S3 recordings need S3_ACCESS_KEY'],
+    [{ S3_ENDPOINT: '', S3_BUCKET: '' }, 'S3 recordings need S3_ENDPOINT and CALL_RECORDINGS_BUCKET (or S3_BUCKET)'],
+    [{ S3_ENDPOINT: '', S3_ACCESS_KEY: '', S3_SECRET_KEY: '', S3_BUCKET: '' }, 'S3 recordings need S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY and CALL_RECORDINGS_BUCKET (or S3_BUCKET)'],
+  ])('names only the missing settings: %j', (env, problem) => {
+    expect(createRecordingStore({ ...S3_ENV, ...env }, () => client())).toMatchObject({ type: 's3', problem });
+  });
+
+  it('a store that says what is wrong: CALL_RECORDINGS_SSE', () => {
+    expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_SSE: 'des' }, () => client())).toMatchObject({ type: 's3', problem: 'CALL_RECORDINGS_SSE must be AES256 or aws:kms' });
   });
 
   it('STORAGE_TYPE when CALL_RECORDINGS_STORAGE is not set', () => {

@@ -251,7 +251,7 @@ describe('CallRecordingsService.sweepOrphans', () => {
     const young = recordingKey(ORG, PROFILE, '55555555-5555-4555-8555-555555555555', NOW);
     const kept = announcementKey(ORG, PROFILE, 'mp3');
     const replaced = announcementKey(ORG, PROFILE, 'wav');
-    for (const key of [live, orphan, kept, replaced, `${orphan}.part`, 'media/notes.txt', `probe/${CALL}`]) store.file(key, 'x', old);
+    for (const key of [live, orphan, kept, replaced, `${orphan}.0a1b2c3d.part`, 'media/notes.txt', `probe/${CALL}`]) store.file(key, 'x', old);
     store.file(young, 'x', fresh);
     db.profile.findMany.mockResolvedValue([{ settings: { callsAnnouncement: { storageKey: kept, mimeType: 'audio/mpeg', durationSec: 2 } } }, { settings: {} }]);
     db.callRecording.findMany.mockImplementation(async ({ where }: any) => (where.storageKey.in.includes(live) ? [{ storageKey: live }] : []));

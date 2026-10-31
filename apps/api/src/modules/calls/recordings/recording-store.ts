@@ -11,10 +11,10 @@
 //   <orgId>/<profileId>/<yyyy>/<mm>/<callId>.webm    a recording (the month of the call, UTC)
 //   announcements/<orgId>/<profileId>/<uuid>.<ext>   an announcement
 //   probe/<uuid>                                     the privacy check's probe, deleted at once
-// and each of them + '.part': a local write not yet renamed into place.
+// and each of them + '.<8 hex>.part': a local write not yet renamed into place.
 import { randomBytes, randomUUID } from 'crypto';
-import { createReadStream, mkdirSync } from 'fs';
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'fs/promises';
+import { mkdirSync } from 'fs';
+import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import type { Readable } from 'stream';
 import {
@@ -43,7 +43,7 @@ export interface RecordingStore {
   put(key: string, body: Buffer, mimeType: string): Promise<void>;
   /** The object's size in bytes, or null when there is none. */
   size(key: string): Promise<number | null>;
-  /** The bytes from `start` to `end` (inclusive), or the whole object. */
+  /** The bytes from `start` to `end` (inclusive), or the whole object. A missing object rejects, with code ENOENT. */
   read(key: string, range?: { start: number; end: number }): Promise<Readable>;
   /** A missing object is not an error. */
   delete(key: string): Promise<void>;
@@ -55,7 +55,7 @@ export interface RecordingStore {
 
 const ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const ANNOUNCEMENT = `announcements/${ID}/${ID}/${ID}\\.(mp3|wav|ogg|webm|m4a)`;
-const OWN_KEY = new RegExp(`^(${ID}/${ID}/\\d{4}/\\d{2}/${ID}\\.webm|${ANNOUNCEMENT}|probe/${ID})(\\.part)?$`);
+const OWN_KEY = new RegExp(`^(${ID}/${ID}/\\d{4}/\\d{2}/${ID}\\.webm|${ANNOUNCEMENT}|probe/${ID})(\\.[0-9a-f]{8}\\.part)?$`);
 const ANNOUNCEMENT_KEY = new RegExp(`^${ANNOUNCEMENT}$`);
 
 /** The key of a call's recording. */
@@ -71,12 +71,15 @@ export const announcementKey = (organizationId: string, profileId: string, ext: 
 /** Whether the key has one of the store's own shapes: the sweep never touches any other. */
 export const isStoreKey = (key: string): boolean => OWN_KEY.test(key);
 
-/** Whether the key is an announcement of this profile: a key read back from the settings is checked before it is served. */
-export const isAnnouncementOf = (key: string, organizationId: string, profileId: string): boolean =>
-  ANNOUNCEMENT_KEY.test(key) && key.startsWith(`announcements/${organizationId}/${profileId}/`);
+/**
+ * Whether the key is an announcement of this profile: a key read back from the settings is checked before it is served
+ * or deleted. Profile ids are unique, so the profile's segment says whose it is.
+ */
+export const isAnnouncementOf = (key: string, profileId: string): boolean => ANNOUNCEMENT_KEY.test(key) && key.split('/')[2] === profileId;
 
 const probeKey = () => `probe/${randomUUID()}`;
 const reasonOf = (e: unknown) => String((e as Error)?.message ?? e);
+const notFound = (e: unknown) => (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404;
 
 /** A store whose settings are missing or wrong: recording cannot be turned on, and there is nothing to list or sweep. */
 export class UnsetRecordingStore implements RecordingStore {
@@ -125,9 +128,11 @@ export class LocalRecordingStore implements RecordingStore {
   async put(key: string, body: Buffer, _mimeType: string): Promise<void> {
     const path = this.path(key);
     await mkdir(dirname(path), { recursive: true });
-    // Written aside, then renamed into place: a reader never sees half a file.
-    await writeFile(`${path}.part`, body);
-    await rename(`${path}.part`, path);
+    // Written aside, then renamed into place: a reader never sees half a file. Aside under a name of its own: two
+    // writes of one key at once would interleave in a shared one.
+    const part = `${path}.${randomBytes(4).toString('hex')}.part`;
+    await writeFile(part, body);
+    await rename(part, path);
   }
 
   async size(key: string): Promise<number | null> {
@@ -139,8 +144,11 @@ export class LocalRecordingStore implements RecordingStore {
     }
   }
 
+  // Opened first, so a missing file rejects here: a stream that fails later is an unhandled 'error' before anyone
+  // listens, or a 500 after the headers went. The stream closes the handle when it ends.
   async read(key: string, range?: { start: number; end: number }): Promise<Readable> {
-    return createReadStream(this.path(key), range ? { start: range.start, end: range.end } : undefined);
+    const handle = await open(this.path(key), 'r');
+    return handle.createReadStream(range ? { start: range.start, end: range.end } : {});
   }
 
   async delete(key: string): Promise<void> {
@@ -193,6 +201,10 @@ const PROBE_FETCH_MS = 5_000;
 /**
  * Recordings in an S3-compatible bucket: AWS S3, MinIO, Wasabi, Backblaze B2, Cloudflare R2, DigitalOcean Spaces,
  * Google Cloud Storage (XML API). No ACL is sent, so an object is as private as its bucket; SSE when configured.
+ *
+ * The privacy check sees only the addresses it is given (publicBases). A public URL of the bucket's own (Cloudflare R2's
+ * r2.dev, a custom domain) or a CDN that reads the bucket with credentials of its own is not seen: operators must turn
+ * those off for the recordings bucket.
  */
 export class S3RecordingStore implements RecordingStore {
   readonly type = 's3';
@@ -217,16 +229,24 @@ export class S3RecordingStore implements RecordingStore {
       const head = (await this.s3.send(new HeadObjectCommand(this.object(key)))) as HeadObjectCommandOutput;
       return head.ContentLength ?? 0;
     } catch (e) {
-      if ((e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) return null;
+      if (notFound(e)) return null;
       throw e;
     }
   }
 
   async read(key: string, range?: { start: number; end: number }): Promise<Readable> {
-    const object = (await this.s3.send(new GetObjectCommand({ ...this.object(key), ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}) }))) as GetObjectCommandOutput;
-    return object.Body as Readable;
+    try {
+      const object = (await this.s3.send(new GetObjectCommand({ ...this.object(key), ...(range ? { Range: `bytes=${range.start}-${range.end}` } : {}) }))) as GetObjectCommandOutput;
+      return object.Body as Readable;
+    } catch (e) {
+      // As the local store rejects a missing file: its readers tell "missing" from "failing" by the code alone.
+      if (notFound(e)) throw Object.assign(new Error('The object does not exist'), { code: 'ENOENT' });
+      throw e;
+    }
   }
 
+  // With versioning on, a delete only adds a delete marker and the recording stays in the bucket: the recordings bucket
+  // must have versioning off, or a lifecycle rule that expires noncurrent versions.
   async delete(key: string): Promise<void> {
     await this.s3.send(new DeleteObjectCommand(this.object(key)));
   }
@@ -236,7 +256,8 @@ export class S3RecordingStore implements RecordingStore {
     do {
       const page = (await this.s3.send(new ListObjectsV2Command({ Bucket: this.config.bucket, Prefix: this.config.prefix, ContinuationToken: token }))) as ListObjectsV2CommandOutput;
       for (const o of page.Contents ?? []) {
-        if (o.Key?.startsWith(this.config.prefix)) yield { key: o.Key.slice(this.config.prefix.length), size: o.Size ?? 0, lastModified: o.LastModified ?? new Date(0) };
+        // Without a time an object counts as new: never old enough for the sweep.
+        if (o.Key?.startsWith(this.config.prefix)) yield { key: o.Key.slice(this.config.prefix.length), size: o.Size ?? 0, lastModified: o.LastModified ?? new Date() };
       }
       token = page.IsTruncated ? page.NextContinuationToken : undefined;
     } while (token);
@@ -245,7 +266,7 @@ export class S3RecordingStore implements RecordingStore {
   // A probe with bytes of its own, fetched WITHOUT credentials (plain fetch, following redirects) at every address the
   // bucket may be reached on: a reply carrying those bytes means anyone can read the recordings. A refusal is what a
   // private bucket answers, and a 2xx with other bytes (a login page in front) is not the object. Anything else proves
-  // nothing: the check fails.
+  // nothing, so the check fails, but only once every address was fetched: one that serves the probe outweighs it.
   async checkPrivate(): Promise<PrivacyCheck> {
     const key = probeKey();
     const probe = randomBytes(16).toString('hex');
@@ -255,17 +276,21 @@ export class S3RecordingStore implements RecordingStore {
       return { ok: false, reason: 'storage_check_failed', detail: `the probe could not be stored: ${reasonOf(e)}` };
     }
     try {
+      let unchecked: string | undefined;
       for (const base of this.config.publicBases) {
         const url = `${base}/${this.config.bucket}/${this.config.prefix}${key}`;
         const answer = await this.fetchFn(url, { redirect: 'follow', signal: AbortSignal.timeout(PROBE_FETCH_MS) })
           .then(async (res) => ({ status: res.status, body: await res.text() }))
           .catch((e: unknown) => ({ error: reasonOf(e) }));
-        if ('error' in answer) return { ok: false, reason: 'storage_check_failed', detail: `${url}: ${answer.error}` };
+        if ('error' in answer) {
+          unchecked ??= `${url}: ${answer.error}`;
+          continue;
+        }
         const success = answer.status >= 200 && answer.status < 300;
         if (success && answer.body === probe) return { ok: false, reason: 'storage_not_private', detail: `${url} is readable without credentials` };
-        if (!success && !REFUSED.has(answer.status)) return { ok: false, reason: 'storage_check_failed', detail: `${url} answered ${answer.status}` };
+        if (!success && !REFUSED.has(answer.status)) unchecked ??= `${url} answered ${answer.status}`;
       }
-      return { ok: true };
+      return unchecked ? { ok: false, reason: 'storage_check_failed', detail: unchecked } : { ok: true };
     } finally {
       await this.delete(key).catch(() => undefined);
     }
@@ -276,6 +301,20 @@ export class S3RecordingStore implements RecordingStore {
 const inside = (a: string, b: string) => a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
 const overlaps = (a: string, b: string) => inside(a, b) || inside(b, a);
 
+const SAFE_PREFIX = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+
+/** Whether the URL's host is this host: localhost, 127.0.0.0/8 or [::1]. */
+function isLoopback(url: string): boolean {
+  try {
+    return /^(localhost|127(\.\d{1,3}){3}|\[::1\])$/.test(new URL(url).hostname);
+  } catch {
+    return false; // not a URL: fetched, and the fetch fails the check, which shows it
+  }
+}
+
+/** "a", "a and b", "a, b and c". */
+const listed = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names.join(''));
+
 /**
  * The store the environment asks for. A missing or wrong setting gives a store whose `problem` says which: the API
  * starts all the same, and recording cannot be turned on.
@@ -283,39 +322,56 @@ const overlaps = (a: string, b: string) => inside(a, b) || inside(b, a);
 export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3ClientConfig) => S3Like = (config) => new S3Client(config)): RecordingStore {
   // `|| undefined`: compose passes an unset variable as an empty string.
   const value = (name: string) => env[name]?.trim() || undefined;
-  const type = value('CALL_RECORDINGS_STORAGE') ?? value('STORAGE_TYPE') ?? 'local';
+  const typeFrom = value('CALL_RECORDINGS_STORAGE') ? 'CALL_RECORDINGS_STORAGE' : 'STORAGE_TYPE';
+  const type = value(typeFrom) ?? 'local';
   if (type === 's3') {
     const endpoint = value('S3_ENDPOINT')?.replace(/\/+$/, '');
     const accessKeyId = value('S3_ACCESS_KEY');
     const secretAccessKey = value('S3_SECRET_KEY');
     const bucket = value('CALL_RECORDINGS_BUCKET') ?? value('S3_BUCKET');
     if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) {
-      return new UnsetRecordingStore('s3', 'S3 recordings need S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY and CALL_RECORDINGS_BUCKET (or S3_BUCKET)');
+      const settings: Array<[string, string | undefined]> = [
+        ['S3_ENDPOINT', endpoint], ['S3_ACCESS_KEY', accessKeyId], ['S3_SECRET_KEY', secretAccessKey], ['CALL_RECORDINGS_BUCKET (or S3_BUCKET)', bucket],
+      ];
+      return new UnsetRecordingStore('s3', `S3 recordings need ${listed(settings.filter(([, v]) => !v).map(([name]) => name))}`);
     }
     const sse = value('CALL_RECORDINGS_SSE');
     if (sse !== undefined && sse !== 'AES256' && sse !== 'aws:kms') return new UnsetRecordingStore('s3', 'CALL_RECORDINGS_SSE must be AES256 or aws:kms');
+    // Never empty: the probes and the sweep's listing must not sit at the root of a bucket shared with the media. And
+    // of safe characters only: the SDK encodes the key it puts, but the probe's URL is joined as a string, which fetch
+    // reads its own way (%41 decoded, cut at # or ?, \ made /), so the probe would be fetched at another key.
+    const prefix = (value('CALL_RECORDINGS_PREFIX') ?? '').replace(/^\/+|\/+$/g, '') || 'call-recordings';
+    if (!SAFE_PREFIX.test(prefix) || prefix.split('/').some((s) => s === '.' || s === '..')) {
+      return new UnsetRecordingStore('s3', 'CALL_RECORDINGS_PREFIX may hold only letters, digits, ".", "_", "-" and "/" (and no "." or ".." segment)');
+    }
     const publicUrl = value('S3_PUBLIC_URL')?.replace(/\/+$/, '');
     return new S3RecordingStore(
       makeS3({ endpoint, region: value('S3_REGION') ?? 'us-east-1', credentials: { accessKeyId, secretAccessKey }, forcePathStyle: true }),
       {
         bucket,
-        // Never empty: the probes and the sweep's listing must not sit at the root of a bucket shared with the media.
-        prefix: `${(value('CALL_RECORDINGS_PREFIX') ?? '').replace(/^\/+|\/+$/g, '') || 'call-recordings'}/`,
+        prefix: `${prefix}/`,
         sse,
-        publicBases: [...new Set([endpoint, ...(publicUrl ? [publicUrl] : [])])],
+        // A loopback S3_PUBLIC_URL names the api's own host or container, never another way to the bucket: the dev
+        // compose's http://localhost:9000 is the browser's address of the MinIO the endpoint already reaches, and from
+        // inside the api's container it reaches nothing, so the check could never pass.
+        publicBases: [...new Set([endpoint, ...(publicUrl && !isLoopback(publicUrl) ? [publicUrl] : [])])],
       },
     );
   }
-  if (type !== 'local') return new UnsetRecordingStore('local', `CALL_RECORDINGS_STORAGE must be local or s3, not ${type}`);
+  if (type !== 'local') return new UnsetRecordingStore('local', `${typeFrom} must be local or s3, not ${type}`);
   const path = value('CALL_RECORDINGS_PATH');
   if (!path) return new UnsetRecordingStore('local', 'CALL_RECORDINGS_PATH is not set');
   const root = resolve(path);
   // The media folder is served without a login, the sessions volume is snapshotted with every session, and a root
-  // around the application would be walked whole by the nightly sweep.
+  // around the application would be walked whole by the nightly sweep. Without SESSIONS_DIR the engines keep their
+  // sessions in /data/sessions or ./sessions (EngineManagerService): neither may overlap then.
   const sessions = value('SESSIONS_DIR');
   const clashes: Array<[string, boolean]> = [
     ['STORAGE_PATH', overlaps(root, resolve(value('STORAGE_PATH') ?? './media'))],
-    ['SESSIONS_DIR', !!sessions && overlaps(root, resolve(sessions))],
+    [
+      sessions ? 'SESSIONS_DIR' : 'SESSIONS_DIR (unset: /data/sessions and ./sessions)',
+      (sessions ? [sessions] : ['/data/sessions', './sessions']).some((d) => overlaps(root, resolve(d))),
+    ],
     ['the working directory', inside(process.cwd(), root)],
   ];
   const clash = clashes.find(([, yes]) => yes);

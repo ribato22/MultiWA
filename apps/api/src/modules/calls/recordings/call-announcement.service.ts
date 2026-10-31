@@ -41,7 +41,7 @@ export class CallAnnouncementService {
     const profile = await this.profile(profileId);
     const announcement = announcementOf(profile.settings);
     // A key read from the settings is served only when it is the profile's own.
-    if (!announcement || this.store.problem || !isAnnouncementOf(announcement.storageKey, profile.organizationId, profileId)) {
+    if (!announcement || this.store.problem || !isAnnouncementOf(announcement.storageKey, profileId)) {
       throw new NotFoundException('This profile has no announcement');
     }
     const size = await this.store.size(announcement.storageKey);
