@@ -116,7 +116,7 @@ export class CallsController {
   @ApiProduces('audio/webm')
   @ApiResponse({ status: 206, description: 'One byte range of the recording, with Content-Range' })
   @ApiResponse({ status: 416, description: 'The range starts past the end: `Content-Range: bytes */<size>`' })
-  @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server, or the access could not be audited: nothing is sent' })
+  @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server or did not answer, or the access could not be audited: nothing is sent' })
   @ApiNotFound('Recording')
   async recording(@Param('id') id: string, @Query('download') download: string | undefined, @Request() req: any, @Res() reply: FastifyReply): Promise<void> {
     // Fastify answers a HEAD with this handler. A HEAD asks for the recording too: play() checks, sizes and audits it as

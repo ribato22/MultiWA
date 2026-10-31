@@ -76,6 +76,15 @@ describe('S3RecordingStore', () => {
     await new S3RecordingStore(s3, CONFIG).delete('a/b.webm');
     expect(sent(s3)).toEqual([[DeleteObjectCommand, { Bucket: 'recs', Key: 'call-recordings/a/b.webm' }]]);
   });
+
+  // S3 and MinIO answer the delete of a missing key 204; some compatible stores (Google Cloud Storage's XML API, for
+  // one) answer 404.
+  it('a missing object deletes fine (a 404); another error is thrown', async () => {
+    const failing = (status: number) => Object.assign(new Error(`status ${status}`), { $metadata: { httpStatusCode: status } });
+    const store = (e: Error) => new S3RecordingStore(client(() => { throw e; }), CONFIG);
+    await expect(store(failing(404)).delete('a/b.webm')).resolves.toBeUndefined();
+    await expect(store(failing(403)).delete('a/b.webm')).rejects.toThrow('status 403');
+  });
 });
 
 describe('S3RecordingStore.checkPrivate', () => {

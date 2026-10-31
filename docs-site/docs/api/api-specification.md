@@ -277,7 +277,7 @@ The audio itself:
   - `?download=1` adds `Content-Disposition: attachment`.
   - Every read is audited (`call.recording.play`, `call.recording.download`, with the IP and user agent) before its first byte: once every 10 minutes per user, address, user agent, recording and action, whatever range it asks for, so a player's seeks do not flood the audit log and no range escapes it. A request that cannot be audited is refused with `503`.
   - A `HEAD` answers the same headers without the audio, and is audited as a read.
-  - `404` when the call has no recording, it was deleted, its file is missing, or it is stored in another location than this server uses now (see [Call recordings](<../operations/configuration-reference.md#call-recordings>)). `503` while the recordings storage is not configured.
+  - `404` when the call has no recording, it was deleted, its file is missing, or it is stored in another location than this server uses now (see [Call recordings](<../operations/configuration-reference.md#call-recordings>)). `503` while the recordings storage is not configured, or when it does not answer (try again).
 - **`DELETE /calls/:id/recording`** deletes the file and answers `{ callId, recordingId, deletedAt }`. It is audited as `call.recording.delete` and sends the `call.recording.deleted` webhook. A recording already deleted is `404`, and one stored in another location `409`; while the recordings storage is not configured, the answer is `503`.
 - **A browser player** cannot point an `<audio>` element at this route: the route needs the `Authorization` (or `x-api-key`) header. Fetch the file with the header, then play what was fetched.
 
@@ -290,7 +290,7 @@ Turning `recording` on answers `409` with `reasons` when it cannot be on:
 
 A `true` sent for a setting that is already on (`recording` or `answerInDashboard`) is left as it is, without a check, so a form may send every field.
 
-The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read. It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
+The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read or the recordings storage does not answer (as `GET /profiles/:id/calls-announcement` does then). It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
 
 ### Contacts (`/contacts`)
 

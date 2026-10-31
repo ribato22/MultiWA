@@ -17,7 +17,7 @@ import { mkdirSync } from 'fs';
 import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import type { Readable } from 'stream';
-import { Logger } from '@nestjs/common';
+import { HttpException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client,
   type GetObjectCommandOutput, type HeadObjectCommandOutput, type ListObjectsV2CommandOutput, type S3ClientConfig,
@@ -92,6 +92,19 @@ const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const probeKey = () => `probe/${randomUUID()}`;
 const reasonOf = (e: unknown) => String((e as Error)?.message ?? e);
 const notFound = (e: unknown) => (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404;
+
+/**
+ * The catch of a store call made for a request: an HttpException passes as it is, and anything else (the storage
+ * refusing, timing out, a disk failing) is a 503, not a bare 500: the storage is the problem, and the next try may find
+ * it answering. The error goes to the server log only, as it may name the directory or the bucket's address.
+ */
+export const storageFailed =
+  (log: Logger, what: string) =>
+  (e: unknown): never => {
+    if (e instanceof HttpException) throw e;
+    log.warn(`${what}: the recordings storage failed: ${clean(reasonOf(e))}`);
+    throw new ServiceUnavailableException('The recordings storage did not answer; try again');
+  };
 
 /** A store whose settings are missing or wrong: recording cannot be turned on, and there is nothing to list or sweep. */
 export class UnsetRecordingStore implements RecordingStore {
@@ -268,9 +281,14 @@ export class S3RecordingStore implements RecordingStore {
   }
 
   // With versioning on, a delete only adds a delete marker and the recording stays in the bucket: the recordings bucket
-  // must have versioning off, or a lifecycle rule that expires noncurrent versions.
+  // must have versioning off, or a lifecycle rule that expires noncurrent versions. S3 and MinIO answer the delete of a
+  // missing key 204, some compatible stores (Google Cloud Storage's XML API, for one) 404: gone either way.
   async delete(key: string): Promise<void> {
-    await this.s3.send(new DeleteObjectCommand(this.object(key)));
+    try {
+      await this.s3.send(new DeleteObjectCommand(this.object(key)));
+    } catch (e) {
+      if (!notFound(e)) throw e;
+    }
   }
 
   async *list(): AsyncIterable<StoredObject> {

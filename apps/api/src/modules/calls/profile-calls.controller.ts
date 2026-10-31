@@ -100,7 +100,7 @@ export class ProfileCallsController {
   @ApiResponse({ status: 413, description: 'Larger than 2 MB' })
   @ApiResponse({ status: 415, description: 'Not one of the audio formats' })
   @ApiResponse({ status: 422, description: 'Longer than 30 seconds, or its length is unknown' })
-  @ApiResponse({ status: 503, description: 'Two other announcements are being read: try again in a moment' })
+  @ApiResponse({ status: 503, description: 'Two other announcements are being read, or the recordings storage did not answer: try again in a moment' })
   @ApiNotFound('Profile')
   async uploadAnnouncement(@Param('id') id: string, @Req() request: FastifyRequest) {
     return this.announcements.upload(id, await readUpload(request, ANNOUNCEMENT_MAX_BYTES));
@@ -112,6 +112,7 @@ export class ProfileCallsController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: "The profile's announcement, to listen to" })
   @ApiProduces('audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4')
+  @ApiResponse({ status: 503, description: 'The recordings storage did not answer: try again' })
   @ApiNotFound('Announcement')
   async announcement(@Param('id') id: string, @Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
     // Fastify answers a HEAD with this handler: sized, not read (up to 2 MB read only to be dropped). Handed a stream,

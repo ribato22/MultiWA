@@ -29,6 +29,7 @@ const NOW = new Date('2026-10-31T19:30:00Z');
 const DAY = 24 * 60 * 60 * 1000;
 const MINUTE = 60 * 1000;
 const UNCONFIGURED = 'The recordings storage is not configured on this server';
+const STORAGE_DOWN = 'The recordings storage did not answer; try again';
 const KEY = recordingKey(ORG, PROFILE, CALL, new Date('2026-10-01T03:00:00Z'));
 const ACTOR = { userId: 'u1', organizationId: ORG };
 const ADMIN = { userId: 'u1', organizationId: ORG, ip: '203.0.113.7', userAgent: 'Mozilla/5.0' };
@@ -173,14 +174,25 @@ describe('CallRecordingsService.play', () => {
     await expect(service.play(CALL, ACTOR, undefined, false)).rejects.toThrow('The recording file is missing');
   });
 
-  it('404 when its file goes between its size and its read; another read failure is thrown as it is', async () => {
+  it('404 when its file goes between its size and its read', async () => {
     const { service, store } = stored();
-    const read = vi.spyOn(store, 'read').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENOENT' }));
+    vi.spyOn(store, 'read').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENOENT' }));
     const missing = await service.play(CALL, ACTOR, undefined, false).catch((e) => e);
     expect(missing).toBeInstanceOf(NotFoundException);
     expect(missing.message).toBe('The recording file is missing');
-    read.mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
-    await expect(service.play(CALL, ACTOR, undefined, false)).rejects.toThrow('EACCES: permission denied');
+  });
+
+  // Not a bare 500: the storage is the problem, and the next try may find it answering. Its error goes to the server log
+  // only: it may name the directory or the bucket's address.
+  it.each(['size', 'read'] as const)('503 when the storage fails the %s, its error logged', async (method) => {
+    const { service, store, warn } = stored();
+    vi.spyOn(store, method).mockRejectedValueOnce(Object.assign(new Error('EACCES: permission denied\nforged'), { code: 'EACCES' }));
+    const refused = await service.play(CALL, ACTOR, undefined, false).catch((e) => e);
+    expect(refused).toBeInstanceOf(ServiceUnavailableException);
+    expect(refused.message).toBe(STORAGE_DOWN);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(`call ${CALL}`);
+    expect(warn.mock.calls[0][0]).toContain('EACCES: permission deniedforged');
   });
 
   it('503 when the storage is not configured on this server: nothing read, nothing audited', async () => {
@@ -454,9 +466,18 @@ describe('CallRecordingsService.purgeProfile', () => {
     expect(del).not.toHaveBeenCalled();
   });
 
-  it('does nothing when the storage is not configured', async () => {
-    await make(unconfigured()).service.purgeProfile(PROFILE);
+  // The profile's rows go all the same (the cascade): the log keeps how many files were left where they are.
+  it('deletes nothing when the storage is not configured, and says how many recordings of the profile it cannot reach', async () => {
+    const { service, store, warn } = make(unconfigured());
+    const del = vi.spyOn(store, 'delete');
+    db.callRecording.count.mockResolvedValueOnce(0).mockResolvedValueOnce(2);
+    await service.purgeProfile(PROFILE);
+    expect(warn).not.toHaveBeenCalled();
+    await service.purgeProfile(PROFILE);
+    expect(db.callRecording.count).toHaveBeenCalledWith({ where: { profileId: PROFILE, deletedAt: null } });
     expect(db.callRecording.findMany).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+    expect(warn.mock.calls).toEqual([[`The call recordings storage is not configured: the purge of profile ${PROFILE} cannot reach 2 recording(s)`]]);
   });
 });
 
@@ -524,10 +545,16 @@ describe('CallRecordingsService.applyRetention', () => {
     expect(warn.mock.calls[0][0]).toContain("3 live call recording(s) are in another storage location than this server's: retention cannot delete them");
   });
 
-  it('does nothing when the storage is not configured', async () => {
-    expect(await make(unconfigured()).service.applyRetention(NOW)).toBe(0);
+  it('deletes nothing when the storage is not configured, and says once how many live recordings it cannot reach', async () => {
+    const { service, warn } = make(unconfigured());
+    db.callRecording.count.mockResolvedValueOnce(0).mockResolvedValueOnce(3);
+    expect(await service.applyRetention(NOW)).toBe(0);
+    expect(warn).not.toHaveBeenCalled(); // an install without recordings is told nothing
+    expect(await service.applyRetention(NOW)).toBe(0);
+    expect(db.callRecording.count).toHaveBeenCalledWith({ where: { deletedAt: null } });
     expect(db.callRecording.groupBy).not.toHaveBeenCalled();
     expect(db.callRecording.updateMany).not.toHaveBeenCalled();
+    expect(warn.mock.calls).toEqual([['The call recordings storage is not configured: retention cannot reach 3 recording(s)']]);
   });
 });
 
@@ -578,9 +605,15 @@ describe('CallRecordingsService.sweepOrphans', () => {
     expect(db.callRecording.findMany.mock.calls[1][0].where.storageKey.in).toEqual([keys[SWEEP_BATCH]]);
   });
 
-  it('nothing when the storage is not configured', async () => {
-    expect(await make(unconfigured()).service.sweepOrphans(NOW)).toBe(0);
+  it('nothing when the storage is not configured, saying once how many live recordings it cannot reach', async () => {
+    const { service, warn } = make(unconfigured());
+    db.callRecording.count.mockResolvedValueOnce(0).mockResolvedValueOnce(2);
+    expect(await service.sweepOrphans(NOW)).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(await service.sweepOrphans(NOW)).toBe(0);
+    expect(db.callRecording.count).toHaveBeenCalledWith({ where: { deletedAt: null } });
     expect(db.profile.findMany).not.toHaveBeenCalled();
+    expect(warn.mock.calls).toEqual([['The call recordings storage is not configured: the sweep cannot reach 2 recording(s)']]);
   });
 });
 

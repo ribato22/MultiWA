@@ -17,7 +17,7 @@ import { InternalEvents, type CallRecordingsPrivacyPayload } from '../../../metr
 import { announcementOf, retentionDaysOf } from '../../profiles/profile-settings';
 import { parseByteRange } from './byte-range';
 import {
-  RECORDING_STORE, isAnnouncementOf, isStoreKey, type PrivacyCheck, type PrivacyFailure, type RecordingStore, type StoredObject,
+  RECORDING_STORE, isAnnouncementOf, isStoreKey, storageFailed, type PrivacyCheck, type PrivacyFailure, type RecordingStore, type StoredObject,
 } from './recording-store';
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
@@ -137,7 +137,8 @@ export class CallRecordingsService {
     const rec = await this.liveRecording(callId);
     if (this.store.problem) throw new ServiceUnavailableException(UNCONFIGURED);
     if (rec.storageLocation !== this.store.location) throw new NotFoundException(ELSEWHERE);
-    const size = await this.store.size(rec.storageKey);
+    const failed = storageFailed(this.logger, `The recording of call ${clean(rec.callId)} was not served`);
+    const size = await this.store.size(rec.storageKey).catch(failed);
     if (size === null) throw new NotFoundException('The recording file is missing');
     const range = parseByteRange(rangeHeader, size);
     const headers: Record<string, string> = {
@@ -153,7 +154,7 @@ export class CallRecordingsService {
     await this.auditRead(rec, actor, download ? 'call.recording.download' : 'call.recording.play');
     const body = head ? null : await this.store.read(rec.storageKey, range ?? undefined).catch((e: unknown) => {
       if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') throw new NotFoundException('The recording file is missing'); // gone since its size was read
-      throw e;
+      return failed(e);
     });
     return {
       status: range ? 206 : 200,
@@ -196,7 +197,7 @@ export class CallRecordingsService {
    * for whoever can reach it.
    */
   async purgeProfile(profileId: string): Promise<void> {
-    if (this.store.problem) return;
+    if (this.store.problem) return this.unreachable(`the purge of profile ${clean(profileId)}`, { profileId });
     const [rows, profile] = await Promise.all([
       prisma.callRecording.findMany({ where: { profileId, deletedAt: null }, select: { storageKey: true, storageLocation: true } }),
       prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } }),
@@ -211,6 +212,9 @@ export class CallRecordingsService {
     if (announcement && isAnnouncementOf(announcement, profileId)) keys.push(announcement);
     // One failure stops it: this runs inside the DELETE request, and a storage that stopped answering would hold the
     // request for one wait per file.
+    // ponytail: one object at a time, inside the DELETE request: a profile with thousands of recordings outlasts a 60 s
+    // proxy timeout. Delete them in batches (S3 DeleteObjects, 1000 keys a call), or purge in the background, if
+    // profiles grow that big.
     try {
       for (const key of keys) await this.store.delete(key);
     } catch (e) {
@@ -224,7 +228,10 @@ export class CallRecordingsService {
    * delete them.
    */
   async applyRetention(now: Date): Promise<number> {
-    if (this.store.problem) return 0;
+    if (this.store.problem) {
+      await this.unreachable('retention');
+      return 0;
+    }
     const elsewhere = await prisma.callRecording.count({ where: { deletedAt: null, storageLocation: { not: this.store.location } } });
     if (elsewhere) this.logger.warn(`${elsewhere} live call recording(s) are in another storage location than this server's: retention cannot delete them`);
     const groups = await prisma.callRecording.groupBy({ by: ['profileId'], where: { deletedAt: null, storageLocation: this.store.location } });
@@ -267,7 +274,10 @@ export class CallRecordingsService {
    * announcement, a probe or an unfinished write left by a crash. Keys of any other shape are never touched.
    */
   async sweepOrphans(now: Date): Promise<number> {
-    if (this.store.problem) return 0;
+    if (this.store.problem) {
+      await this.unreachable('the sweep');
+      return 0;
+    }
     const before = now.getTime() - ORPHAN_MIN_AGE_MS;
     const profiles = await prisma.profile.findMany({ select: { settings: true } });
     const announcements = new Set(profiles.map((p) => announcementOf(p.settings)?.storageKey).filter((k): k is string => !!k));
@@ -304,6 +314,15 @@ export class CallRecordingsService {
       prisma.callRecording.groupBy({ by: ['profileId'], where: { deletedAt: null } }),
     ]);
     return { recording: recording.map((p) => p.id), stored: stored.map((g) => g.profileId) };
+  }
+
+  /**
+   * With the storage not configured: how many live recordings `what` cannot reach, said only when there are any, so an
+   * install without recordings is told nothing.
+   */
+  private async unreachable(what: string, where: { profileId?: string } = {}): Promise<void> {
+    const count = await prisma.callRecording.count({ where: { ...where, deletedAt: null } });
+    if (count) this.logger.warn(`The call recordings storage is not configured: ${what} cannot reach ${count} recording(s)`);
   }
 
   private async liveRecording(callId: string) {

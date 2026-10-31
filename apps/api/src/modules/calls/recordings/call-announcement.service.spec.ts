@@ -5,8 +5,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import type { Readable } from 'stream';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { NotFoundException, UnsupportedMediaTypeException } from '@nestjs/common';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
+import { Logger, NotFoundException, ServiceUnavailableException, UnsupportedMediaTypeException } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn() } } }));
 vi.mock('../../profiles/profile-settings', async (importOriginal) => ({
@@ -29,6 +29,7 @@ const OTHER = '33333333-3333-4333-8333-333333333333';
 const MP3 = readFileSync(join(__dirname, 'fixtures', 'tone.mp3'));
 const OLD = `announcements/${ORG}/${PROFILE}/44444444-4444-4444-8444-444444444444.wav`;
 const KEY = `announcements/${ORG}/${PROFILE}/55555555-5555-4555-8555-555555555555.mp3`;
+const STORAGE_DOWN = 'The recordings storage did not answer; try again';
 const profileWith = (callsAnnouncement?: unknown) => ({ settings: callsAnnouncement ? { callsAnnouncement } : {}, workspace: { organizationId: ORG } });
 const text = async (stream: Readable) => {
   const chunks: Buffer[] = [];
@@ -36,11 +37,14 @@ const text = async (stream: Readable) => {
   return Buffer.concat(chunks).toString();
 };
 
+let warn: MockInstance;
 beforeEach(() => {
   db.profile.findUnique.mockReset().mockResolvedValue(profileWith({ storageKey: OLD, mimeType: 'audio/wav', durationSec: 5 }));
   merge.mockReset().mockResolvedValue({});
   remove.mockReset().mockResolvedValue({});
+  warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
 });
+afterEach(() => warn.mockRestore());
 
 describe('CallAnnouncementService.upload', () => {
   // A call that has just read the previous key can still play its file: the nightly sweep deletes it, an hour old.
@@ -67,6 +71,20 @@ describe('CallAnnouncementService.upload', () => {
     const store = new MemoryRecordingStore();
     await expect(new CallAnnouncementService(store).upload(PROFILE, Buffer.from('not audio'))).rejects.toBeInstanceOf(UnsupportedMediaTypeException);
     expect(store.files.size).toBe(0);
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  // Not a bare 500: the storage is the problem, and the next try may find it answering. Its error goes to the server
+  // log only: it may name the directory or the bucket's address.
+  it('503 when the storage fails the put, its error logged; nothing set', async () => {
+    const store = new MemoryRecordingStore();
+    vi.spyOn(store, 'put').mockRejectedValueOnce(new Error('ECONNRESET\nforged'));
+    const refused = await new CallAnnouncementService(store).upload(PROFILE, MP3).catch((e) => e);
+    expect(refused).toBeInstanceOf(ServiceUnavailableException);
+    expect(refused.message).toBe(STORAGE_DOWN);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(`profile ${PROFILE}`);
+    expect(warn.mock.calls[0][0]).toContain('ECONNRESETforged');
     expect(merge).not.toHaveBeenCalled();
   });
 
@@ -105,6 +123,27 @@ describe('CallAnnouncementService.read', () => {
     db.profile.findUnique.mockResolvedValue(profileWith({ storageKey: KEY, mimeType: 'audio/mpeg', durationSec: 2 }));
     expect(await new CallAnnouncementService(store).read(PROFILE, true)).toEqual({ mimeType: 'audio/mpeg', size: 9, body: null });
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it.each(['size', 'read'] as const)('503 when the storage fails the %s, its error logged', async (method) => {
+    const store = new MemoryRecordingStore();
+    store.file(KEY, 'mp3-bytes');
+    vi.spyOn(store, method).mockRejectedValueOnce(new Error('ETIMEDOUT\nforged'));
+    db.profile.findUnique.mockResolvedValue(profileWith({ storageKey: KEY, mimeType: 'audio/mpeg', durationSec: 2 }));
+    const refused = await new CallAnnouncementService(store).read(PROFILE).catch((e) => e);
+    expect(refused).toBeInstanceOf(ServiceUnavailableException);
+    expect(refused.message).toBe(STORAGE_DOWN);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(`profile ${PROFILE}`);
+    expect(warn.mock.calls[0][0]).toContain('ETIMEDOUTforged');
+  });
+
+  it('404 when its file goes between its size and its read', async () => {
+    const store = new MemoryRecordingStore();
+    store.file(KEY, 'mp3-bytes');
+    vi.spyOn(store, 'read').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENOENT' }));
+    db.profile.findUnique.mockResolvedValue(profileWith({ storageKey: KEY, mimeType: 'audio/mpeg', durationSec: 2 }));
+    await expect(new CallAnnouncementService(store).read(PROFILE)).rejects.toThrow(new NotFoundException('The announcement file is missing'));
   });
 
   it("404 for none, for a missing file, and for a key that is not the profile's own", async () => {

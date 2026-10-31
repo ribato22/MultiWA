@@ -8,15 +8,20 @@
 // Replacing or removing an announcement changes the settings only: its file is left to the nightly sweep, which
 // deletes an announcement no profile points at once it is an hour old. A call that has just read the key can still
 // play the file, and the sweep is the one delete path, with its own key check.
-import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Readable } from 'stream';
 import { prisma } from '@multiwa/database';
 import { announcementOf, mergeProfileSettings, removeAnnouncementUnlessRecording, type CallAnnouncement } from '../../profiles/profile-settings';
 import { inspectAnnouncement } from './announcement-audio';
-import { RECORDING_STORE, announcementKey, isAnnouncementOf, type RecordingStore } from './recording-store';
+import { RECORDING_STORE, announcementKey, isAnnouncementOf, storageFailed, type RecordingStore } from './recording-store';
+
+// CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
+const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 
 @Injectable()
 export class CallAnnouncementService {
+  private readonly logger = new Logger(CallAnnouncementService.name);
+
   constructor(@Inject(RECORDING_STORE) private readonly store: RecordingStore) {}
 
   /** Stores a new announcement (its type and length read from the file) in place of the profile's previous one. */
@@ -25,7 +30,7 @@ export class CallAnnouncementService {
     if (this.store.problem) throw new ConflictException({ message: 'The call recordings storage is not configured on this server', reasons: ['recordings_storage_unset'] });
     const audio = await inspectAnnouncement(file);
     const announcement: CallAnnouncement = { storageKey: announcementKey(profile.organizationId, profileId, audio.ext), mimeType: audio.mimeType, durationSec: audio.durationSec };
-    await this.store.put(announcement.storageKey, file, audio.mimeType);
+    await this.store.put(announcement.storageKey, file, audio.mimeType).catch(storageFailed(this.logger, `The announcement of profile ${clean(profileId)} was not stored`));
     if (!(await mergeProfileSettings(profileId, { callsAnnouncement: announcement }))) throw new NotFoundException('Profile not found');
     return { profileId, announcement: { mimeType: announcement.mimeType, durationSec: announcement.durationSec } };
   }
@@ -38,9 +43,14 @@ export class CallAnnouncementService {
     if (!announcement || this.store.problem || !isAnnouncementOf(announcement.storageKey, profileId)) {
       throw new NotFoundException('This profile has no announcement');
     }
-    const size = await this.store.size(announcement.storageKey);
+    const failed = storageFailed(this.logger, `The announcement of profile ${clean(profileId)} was not served`);
+    const size = await this.store.size(announcement.storageKey).catch(failed);
     if (size === null) throw new NotFoundException('The announcement file is missing');
-    return { mimeType: announcement.mimeType, size, body: head ? null : await this.store.read(announcement.storageKey) };
+    const body = head ? null : await this.store.read(announcement.storageKey).catch((e: unknown) => {
+      if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') throw new NotFoundException('The announcement file is missing'); // gone since its size was read
+      return failed(e);
+    });
+    return { mimeType: announcement.mimeType, size, body };
   }
 
   /** Removes the announcement; refused while recording is on (409 recording_on). */
