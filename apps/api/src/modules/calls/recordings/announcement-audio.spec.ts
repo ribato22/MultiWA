@@ -40,6 +40,17 @@ const SIXTY_SECONDS_WAV = Buffer.concat([
   Buffer.alloc(960000),
 ]);
 
+// 30 s of µ-law at 8000 Hz laid out as macOS `afconvert -f WAVE -d ulaw@8000` writes it: a FLLR chunk pads the header
+// to 4096 bytes, which at 8000 bytes a second is half a second more than the audio.
+const AFCONVERT_THIRTY_SECONDS = Buffer.concat([
+  Buffer.from('RIFF\x78\xb9\x03\0WAVEfmt \x10\0\0\0', 'latin1'),
+  Buffer.from('07000100401f0000401f000001000800', 'hex'), // µ-law, mono, 8000 Hz, 8000 bytes a second, block 1, 8 bits
+  Buffer.from('FLLR\xcc\x0f\0\0', 'latin1'),
+  Buffer.alloc(4044),
+  Buffer.from('data\x80\xa9\x03\0', 'latin1'),
+  Buffer.alloc(240000, 0xff), // µ-law silence
+]);
+
 const longerThan30 = (seconds: number) => `The announcement must be at most 30 seconds; this one is ${seconds} seconds`;
 
 describe('inspectAnnouncement', () => {
@@ -115,6 +126,12 @@ describe('inspectAnnouncement', () => {
     expect(refused.message).toBe(longerThan30(33));
   });
 
+  it('an mp3 without a Xing header is as long as its frames: 1 s of silence and 7 s of noise read 8.2 s, not 12.7', async () => {
+    // Made with -q:a 6 -write_xing 0; ffmpeg decodes its 114 frames to 8.208 s. Its first three (the silence) share a
+    // bitrate, so music-metadata calls it CBR and makes its length from the file's size at that bitrate: 12.744 s.
+    expect((await inspectAnnouncement(fixture('vbr-no-xing.mp3'))).durationSec).toBe(8.2);
+  });
+
   it('an ID3v1 tag at the end is no audio: 30 s with one is still 30.2 s', async () => {
     const id3v1 = Buffer.concat([Buffer.from('TAGWelcome', 'latin1'), Buffer.alloc(118)]);
     expect((await inspectAnnouncement(Buffer.concat([fixture('thirty.mp3'), id3v1]))).durationSec).toBe(30.2);
@@ -145,6 +162,10 @@ describe('inspectAnnouncement', () => {
     const refused = await inspectAnnouncement(wav).catch((e) => e);
     expect(refused).toBeInstanceOf(UnprocessableEntityException);
     expect(refused.message).toBe(longerThan30(60));
+  });
+
+  it("a WAV is as long as its data chunks: 30 s behind afconvert's 4 KB of header reads 30 s, not 30.5", async () => {
+    expect((await inspectAnnouncement(AFCONVERT_THIRTY_SECONDS)).durationSec).toBe(30);
   });
 
   it('reads in a worker thread: a file that keeps the parser busy past the time limit is refused, and timers still fire', async () => {
@@ -193,6 +214,7 @@ describe("inspectAnnouncement's reader thread", () => {
     const read = inspectAnnouncement(fixture('tone.mp3'), { timeoutMs: 1000 }).catch((e) => e);
     vi.advanceTimersByTime(999);
     reader.emit('message', null); // music-metadata did not know the format
+    reader.emit('exit', 1); // as terminate() makes it: an echo, not a reader that died
     expect((await read).message).toContain('must be an mp3');
     vi.advanceTimersByTime(1000);
     expect(warn).not.toHaveBeenCalled();

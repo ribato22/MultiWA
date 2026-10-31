@@ -177,9 +177,9 @@ describe('CallRecordingsService.play', () => {
   });
 });
 
-// A player reads in ranges as it seeks, so every read is audited, once per user, address, recording and action every
-// 10 minutes: auditing only the reads from byte 0 would let `bytes=1-` and the known first byte rebuild the file
-// unaudited.
+// A player reads in ranges as it seeks, so every read is audited, once per user, address, user agent, recording and
+// action every 10 minutes: auditing only the reads from byte 0 would let `bytes=1-` and the known first byte rebuild
+// the file unaudited.
 describe('CallRecordingsService.play: the audit window', () => {
   const stored = () => {
     const t = make();
@@ -240,6 +240,22 @@ describe('CallRecordingsService.play: the audit window', () => {
     expect(audit.log.mock.calls.map(([e]) => e.ip)).toEqual(['203.0.113.7', '198.51.100.20']);
   });
 
+  it("the same user from the same address with another user agent is audited within the window: behind a proxy, every device has the proxy's address", async () => {
+    const { service, audit } = stored();
+    const [desktop, phone] = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'];
+    await service.play(CALL, { ...ACTOR, ip: '203.0.113.7', userAgent: desktop }, 'bytes=0-3', false);
+    await service.play(CALL, { ...ACTOR, ip: '203.0.113.7', userAgent: phone }, 'bytes=4-', false);
+    await service.play(CALL, { ...ACTOR, ip: '203.0.113.7', userAgent: desktop }, 'bytes=4-', false);
+    expect(audit.log.mock.calls.map(([e]) => e.userAgent)).toEqual([desktop, phone]);
+  });
+
+  it('a user agent is remembered by its first 512 characters: a 16 KB header makes no 16 KB key', async () => {
+    const { service, audit } = stored();
+    await service.play(CALL, { ...ACTOR, userAgent: 'x'.repeat(16_000) }, undefined, false);
+    expect(audit.log.mock.calls[0][0].userAgent).toHaveLength(16_000); // the audit keeps it whole
+    expect([...(service as any).audited.keys()]).toEqual([`u1::${'x'.repeat(512)}:r1:call.recording.play`]);
+  });
+
   it('a read whose audit failed (503) is not remembered: its retry is audited', async () => {
     const { service, audit } = stored();
     audit.log.mockRejectedValueOnce(new Error('db down'));
@@ -251,12 +267,12 @@ describe('CallRecordingsService.play: the audit window', () => {
   it('at 10 000 remembered reads the oldest is forgotten, and a new read is audited all the same', async () => {
     const { service, audit } = stored();
     const audited: Map<string, number> = (service as any).audited;
-    for (let i = 0; i < 10_000; i++) audited.set(`user${i}::r1:call.recording.play`, NOW.getTime());
+    for (let i = 0; i < 10_000; i++) audited.set(`user${i}:::r1:call.recording.play`, NOW.getTime());
     await service.play(CALL, ACTOR, undefined, false);
     expect(audit.log).toHaveBeenCalledTimes(1);
     expect(audited.size).toBe(10_000);
-    expect(audited.has('user0::r1:call.recording.play')).toBe(false);
-    expect(audited.has('u1::r1:call.recording.play')).toBe(true);
+    expect(audited.has('user0:::r1:call.recording.play')).toBe(false);
+    expect(audited.has('u1:::r1:call.recording.play')).toBe(true);
   });
 });
 

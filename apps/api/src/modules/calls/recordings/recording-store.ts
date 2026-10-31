@@ -17,6 +17,7 @@ import { mkdirSync } from 'fs';
 import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import type { Readable } from 'stream';
+import { Logger } from '@nestjs/common';
 import {
   DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client,
   type GetObjectCommandOutput, type HeadObjectCommandOutput, type ListObjectsV2CommandOutput, type S3ClientConfig,
@@ -42,7 +43,10 @@ export interface RecordingStore {
    * location it was stored at: one elsewhere (another directory, bucket or prefix) is out of this store's reach.
    */
   readonly location: string;
-  /** What is wrong with the settings (nothing can be stored), or null when the store works. */
+  /**
+   * What is wrong with the settings (nothing can be stored), or null when the store works. It names settings, never
+   * what they are set to: GET /calls/media/status shows it to the owners and admins of every organization.
+   */
   readonly problem: string | null;
   /** Stores the object privately, replacing what the key held. */
   put(key: string, body: Buffer, mimeType: string): Promise<void>;
@@ -82,6 +86,9 @@ export const isStoreKey = (key: string): boolean => OWN_KEY.test(key);
  */
 export const isAnnouncementOf = (key: string, profileId: string): boolean => ANNOUNCEMENT_KEY.test(key) && key.split('/')[2] === profileId;
 
+const logger = new Logger('RecordingStore');
+// CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
+const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const probeKey = () => `probe/${randomUUID()}`;
 const reasonOf = (e: unknown) => String((e as Error)?.message ?? e);
 const notFound = (e: unknown) => (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404;
@@ -373,7 +380,8 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
       },
     );
   }
-  if (type !== 'local') return new UnsetRecordingStore('local', `${typeFrom} must be local or s3, not ${type}`);
+  // Not what it is set to: a path given there in place of CALL_RECORDINGS_PATH would be shown to every organization.
+  if (type !== 'local') return new UnsetRecordingStore('local', `${typeFrom} must be local or s3`);
   const path = value('CALL_RECORDINGS_PATH');
   if (!path) return new UnsetRecordingStore('local', 'CALL_RECORDINGS_PATH is not set');
   const root = resolve(path);
@@ -394,7 +402,9 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
   try {
     mkdirSync(root, { recursive: true });
   } catch (e) {
-    return new UnsetRecordingStore('local', `CALL_RECORDINGS_PATH cannot be created: ${reasonOf(e)}`);
+    // The reason names the path (EACCES … mkdir '/data/…'): it goes to the server log only.
+    logger.warn(`CALL_RECORDINGS_PATH (${clean(root)}) cannot be created: ${clean(reasonOf(e))}`);
+    return new UnsetRecordingStore('local', 'CALL_RECORDINGS_PATH cannot be created (the server log says why)');
   }
   return new LocalRecordingStore(root);
 }

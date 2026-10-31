@@ -4,7 +4,8 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Logger } from '@nestjs/common';
 import {
   LocalRecordingStore, UnsetRecordingStore, announcementKey, createRecordingStore, isAnnouncementOf, isStoreKey, recordingKey,
 } from './recording-store';
@@ -146,8 +147,8 @@ describe('createRecordingStore: local', () => {
   it.each([
     [{}, 'CALL_RECORDINGS_PATH is not set'],
     [{ CALL_RECORDINGS_PATH: '  ' }, 'CALL_RECORDINGS_PATH is not set'],
-    [{ CALL_RECORDINGS_STORAGE: 'ftp' }, 'CALL_RECORDINGS_STORAGE must be local or s3, not ftp'],
-    [{ STORAGE_TYPE: 'ftp' }, 'STORAGE_TYPE must be local or s3, not ftp'],
+    [{ CALL_RECORDINGS_STORAGE: 'ftp' }, 'CALL_RECORDINGS_STORAGE must be local or s3'],
+    [{ STORAGE_TYPE: 'ftp' }, 'STORAGE_TYPE must be local or s3'],
   ])('a store that says what is wrong: %j', (env, problem) => {
     const store = createRecordingStore(env);
     expect(store).toBeInstanceOf(UnsetRecordingStore);
@@ -180,5 +181,46 @@ describe('createRecordingStore: local', () => {
     expect(createRecordingStore({ STORAGE_PATH: join(d, 'media'), CALL_RECORDINGS_PATH: pathOf(d) }).problem).toMatch(
       /a directory of its own, not inside or around SESSIONS_DIR/,
     );
+  });
+});
+
+// GET /calls/media/status shows a store's problem to the owners and admins of every organization, and one storage
+// serves them all: a problem names settings, never what they are set to (a path, an address, a bucket, a key).
+describe('createRecordingStore: a problem names settings, never their values', () => {
+  const MARK = 'q7z';
+  const S3 = {
+    CALL_RECORDINGS_STORAGE: 's3', S3_ENDPOINT: `https://${MARK}.example.com`, S3_ACCESS_KEY: `${MARK}-access`, S3_SECRET_KEY: `${MARK}-secret`,
+    CALL_RECORDINGS_BUCKET: `${MARK}-bucket`,
+  };
+  let root = '';
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), `rec-${MARK}-`));
+    writeFileSync(join(root, 'a-file'), 'x');
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each<[string, (d: string) => NodeJS.ProcessEnv]>([
+    ['S3 settings missing', () => ({ ...S3, S3_SECRET_KEY: '' })],
+    ['an SSE of another kind', () => ({ ...S3, CALL_RECORDINGS_SSE: MARK })],
+    ['a prefix of unsafe characters', () => ({ ...S3, CALL_RECORDINGS_PREFIX: `${MARK}#1` })],
+    ['a path where the storage type goes', () => ({ CALL_RECORDINGS_STORAGE: `/data/${MARK}` })],
+    ['a directory inside STORAGE_PATH', (d) => ({ STORAGE_PATH: join(d, 'media'), CALL_RECORDINGS_PATH: join(d, 'media', 'rec') })],
+    ['a directory around SESSIONS_DIR', (d) => ({ SESSIONS_DIR: join(d, 'wa'), CALL_RECORDINGS_PATH: d })],
+    ['a directory that cannot be created', (d) => ({ CALL_RECORDINGS_PATH: join(d, 'a-file', 'rec') })],
+  ])('%s', (_what, envOf) => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const { problem } = createRecordingStore(envOf(root));
+    expect(problem).toEqual(expect.any(String));
+    expect(problem).not.toContain(MARK);
+  });
+
+  it('a directory that cannot be created: the server log says why, and where', () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const path = join(root, 'a-file', 'rec');
+    expect(createRecordingStore({ CALL_RECORDINGS_PATH: path }).problem).toBe('CALL_RECORDINGS_PATH cannot be created (the server log says why)');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(path);
+    expect(warn.mock.calls[0][0]).toContain('ENOTDIR');
   });
 });

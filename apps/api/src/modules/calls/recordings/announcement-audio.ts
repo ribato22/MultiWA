@@ -128,9 +128,26 @@ function mp3Seconds(file: Buffer): number {
   return seconds;
 }
 
-/** How long a WAV plays: its bytes (its few header bytes too) at the rate its sample format makes, as decoders read it. */
+/**
+ * How long a WAV plays: the bytes of its data chunks at the rate its sample format makes, as decoders read them. The
+ * other chunks are no audio, and can be long: afconvert pads its header to 4 KB (half a second of µ-law). A data
+ * chunk's size of 0 or 0xFFFFFFFF was never filled in (its writer could not seek back): the rest of the file is audio.
+ */
 function wavSeconds(file: Buffer, { sampleRate = 0, numberOfChannels = 0, bitsPerSample = 0 }: AudioFormat): number {
-  return (file.length * 8) / (sampleRate * numberOfChannels * bitsPerSample);
+  let bytes = 0;
+  for (let i = 12; i + 8 <= file.length; ) {
+    const size = file.readUInt32LE(i + 4);
+    const left = file.length - i - 8;
+    if (file.toString('latin1', i, i + 4) === 'data') {
+      if (size === 0 || size === 0xffffffff) {
+        bytes += left;
+        break;
+      }
+      bytes += Math.min(size, left);
+    }
+    i += 8 + size + (size & 1); // a chunk of an odd size is followed by a pad byte
+  }
+  return (bytes * 8) / (sampleRate * numberOfChannels * bitsPerSample);
 }
 
 export async function inspectAnnouncement(file: Buffer, { timeoutMs = READ_TIMEOUT_MS }: { timeoutMs?: number } = {}): Promise<AnnouncementAudio> {
@@ -142,11 +159,12 @@ export async function inspectAnnouncement(file: Buffer, { timeoutMs = READ_TIMEO
     format &&
     FORMATS.find((f) => f.container.test(format.container ?? '') && f.codec.test(format.codec ?? '') && (f.bitsPerSample === undefined || f.bitsPerSample === format.bitsPerSample));
   if (!format || !match) throw new UnsupportedMediaTypeException('The announcement must be an mp3, wav (PCM, 32-bit float, A-law or µ-law), ogg, webm or m4a audio file');
-  // A header's length is a claim the player does not follow: two mp3 files back to back keep the first one's Info or
-  // Xing header, and a WAV's fact chunk and block size are not what its decoder reads. So an mp3's frames and a WAV's
-  // samples are counted too, and the longer counts. Ogg, WebM and MP4 have no such count here.
-  const counted = match.ext === 'mp3' ? mp3Seconds(file) : match.ext === 'wav' ? wavSeconds(file, format) : 0;
-  const seconds = Math.max(format.duration ?? 0, counted);
+  // A header's length is a claim the player does not follow. An mp3's length is its frames alone: music-metadata's is
+  // its Info or Xing header (two files back to back keep the first one's) or, without one, a guess from the file's size
+  // at the bitrate its first three frames share, which a quiet start makes far too long. A WAV's fact chunk and block
+  // size are not what its decoder reads either, so its data is counted too, and the longer counts. Ogg, WebM and MP4
+  // have no such count here.
+  const seconds = match.ext === 'mp3' ? mp3Seconds(file) : Math.max(format.duration ?? 0, match.ext === 'wav' ? wavSeconds(file, format) : 0);
   if (!(seconds > 0 && Number.isFinite(seconds))) {
     throw new UnprocessableEntityException('The file does not say how long it is (a browser recording, for one): export it again as mp3, ogg or wav');
   }

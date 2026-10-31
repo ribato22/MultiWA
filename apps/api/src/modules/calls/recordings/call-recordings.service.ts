@@ -27,7 +27,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_BATCH = 100;
 /** The sweep looks up this many listed objects at a time. */
 export const SWEEP_BATCH = 500;
-/** A user's reads of one recording from one address, by one action, are audited once in this time (see auditRead). */
+/**
+ * A user's reads of one recording from one address and user agent, by one action, are audited once in this time (see
+ * auditRead).
+ */
 const AUDIT_WINDOW_MS = 10 * 60 * 1000;
 /** The audited reads remembered for the window; past it the oldest is forgotten, and its next read audited again. */
 const AUDIT_WINDOW_MAX = 10_000;
@@ -69,7 +72,10 @@ export interface RecordingReader {
 export class CallRecordingsService {
   private readonly logger = new Logger(CallRecordingsService.name);
   private lastCheck: { at: string; ok: boolean; reason?: PrivacyFailure } | null = null;
-  /** `${userId}:${ip}:${recordingId}:${action}` → when that read was audited. In insertion order: the first is the oldest. */
+  /**
+   * `${userId}:${ip}:${userAgent}:${recordingId}:${action}` → when that read was audited. In insertion order: the first
+   * is the oldest.
+   */
   private readonly audited = new Map<string, number>();
 
   constructor(
@@ -280,13 +286,15 @@ export class CallRecordingsService {
   }
 
   // Every read is audited, as a player reads in ranges as it seeks: auditing only the reads from byte 0 would let
-  // `bytes=1-` and the known first byte rebuild the file unaudited. But once per user, address, recording and action in
-  // AUDIT_WINDOW_MS, so one listen is one entry, and a second device (or a stolen token) leaves its own, with its IP
-  // and user agent. A read is remembered only once its audit is written (the retry of a refused one is audited again),
-  // and the window runs from the audited read: the reads within it never move it. Date.now() is the wall clock: one
-  // stepped back is no window, or reads would go unaudited for the step and ten minutes more.
+  // `bytes=1-` and the known first byte rebuild the file unaudited. But once per user, address, user agent, recording
+  // and action in AUDIT_WINDOW_MS, so one listen is one entry, and a second device (or a stolen token) leaves its own,
+  // with its IP and user agent. The user agent too, as behind a reverse proxy (Fastify runs without trustProxy) every
+  // device has the proxy's address; its first 512 characters only, as a header may be 16 KB, and AUDIT_WINDOW_MAX keys
+  // of that would hold 160 MB. A read is remembered only once its audit is written (the retry of a refused one is
+  // audited again), and the window runs from the audited read: the reads within it never move it. Date.now() is the
+  // wall clock: one stepped back is no window, or reads would go unaudited for the step and ten minutes more.
   private async auditRead(rec: Omit<RecordingRef, 'storageKey'>, actor: RecordingReader, action: string): Promise<void> {
-    const key = `${actor.userId}:${actor.ip ?? ''}:${rec.id}:${action}`;
+    const key = `${actor.userId}:${actor.ip ?? ''}:${(actor.userAgent ?? '').slice(0, 512)}:${rec.id}:${action}`;
     const now = Date.now();
     const at = this.audited.get(key);
     if (at !== undefined && now >= at && now - at < AUDIT_WINDOW_MS) return;
