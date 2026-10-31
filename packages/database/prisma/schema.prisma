@@ -269,6 +269,7 @@ model CallRecording {
   callId             String    @unique
   profileId          String
   storageType        String                          // local | s3: the storage the file was written to
+  storageLocation    String                          // where in that storage: "s3:<bucket>/<prefix>" or "local:<root>"; a recording elsewhere is neither played nor deleted here
   storageKey         String    @unique               // its key there; never a phone number
   mimeType           String    @default("audio/webm")
   bytes              Int

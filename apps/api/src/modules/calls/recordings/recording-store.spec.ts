@@ -139,7 +139,7 @@ describe('createRecordingStore: local', () => {
     const root = join(dir(), 'recordings');
     const store = createRecordingStore({ CALL_RECORDINGS_PATH: root });
     expect(store).toBeInstanceOf(LocalRecordingStore);
-    expect(store).toMatchObject({ type: 'local', problem: null });
+    expect(store).toMatchObject({ type: 'local', problem: null, location: `local:${root}` });
     expect(existsSync(root)).toBe(true);
   });
 
@@ -152,6 +152,7 @@ describe('createRecordingStore: local', () => {
     const store = createRecordingStore(env);
     expect(store).toBeInstanceOf(UnsetRecordingStore);
     expect(store.problem).toContain(problem);
+    expect(store.location).toBe('');
   });
 
   // The media folder is served without a login, the sessions volume is snapshotted with every session, and a root

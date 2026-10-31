@@ -9,7 +9,10 @@ export class MemoryRecordingStore implements RecordingStore {
   privacy: PrivacyCheck = { ok: true };
   readonly files = new Map<string, { body: Buffer; lastModified: Date }>();
 
-  constructor(readonly type: 'local' | 's3' = 'local') {}
+  constructor(
+    readonly type: 'local' | 's3' = 'local',
+    readonly location = 'memory:test',
+  ) {}
 
   /** Sets a file directly, with its time. */
   file(key: string, body = 'x', lastModified = new Date()): void {

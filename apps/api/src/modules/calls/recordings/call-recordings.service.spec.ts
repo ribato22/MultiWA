@@ -31,8 +31,13 @@ const MINUTE = 60 * 1000;
 const UNCONFIGURED = 'The recordings storage is not configured on this server';
 const KEY = recordingKey(ORG, PROFILE, CALL, new Date('2026-10-01T03:00:00Z'));
 const ACTOR = { userId: 'u1', organizationId: ORG };
+// The memory store's location is memory:test. A recording of the same type elsewhere: what a new CALL_RECORDINGS_PATH,
+// bucket or prefix leaves behind.
+const HERE = 'memory:test';
+const OLD_DIRECTORY = 'local:/srv/old-recordings';
+const ELSEWHERE = 'The recording is in another storage location than this server uses now';
 const rec = (over: Record<string, unknown> = {}) => ({
-  id: 'r1', callId: CALL, profileId: PROFILE, storageType: 'local', storageKey: KEY, mimeType: 'audio/webm', bytes: 10,
+  id: 'r1', callId: CALL, profileId: PROFILE, storageType: 'local', storageLocation: HERE, storageKey: KEY, mimeType: 'audio/webm', bytes: 10,
   durationSec: 1, channels: 2, announcementPlayed: true, partial: false, createdAt: new Date('2026-10-01T03:01:00Z'),
   deletedAt: null, deletedByUserId: null, deleteReason: null, ...over,
 });
@@ -128,12 +133,20 @@ describe('CallRecordingsService.play', () => {
   it.each([
     ['no recording', null],
     ['a deleted one', rec({ deletedAt: NOW, deleteReason: 'admin' })],
-    ['one in another storage', rec({ storageType: 's3' })],
+    ['one in another storage type', rec({ storageType: 's3', storageLocation: 's3:recs/call-recordings/' })],
+    ['one of the same type in another location', rec({ storageLocation: OLD_DIRECTORY })],
   ])('404 for %s, nothing audited', async (_what, row) => {
     const { service, audit } = stored();
     db.callRecording.findUnique.mockResolvedValue(row);
     await expect(service.play(CALL, ACTOR, undefined, false)).rejects.toBeInstanceOf(NotFoundException);
     expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  // One storage serves every organization of the server: its bucket or directory is not the caller's to know.
+  it('the 404 for a recording elsewhere does not say where it is', async () => {
+    const { service } = stored();
+    db.callRecording.findUnique.mockResolvedValue(rec({ storageLocation: OLD_DIRECTORY }));
+    await expect(service.play(CALL, ACTOR, undefined, false)).rejects.toThrow(new NotFoundException(ELSEWHERE));
   });
 
   it('404 when its file is missing', async () => {
@@ -164,8 +177,9 @@ describe('CallRecordingsService.play', () => {
   });
 });
 
-// A player reads in ranges as it seeks, so every read is audited, once per user, recording and action every 10
-// minutes: auditing only the reads from byte 0 would let `bytes=1-` and the known first byte rebuild the file unaudited.
+// A player reads in ranges as it seeks, so every read is audited, once per user, address, recording and action every
+// 10 minutes: auditing only the reads from byte 0 would let `bytes=1-` and the known first byte rebuild the file
+// unaudited.
 describe('CallRecordingsService.play: the audit window', () => {
   const stored = () => {
     const t = make();
@@ -210,6 +224,22 @@ describe('CallRecordingsService.play: the audit window', () => {
     expect(audit.log).toHaveBeenCalledTimes(2);
   });
 
+  it('a clock stepped back opens no window: the read after the step is audited', async () => {
+    const { service, audit } = stored();
+    await service.play(CALL, ACTOR, 'bytes=0-3', false);
+    vi.setSystemTime(NOW.getTime() - 5 * MINUTE); // the wall clock set back (by NTP, or by hand)
+    await service.play(CALL, ACTOR, 'bytes=4-', false);
+    expect(audit.log).toHaveBeenCalledTimes(2);
+  });
+
+  it('the same user from another address is audited within the window: a second device, or a stolen token', async () => {
+    const { service, audit } = stored();
+    await service.play(CALL, { ...ACTOR, ip: '203.0.113.7' }, 'bytes=0-3', false);
+    await service.play(CALL, { ...ACTOR, ip: '198.51.100.20' }, 'bytes=4-', false);
+    await service.play(CALL, { ...ACTOR, ip: '203.0.113.7' }, 'bytes=4-', false);
+    expect(audit.log.mock.calls.map(([e]) => e.ip)).toEqual(['203.0.113.7', '198.51.100.20']);
+  });
+
   it('a read whose audit failed (503) is not remembered: its retry is audited', async () => {
     const { service, audit } = stored();
     audit.log.mockRejectedValueOnce(new Error('db down'));
@@ -221,12 +251,12 @@ describe('CallRecordingsService.play: the audit window', () => {
   it('at 10 000 remembered reads the oldest is forgotten, and a new read is audited all the same', async () => {
     const { service, audit } = stored();
     const audited: Map<string, number> = (service as any).audited;
-    for (let i = 0; i < 10_000; i++) audited.set(`user${i}:r1:call.recording.play`, NOW.getTime());
+    for (let i = 0; i < 10_000; i++) audited.set(`user${i}::r1:call.recording.play`, NOW.getTime());
     await service.play(CALL, ACTOR, undefined, false);
     expect(audit.log).toHaveBeenCalledTimes(1);
     expect(audited.size).toBe(10_000);
-    expect(audited.has('user0:r1:call.recording.play')).toBe(false);
-    expect(audited.has('u1:r1:call.recording.play')).toBe(true);
+    expect(audited.has('user0::r1:call.recording.play')).toBe(false);
+    expect(audited.has('u1::r1:call.recording.play')).toBe(true);
   });
 });
 
@@ -284,12 +314,15 @@ describe('CallRecordingsService.deleteByAdmin', () => {
     expect(db.callRecording.updateMany).not.toHaveBeenCalled();
   });
 
-  it('409 for a recording in another storage: the row is not claimed', async () => {
+  it.each([
+    ['another storage type', rec({ storageType: 's3', storageLocation: 's3:recs/call-recordings/' })],
+    ['the same type in another location', rec({ storageLocation: OLD_DIRECTORY })],
+  ])('409 for a recording in %s, not saying where: the row is not claimed', async (_what, row) => {
     const { service } = make();
-    db.callRecording.findUnique.mockResolvedValue(rec({ storageType: 's3' }));
+    db.callRecording.findUnique.mockResolvedValue(row);
     const refused = await service.deleteByAdmin(CALL, 'u1').catch((e) => e);
     expect(refused).toBeInstanceOf(ConflictException);
-    expect(refused.message).toBe('The recording is in s3 storage, which this server does not use now: it cannot be deleted from here');
+    expect(refused.message).toBe(`${ELSEWHERE}: it cannot be deleted from here`);
     expect(db.callRecording.updateMany).not.toHaveBeenCalled();
   });
 });
@@ -299,22 +332,22 @@ describe('CallRecordingsService.purgeProfile', () => {
     const { service, store } = make();
     const announcement = announcementKey(ORG, PROFILE, 'mp3');
     const del = vi.spyOn(store, 'delete').mockRejectedValueOnce(new Error('EACCES'));
-    db.callRecording.findMany.mockResolvedValue([{ storageKey: 'a', storageType: 'local' }, { storageKey: 'b', storageType: 'local' }]);
+    db.callRecording.findMany.mockResolvedValue([{ storageKey: 'a', storageType: 'local', storageLocation: HERE }, { storageKey: 'b', storageType: 'local', storageLocation: HERE }]);
     db.profile.findUnique.mockResolvedValue({ settings: { callsAnnouncement: { storageKey: announcement, mimeType: 'audio/mpeg', durationSec: 3 } } });
     await service.purgeProfile(PROFILE);
-    expect(db.callRecording.findMany).toHaveBeenCalledWith({ where: { profileId: PROFILE, deletedAt: null }, select: { storageKey: true, storageType: true } });
+    expect(db.callRecording.findMany).toHaveBeenCalledWith({ where: { profileId: PROFILE, deletedAt: null }, select: { storageKey: true, storageLocation: true } });
     expect(del.mock.calls.map(([key]) => key)).toEqual(['a', 'b', announcement]);
   });
 
-  it('leaves the files in another storage, naming them for the operator: the cascade is about to drop their rows', async () => {
+  it('leaves the files of the same type in another location, naming them and where for the operator: the cascade is about to drop their rows', async () => {
     const { service, store, warn } = make();
     const del = vi.spyOn(store, 'delete');
-    db.callRecording.findMany.mockResolvedValue([{ storageKey: 'a', storageType: 'local' }, { storageKey: 'b\nforged', storageType: 's3' }]);
+    db.callRecording.findMany.mockResolvedValue([{ storageKey: 'a', storageType: 'local', storageLocation: HERE }, { storageKey: 'b\nforged', storageType: 'local', storageLocation: OLD_DIRECTORY }]);
     db.profile.findUnique.mockResolvedValue({ settings: {} });
     await service.purgeProfile(PROFILE);
     expect(del.mock.calls.map(([key]) => key)).toEqual(['a']);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain('bforged');
+    expect(warn.mock.calls[0][0]).toContain(`bforged (${OLD_DIRECTORY})`);
     expect(warn.mock.calls[0][0]).not.toMatch(/[\r\n]/);
   });
 
@@ -353,13 +386,14 @@ describe('CallRecordingsService.applyRetention', () => {
 
     expect(await service.applyRetention(NOW)).toBe(101);
 
-    // Only what this server's storage holds: a row claimed for a file it cannot reach would leave the file for good.
-    expect(db.callRecording.groupBy).toHaveBeenCalledWith({ by: ['profileId'], where: { deletedAt: null, storageType: 'local' } });
+    // Only what this server's storage location holds (not merely its type): a row claimed for a file it cannot reach
+    // would leave the file for good.
+    expect(db.callRecording.groupBy).toHaveBeenCalledWith({ by: ['profileId'], where: { deletedAt: null, storageLocation: HERE } });
     const before30 = new Date(NOW.getTime() - 30 * DAY);
     expect(db.callRecording.findMany.mock.calls.map(([q]: any[]) => q.where)).toEqual([
-      { profileId: 'p30', deletedAt: null, storageType: 'local', createdAt: { lt: before30 } },
-      { profileId: 'p30', deletedAt: null, storageType: 'local', createdAt: { lt: before30 } },
-      { profileId: 'p90', deletedAt: null, storageType: 'local', createdAt: { lt: new Date(NOW.getTime() - 90 * DAY) } },
+      { profileId: 'p30', deletedAt: null, storageLocation: HERE, createdAt: { lt: before30 } },
+      { profileId: 'p30', deletedAt: null, storageLocation: HERE, createdAt: { lt: before30 } },
+      { profileId: 'p90', deletedAt: null, storageLocation: HERE, createdAt: { lt: new Date(NOW.getTime() - 90 * DAY) } },
     ]);
     expect(db.callRecording.updateMany.mock.calls[0][0].data).toMatchObject({ deletedByUserId: null, deleteReason: 'retention' });
     expect(audit.log).toHaveBeenCalledTimes(101);
@@ -389,14 +423,14 @@ describe('CallRecordingsService.applyRetention', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it('says once how many live recordings are in another storage, which it cannot delete', async () => {
+  it('says once how many live recordings are in another storage location (of the same type too), which it cannot delete', async () => {
     db.callRecording.groupBy.mockResolvedValue([]);
     db.callRecording.count.mockResolvedValue(3);
     const { service, warn } = make();
     expect(await service.applyRetention(NOW)).toBe(0);
-    expect(db.callRecording.count).toHaveBeenCalledWith({ where: { deletedAt: null, storageType: { not: 'local' } } });
+    expect(db.callRecording.count).toHaveBeenCalledWith({ where: { deletedAt: null, storageLocation: { not: HERE } } });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("3 live call recording(s) are in another storage than this server's: retention cannot delete them");
+    expect(warn.mock.calls[0][0]).toContain("3 live call recording(s) are in another storage location than this server's: retention cannot delete them");
   });
 
   it('does nothing when the storage is not configured', async () => {

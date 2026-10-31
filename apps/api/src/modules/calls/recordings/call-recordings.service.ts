@@ -5,8 +5,8 @@
 // play or a download is audited BEFORE a byte is sent: a read that cannot be audited is refused. It is deleted by an
 // admin or by its profile's retention period, the row claimed first (deletedAt) and the file after, so a file whose
 // delete failed is an orphan for the nightly sweep, never a recording that looks alive without its file. A recording
-// in another storage than this server's is neither played nor deleted here: its row claimed, its file would stay for
-// good, as no sweep of this server lists it.
+// in another storage location than this server's (another type, directory, bucket or prefix) is neither played nor
+// deleted here: its row claimed, its file would stay for good, as no sweep of this server lists it.
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { Readable } from 'stream';
@@ -27,11 +27,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_BATCH = 100;
 /** The sweep looks up this many listed objects at a time. */
 export const SWEEP_BATCH = 500;
-/** A user's reads of one recording, by one action, are audited once in this time (see auditRead). */
+/** A user's reads of one recording from one address, by one action, are audited once in this time (see auditRead). */
 const AUDIT_WINDOW_MS = 10 * 60 * 1000;
 /** The audited reads remembered for the window; past it the oldest is forgotten, and its next read audited again. */
 const AUDIT_WINDOW_MAX = 10_000;
 const UNCONFIGURED = 'The recordings storage is not configured on this server';
+// Never where it is: one storage serves every organization of the server.
+const ELSEWHERE = 'The recording is in another storage location than this server uses now';
 /**
  * An object younger than this may be a recording whose upload is done but whose row is not yet written (the upload
  * comes first), or an announcement whose settings are being written: the sweep leaves it for the next night.
@@ -67,7 +69,7 @@ export interface RecordingReader {
 export class CallRecordingsService {
   private readonly logger = new Logger(CallRecordingsService.name);
   private lastCheck: { at: string; ok: boolean; reason?: PrivacyFailure } | null = null;
-  /** `${userId}:${recordingId}:${action}` → when that read was audited. In insertion order: the first is the oldest. */
+  /** `${userId}:${ip}:${recordingId}:${action}` → when that read was audited. In insertion order: the first is the oldest. */
   private readonly audited = new Map<string, number>();
 
   constructor(
@@ -123,7 +125,7 @@ export class CallRecordingsService {
   async play(callId: string, actor: RecordingReader, rangeHeader: string | undefined, download: boolean): Promise<Playback> {
     const rec = await this.liveRecording(callId);
     if (this.store.problem) throw new ServiceUnavailableException(UNCONFIGURED);
-    if (rec.storageType !== this.store.type) throw new NotFoundException(`The recording is in ${rec.storageType} storage, which this server does not use now`);
+    if (rec.storageLocation !== this.store.location) throw new NotFoundException(ELSEWHERE);
     const size = await this.store.size(rec.storageKey);
     if (size === null) throw new NotFoundException('The recording file is missing');
     const range = parseByteRange(rangeHeader, size);
@@ -153,9 +155,7 @@ export class CallRecordingsService {
     const rec = await this.liveRecording(callId);
     // Before the row is claimed: claimed, a file this server cannot reach would stay for good.
     if (this.store.problem) throw new ServiceUnavailableException(UNCONFIGURED);
-    if (rec.storageType !== this.store.type) {
-      throw new ConflictException(`The recording is in ${rec.storageType} storage, which this server does not use now: it cannot be deleted from here`);
-    }
+    if (rec.storageLocation !== this.store.location) throw new ConflictException(`${ELSEWHERE}: it cannot be deleted from here`);
     const deletedAt = await this.remove(rec, 'admin', userId);
     if (!deletedAt) throw new NotFoundException('This call has no recording'); // deleted meanwhile
     return { callId, recordingId: rec.id, deletedAt: deletedAt.toISOString() };
@@ -164,19 +164,19 @@ export class CallRecordingsService {
   /**
    * Before a profile is deleted: its recording files and its announcement. Its rows go with the profile (the cascade).
    * A file whose delete fails is left to the nightly sweep, and the profile is deleted all the same. A file in another
-   * storage than this server's is out of reach: its key goes to the log, for whoever can reach that storage.
+   * storage location than this server's is out of reach: its key and location go to the log, for whoever can reach it.
    */
   async purgeProfile(profileId: string): Promise<void> {
     if (this.store.problem) return;
     const [rows, profile] = await Promise.all([
-      prisma.callRecording.findMany({ where: { profileId, deletedAt: null }, select: { storageKey: true, storageType: true } }),
+      prisma.callRecording.findMany({ where: { profileId, deletedAt: null }, select: { storageKey: true, storageLocation: true } }),
       prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } }),
     ]);
-    const elsewhere = rows.filter((r) => r.storageType !== this.store.type).map((r) => r.storageKey);
+    const elsewhere = rows.filter((r) => r.storageLocation !== this.store.location).map((r) => `${r.storageKey} (${r.storageLocation})`);
     if (elsewhere.length) {
-      this.logger.warn(`Profile ${clean(profileId)} is deleted with recording files in another storage than this server's, which are left there: ${clean(elsewhere.join(', '))}`);
+      this.logger.warn(`Profile ${clean(profileId)} is deleted with recording files in another storage location than this server's, which are left there: ${clean(elsewhere.join(', '))}`);
     }
-    const keys = rows.filter((r) => r.storageType === this.store.type).map((r) => r.storageKey);
+    const keys = rows.filter((r) => r.storageLocation === this.store.location).map((r) => r.storageKey);
     // A key read back from the settings is deleted only when it is the profile's own announcement.
     const announcement = announcementOf(profile?.settings)?.storageKey;
     if (announcement && isAnnouncementOf(announcement, profileId)) keys.push(announcement);
@@ -187,13 +187,14 @@ export class CallRecordingsService {
 
   /**
    * Nightly: every recording older than its profile's retention period (callsRecordingRetentionDays, 90 days by
-   * default), of those in this server's storage: the others are counted in the log, as nothing here can delete them.
+   * default), of those in this server's storage location: the others are counted in the log, as nothing here can
+   * delete them.
    */
   async applyRetention(now: Date): Promise<number> {
     if (this.store.problem) return 0;
-    const elsewhere = await prisma.callRecording.count({ where: { deletedAt: null, storageType: { not: this.store.type } } });
-    if (elsewhere) this.logger.warn(`${elsewhere} live call recording(s) are in another storage than this server's: retention cannot delete them`);
-    const groups = await prisma.callRecording.groupBy({ by: ['profileId'], where: { deletedAt: null, storageType: this.store.type } });
+    const elsewhere = await prisma.callRecording.count({ where: { deletedAt: null, storageLocation: { not: this.store.location } } });
+    if (elsewhere) this.logger.warn(`${elsewhere} live call recording(s) are in another storage location than this server's: retention cannot delete them`);
+    const groups = await prisma.callRecording.groupBy({ by: ['profileId'], where: { deletedAt: null, storageLocation: this.store.location } });
     if (!groups.length) return 0;
     const profiles = await prisma.profile.findMany({
       where: { id: { in: groups.map((g) => g.profileId) } },
@@ -204,7 +205,7 @@ export class CallRecordingsService {
       const before = new Date(now.getTime() - retentionDaysOf(profile.settings) * DAY_MS);
       for (;;) {
         const batch = await prisma.callRecording.findMany({
-          where: { profileId: profile.id, deletedAt: null, storageType: this.store.type, createdAt: { lt: before } },
+          where: { profileId: profile.id, deletedAt: null, storageLocation: this.store.location, createdAt: { lt: before } },
           orderBy: { createdAt: 'asc' },
           take: RETENTION_BATCH,
         });
@@ -279,14 +280,16 @@ export class CallRecordingsService {
   }
 
   // Every read is audited, as a player reads in ranges as it seeks: auditing only the reads from byte 0 would let
-  // `bytes=1-` and the known first byte rebuild the file unaudited. But once per user, recording and action in
-  // AUDIT_WINDOW_MS, so one listen is one entry. A read is remembered only once its audit is written (the retry of a
-  // refused one is audited again), and the window runs from the audited read: the reads within it never move it.
+  // `bytes=1-` and the known first byte rebuild the file unaudited. But once per user, address, recording and action in
+  // AUDIT_WINDOW_MS, so one listen is one entry, and a second device (or a stolen token) leaves its own, with its IP
+  // and user agent. A read is remembered only once its audit is written (the retry of a refused one is audited again),
+  // and the window runs from the audited read: the reads within it never move it. Date.now() is the wall clock: one
+  // stepped back is no window, or reads would go unaudited for the step and ten minutes more.
   private async auditRead(rec: Omit<RecordingRef, 'storageKey'>, actor: RecordingReader, action: string): Promise<void> {
-    const key = `${actor.userId}:${rec.id}:${action}`;
+    const key = `${actor.userId}:${actor.ip ?? ''}:${rec.id}:${action}`;
     const now = Date.now();
     const at = this.audited.get(key);
-    if (at !== undefined && now - at < AUDIT_WINDOW_MS) return;
+    if (at !== undefined && now >= at && now - at < AUDIT_WINDOW_MS) return;
     await this.audit
       .log({
         action,

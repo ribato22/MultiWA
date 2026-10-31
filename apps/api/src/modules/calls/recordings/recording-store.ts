@@ -37,6 +37,11 @@ export type PrivacyCheck = { ok: true } | { ok: false; reason: PrivacyFailure; d
 
 export interface RecordingStore {
   readonly type: RecordingStorageType;
+  /**
+   * Where in that type of storage: "local:<root>" or "s3:<bucket>/<prefix>" ('' when unset). A recording keeps the
+   * location it was stored at: one elsewhere (another directory, bucket or prefix) is out of this store's reach.
+   */
+  readonly location: string;
   /** What is wrong with the settings (nothing can be stored), or null when the store works. */
   readonly problem: string | null;
   /** Stores the object privately, replacing what the key held. */
@@ -83,6 +88,8 @@ const notFound = (e: unknown) => (e as { $metadata?: { httpStatusCode?: number }
 
 /** A store whose settings are missing or wrong: recording cannot be turned on, and there is nothing to list or sweep. */
 export class UnsetRecordingStore implements RecordingStore {
+  readonly location = '';
+
   constructor(readonly type: RecordingStorageType, readonly problem: string) {}
 
   async put(): Promise<void> {
@@ -114,8 +121,11 @@ export class UnsetRecordingStore implements RecordingStore {
 export class LocalRecordingStore implements RecordingStore {
   readonly type = 'local';
   readonly problem = null;
+  readonly location: string;
 
-  constructor(private readonly root: string) {}
+  constructor(private readonly root: string) {
+    this.location = `local:${root}`;
+  }
 
   // Rebuilt from basename()-stripped segments, '.' and '..' refused: no key, not even one read back from the database,
   // reaches outside the root. (The shape CodeQL models as a js/path-injection sanitizer, as in LocalStorageAdapter.)
@@ -209,12 +219,17 @@ const PROBE_FETCH_MS = 5_000;
 export class S3RecordingStore implements RecordingStore {
   readonly type = 's3';
   readonly problem = null;
+  readonly location: string;
 
   constructor(
     private readonly s3: S3Like,
     private readonly config: S3RecordingStoreConfig,
     private readonly fetchFn: typeof fetch = fetch,
-  ) {}
+  ) {
+    // The bucket and the prefix, not the endpoint: the same bucket is often reached at a new address (http to https,
+    // an internal name), and its recordings are no less its own.
+    this.location = `s3:${config.bucket}/${config.prefix}`;
+  }
 
   private object(key: string) {
     return { Bucket: this.config.bucket, Key: this.config.prefix + key };

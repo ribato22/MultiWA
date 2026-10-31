@@ -176,6 +176,16 @@ describe('createRecordingStore: S3', () => {
     expect(store).toBeInstanceOf(S3RecordingStore);
     expect(made).toEqual([{ endpoint: 'http://minio:9000', region: 'ap-southeast-3', credentials: { accessKeyId: 'a', secretAccessKey: 'b' }, forcePathStyle: true }]);
     expect((store as any).config).toEqual({ bucket: 'recs', prefix: 'call-recordings/', sse: 'AES256', publicBases: ['http://minio:9000', 'https://cdn.example.com'] });
+    expect(store.location).toBe('s3:recs/call-recordings/');
+  });
+
+  // A recording is played and deleted only where it was stored. The address is no part of where: the same bucket is
+  // often reached at a new one (http to https, an internal name).
+  it('its location is the bucket and the prefix, not the address it is reached at', () => {
+    const locationOf = (env: Record<string, string>) => createRecordingStore({ ...S3_ENV, ...env }, () => client()).location;
+    expect(locationOf({})).toBe('s3:media/call-recordings/');
+    expect(locationOf({ S3_ENDPOINT: 'https://minio.example.com' })).toBe('s3:media/call-recordings/');
+    expect(locationOf({ CALL_RECORDINGS_BUCKET: 'recs', CALL_RECORDINGS_PREFIX: 'calls' })).toBe('s3:recs/calls/');
   });
 
   it('the media bucket by default; a prefix always ends with one slash and is never empty', () => {
@@ -201,6 +211,11 @@ describe('createRecordingStore: S3', () => {
   // http://localhost:9000 is the browser's way to the MinIO the endpoint already reaches.
   it.each(['http://localhost:9000', 'http://127.0.0.1:9000/', 'http://127.1.2.3', 'http://[::1]:9000'])('a loopback S3_PUBLIC_URL is not fetched: %s', (url) => {
     expect(configOf({ S3_PUBLIC_URL: url }).publicBases).toEqual(['http://minio:9000']);
+  });
+
+  // The rule is anchored: a name that only begins or ends like a loopback one is another host.
+  it.each(['http://127.0.0.1.nip.io', 'http://localhost.example.com'])('an S3_PUBLIC_URL that only looks like loopback is fetched: %s', (url) => {
+    expect(configOf({ S3_PUBLIC_URL: url }).publicBases).toEqual(['http://minio:9000', url]);
   });
 
   it.each([
