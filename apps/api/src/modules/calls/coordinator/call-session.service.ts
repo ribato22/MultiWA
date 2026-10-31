@@ -4,12 +4,13 @@
 // A call of a profile with dashboard answering on rings every eligible agent online: an active owner, admin or member
 // of its organization, available, not on a call. The first Answer claims it (calls.answeredByUserId), and its audio
 // connects within CALLS_CONNECT_TIMEOUT_MS: a media room, the page's bridge, the agent's transports, and only then
-// WhatsApp's own Accept. A claim whose audio does not connect is given back, and the call rings again. An answered call
-// ends with the agent's Hang up, the caller's, the talk-time cap, an agent lost for CALLS_AGENT_GRACE_MS, or a media
-// failure: every end hangs up what WhatsApp still holds, closes the media, and stores who ended it and why.
+// WhatsApp's own Accept. A claim whose audio does not connect is given back, and the call rings again unless it was
+// hung up. Once WhatsApp has answered, the call ends with the agent's Hang up, the caller's, the talk-time cap, an agent
+// lost for CALLS_AGENT_GRACE_MS, or a media failure (the page's media link down as long, too): every end hangs up what
+// WhatsApp still holds, closes the media, and stores who ended it and why.
 // Sessions live in this process, with the engines and the media server they use: a restart ends them, and the next
 // boot closes their rows.
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, forwardRef } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
 import { AppEvents, REALTIME_EMITTER, type RealtimeEmitter } from '@multiwa/core';
@@ -59,11 +60,14 @@ const positive = (raw: string | undefined, fallback: number) => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 
+/** setTimeout's longest delay: a longer one fires after 1 ms. */
+const timerMs = (ms: number) => Math.min(ms, 2 ** 31 - 1);
+
 export function readCallTimings(env: NodeJS.ProcessEnv = process.env): CallTimings {
   return {
-    connectMs: positive(env.CALLS_CONNECT_TIMEOUT_MS, 10_000),
-    agentGraceMs: positive(env.CALLS_AGENT_GRACE_MS, 15_000),
-    maxTalkMs: positive(env.CALLS_MAX_TALK_MINUTES, 120) * 60_000,
+    connectMs: timerMs(positive(env.CALLS_CONNECT_TIMEOUT_MS, 10_000)),
+    agentGraceMs: timerMs(positive(env.CALLS_AGENT_GRACE_MS, 15_000)),
+    maxTalkMs: timerMs(positive(env.CALLS_MAX_TALK_MINUTES, 120) * 60_000),
   };
 }
 
@@ -79,7 +83,10 @@ interface Session {
   organizationId: string;
   userId: string;
   startedAt: Date;
+  /** When the connect budget (CALLS_CONNECT_TIMEOUT_MS from the claim) runs out, in epoch ms. */
+  connectDeadline: number;
   media: CallMediaEngine;
+  /** Active from WhatsApp's accept on: every stop is then an end. */
   phase: 'connecting' | 'active' | 'ending';
   room: CallMediaRoom | null;
   handle: CallMediaHandle | null;
@@ -91,15 +98,17 @@ interface Session {
   /** engine.answer was called: WhatsApp may hold the call from then on (its accept cannot be cancelled). */
   answerTried: boolean;
   answeredAt: Date | null;
+  /** The answer's write (markAnswered), from WhatsApp's accept on: null once it did not store. An end waits for it. */
+  answering: Promise<CallRecord | null> | null;
   /** A reloaded agent page is producing anew (call:rejoin). */
   rejoining: boolean;
   socketsLost: boolean;
   linkLost: boolean;
-  timers: { connect?: NodeJS.Timeout; grace?: NodeJS.Timeout; talk?: NodeJS.Timeout };
+  timers: { connect?: NodeJS.Timeout; grace?: NodeJS.Timeout; talk?: NodeJS.Timeout; page?: NodeJS.Timeout };
 }
 
 @Injectable()
-export class CallSessionService implements OnModuleInit, OnModuleDestroy {
+export class CallSessionService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(CallSessionService.name);
   private readonly timing = readCallTimings();
   /** The calls being answered (connecting or talking), by calls row id. */
@@ -108,6 +117,8 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
   private readonly rung = new Map<string, Set<string>>();
   /** Users who turned themselves unavailable. They are available again once their last socket goes. */
   private readonly unavailable = new Set<string>();
+  /** Users whose Answer is claiming a call: busy before their session exists. */
+  private readonly claiming = new Set<string>();
 
   constructor(
     private readonly callMedia: CallMediaService,
@@ -122,7 +133,12 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     // The rooms a dead worker carried are gone: their calls end (or ring again while connecting), and the admins are told.
     this.callMedia.events.on('worker-died', (callIds: string[]) => void this.onWorkerDied(callIds));
-    // Not awaited: a slow calls table must not hold the boot. It runs before the app listens, so before any command.
+  }
+
+  onApplicationBootstrap(): void {
+    // Once every module is initialized: the call.ended it publishes must reach the webhook dispatcher, which subscribes
+    // in its onModuleInit. Not awaited, so that a slow calls table does not hold the boot: it can still be running when
+    // the app takes calls, and that is safe, as both of its writes touch only rows from before `at`.
     reconcileAfterRestart(new Date())
       .then(({ ended, released }) => {
         // Every call.answered gets its call.ended: the previous process went before it could send these.
@@ -135,7 +151,9 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
   /** Shutdown: the engines and the media server go with the process. Answered calls are stored as ended, claims given back. */
   async onModuleDestroy(): Promise<void> {
     await Promise.all(
-      [...this.sessions.values()].map((s) => (s.phase === 'connecting' ? this.stopConnecting(s, { reRing: false }) : this.end(s, 'server', 'server_restart'))),
+      [...this.sessions.values()].map((s) =>
+        s.phase === 'connecting' ? this.stopConnecting(s, { reRing: false, hangUp: false }) : this.end(s, 'server', 'server_restart'),
+      ),
     );
   }
 
@@ -182,11 +200,18 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     if (profile.settings.callsAnswerInDashboard !== true || call.isVideo || call.isGroup || !media || this.callMedia.publicStatus().worker !== 'up') {
       return { ok: false, reason: 'media_unavailable' };
     }
-    if (!(await claimCall(call.id, user.id))) {
-      const now = await findCallForAnswer(call.id);
-      return { ok: false, reason: now?.call.outcome === 'ringing' ? 'already_claimed' : 'not_ringing' };
+    // Busy from the check above on, nothing awaited in between: two Answers of one agent cannot both claim.
+    this.claiming.add(user.id);
+    let session: Session;
+    try {
+      if (!(await claimCall(call.id, user.id))) {
+        const now = await findCallForAnswer(call.id);
+        return { ok: false, reason: now?.call.outcome === 'ringing' ? 'already_claimed' : 'not_ringing' };
+      }
+      session = this.open(call, user.organizationId, user.id, media);
+    } finally {
+      this.claiming.delete(user.id);
     }
-    const session = this.open(call, user.organizationId, user.id, media);
     const others = [...(this.rung.get(call.id) ?? [])].filter((id) => id !== user.id);
     this.gateway.emitToUsers(others, 'call:claimed', { callId: call.id, byUserId: user.id, byUserName: user.name });
     let handle: CallMediaHandle;
@@ -221,12 +246,15 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** The agent's Hang up. While connecting it gives the call up, and the call rings again for everyone. */
+  /**
+   * The agent's Hang up. While connecting it gives the call up, and the call rings again for everyone. Also for an agent
+   * deactivated or demoted since the answer: every other command refuses them, and their call would run on to the cap.
+   */
   async hangup(principal: SocketPrincipal, callId: unknown): Promise<CallCommandReply> {
-    const own = await this.ownSession(principal, callId);
-    if (!own.ok) return own;
-    if (own.session.phase === 'connecting') await this.stopConnecting(own.session, { reRing: true });
-    else await this.end(own.session, 'agent', 'hangup');
+    const session = this.sessionOf(principal, callId);
+    if (!session) return { ok: false, reason: (await this.agentOf(principal)) ? 'not_in_call' : 'not_allowed' };
+    if (session.phase === 'connecting') await this.stopConnecting(session, { reRing: true });
+    else await this.end(session, 'agent', 'hangup');
     return { ok: true };
   }
 
@@ -251,6 +279,7 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
         return { ok: false, reason: 'media_failed' };
       }
     }
+    if (session.phase !== 'active') return { ok: false, reason: 'not_in_call' }; // it ended meanwhile
     session.room.closePeer('agent');
     session.socketsLost = false; // it is talking to us
     this.updateGrace(session);
@@ -296,7 +325,7 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     if (!payload || payload.state === 'ringing') return;
     const session = [...this.sessions.values()].find((s) => s.profileId === payload.profileId && s.waCallId === payload.waCallId);
     if (!session) return;
-    if (session.phase === 'connecting') await this.stopConnecting(session, { reRing: false });
+    if (session.phase === 'connecting') await this.stopConnecting(session, { reRing: false, hangUp: false });
     else await this.end(session, 'caller', 'caller_hangup');
   }
 
@@ -312,29 +341,39 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
 
   /** Ring the eligible agents of a ringing call nobody claimed: each banner says whether it can be answered here. */
   private async ring(callId: string): Promise<void> {
-    const found = await findCallForAnswer(callId);
-    if (!found) return;
-    const { call, profile } = found;
-    if (call.outcome !== 'ringing' || call.answeredByUserId || !profile.organizationId) return;
-    // A profile that rejects every call never rings: its calls are gone before anyone could answer them.
-    if (profile.settings.callsAnswerInDashboard !== true || profile.settings.autoRejectCalls === true) return;
-    const agents = await this.eligibleAgents(profile.organizationId);
-    if (!agents.length) return;
-    // This engine is voice-only: the page's bridge carries no video.
-    const unavailableReason = call.isGroup ? 'group_call' : call.isVideo ? 'video_call' : (await this.readiness(profile.id, profile.settings)).reasons[0];
-    const rung = this.rung.get(callId) ?? new Set<string>();
-    for (const id of agents) rung.add(id);
-    this.rung.set(callId, rung);
-    this.gateway.emitToUsers(agents, 'call:ringing', {
-      callId,
-      profileId: profile.id,
-      profileName: profile.displayName ?? profile.id,
-      caller: { name: found.callerName, number: callerNumber(call.fromJid) },
-      startedAt: call.startedAt.toISOString(),
-      answerable: !unavailableReason,
-      ...(unavailableReason ? { unavailableReason } : {}),
-    });
-    this.metric({ kind: 'rung' });
+    // The call's entry exists before the first await: a call that stops ringing meanwhile takes it away (onCallChanged),
+    // and this ring then opens no banner, which nothing would close.
+    const known = this.rung.get(callId);
+    const rung = known ?? new Set<string>();
+    if (!known) this.rung.set(callId, rung);
+    const closed = () => this.rung.get(callId) !== rung;
+    try {
+      const found = await findCallForAnswer(callId);
+      if (!found || closed()) return;
+      const { call, profile } = found;
+      if (call.outcome !== 'ringing' || call.answeredByUserId || !profile.organizationId) return;
+      // A profile that rejects every call never rings: its calls are gone before anyone could answer them.
+      if (profile.settings.callsAnswerInDashboard !== true || profile.settings.autoRejectCalls === true) return;
+      const agents = await this.eligibleAgents(profile.organizationId);
+      if (!agents.length || closed()) return;
+      // This engine is voice-only: the page's bridge carries no video.
+      const unavailableReason = call.isGroup ? 'group_call' : call.isVideo ? 'video_call' : (await this.readiness(profile.id, profile.settings)).reasons[0];
+      if (closed()) return;
+      for (const id of agents) rung.add(id);
+      this.gateway.emitToUsers(agents, 'call:ringing', {
+        callId,
+        profileId: profile.id,
+        profileName: profile.displayName ?? profile.id,
+        caller: { name: found.callerName, number: callerNumber(call.fromJid) },
+        startedAt: call.startedAt.toISOString(),
+        answerable: !unavailableReason,
+        ...(unavailableReason ? { unavailableReason } : {}),
+      });
+      this.metric({ kind: 'rung' });
+    } finally {
+      // An entry this ring made, and rang nobody with, goes.
+      if (!known && !closed() && !rung.size) this.rung.delete(callId);
+    }
   }
 
   /** Online users of the organization who may answer, are available and not on a call (roles read fresh). */
@@ -349,6 +388,7 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private busy(userId: string): boolean {
+    if (this.claiming.has(userId)) return true;
     for (const s of this.sessions.values()) if (s.userId === userId) return true;
     return false;
   }
@@ -362,9 +402,10 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     });
     promise.catch(() => undefined); // a session can stop before anything waits on it
     const session: Session = {
-      callId: call.id, waCallId: call.waCallId, profileId: call.profileId, organizationId, userId, startedAt: call.startedAt, media,
+      callId: call.id, waCallId: call.waCallId, profileId: call.profileId, organizationId, userId, startedAt: call.startedAt,
+      connectDeadline: Date.now() + this.timing.connectMs, media,
       phase: 'connecting', room: null, handle: null, agent: null, agentProducerId: null, agentListening: false,
-      ready: { promise, resolve, reject }, answerTried: false, answeredAt: null, rejoining: false, socketsLost: false, linkLost: false,
+      ready: { promise, resolve, reject }, answerTried: false, answeredAt: null, answering: null, rejoining: false, socketsLost: false, linkLost: false,
       timers: {},
     };
     session.timers.connect = setTimeout(() => void this.stopConnecting(session, { failure: 'connect_timeout', reRing: true }), this.timing.connectMs);
@@ -406,16 +447,32 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Agent lost: no socket on /ws, or the room's link to the agent down. Either starts the grace; both recovered cancel it. */
-  private watchAgent(session: Session): void {
-    session.room!.onLinkChange((peer, up) => {
-      if (peer !== 'agent') return;
+  /**
+   * Agent lost: no socket on /ws, or the room's link to the agent down. Either starts the grace; both recovered cancel it.
+   * The page's link down for as long ends the call too: the page lets its bridge go 250-500 ms after its call is over, so
+   * an end the engine did not report shows here, before the talk-time cap, and the profile's one bridge is freed.
+   */
+  private watchLinks(session: Session): void {
+    const room = session.room!;
+    room.onLinkChange((peer, up) => {
+      if (peer === 'page') return this.updatePageLink(session, up);
       session.linkLost = !up;
       this.updateGrace(session);
     });
-    session.linkLost = !session.room!.linkUp('agent');
+    session.linkLost = !room.linkUp('agent');
     session.socketsLost = !this.gateway.isUserOnline(session.userId);
     this.updateGrace(session);
+    this.updatePageLink(session, room.linkUp('page'));
+  }
+
+  private updatePageLink(session: Session, up: boolean): void {
+    if (session.phase !== 'active') return;
+    if (!up && !session.timers.page) {
+      session.timers.page = setTimeout(() => void this.end(session, 'server', 'media_failed', { failure: 'engine_lost' }), this.timing.agentGraceMs);
+    } else if (up && session.timers.page) {
+      clearTimeout(session.timers.page);
+      session.timers.page = undefined;
+    }
   }
 
   private setSocketsLost(userId: string, lost: boolean): void {
@@ -449,7 +506,10 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     await this.alerts.workerDied(talking, new Date()).catch((e) => this.logger.warn(`The call media alert failed: ${message(e)}`));
   }
 
-  /** The connecting after the ack: the agent's audio, WhatsApp's Accept, then caller and agent put together. */
+  /**
+   * The connecting after the ack: the agent's audio, WhatsApp's Accept, then caller and agent put together. From the
+   * Accept on, the session is active: whatever stops it then is an end, which waits for the answer to be stored.
+   */
   private async connect(session: Session): Promise<void> {
     let failure: MediaFailure = 'connect_timeout';
     try {
@@ -458,34 +518,48 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
       failure = 'answer_failed';
       session.answerTried = true;
       try {
-        await session.media.answer(session.waCallId, { timeoutMs: this.timing.connectMs });
+        // What is left of the connect budget: the agent's media took the rest.
+        await session.media.answer(session.waCallId, { timeoutMs: Math.max(1_000, session.connectDeadline - Date.now()) });
       } finally {
         // Stopped meanwhile, and hung up then: an accept already under way can still connect after that hang-up.
         if (session.phase !== 'connecting') await this.hangUpQuietly(session);
       }
       if (session.phase !== 'connecting') return;
-      const answered = await markAnswered(session.callId, session.userId, new Date());
-      if (!answered?.answeredAt) throw new Error('the call stopped ringing while it was being answered');
+      // WhatsApp holds the call: active now, so whatever stops it from here on is an end.
       clearTimeout(session.timers.connect);
       session.timers.connect = undefined;
+      session.answeredAt = new Date();
       session.phase = 'active';
-      session.answeredAt = answered.answeredAt;
+      session.answering = markAnswered(session.callId, session.userId, session.answeredAt).catch((e) => {
+        this.logger.warn(`Call ${session.callId}: its answer was not stored: ${message(e)}`);
+        return null;
+      });
+      const answered = await session.answering;
+      if (!answered) {
+        // The call stopped ringing meanwhile, or the write failed.
+        await this.end(session, 'server', 'media_failed', { failure: 'answer_failed', error: new Error('the answer was not stored') });
+        return;
+      }
       this.rung.delete(session.callId); // the others' banners were told who answered (call:claimed)
       publishCall(this.callDeps(session.profileId), AppEvents.CALL.ANSWERED, answered);
-      this.metric({ kind: 'answered', answerSeconds: (answered.answeredAt.getTime() - session.startedAt.getTime()) / 1000 });
+      this.metric({ kind: 'answered', answerSeconds: (session.answeredAt.getTime() - session.startedAt.getTime()) / 1000 });
       this.audit
         .log({ action: 'call.answer', userId: session.userId, organizationId: session.organizationId, resourceType: 'call', resourceId: session.callId, metadata: { profileId: session.profileId } })
         .catch((e) => this.logger.warn(`The audit of the answer of call ${session.callId} failed: ${message(e)}`));
+      if (session.phase !== 'active') return; // ended while the answer was stored: that end publishes call.ended
       session.timers.talk = setTimeout(() => void this.end(session, 'server', 'time_limit'), this.timing.maxTalkMs);
-      this.watchAgent(session);
+      this.watchLinks(session);
       failure = 'attach_failed';
       const pick = await withTimeout(session.handle!.attachCaller(), ATTACH_MS, "the caller's audio did not attach in time");
       if (pick.freshCandidates > 1 || pick.fallback) {
-        this.logger.warn(`Call ${session.callId}: the caller's audio is a guess (${pick.freshCandidates} fresh candidate(s), fallback ${pick.fallback})`);
+        this.logger.warn(`Call ${session.callId}: the caller's audio is a guess (${clean(pick.freshCandidates)} fresh candidate(s), fallback ${clean(pick.fallback)})`);
       }
+      // A rejoin meanwhile took this producer off the call (or replaced it): reconnectAgent connects the new one.
+      if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
       failure = 'agent_connect_failed';
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
-      if (session.phase === 'active') this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString() });
+      if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
+      this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString() });
     } catch (e) {
       if (session.phase === 'connecting') await this.stopConnecting(session, { failure, error: e, reRing: true });
       else if (session.phase === 'active') await this.end(session, 'server', 'media_failed', { failure, error: e });
@@ -494,14 +568,17 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * A session that did not get to talk: undo all of it, give the claim back, tell the agent. A call that still rings
-   * rings again (`reRing`) for every eligible agent, this one included.
+   * rings again (`reRing`) for every eligible agent, this one included, unless WhatsApp was asked to answer it: it was
+   * hung up then, and rings nowhere. `hangUp: false` for the caller's own end and a shutdown (the engines go with the
+   * process); a late accept is still hung up once the answer is over (connect).
    */
-  private async stopConnecting(session: Session, opts: { failure?: MediaFailure; error?: unknown; reRing: boolean }): Promise<void> {
+  private async stopConnecting(session: Session, opts: { failure?: MediaFailure; error?: unknown; reRing: boolean; hangUp?: boolean }): Promise<void> {
     if (session.phase !== 'connecting') return;
     session.phase = 'ending';
     this.clearTimers(session);
     session.ready.reject(new Error('The session stopped'));
-    if (session.answerTried) await this.hangUpQuietly(session); // WhatsApp's accept cannot be cancelled: it may connect late
+    // WhatsApp's accept cannot be cancelled: it may connect late.
+    if (session.answerTried && opts.hangUp !== false) await this.hangUpQuietly(session);
     await this.teardown(session);
     this.sessions.delete(session.callId);
     await releaseClaim(session.callId, session.userId).catch((e) => this.logger.warn(`Call ${session.callId}: its claim was not released: ${message(e)}`));
@@ -510,11 +587,12 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
       this.metric({ kind: 'media_failed', reason: opts.failure });
       this.logger.warn(`Call ${session.callId}: the audio did not connect (${opts.failure}${opts.error ? `: ${message(opts.error)}` : ''})`);
     }
-    if (opts.reRing) await this.ring(session.callId).catch((e) => this.logger.warn(`Ringing call ${session.callId} again failed: ${message(e)}`));
+    if (opts.reRing && !session.answerTried) await this.ring(session.callId).catch((e) => this.logger.warn(`Ringing call ${session.callId} again failed: ${message(e)}`));
   }
 
   /** The end of an answered call: hang up what WhatsApp still holds, close the media, store and publish the end. */
   private async end(session: Session, endedBy: CallEndedBy, endReason: CallEndReason, opts: { failure?: MediaFailure; error?: unknown } = {}): Promise<void> {
+    const at = new Date();
     if (session.phase !== 'active') return;
     session.phase = 'ending';
     this.clearTimers(session);
@@ -522,13 +600,17 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     if (endedBy !== 'caller' && endReason !== 'server_restart') await this.hangUpQuietly(session);
     await this.teardown(session);
     this.sessions.delete(session.callId);
+    // An end while the answer is stored waits for it: its call.ended follows the call.answered, and an answer that did
+    // not store leaves a claim to give back.
+    const answered = await session.answering;
     let ended: CallRecord | null = null;
     try {
-      ended = await markEnded(session.callId, endedBy, endReason, new Date());
+      ended = await markEnded(session.callId, endedBy, endReason, at);
     } catch (e) {
       this.logger.warn(`Call ${session.callId}: its end was not stored: ${message(e)}`);
     }
     if (ended) publishCall(this.callDeps(session.profileId), AppEvents.CALL.ENDED, ended);
+    else if (!answered) await releaseClaim(session.callId, session.userId).catch((e) => this.logger.warn(`Call ${session.callId}: its claim was not released: ${message(e)}`));
     this.gateway.emitToUsers([session.userId], 'call:ended', { callId: session.callId, endedBy, endReason, talkSeconds: ended?.talkSeconds ?? null });
     this.metric({ kind: 'ended', endReason });
     if (endReason === 'media_failed') this.metric({ kind: 'media_failed', reason: opts.failure ?? 'engine_lost' });
@@ -537,13 +619,18 @@ export class CallSessionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** The principal's own session of `callId`, unless it is ending. */
+  /** The principal's own session of `callId`, unless it is ending, for an agent (agentOf). */
   private async ownSession(principal: SocketPrincipal, callId: unknown): Promise<{ ok: true; session: Session } | { ok: false; reason: string }> {
-    const user = await this.agentOf(principal);
-    if (!user) return { ok: false, reason: 'not_allowed' };
+    if (!(await this.agentOf(principal))) return { ok: false, reason: 'not_allowed' };
+    const session = this.sessionOf(principal, callId);
+    return session ? { ok: true, session } : { ok: false, reason: 'not_in_call' };
+  }
+
+  /** The session of `callId` that the principal's user answered, unless it is ending: for a dashboard login only. */
+  private sessionOf(principal: SocketPrincipal | null, callId: unknown): Session | null {
     const session = typeof callId === 'string' ? this.sessions.get(callId) : undefined;
-    if (!session || session.userId !== user.id || session.phase === 'ending') return { ok: false, reason: 'not_in_call' };
-    return { ok: true, session };
+    if (!principal || principal.apiKeyScopes !== undefined || !session || session.userId !== principal.userId || session.phase === 'ending') return null;
+    return session;
   }
 
   private async hangUpQuietly(session: Session): Promise<void> {
