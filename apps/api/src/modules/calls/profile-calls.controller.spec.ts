@@ -1,7 +1,7 @@
 // The call settings and the call announcement are owner/admin only, tenant-checked on the profile, and audited.
 import 'reflect-metadata';
 import { describe, it, expect, vi } from 'vitest';
-import { BadRequestException, RequestMethod } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, RequestMethod } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
 import { lastValueFrom, of } from 'rxjs';
@@ -11,6 +11,7 @@ vi.mock('./recordings/call-announcement.service', () => ({ CallAnnouncementServi
 vi.mock('./recordings/call-recordings.service', () => ({ CallRecordingsService: class {} }));
 
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
+import { API_KEY_SCOPE } from '../auth/decorators/require-scope.decorator';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -28,8 +29,48 @@ describe('call settings and status routes', () => {
     expect(Reflect.getMetadata(ROLES_KEY, handler)).toEqual(['owner', 'admin']);
     expect(Reflect.getMetadata(TENANT_CHECK, handler)).toEqual([{ from: 'param', key: 'id', resource: 'profile' }]);
     const calls = { updateCallSettings: vi.fn().mockResolvedValue({ profileId: 'p1', answerInDashboard: true }) };
-    expect(await new ProfileCallsController(calls as any, {} as any).updateCallSettings('p1', { answerInDashboard: true })).toEqual({ profileId: 'p1', answerInDashboard: true });
+    expect(await new ProfileCallsController(calls as any, {} as any).updateCallSettings('p1', { answerInDashboard: true }, { user: { id: 'u1' } } as any)).toEqual({ profileId: 'p1', answerInDashboard: true });
     expect(calls.updateCallSettings).toHaveBeenCalledWith('p1', { answerInDashboard: true });
+  });
+
+  // An integration key with a scope list (only messages:write, say) changes none of what these routes decide: who
+  // talks to the callers, whether the calls are recorded, what they hear first. The admin issues "Manage Profiles".
+  it.each(['updateCallSettings', 'uploadAnnouncement', 'announcement', 'deleteAnnouncement'])('%s asks an API key with a scope list for profiles:write', (name) => {
+    expect(Reflect.getMetadata(API_KEY_SCOPE, (ProfileCallsController.prototype as any)[name])).toEqual(['profiles:write']);
+  });
+
+  // Retention deletes the recordings older than it every night: a key that DELETE /calls/:id/recording refuses
+  // (recordings:delete) must not delete them all by setting one day.
+  describe('changing the retention', () => {
+    const run = async (user: unknown, dto: Record<string, unknown> = { retentionDays: 1 }) => {
+      const calls = { updateCallSettings: vi.fn().mockResolvedValue('written') };
+      const controller = new ProfileCallsController(calls as any, {} as any);
+      const result = await (async () => controller.updateCallSettings('p1', dto, { user } as any))().catch((e: unknown) => e);
+      return { result, calls };
+    };
+
+    it('403 for an API key with a scope list without recordings:delete, and nothing is changed', async () => {
+      const { result, calls } = await run({ apiKeyScopes: ['profiles:write', 'messages:write'] });
+      expect(result).toBeInstanceOf(ForbiddenException);
+      expect((result as Error).message).toBe('API key missing required scope(s): recordings:delete');
+      expect(calls.updateCallSettings).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an API key with recordings:delete', { apiKeyScopes: ['profiles:write', 'recordings:delete'] }],
+      ['an API key with *', { apiKeyScopes: ['*'] }],
+      ['an unscoped API key (full access)', { apiKeyScopes: [] }],
+      ['a login', { id: 'u1', role: 'owner' }],
+    ])('%s changes it', async (_who, user) => {
+      const { result, calls } = await run(user);
+      expect(result).toBe('written');
+      expect(calls.updateCallSettings).toHaveBeenCalledWith('p1', { retentionDays: 1 });
+    });
+
+    it('the other settings need no recordings:delete', async () => {
+      const { result } = await run({ apiKeyScopes: ['profiles:write'] }, { answerInDashboard: true, recording: false });
+      expect(result).toBe('written');
+    });
   });
 
   it('PUT /profiles/:id/calls-settings is audited as profile.calls_settings, with the value it set', async () => {

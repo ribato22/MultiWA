@@ -2,8 +2,9 @@
 // apps/api/src/modules/calls/profile-calls.controller.ts
 //
 // Their own routes, owner/admin only: the profile update (PUT /profiles/:id) checks no role, and these decide who can
-// talk to the callers, whether the calls are recorded, and what the callers hear first.
-import { BadRequestException, Body, Controller, Delete, Get, Param, PayloadTooLargeException, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
+// talk to the callers, whether the calls are recorded, and what the callers hear first. So an API key with a scope
+// list needs profiles:write (the admin's "Manage Profiles") for any of them.
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, PayloadTooLargeException, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -12,9 +13,10 @@ import { CallAnnouncementService } from './recordings/call-announcement.service'
 import { ANNOUNCEMENT_MAX_BYTES } from './recordings/announcement-audio';
 import { UpdateCallSettingsDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
-import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { ApiKeyScopeGuard, apiKeyLacksScope } from '../auth/guards/api-key-scope.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
@@ -54,12 +56,18 @@ export class ProfileCallsController {
 
   @Put(':id/calls-settings')
   @Roles('owner', 'admin')
+  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: "This profile's call settings: answering in the dashboard, recording, the retention period" })
   @ApiResponse({ status: 409, description: 'Not available for this profile now: `reasons` says why' })
   @ApiNotFound('Profile')
   @ApiValidationError()
-  updateCallSettings(@Param('id') id: string, @Body() dto: UpdateCallSettingsDto) {
+  updateCallSettings(@Param('id') id: string, @Body() dto: UpdateCallSettingsDto, @Req() req: { user?: { apiKeyScopes?: string[] } }) {
+    // Every night the retention deletes the recordings older than it: a key that may not delete one recording
+    // (DELETE /calls/:id/recording) must not delete them all by setting one day.
+    if (dto.retentionDays !== undefined && apiKeyLacksScope(req.user, 'recordings:delete')) {
+      throw new ForbiddenException('API key missing required scope(s): recordings:delete');
+    }
     return this.calls.updateCallSettings(id, dto);
   }
 
@@ -67,6 +75,7 @@ export class ProfileCallsController {
   // Reading an audio file costs a worker thread up to seconds of CPU; uploads are rare, so a tight limit costs nobody.
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Roles('owner', 'admin')
+  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Upload the announcement callers hear before a recorded call: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds' })
   @ApiConsumes('multipart/form-data')
@@ -83,6 +92,7 @@ export class ProfileCallsController {
 
   @Get(':id/calls-announcement')
   @Roles('owner', 'admin')
+  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: "The profile's announcement, to listen to" })
   @ApiProduces('audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4')
@@ -94,6 +104,7 @@ export class ProfileCallsController {
 
   @Delete(':id/calls-announcement')
   @Roles('owner', 'admin')
+  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Remove the announcement (refused while recording is on)' })
   @ApiResponse({ status: 409, description: 'Recording is on (`reasons`: recording_on)' })
