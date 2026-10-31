@@ -60,6 +60,13 @@ RUN f="$(find /app/node_modules/.pnpm -path '*bullmq*/dist/cjs/classes/redis-que
     && test -n "$f" && grep -q "bclient.status === 'ready'" "$f" \
     || (echo "::error::bullmq patch NOT applied (patches/bullmq@6.1.1.patch)" && exit 1)
 
+# Fail the build if the file-type patch did not apply. Unpatched, file-type 16.5.4 (music-metadata's format sniffer,
+# which Baileys runs to read a voice note's length) loops forever on an ASF object smaller than its own header: a
+# 64-byte file freezes the process, timers and health checks included.
+RUN f="$(find /app/node_modules/.pnpm -path '*file-type@16.5.4*/core.js' | head -1)" \
+    && test -n "$f" && grep -qF 'if (!Number.isFinite(payload) || payload < 0) break;' "$f" \
+    || (echo "::error::file-type patch NOT applied (patches/file-type@16.5.4.patch)" && exit 1)
+
 # Generate Prisma client FIRST (before worker build)
 RUN cd packages/database && npx prisma generate
 
