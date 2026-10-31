@@ -38,6 +38,7 @@ const ringing = (call: Record<string, unknown> = {}, settings: Record<string, un
 });
 const flush = () => new Promise((r) => setImmediate(r));
 
+const live: Array<{ service: CallSessionService }> = [];
 function harness() {
   const online = new Set(['u1', 'u2', 'u3', 'u4', 'u5']);
   const gateway = { emitToUsers: vi.fn(), onlineUserIds: () => [...online], isUserOnline: (id: string) => online.has(id) };
@@ -87,7 +88,9 @@ function harness() {
   const service = new CallSessionService(callMedia as any, engines as any, gateway as any, bus as any, realtime as any, audit as any, alerts as any);
   /** What `event` sent, to whom. */
   const sent = (event: string) => gateway.emitToUsers.mock.calls.filter((c) => c[1] === event).map((c) => ({ to: c[0], payload: c[2] }));
-  return { service, gateway, bus, realtime, audit, alerts, room, agentPeer, links, callMedia, handle, media, engines, online, sent };
+  const h = { service, gateway, bus, realtime, audit, alerts, room, agentPeer, links, callMedia, handle, media, engines, online, sent };
+  live.push(h);
+  return h;
 }
 
 beforeEach(() => {
@@ -106,7 +109,18 @@ beforeEach(() => {
   S.markEnded.mockImplementation(async (id: string, endedBy: string, endReason: string, at: Date) => ({ ...ringing().call, id, outcome: 'answered', answeredAt: STARTED, endedAt: at, endedBy, endReason, talkSeconds: 42 }));
   S.reconcileAfterRestart.mockResolvedValue({ ended: [], released: 0 });
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  for (const h of live.splice(0)) for (const s of (h.service as any).sessions.values()) for (const t of Object.values(s.timers)) clearTimeout(t as any);
+  vi.useRealTimers();
+});
+
+/** u1 answers c1, then plays the agent's browser: it produces its voice and resumes the caller. */
+async function answered(h: ReturnType<typeof harness>) {
+  expect(await h.service.answer(as('u1'), 'c1')).toMatchObject({ ok: true });
+  await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'audio', rtpParameters: {} });
+  await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-1' });
+  await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+}
 
 describe('CallSessionService: who is rung', () => {
   it('rings every online owner, admin and member of the organization (active), never a viewer or another organization', async () => {
@@ -204,5 +218,215 @@ describe('CallSessionService: boot and settings', () => {
     expect(readCallTimings({ CALLS_CONNECT_TIMEOUT_MS: '5000', CALLS_AGENT_GRACE_MS: 'x', CALLS_MAX_TALK_MINUTES: '30' })).toEqual({
       connectMs: 5_000, agentGraceMs: 15_000, maxTalkMs: 30 * 60_000,
     });
+  });
+});
+
+describe('CallSessionService: answering', () => {
+  it('claims the call, opens its room and the page bridge, acks what the browser needs; the others are told who answered', async () => {
+    const h = harness();
+    await h.service.onCallReceived({ callId: 'c1' }); // rings u1 and u2
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({
+      ok: true, callId: 'c1', callerProducerId: 'caller-producer', iceServers: [{ urls: 'stun:stun.example.com:3478' }],
+    });
+    expect(S.claimCall).toHaveBeenCalledWith('c1', 'u1');
+    expect(h.callMedia.createRoom).toHaveBeenCalledWith('c1');
+    expect(h.media.startCallMedia).toHaveBeenCalledWith('W1', expect.anything()); // the ENGINE's call id
+    expect(h.sent('call:claimed')).toEqual([{ to: ['u2'], payload: { callId: 'c1', byUserId: 'u1', byUserName: 'Ana' } }]);
+    expect(h.media.answer).not.toHaveBeenCalled(); // not before the agent's audio is ready
+    expect(h.service.activeSessionCount()).toBe(1);
+  });
+
+  it('once the agent produced and listens: WhatsApp answers, the call is answered (published, audited, counted), caller and agent are put together', async () => {
+    const h = harness();
+    await answered(h);
+    expect(h.media.answer).toHaveBeenCalledWith('W1', { timeoutMs: 10_000 });
+    expect(S.markAnswered).toHaveBeenCalledWith('c1', 'u1', expect.any(Date));
+    expect(h.bus.emit).toHaveBeenCalledWith('call.answered', expect.objectContaining({ callId: 'c1', outcome: 'answered', answeredByUserId: 'u1' }));
+    expect(h.realtime.emitCallUpdate).toHaveBeenCalledWith('p1', expect.objectContaining({ outcome: 'answered' }));
+    expect(h.audit.log).toHaveBeenCalledWith({ action: 'call.answer', userId: 'u1', organizationId: 'o1', resourceType: 'call', resourceId: 'c1', metadata: { profileId: 'p1' } });
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'answered', answerSeconds: expect.any(Number) });
+    expect(h.handle.attachCaller).toHaveBeenCalled();
+    expect(h.handle.connectAgent).toHaveBeenCalledWith('agent-producer');
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+  });
+
+  it('refuses a viewer, another organization, a call no longer ringing or already claimed, a call that cannot be answered here, an agent on a call', async () => {
+    const h = harness();
+    expect(await h.service.answer(as('u3'), 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.answer(as('u4'), 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.answer(as('u1'), 42)).toEqual({ ok: false, reason: 'not_allowed' });
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ outcome: 'missed' }));
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_ringing' });
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ answeredByUserId: 'u2' }));
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'already_claimed' });
+    for (const f of [ringing({ isVideo: true }), ringing({ isGroup: true }), ringing({}, { callsAnswerInDashboard: false })]) {
+      S.findCallForAnswer.mockResolvedValueOnce(f);
+      expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_unavailable' });
+    }
+    h.callMedia.publicStatus.mockReturnValueOnce({ enabled: true, worker: 'down' });
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_unavailable' });
+    h.engines.getEngine.mockReturnValueOnce(null as any);
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_unavailable' });
+    expect(S.claimCall).not.toHaveBeenCalled();
+    await h.service.answer(as('u1'), 'c1'); // u1 is connecting this one now
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ id: 'c2', waCallId: 'W2' }));
+    expect(await h.service.answer(as('u1'), 'c2')).toEqual({ ok: false, reason: 'busy' });
+  });
+
+  it('a lost claim says whether someone else has the call or it stopped ringing', async () => {
+    const h = harness();
+    S.claimCall.mockResolvedValue(false);
+    S.findCallForAnswer.mockResolvedValueOnce(ringing()).mockResolvedValueOnce(ringing({ answeredByUserId: 'u2' }));
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'already_claimed' });
+    S.findCallForAnswer.mockResolvedValueOnce(ringing()).mockResolvedValueOnce(ringing({ outcome: 'missed' }));
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_ringing' });
+  });
+
+  it('an agent on a call is not rung for another one', async () => {
+    const h = harness();
+    await h.service.answer(as('u1'), 'c1');
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ id: 'c2', waCallId: 'W2' }));
+    await h.service.onCallReceived({ callId: 'c2' });
+    expect(h.sent('call:ringing').slice(-1)[0].to).toEqual(['u2']);
+  });
+
+  it('boot: the answered calls the previous process left get their call.ended (talk time unknown)', async () => {
+    const h = harness();
+    S.reconcileAfterRestart.mockResolvedValueOnce({
+      ended: [{ ...ringing().call, outcome: 'answered', answeredByUserId: 'u1', answeredAt: STARTED, endedAt: STARTED, endedBy: 'server', endReason: 'server_restart', talkSeconds: null }],
+      released: 0,
+    });
+    h.service.onModuleInit();
+    await flush();
+    expect(h.bus.emit).toHaveBeenCalledWith('call.ended', expect.objectContaining({ callId: 'c1', endReason: 'server_restart', talkSeconds: null }));
+    expect(h.realtime.emitCallUpdate).toHaveBeenCalledWith('p1', expect.objectContaining({ endReason: 'server_restart' }));
+  });
+});
+
+describe('CallSessionService: audio that does not connect', () => {
+  it('not in time: the claim goes back, the agent is told, the call rings again (connect_timeout)', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.answer(as('u1'), 'c1');
+    await vi.advanceTimersByTimeAsync(10_000); // the agent's browser never produced
+    expect(h.media.answer).not.toHaveBeenCalled();
+    expect(h.media.hangUp).not.toHaveBeenCalled(); // WhatsApp was never asked: nothing to hang up
+    expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+    expect(h.room.close).toHaveBeenCalled();
+    expect(S.releaseClaim).toHaveBeenCalledWith('c1', 'u1');
+    expect(h.sent('call:ended')).toContainEqual({ to: ['u1'], payload: { callId: 'c1', endReason: 'media_failed' } });
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'media_failed', reason: 'connect_timeout' });
+    expect(h.sent('call:ringing').slice(-1)[0].to).toEqual(['u1', 'u2']); // rings again, this agent included
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it('the page bridge does not start: the same, as page_start_failed', async () => {
+    const h = harness();
+    h.media.startCallMedia.mockRejectedValueOnce(new Error('Call is not the active call'));
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_failed' });
+    expect(h.room.close).toHaveBeenCalled();
+    expect(S.releaseClaim).toHaveBeenCalledWith('c1', 'u1');
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'media_failed', reason: 'page_start_failed' });
+  });
+
+  it('WhatsApp does not answer: it is hung up all the same (its accept cannot be cancelled), released, rung again', async () => {
+    const h = harness();
+    h.media.answer.mockRejectedValueOnce(new Error('Call did not connect in time'));
+    await h.service.answer(as('u1'), 'c1');
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'audio', rtpParameters: {} });
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-1' });
+    await vi.waitFor(() => expect(S.releaseClaim).toHaveBeenCalled());
+    expect(h.media.hangUp).toHaveBeenCalledWith('W1');
+    expect(S.markAnswered).not.toHaveBeenCalled();
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'media_failed', reason: 'answer_failed' });
+  });
+
+  it('the time runs out while WhatsApp answers: hung up at once, and again once the answer is over (an accept can connect late)', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    let connected!: () => void;
+    h.media.answer.mockReturnValueOnce(new Promise((r) => (connected = () => r({ connectedAfterMs: 9_000 }))));
+    await h.service.answer(as('u1'), 'c1');
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'audio', rtpParameters: {} });
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-1' });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.media.hangUp).toHaveBeenCalledTimes(1);
+    expect(S.releaseClaim).toHaveBeenCalledWith('c1', 'u1');
+    connected();
+    await vi.waitFor(() => expect(h.media.hangUp).toHaveBeenCalledTimes(2));
+    expect(S.markAnswered).not.toHaveBeenCalled();
+  });
+
+  it('the call stopped ringing while WhatsApp answered it: hung up and released, never answered', async () => {
+    const h = harness();
+    S.markAnswered.mockResolvedValueOnce(null);
+    await h.service.answer(as('u1'), 'c1');
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'audio', rtpParameters: {} });
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-1' });
+    await vi.waitFor(() => expect(S.releaseClaim).toHaveBeenCalled());
+    expect(h.media.hangUp).toHaveBeenCalledWith('W1');
+    expect(h.bus.emit).not.toHaveBeenCalledWith('call.answered', expect.anything());
+  });
+
+  it("answered, but the caller's audio does not attach: the call is ended (media_failed, attach_failed), hung up, stored", async () => {
+    const h = harness();
+    h.handle.attachCaller.mockRejectedValueOnce(new Error('No caller audio'));
+    await h.service.answer(as('u1'), 'c1');
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'audio', rtpParameters: {} });
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-1' });
+    await vi.waitFor(() => expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date)));
+    expect(h.media.hangUp).toHaveBeenCalledWith('W1');
+    expect(h.bus.emit).toHaveBeenCalledWith('call.ended', expect.objectContaining({ endReason: 'media_failed' }));
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'media_failed', reason: 'attach_failed' });
+    expect(h.sent('call:active')).toEqual([]);
+  });
+});
+
+describe("CallSessionService: the agent's media and Hang up", () => {
+  it("signalling reaches the session's own agent only; room errors come back as media_error", async () => {
+    const h = harness();
+    await h.service.answer(as('u1'), 'c1');
+    expect(await h.service.media(as('u1'), 'c1', 'rtpCapabilities', {})).toEqual({ ok: true, result: { codecs: [] } });
+    expect(await h.service.media(as('u2'), 'c1', 'rtpCapabilities', {})).toEqual({ ok: false, reason: 'not_in_call' });
+    expect(await h.service.media(as('u3'), 'c1', 'rtpCapabilities', {})).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.media(as('u1'), 'nope', 'rtpCapabilities', {})).toEqual({ ok: false, reason: 'not_in_call' });
+    h.agentPeer.consume.mockRejectedValueOnce(new Error('Not allowed to consume\nthis producer'));
+    expect(await h.service.media(as('u1'), 'c1', 'consume', {})).toEqual({ ok: false, reason: 'media_error', message: 'Not allowed to consumethis producer' });
+    expect(await h.service.media(as('u1'), 'c1', 'teleport', {})).toEqual({ ok: false, reason: 'media_error', message: 'Unknown media signalling operation' });
+  });
+
+  it('Hang up in a call: WhatsApp hangs up, the media closes, the end is stored and published, the agent is told', async () => {
+    const h = harness();
+    await answered(h);
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: true });
+    expect(h.media.hangUp).toHaveBeenCalledWith('W1');
+    expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+    expect(h.room.close).toHaveBeenCalled();
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'agent', 'hangup', expect.any(Date));
+    expect(h.bus.emit).toHaveBeenCalledWith('call.ended', expect.objectContaining({ callId: 'c1', endedBy: 'agent', endReason: 'hangup', talkSeconds: 42 }));
+    expect(h.sent('call:ended')).toContainEqual({ to: ['u1'], payload: { callId: 'c1', endedBy: 'agent', endReason: 'hangup', talkSeconds: 42 } });
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'ended', endReason: 'hangup' });
+    expect(h.service.activeSessionCount()).toBe(0);
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_in_call' });
+  });
+
+  it('Hang up while connecting gives the call up: released, and it rings again for everyone', async () => {
+    const h = harness();
+    await h.service.answer(as('u1'), 'c1');
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: true });
+    expect(S.releaseClaim).toHaveBeenCalledWith('c1', 'u1');
+    expect(h.sent('call:ended')).toContainEqual({ to: ['u1'], payload: { callId: 'c1', endReason: 'cancelled' } });
+    expect(h.bus.emit).not.toHaveBeenCalledWith('internal.calls.session', expect.objectContaining({ kind: 'media_failed' }));
+    expect(h.sent('call:ringing').slice(-1)[0].to).toEqual(['u1', 'u2']);
+  });
+
+  it('the talk-time cap ends the call (server, time_limit)', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('CALLS_MAX_TALK_MINUTES', '1');
+    const h = harness();
+    await answered(h);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'time_limit', expect.any(Date));
+    expect(h.media.hangUp).toHaveBeenCalledWith('W1');
   });
 });
