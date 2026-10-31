@@ -61,7 +61,8 @@ function harness() {
     signalingFor: vi.fn((p: string) => (p === 'agent' ? agentPeer : peer())),
     close: vi.fn(),
     closePeer: vi.fn(),
-    linkUp: vi.fn((_peer: string) => true),
+    // The page's receive transport links at its first consume, which is the agent's connect.
+    linkUp: vi.fn((peer: string) => peer !== 'page' || handle.connectAgent.mock.calls.length > 0),
     onLinkChange: vi.fn((l: any) => links.push(l)),
   };
   const callMedia = {
@@ -506,9 +507,28 @@ describe('CallSessionService: once WhatsApp answered, every stop is one end', ()
     expect(h.media.hangUp.mock.calls).toEqual([['W1']]);
     expect(S.releaseClaim.mock.calls).toEqual([['c1', 'u1']]);
     expect(h.published()).toEqual([]);
-    expect(h.counted()).toEqual([{ kind: 'ended', endReason: 'media_failed' }, { kind: 'media_failed', reason: 'answer_failed' }]);
+    expect(h.counted()).toEqual([{ kind: 'media_failed', reason: 'answer_failed' }]); // ended counts answered calls only
     expect(warn).toHaveBeenCalledWith('Call c1: its answer was not stored: Connectionterminated');
     expect(h.sent('call:ringing')).toEqual([]);
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it('the answer is written but not read back: the end still publishes call.answered before call.ended, and the ring is forgotten', async () => {
+    const h = harness();
+    await h.service.onCallReceived({ callId: 'c1' }); // rings u1 and u2
+    S.markAnswered.mockRejectedValueOnce(new Error('Connection terminated')); // after its write: the row is answered
+    S.markEnded.mockImplementationOnce(async (id: string, endedBy: string, endReason: string, at: Date) => ({
+      ...ringing().call, id, outcome: 'answered', answeredByUserId: 'u1', answeredAt: STARTED, endedAt: at, endedBy, endReason, talkSeconds: 0,
+    }));
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:ended')).toHaveLength(1));
+    await flush();
+    expect(h.published()).toEqual(['call.answered', 'call.ended']);
+    expect(h.bus.emit).toHaveBeenCalledWith('call.answered', expect.objectContaining({ callId: 'c1', outcome: 'answered', answeredByUserId: 'u1' }));
+    expect(S.releaseClaim).not.toHaveBeenCalled(); // the claim is the answer now
+    expect(h.counted()).toEqual([{ kind: 'rung' }, { kind: 'media_failed', reason: 'answer_failed' }]);
+    expect((h.service as any).rung.has('c1')).toBe(false);
     expect(h.service.activeSessionCount()).toBe(0);
   });
 });
@@ -737,6 +757,23 @@ describe('CallSessionService: an agent lost, and back', () => {
     expect(S.markEnded.mock.calls).toEqual([['c1', 'server', 'media_failed', expect.any(Date)]]);
   });
 
+  it("the page's media link is watched from the agent's connect on: a link down at the answer, the connect slower than the grace, the call goes on", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('CALLS_AGENT_GRACE_MS', '3000');
+    const h = harness();
+    let connected!: () => void;
+    h.handle.connectAgent.mockReturnValueOnce(new Promise((r) => (connected = () => r(undefined))));
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.handle.connectAgent).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(4_000); // past the grace, within the agent's own connect bound
+    expect(S.markEnded).not.toHaveBeenCalled();
+    connected();
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(S.markEnded).not.toHaveBeenCalled();
+  });
+
   it('the agent rejoins while the caller is being attached: the new producer is connected, never the old one, and the call goes on', async () => {
     const h = harness();
     let attached!: () => void;
@@ -781,6 +818,84 @@ describe('CallSessionService: an agent lost, and back', () => {
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer'], ['agent-producer-2']]);
     expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+    expect(S.markEnded).not.toHaveBeenCalled();
+  });
+
+  it('two rejoins in quick succession: one call:active, for the last page only, and the call goes on', async () => {
+    const h = harness();
+    await answered(h);
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true });
+    let connected!: () => void;
+    h.handle.connectAgent.mockReturnValueOnce(new Promise((r) => (connected = () => r(undefined))));
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await agentReady(h); // the reloaded page produces and listens: it is being connected
+    await vi.waitFor(() => expect(h.handle.connectAgent).toHaveBeenLastCalledWith('agent-producer-2'));
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true }); // and it reloads again
+    connected(); // its connect ends after the second rejoin took it off
+    await flush();
+    expect(h.sent('call:active')).toHaveLength(1); // the answer's
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-3' });
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
+    await flush();
+    expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer'], ['agent-producer-2'], ['agent-producer-3']]);
+    expect(h.sent('call:active')).toHaveLength(2);
+    expect(S.markEnded).not.toHaveBeenCalled();
+    expect(h.service.activeSessionCount()).toBe(1);
+  });
+
+  it("a reloaded page's last produce and resume land during the next rejoin's disconnect: void, and the newest page is connected", async () => {
+    const h = harness();
+    await answered(h);
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true });
+    let disconnected!: () => void;
+    h.handle.disconnectAgent.mockReturnValueOnce(new Promise((r) => (disconnected = () => r(undefined))));
+    // The page runs the agent's connects and disconnects one at a time: this connect waits for the disconnect before
+    // it, and then finds its producer closed with the transports of its page.
+    let turn!: () => void;
+    const queued = new Promise<void>((r) => (turn = r));
+    h.handle.connectAgent.mockImplementation(async (id: string) => {
+      if (id !== 'agent-producer-2') return;
+      await queued;
+      if (h.room.closePeer.mock.calls.length > 1) throw new Error('Not allowed to consume this producer');
+    });
+    const rejoined = h.service.rejoin(as('u1'), 'c1'); // reloaded again while the page was still setting up
+    await vi.waitFor(() => expect(h.handle.disconnectAgent).toHaveBeenCalledTimes(2));
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await agentReady(h); // that page's last commands land now
+    disconnected();
+    expect(await rejoined).toMatchObject({ ok: true });
+    turn();
+    await flush();
+    expect(S.markEnded).not.toHaveBeenCalled();
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-3' });
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't3', kind: 'audio', rtpParameters: {} });
+    expect(h.handle.connectAgent).not.toHaveBeenCalledWith('agent-producer-3'); // not before it listens itself
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-3' });
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
+    expect(h.handle.connectAgent).toHaveBeenLastCalledWith('agent-producer-3');
+    expect(S.markEnded).not.toHaveBeenCalled();
+    expect(h.service.activeSessionCount()).toBe(1);
+  });
+
+  it("the closed page's produce that lands during the rejoin's disconnect is void: the new page listening first does not connect it", async () => {
+    const h = harness();
+    await answered(h);
+    let disconnected!: () => void;
+    h.handle.disconnectAgent.mockReturnValueOnce(new Promise((r) => (disconnected = () => r(undefined))));
+    const rejoined = h.service.rejoin(as('u1'), 'c1');
+    await vi.waitFor(() => expect(h.handle.disconnectAgent).toHaveBeenCalled());
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-closed' }); // closed with the old page's transports
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'audio', rtpParameters: {} });
+    disconnected();
+    expect(await rejoined).toMatchObject({ ok: true });
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-2' });
+    await flush();
+    expect(h.handle.connectAgent).not.toHaveBeenCalledWith('agent-producer-closed');
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't2', kind: 'audio', rtpParameters: {} });
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
+    expect(h.handle.connectAgent).toHaveBeenLastCalledWith('agent-producer-2');
     expect(S.markEnded).not.toHaveBeenCalled();
   });
 

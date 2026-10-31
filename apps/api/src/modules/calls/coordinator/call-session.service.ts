@@ -247,8 +247,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   }
 
   /**
-   * The agent's Hang up. While connecting it gives the call up, and the call rings again for everyone. Also for an agent
-   * deactivated or demoted since the answer: every other command refuses them, and their call would run on to the cap.
+   * The agent's Hang up. While connecting it gives the call up: before WhatsApp was asked to answer, the call rings again
+   * for everyone; once it was asked, the call is hung up and rings nowhere. Also for an agent deactivated or demoted
+   * since the answer: every other command refuses them, and their call would run on to the cap.
    */
   async hangup(principal: SocketPrincipal, callId: unknown): Promise<CallCommandReply> {
     const session = this.sessionOf(principal, callId);
@@ -281,6 +282,10 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     }
     if (session.phase !== 'active') return { ok: false, reason: 'not_in_call' }; // it ended meanwhile
     session.room.closePeer('agent');
+    // Whatever the closed page did during the disconnect is void: its producer went with its transports.
+    session.agentProducerId = null;
+    session.agentListening = false;
+    session.rejoining = true;
     session.socketsLost = false; // it is talking to us
     this.updateGrace(session);
     return { ok: true, callId: session.callId, callerProducerId: session.handle.callerProducerId, iceServers: this.callMedia.iceServers() };
@@ -437,20 +442,23 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     else if (session.phase === 'active' && session.rejoining) void this.reconnectAgent(session, session.agentProducerId);
   }
 
+  /** A newer rejoin supersedes this one: its failure is then no end, and its success no call:active. */
   private async reconnectAgent(session: Session, agentProducerId: string): Promise<void> {
     session.rejoining = false;
+    const current = () => session.agentProducerId === agentProducerId && !session.rejoining;
     try {
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
-      if (session.phase === 'active') this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString() });
+      if (session.phase === 'active' && current()) this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString() });
     } catch (e) {
-      await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
+      if (current()) await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
     }
   }
 
   /**
    * Agent lost: no socket on /ws, or the room's link to the agent down. Either starts the grace; both recovered cancel it.
    * The page's link down for as long ends the call too: the page lets its bridge go 250-500 ms after its call is over, so
-   * an end the engine did not report shows here, before the talk-time cap, and the profile's one bridge is freed.
+   * an end the engine did not report shows here, before the talk-time cap, and the profile's one bridge is freed. Its
+   * link is first read once the agent is connected (connect): the page's receive transport links at its first consume.
    */
   private watchLinks(session: Session): void {
     const room = session.room!;
@@ -462,7 +470,6 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     session.linkLost = !room.linkUp('agent');
     session.socketsLost = !this.gateway.isUserOnline(session.userId);
     this.updateGrace(session);
-    this.updatePageLink(session, room.linkUp('page'));
   }
 
   private updatePageLink(session: Session, up: boolean): void {
@@ -558,6 +565,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
       failure = 'agent_connect_failed';
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
+      // The page's receive transport links at its first consume, this one: until now it was never linked.
+      this.updatePageLink(session, session.room!.linkUp('page'));
       if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
       this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString() });
     } catch (e) {
@@ -609,10 +618,17 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     } catch (e) {
       this.logger.warn(`Call ${session.callId}: its end was not stored: ${message(e)}`);
     }
-    if (ended) publishCall(this.callDeps(session.profileId), AppEvents.CALL.ENDED, ended);
-    else if (!answered) await releaseClaim(session.callId, session.userId).catch((e) => this.logger.warn(`Call ${session.callId}: its claim was not released: ${message(e)}`));
+    if (ended) {
+      // The answer's write went through, its read-back did not (markAnswered): answered all the same. As connect does for
+      // an answer it read back, the users it rang are let go (call:claimed told them), and its call.answered goes first.
+      if (!answered) {
+        this.rung.delete(session.callId);
+        publishCall(this.callDeps(session.profileId), AppEvents.CALL.ANSWERED, ended);
+      }
+      publishCall(this.callDeps(session.profileId), AppEvents.CALL.ENDED, ended);
+    } else if (!answered) await releaseClaim(session.callId, session.userId).catch((e) => this.logger.warn(`Call ${session.callId}: its claim was not released: ${message(e)}`));
     this.gateway.emitToUsers([session.userId], 'call:ended', { callId: session.callId, endedBy, endReason, talkSeconds: ended?.talkSeconds ?? null });
-    this.metric({ kind: 'ended', endReason });
+    if (answered) this.metric({ kind: 'ended', endReason }); // only an answer connect counted is counted as ended
     if (endReason === 'media_failed') this.metric({ kind: 'media_failed', reason: opts.failure ?? 'engine_lost' });
     if (endReason === 'media_failed' || endReason === 'agent_lost') {
       this.logger.warn(`Call ${session.callId} ended: ${endReason}${opts.failure ? ` (${opts.failure})` : ''}${opts.error ? `: ${message(opts.error)}` : ''}`);
