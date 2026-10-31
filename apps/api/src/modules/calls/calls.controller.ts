@@ -1,9 +1,12 @@
 // MultiWA Gateway - Calls Controller
 // apps/api/src/modules/calls/calls.controller.ts
 
-import { Body, Controller, Get, Param, Patch, Post, Query, Request, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, Res, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiProduces, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import type { FastifyReply } from 'fastify';
 import { CallsService } from './calls.service';
+import { CallRecordingsService } from './recordings/call-recordings.service';
+import { AuditService } from '../audit/audit.service';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
@@ -16,14 +19,18 @@ import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/dec
 
 @ApiTags('Calls')
 @Controller('calls')
-// Like MessagesController: the scope check sits between authentication and the tenant lookup. Only the two routes
-// that send a message to the caller ask an API key for a scope; reject and the reads, like the conversations routes, do not.
+// Like MessagesController: the scope check sits between authentication and the tenant lookup. The two routes that send
+// a message to the caller ask an API key for a scope, and so do the recording's two (a recording is personal data);
+// reject and the other reads, like the conversations routes, do not.
 @UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
 export class CallsController {
-  constructor(private readonly service: CallsService) {}
+  constructor(
+    private readonly service: CallsService,
+    private readonly recordings: CallRecordingsService,
+  ) {}
 
   @Get()
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
@@ -92,5 +99,33 @@ export class CallsController {
   @ApiValidationError()
   callLink(@Param('id') id: string, @Body() dto: CallLinkDto) {
     return this.service.sendCallLink(id, dto.type, dto.text);
+  }
+
+  // A recording is personal data: owner and admin only, an API key with a scope list needs recordings:read, and a play
+  // or a download is audited before a byte is sent.
+  @Get(':id/recording')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  @RequireScope('recordings:read')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
+  @ApiOperation({ summary: "The call's recording (audio/webm): HTTP Range for seeking, ?download=1 as an attachment; audited" })
+  @ApiProduces('audio/webm')
+  @ApiNotFound('Recording')
+  async recording(@Param('id') id: string, @Query('download') download: string | undefined, @Request() req: any, @Res() reply: FastifyReply): Promise<void> {
+    // Who read it, from where: the audit of a read carries the IP and user agent, like every other audit entry.
+    const actor = { ...AuditService.fromRequest(req), userId: req.user.id, organizationId: req.user.organizationId };
+    const playback = await this.recordings.play(id, actor, req.headers?.range, download === '1' || download === 'true');
+    reply.code(playback.status).headers(playback.headers).send(playback.body ?? '');
+  }
+
+  @Delete(':id/recording')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  @RequireScope('recordings:delete')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
+  @ApiOperation({ summary: "Delete the call's recording: the file goes, the row stays marked deleted as evidence" })
+  @ApiNotFound('Recording')
+  deleteRecording(@Param('id') id: string, @Request() req: any) {
+    return this.recordings.deleteByAdmin(id, req.user.id);
   }
 }

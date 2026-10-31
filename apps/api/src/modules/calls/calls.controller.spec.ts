@@ -1,21 +1,27 @@
 // CallsController is a thin shell over CallsService, so what is pinned here is the contract at the HTTP edge:
-// the eight routes with their guards and tenant checks (a wrong resource or key there is a cross-tenant hole),
+// the ten routes with their guards and tenant checks (a wrong resource or key there is a cross-tenant hole),
 // the request DTOs as the API-wide ValidationPipe applies them (the options of app.factory.ts), and the
 // hand-over to the service. The service itself is pinned by calls.service.spec.ts.
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { BadRequestException, RequestMethod, ValidationPipe, type ArgumentMetadata, type Type } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { Readable } from 'stream';
+import { lastValueFrom, of } from 'rxjs';
 
 vi.mock('@multiwa/database', () => ({ prisma: {} }));
 vi.mock('../profiles/engine-manager.service', () => ({ EngineManagerService: class {} }));
 vi.mock('../messages/messages.service', () => ({ MessagesService: class {} }));
+vi.mock('./recordings/call-recordings.service', () => ({ CallRecordingsService: class {} }));
 
 import { TENANT_CHECK, type TenantCheck } from '../../common/tenant/require-tenant.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { API_KEY_SCOPE } from '../auth/decorators/require-scope.decorator';
+import { ROLES_KEY } from '../auth/decorators/roles.decorator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { AuditInterceptor } from '../audit/audit.interceptor';
 import { CallsController } from './calls.controller';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto, UpdateCallSettingsDto } from './dto';
 
@@ -32,6 +38,8 @@ const ROUTES: Array<[string, RequestMethod, string, TenantCheck[] | null]> = [
   ['reject', RequestMethod.POST, ':id/reject', [BY_ID]],
   ['reply', RequestMethod.POST, ':id/reply', [BY_ID]],
   ['callLink', RequestMethod.POST, ':id/call-link', [BY_ID]],
+  ['recording', RequestMethod.GET, ':id/recording', [BY_ID]],
+  ['deleteRecording', RequestMethod.DELETE, ':id/recording', [BY_ID]],
 ];
 
 describe('CallsController routes', () => {
@@ -41,20 +49,36 @@ describe('CallsController routes', () => {
   });
 
   // The two routes that send a message to the caller need what every other send route needs (MessagesController:
-  // the `messages:write` scope the admin UI issues as "Send Messages"). Reject and the reads are not sends: like
-  // the conversations routes they ask nothing of an API key's scopes.
-  it('asks an API key for messages:write on the routes that send a message, and for nothing on the others', () => {
+  // the `messages:write` scope the admin UI issues as "Send Messages"). Reject and the other reads are not sends: like
+  // the conversations routes they ask nothing of an API key's scopes. A recording is personal data: its own scopes.
+  it('asks an API key for messages:write on the routes that send a message, for recordings:read and recordings:delete on the recording, and for nothing on the others', () => {
     const scopes = Object.fromEntries(ROUTES.map(([name]) => [name, Reflect.getMetadata(API_KEY_SCOPE, proto[name])]));
     expect(scopes).toEqual({
       list: undefined, openCount: undefined, mediaStatus: undefined, get: undefined, update: undefined, reject: undefined,
-      reply: ['messages:write'], callLink: ['messages:write'],
+      reply: ['messages:write'], callLink: ['messages:write'], recording: ['recordings:read'], deleteRecording: ['recordings:delete'],
     });
     expect(Reflect.getMetadata(API_KEY_SCOPE, CallsController)).toBeUndefined();
   });
 
-  it('serves exactly these eight routes', () => {
+  it('serves exactly these ten routes', () => {
     const served = Object.getOwnPropertyNames(proto).filter((n) => n !== 'constructor' && Reflect.getMetadata(PATH_METADATA, proto[n]) !== undefined);
     expect(served.sort()).toEqual(ROUTES.map(([name]) => name).sort());
+  });
+
+  // A recording is personal data: owner and admin only (RolesGuard on the two routes, after the class's guards).
+  it('the recording routes are for owners and admins only', () => {
+    for (const name of ['recording', 'deleteRecording']) {
+      expect(Reflect.getMetadata(ROLES_KEY, proto[name])).toEqual(['owner', 'admin']);
+      expect(Reflect.getMetadata(GUARDS_METADATA, proto[name])).toEqual([RolesGuard]);
+    }
+  });
+
+  it('a recording deleted by an admin is audited as call.recording.delete', async () => {
+    const audit = { log: vi.fn().mockResolvedValue(undefined) };
+    const req = { method: 'DELETE', params: { id: 'c1' }, user: { id: 'u1', organizationId: 'o1' }, headers: {} };
+    const context = { switchToHttp: () => ({ getRequest: () => req }), getClass: () => CallsController, getHandler: () => proto.deleteRecording };
+    await lastValueFrom(new AuditInterceptor(audit as any).intercept(context as any, { handle: () => of({}) }));
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'call.recording.delete', userId: 'u1', organizationId: 'o1', resourceId: 'c1' }));
   });
 
   it.each(ROUTES)('%s: verb, path and tenant check', (name, method, path, checks) => {
@@ -75,7 +99,8 @@ describe('CallsController hands over to the service', () => {
   function make() {
     const service = { list: vi.fn(), openCount: vi.fn(), mediaStatus: vi.fn(), get: vi.fn(), update: vi.fn(), reject: vi.fn(), reply: vi.fn(), sendCallLink: vi.fn() };
     for (const fn of Object.values(service)) fn.mockResolvedValue('result');
-    return { service, controller: new CallsController(service as any) };
+    const recordings = { play: vi.fn(), deleteByAdmin: vi.fn().mockResolvedValue('deleted') };
+    return { service, recordings, controller: new CallsController(service as any, recordings as any) };
   }
 
   it('list: the validated query as it is', async () => {
@@ -116,6 +141,41 @@ describe('CallsController hands over to the service', () => {
     const { service, controller } = make();
     await controller.callLink('c1', Object.assign(new CallLinkDto(), { type: 'video', text: 'Join here' }));
     expect(service.sendCallLink).toHaveBeenCalledWith('c1', 'video', 'Join here');
+  });
+
+  const fakeReply = () => {
+    const reply: any = {};
+    reply.code = vi.fn(() => reply);
+    reply.headers = vi.fn(() => reply);
+    reply.send = vi.fn(() => reply);
+    return reply;
+  };
+
+  it('recording: the caller as the actor, the Range header, the download flag; the reply gets the status, headers and body', async () => {
+    const { recordings, controller } = make();
+    const audio = Readable.from(['x']);
+    recordings.play.mockResolvedValue({ status: 206, headers: { 'Content-Range': 'bytes 0-0/1' }, body: audio });
+    const reply = fakeReply();
+    await controller.recording('c1', '1', { user: { id: 'u1', organizationId: 'o1' }, ip: '203.0.113.7', headers: { range: 'bytes=0-0', 'user-agent': 'test-agent' } }, reply);
+    expect(recordings.play).toHaveBeenCalledWith('c1', { userId: 'u1', organizationId: 'o1', ip: '203.0.113.7', userAgent: 'test-agent' }, 'bytes=0-0', true);
+    expect(reply.code).toHaveBeenCalledWith(206);
+    expect(reply.headers).toHaveBeenCalledWith({ 'Content-Range': 'bytes 0-0/1' });
+    expect(reply.send).toHaveBeenCalledWith(audio);
+  });
+
+  it.each([[undefined, false], ['0', false], ['true', true]])('recording: ?download=%s is a download: %s; no body is an empty one', async (download, expected) => {
+    const { recordings, controller } = make();
+    recordings.play.mockResolvedValue({ status: 416, headers: {}, body: null });
+    const reply = fakeReply();
+    await controller.recording('c1', download, { user: { id: 'u1', organizationId: 'o1' }, headers: {} }, reply);
+    expect(recordings.play.mock.calls[0][3]).toBe(expected);
+    expect(reply.send).toHaveBeenCalledWith('');
+  });
+
+  it('deleteRecording: the call, and the admin who deletes it', async () => {
+    const { recordings, controller } = make();
+    await expect(controller.deleteRecording('c1', { user: { id: 'u1' } })).resolves.toBe('deleted');
+    expect(recordings.deleteByAdmin).toHaveBeenCalledWith('c1', 'u1');
   });
 });
 

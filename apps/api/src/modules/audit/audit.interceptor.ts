@@ -24,9 +24,14 @@ const ACTION_MAP: Record<string, AuditAction | string> = {
   'ProfilesController.connect': AuditAction.PROFILE_CONNECT,
   'ProfilesController.disconnect': AuditAction.PROFILE_DISCONNECT,
   'ProfileCallsController.updateCallSettings': 'profile.calls_settings',
+  'ProfileCallsController.uploadAnnouncement': 'profile.calls_announcement',
+  'ProfileCallsController.deleteAnnouncement': 'profile.calls_announcement_delete',
   
   // Messages
   'MessagesController.send': AuditAction.MESSAGE_SEND,
+
+  // Calls
+  'CallsController.deleteRecording': 'call.recording.delete',
   
   // Broadcast
   'BroadcastController.create': AuditAction.BROADCAST_CREATE,

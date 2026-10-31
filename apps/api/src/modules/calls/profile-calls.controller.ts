@@ -1,11 +1,15 @@
-// MultiWA Gateway - a profile's call settings
+// MultiWA Gateway - a profile's call settings and its call announcement
 // apps/api/src/modules/calls/profile-calls.controller.ts
 //
-// Its own route, owner/admin only: the profile update (PUT /profiles/:id) checks no role, and these settings decide
-// who can talk to the callers.
-import { Body, Controller, Param, Put, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
+// Their own routes, owner/admin only: the profile update (PUT /profiles/:id) checks no role, and these decide who can
+// talk to the callers, whether the calls are recorded, and what the callers hear first.
+import { BadRequestException, Body, Controller, Delete, Get, Param, PayloadTooLargeException, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { CallsService } from './calls.service';
+import { CallAnnouncementService } from './recordings/call-announcement.service';
+import { ANNOUNCEMENT_MAX_BYTES } from './recordings/announcement-audio';
 import { UpdateCallSettingsDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
@@ -15,6 +19,27 @@ import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
 
+type MultipartRequest = { file(options: { limits: { fileSize: number } }): Promise<{ toBuffer(): Promise<Buffer> } | undefined> };
+const codeOf = (e: unknown) => (e as { code?: unknown } | null)?.code;
+
+/** The one file of a multipart request, at most `maxBytes` (413 past it, before more is read). */
+export async function readUpload(request: FastifyRequest, maxBytes: number): Promise<Buffer> {
+  let part: { toBuffer(): Promise<Buffer> } | undefined;
+  try {
+    part = await (request as unknown as MultipartRequest).file({ limits: { fileSize: maxBytes } });
+  } catch (e) {
+    if (codeOf(e) === 'FST_INVALID_MULTIPART_CONTENT_TYPE') throw new BadRequestException('Send the file as multipart/form-data');
+    throw e;
+  }
+  if (!part) throw new BadRequestException('No file uploaded');
+  try {
+    return await part.toBuffer();
+  } catch (e) {
+    if (codeOf(e) === 'FST_REQ_FILE_TOO_LARGE') throw new PayloadTooLargeException(`The file must be at most ${maxBytes / (1024 * 1024)} MB`);
+    throw e;
+  }
+}
+
 @ApiTags('Calls')
 @Controller('profiles')
 @UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, RolesGuard, TenantGuard)
@@ -22,16 +47,58 @@ import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/dec
 @ApiSecurity('api-key')
 @ApiAuthErrors()
 export class ProfileCallsController {
-  constructor(private readonly calls: CallsService) {}
+  constructor(
+    private readonly calls: CallsService,
+    private readonly announcements: CallAnnouncementService,
+  ) {}
 
   @Put(':id/calls-settings')
   @Roles('owner', 'admin')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
-  @ApiOperation({ summary: "Turn answering this profile's calls in the dashboard on or off" })
-  @ApiResponse({ status: 409, description: 'The profile is not ready: `reasons` says why' })
+  @ApiOperation({ summary: "This profile's call settings: answering in the dashboard, recording, the retention period" })
+  @ApiResponse({ status: 409, description: 'Not available for this profile now: `reasons` says why' })
   @ApiNotFound('Profile')
   @ApiValidationError()
   updateCallSettings(@Param('id') id: string, @Body() dto: UpdateCallSettingsDto) {
     return this.calls.updateCallSettings(id, dto);
+  }
+
+  @Post(':id/calls-announcement')
+  // Reading an audio file costs a worker thread up to seconds of CPU; uploads are rare, so a tight limit costs nobody.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Roles('owner', 'admin')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
+  @ApiOperation({ summary: 'Upload the announcement callers hear before a recorded call: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 409, description: 'The recordings storage is not configured (`reasons`)' })
+  @ApiResponse({ status: 413, description: 'Larger than 2 MB' })
+  @ApiResponse({ status: 415, description: 'Not one of the audio formats' })
+  @ApiResponse({ status: 422, description: 'Longer than 30 seconds, or its length is unknown' })
+  @ApiResponse({ status: 503, description: 'Two other announcements are being read: try again in a moment' })
+  @ApiNotFound('Profile')
+  async uploadAnnouncement(@Param('id') id: string, @Req() request: FastifyRequest) {
+    return this.announcements.upload(id, await readUpload(request, ANNOUNCEMENT_MAX_BYTES));
+  }
+
+  @Get(':id/calls-announcement')
+  @Roles('owner', 'admin')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
+  @ApiOperation({ summary: "The profile's announcement, to listen to" })
+  @ApiProduces('audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4')
+  @ApiNotFound('Announcement')
+  async announcement(@Param('id') id: string, @Res() reply: FastifyReply): Promise<void> {
+    const { mimeType, size, body } = await this.announcements.read(id);
+    reply.headers({ 'Content-Type': mimeType, 'Content-Length': String(size), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }).send(body);
+  }
+
+  @Delete(':id/calls-announcement')
+  @Roles('owner', 'admin')
+  @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
+  @ApiOperation({ summary: 'Remove the announcement (refused while recording is on)' })
+  @ApiResponse({ status: 409, description: 'Recording is on (`reasons`: recording_on)' })
+  @ApiNotFound('Profile')
+  deleteAnnouncement(@Param('id') id: string) {
+    return this.announcements.remove(id);
   }
 }
