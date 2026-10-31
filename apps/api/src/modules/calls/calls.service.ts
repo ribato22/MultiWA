@@ -246,8 +246,13 @@ export class CallsService {
     const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
     if (!profile) throw new NotFoundException('Profile not found');
     const settings = (profile.settings as Record<string, unknown> | null) ?? {};
-    const answer = dto.answerInDashboard ? await this.sessions.readiness(profileId, settings) : { ready: true, reasons: [] };
-    const record = dto.recording ? await this.recordings.recordingReasons(profileId, settings) : [];
+    // A true already stored is left out, neither checked nor written: a form that sends every field would otherwise
+    // re-run the check of a value already on, and while it fails for a while (the storage check, a phone offline) not
+    // even the retention could change. Unwritten, it cannot turn back on what was turned off meanwhile (false then).
+    const answerInDashboard = dto.answerInDashboard === true && settings.callsAnswerInDashboard === true ? undefined : dto.answerInDashboard;
+    const recording = dto.recording === true && recordingOn(settings) ? undefined : dto.recording;
+    const answer = answerInDashboard ? await this.sessions.readiness(profileId, settings) : { ready: true, reasons: [] };
+    const record = recording ? await this.recordings.recordingReasons(profileId, settings) : [];
     if (!answer.ready || record.length) {
       const what = !answer.ready && record.length
         ? 'Answering calls in the dashboard and recording them are'
@@ -257,11 +262,11 @@ export class CallsService {
     // Only the keys given, merged in one statement: the checks above can take seconds, and other routes write the
     // settings JSON too. Recording goes on only if the announcement is still there then (the condition is in the statement).
     const patch: Record<string, unknown> = {
-      ...(dto.answerInDashboard !== undefined ? { callsAnswerInDashboard: dto.answerInDashboard } : {}),
-      ...(dto.recording !== undefined ? { callsRecording: dto.recording } : {}),
+      ...(answerInDashboard !== undefined ? { callsAnswerInDashboard: answerInDashboard } : {}),
+      ...(recording !== undefined ? { callsRecording: recording } : {}),
       ...(dto.retentionDays !== undefined ? { callsRecordingRetentionDays: dto.retentionDays } : {}),
     };
-    const written = dto.recording ? await mergeProfileSettingsIfAnnounced(profileId, patch) : await mergeProfileSettings(profileId, patch);
+    const written = recording ? await mergeProfileSettingsIfAnnounced(profileId, patch) : await mergeProfileSettings(profileId, patch);
     if (!written) {
       if (!(await prisma.profile.findUnique({ where: { id: profileId }, select: { id: true } }))) throw new NotFoundException('Profile not found');
       throw new ConflictException({ message: 'Recording calls is not available for this profile', reasons: ['no_announcement'] }); // removed meanwhile

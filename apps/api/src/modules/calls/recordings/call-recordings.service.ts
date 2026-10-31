@@ -156,14 +156,30 @@ export class CallRecordingsService {
     };
   }
 
-  /** An admin deletes a call's recording (DELETE /calls/:id/recording; the interceptor audits it). */
-  async deleteByAdmin(callId: string, userId: string) {
+  /**
+   * An admin deletes a call's recording (DELETE /calls/:id/recording), audited here as a play and retention's deletes
+   * are: the call and the recording, so one query on the call finds every read and delete of its recording.
+   */
+  async deleteByAdmin(callId: string, admin: RecordingReader) {
     const rec = await this.liveRecording(callId);
     // Before the row is claimed: claimed, a file this server cannot reach would stay for good.
     if (this.store.problem) throw new ServiceUnavailableException(UNCONFIGURED);
     if (rec.storageLocation !== this.store.location) throw new ConflictException(`${ELSEWHERE}: it cannot be deleted from here`);
-    const deletedAt = await this.remove(rec, 'admin', userId);
+    const deletedAt = await this.remove(rec, 'admin', admin.userId);
     if (!deletedAt) throw new NotFoundException('This call has no recording'); // deleted meanwhile
+    // A failed audit is logged, not thrown: the recording is gone by now, and a 500 would say it is not.
+    await this.audit
+      .log({
+        action: 'call.recording.delete',
+        userId: admin.userId,
+        organizationId: admin.organizationId,
+        ip: admin.ip,
+        userAgent: admin.userAgent,
+        resourceType: 'call',
+        resourceId: rec.callId,
+        metadata: { recordingId: rec.id, profileId: rec.profileId, reason: 'admin' },
+      })
+      .catch((e) => this.logger.warn(`The audit of the deletion of the recording of call ${clean(rec.callId)} by user ${clean(admin.userId)} failed: ${message(e)}`));
     return { callId, recordingId: rec.id, deletedAt: deletedAt.toISOString() };
   }
 

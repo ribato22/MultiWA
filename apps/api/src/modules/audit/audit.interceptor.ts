@@ -29,9 +29,6 @@ const ACTION_MAP: Record<string, AuditAction | string> = {
   
   // Messages
   'MessagesController.send': AuditAction.MESSAGE_SEND,
-
-  // Calls
-  'CallsController.deleteRecording': 'call.recording.delete',
   
   // Broadcast
   'BroadcastController.create': AuditAction.BROADCAST_CREATE,
@@ -108,6 +105,8 @@ const SKIP_PATTERNS = [
   /\.getActions$/,
   /^StatisticsController\./,
   /^UploadsController\./,
+  // Audited by CallRecordingsService as a play and retention's deletes are (resourceType call, with the recording's id).
+  /^CallsController\.deleteRecording$/,
 ];
 
 @Injectable()

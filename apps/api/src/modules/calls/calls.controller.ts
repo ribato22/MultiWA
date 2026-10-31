@@ -5,7 +5,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, Res,
 import { ApiBearerAuth, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { CallsService } from './calls.service';
-import { CallRecordingsService } from './recordings/call-recordings.service';
+import { CallRecordingsService, type RecordingReader } from './recordings/call-recordings.service';
 import { AuditService } from '../audit/audit.service';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
@@ -16,6 +16,9 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
+
+// Who reads or deletes a recording, from where: its audit carries the IP and user agent, like every other audit entry.
+const readerOf = (req: any): RecordingReader => ({ ...AuditService.fromRequest(req), userId: req.user.id, organizationId: req.user.organizationId });
 
 @ApiTags('Calls')
 @Controller('calls')
@@ -115,9 +118,11 @@ export class CallsController {
   @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server, or the access could not be audited: nothing is sent' })
   @ApiNotFound('Recording')
   async recording(@Param('id') id: string, @Query('download') download: string | undefined, @Request() req: any, @Res() reply: FastifyReply): Promise<void> {
-    // Who read it, from where: the audit of a read carries the IP and user agent, like every other audit entry.
-    const actor = { ...AuditService.fromRequest(req), userId: req.user.id, organizationId: req.user.organizationId };
-    const playback = await this.recordings.play(id, actor, req.headers?.range, download === '1' || download === 'true');
+    const playback = await this.recordings.play(id, readerOf(req), req.headers?.range, download === '1' || download === 'true');
+    // Fastify answers a HEAD with this handler, so play() has audited it: a HEAD asks for the recording too. Fastify reads
+    // the body it is handed to the end only to drop it (on S3, the whole download); destroyed, it is dropped unread and
+    // the headers stay the GET's. An empty body instead would make Fastify answer Content-Length: 0.
+    if (req.method === 'HEAD') playback.body?.destroy();
     reply.code(playback.status).headers(playback.headers).send(playback.body ?? '');
   }
 
@@ -131,6 +136,6 @@ export class CallsController {
   @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server' })
   @ApiNotFound('Recording')
   deleteRecording(@Param('id') id: string, @Request() req: any) {
-    return this.recordings.deleteByAdmin(id, req.user.id);
+    return this.recordings.deleteByAdmin(id, readerOf(req));
   }
 }

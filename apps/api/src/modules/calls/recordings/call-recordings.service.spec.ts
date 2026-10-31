@@ -31,6 +31,7 @@ const MINUTE = 60 * 1000;
 const UNCONFIGURED = 'The recordings storage is not configured on this server';
 const KEY = recordingKey(ORG, PROFILE, CALL, new Date('2026-10-01T03:00:00Z'));
 const ACTOR = { userId: 'u1', organizationId: ORG };
+const ADMIN = { userId: 'u1', organizationId: ORG, ip: '203.0.113.7', userAgent: 'Mozilla/5.0' };
 // The memory store's location is memory:test. A recording of the same type elsewhere: what a new CALL_RECORDINGS_PATH,
 // bucket or prefix leaves behind.
 const HERE = 'memory:test';
@@ -283,7 +284,7 @@ describe('CallRecordingsService.deleteByAdmin', () => {
     const del = vi.spyOn(store, 'delete');
     db.callRecording.findUnique.mockResolvedValue(rec());
     db.callRecording.updateMany.mockResolvedValue({ count: 1 });
-    const done = await service.deleteByAdmin(CALL, 'u1');
+    const done = await service.deleteByAdmin(CALL, ADMIN);
     expect(done).toEqual({ callId: CALL, recordingId: 'r1', deletedAt: expect.any(String) });
     expect(db.callRecording.updateMany).toHaveBeenCalledWith({
       where: { id: 'r1', deletedAt: null }, data: { deletedAt: new Date(done.deletedAt), deletedByUserId: 'u1', deleteReason: 'admin' },
@@ -295,14 +296,40 @@ describe('CallRecordingsService.deleteByAdmin', () => {
     });
   });
 
-  it('404 when another delete came first: the file is not touched, nothing published', async () => {
-    const { service, store, events } = make();
+  // As retention's deletes are, and as a play is: resourceType call, the call's id, the recording's in the metadata.
+  it('is audited after the claim and the file, with the admin, where from, and the recording', async () => {
+    const { service, store, audit } = make();
+    store.file(KEY);
+    const del = vi.spyOn(store, 'delete');
+    db.callRecording.findUnique.mockResolvedValue(rec());
+    db.callRecording.updateMany.mockResolvedValue({ count: 1 });
+    await service.deleteByAdmin(CALL, ADMIN);
+    expect(audit.log).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith({
+      action: 'call.recording.delete', userId: 'u1', organizationId: ORG, ip: '203.0.113.7', userAgent: 'Mozilla/5.0',
+      resourceType: 'call', resourceId: CALL, metadata: { recordingId: 'r1', profileId: PROFILE, reason: 'admin' },
+    });
+    expect(del.mock.invocationCallOrder[0]).toBeLessThan(audit.log.mock.invocationCallOrder[0]);
+  });
+
+  it('an audit that cannot be written is logged, not thrown: the recording is gone by then', async () => {
+    const { service, audit, warn } = make();
+    audit.log.mockRejectedValueOnce(new Error('db down'));
+    db.callRecording.findUnique.mockResolvedValue(rec());
+    db.callRecording.updateMany.mockResolvedValue({ count: 1 });
+    await expect(service.deleteByAdmin(CALL, ADMIN)).resolves.toMatchObject({ recordingId: 'r1' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('db down'));
+  });
+
+  it('404 when another delete came first: the file is not touched, nothing published or audited', async () => {
+    const { service, store, events, audit } = make();
     const del = vi.spyOn(store, 'delete');
     db.callRecording.findUnique.mockResolvedValue(rec());
     db.callRecording.updateMany.mockResolvedValue({ count: 0 });
-    await expect(service.deleteByAdmin(CALL, 'u1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.deleteByAdmin(CALL, ADMIN)).rejects.toBeInstanceOf(NotFoundException);
     expect(del).not.toHaveBeenCalled();
     expect(events.emit).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
   });
 
   it('a file that will not delete is left to the nightly sweep: the delete still succeeds', async () => {
@@ -310,13 +337,13 @@ describe('CallRecordingsService.deleteByAdmin', () => {
     vi.spyOn(store, 'delete').mockRejectedValue(new Error('EACCES'));
     db.callRecording.findUnique.mockResolvedValue(rec());
     db.callRecording.updateMany.mockResolvedValue({ count: 1 });
-    await expect(service.deleteByAdmin(CALL, 'u1')).resolves.toMatchObject({ recordingId: 'r1' });
+    await expect(service.deleteByAdmin(CALL, ADMIN)).resolves.toMatchObject({ recordingId: 'r1' });
   });
 
   it('404 for a call without a live recording', async () => {
     const { service } = make();
     db.callRecording.findUnique.mockResolvedValue(rec({ deletedAt: NOW }));
-    await expect(service.deleteByAdmin(CALL, 'u1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.deleteByAdmin(CALL, ADMIN)).rejects.toBeInstanceOf(NotFoundException);
     expect(db.callRecording.updateMany).not.toHaveBeenCalled();
   });
 
@@ -324,7 +351,7 @@ describe('CallRecordingsService.deleteByAdmin', () => {
   it('503 when the storage is not configured on this server: the row is not claimed', async () => {
     const { service } = make(unconfigured());
     db.callRecording.findUnique.mockResolvedValue(rec());
-    const refused = await service.deleteByAdmin(CALL, 'u1').catch((e) => e);
+    const refused = await service.deleteByAdmin(CALL, ADMIN).catch((e) => e);
     expect(refused).toBeInstanceOf(ServiceUnavailableException);
     expect(refused.message).toBe(UNCONFIGURED);
     expect(db.callRecording.updateMany).not.toHaveBeenCalled();
@@ -336,7 +363,7 @@ describe('CallRecordingsService.deleteByAdmin', () => {
   ])('409 for a recording in %s, not saying where: the row is not claimed', async (_what, row) => {
     const { service } = make();
     db.callRecording.findUnique.mockResolvedValue(row);
-    const refused = await service.deleteByAdmin(CALL, 'u1').catch((e) => e);
+    const refused = await service.deleteByAdmin(CALL, ADMIN).catch((e) => e);
     expect(refused).toBeInstanceOf(ConflictException);
     expect(refused.message).toBe(`${ELSEWHERE}: it cannot be deleted from here`);
     expect(db.callRecording.updateMany).not.toHaveBeenCalled();

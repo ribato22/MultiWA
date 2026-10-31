@@ -8,6 +8,7 @@ import { BadRequestException, RequestMethod, ValidationPipe, type ArgumentMetada
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
 import { lastValueFrom, of } from 'rxjs';
+import Fastify from 'fastify';
 
 vi.mock('@multiwa/database', () => ({ prisma: {} }));
 vi.mock('../profiles/engine-manager.service', () => ({ EngineManagerService: class {} }));
@@ -81,12 +82,14 @@ describe('CallsController routes', () => {
     expect(documented('deleteRecording')).toEqual(['404', '409', '503']);
   });
 
-  it('a recording deleted by an admin is audited as call.recording.delete', async () => {
+  // The service audits it (resourceType call, the recording's id), as it audits a play and retention's deletes: the
+  // interceptor's entry would be a second one, under resourceType calls and without the recording.
+  it("the interceptor writes nothing for an admin's delete of a recording", async () => {
     const audit = { log: vi.fn().mockResolvedValue(undefined) };
     const req = { method: 'DELETE', params: { id: 'c1' }, user: { id: 'u1', organizationId: 'o1' }, headers: {} };
     const context = { switchToHttp: () => ({ getRequest: () => req }), getClass: () => CallsController, getHandler: () => proto.deleteRecording };
     await lastValueFrom(new AuditInterceptor(audit as any).intercept(context as any, { handle: () => of({}) }));
-    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'call.recording.delete', userId: 'u1', organizationId: 'o1', resourceId: 'c1' }));
+    expect(audit.log).not.toHaveBeenCalled();
   });
 
   it.each(ROUTES)('%s: verb, path and tenant check', (name, method, path, checks) => {
@@ -180,10 +183,41 @@ describe('CallsController hands over to the service', () => {
     expect(reply.send).toHaveBeenCalledWith('');
   });
 
-  it('deleteRecording: the call, and the admin who deletes it', async () => {
+  // Fastify answers a HEAD with the GET handler, and reads a body it is handed to the end only to drop it (on S3, the
+  // whole download). The read is still audited: a HEAD asks for the recording all the same.
+  it('recording: a HEAD reads none of it, answers with the headers of the GET, Content-Length too, and is audited like it', async () => {
     const { recordings, controller } = make();
-    await expect(controller.deleteRecording('c1', { user: { id: 'u1' } })).resolves.toBe('deleted');
-    expect(recordings.deleteByAdmin).toHaveBeenCalledWith('c1', 'u1');
+    let reads = 0;
+    recordings.play.mockImplementation(async () => ({
+      status: 200,
+      headers: { 'Content-Type': 'audio/webm', 'Content-Length': String(64 * 1024) },
+      body: new Readable({ read() { reads++; this.push(reads > 64 ? null : Buffer.alloc(1024)); } }),
+    }));
+    const app = Fastify();
+    app.addHook('onRequest', async (req) => { (req as any).user = { id: 'u1', organizationId: 'o1' }; });
+    // Waiting for the reply, as Nest's route handler does: resolved before a streamed body is under way, Fastify would
+    // send the reply again, empty.
+    app.get('/calls/:id/recording', async (req, reply) => {
+      await controller.recording('c1', undefined, req, reply);
+      return reply;
+    });
+    try {
+      const head = await app.inject({ method: 'HEAD', url: '/calls/c1/recording' });
+      expect([head.statusCode, head.headers['content-length'], head.rawPayload.length, reads]).toEqual([200, String(64 * 1024), 0, 0]);
+      expect(recordings.play).toHaveBeenCalledTimes(1);
+      reads = 0;
+      const get = await app.inject({ method: 'GET', url: '/calls/c1/recording' });
+      expect([get.statusCode, get.rawPayload.length]).toEqual([200, 64 * 1024]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('deleteRecording: the call, and the admin who deletes it, from where, as for a play', async () => {
+    const { recordings, controller } = make();
+    const req = { user: { id: 'u1', organizationId: 'o1' }, ip: '203.0.113.7', headers: { 'user-agent': 'test-agent' } };
+    await expect(controller.deleteRecording('c1', req)).resolves.toBe('deleted');
+    expect(recordings.deleteByAdmin).toHaveBeenCalledWith('c1', { userId: 'u1', organizationId: 'o1', ip: '203.0.113.7', userAgent: 'test-agent' });
   });
 });
 

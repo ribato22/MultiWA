@@ -916,6 +916,25 @@ describe('CallsService: call settings and status', () => {
     await expect(svc.updateCallSettings('p1', { recording: true })).rejects.toMatchObject({ status: 409, response: { reasons: ['no_announcement'] } });
   });
 
+  // A form that always sends every field would re-run the check of a value already on, and while that check fails for a
+  // while (the storage check, a phone offline) nothing else could change. Nothing is written for it either, so a value
+  // the nightly privacy check turned off (false then) never comes back on this way.
+  it('a stored true sent again is left as it is: neither checked nor written, and the rest is written', async () => {
+    const { svc, sessions, recordings } = make();
+    const stored = { callsAnswerInDashboard: true, callsRecording: true, callsAnnouncement: ANNOUNCEMENT };
+    db.profile.findUnique.mockReset().mockResolvedValue({ settings: stored });
+    merge.mockImplementation(async (_id, patch) => ({ ...stored, ...patch }));
+    sessions.readiness.mockResolvedValue({ ready: false, reasons: ['profile_not_connected'] });
+    recordings.recordingReasons.mockResolvedValue(['storage_check_failed']);
+    expect(await svc.updateCallSettings('p1', { answerInDashboard: true, recording: true, retentionDays: 30 })).toEqual({
+      profileId: 'p1', answerInDashboard: true, recording: true, retentionDays: 30, announcement: { mimeType: 'audio/mpeg', durationSec: 4 },
+    });
+    expect(merge).toHaveBeenCalledWith('p1', { callsRecordingRetentionDays: 30 });
+    expect(mergeIfAnnounced).not.toHaveBeenCalled();
+    expect(sessions.readiness).not.toHaveBeenCalled();
+    expect(recordings.recordingReasons).not.toHaveBeenCalled();
+  });
+
   it('turning recording off needs no check', async () => {
     const { svc, recordings } = make();
     await svc.updateCallSettings('p1', { recording: false });
