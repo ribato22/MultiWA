@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 224,
+  "routeCount": 226,
   "routes": [
     {
       "method": "DELETE",
@@ -371,6 +371,10 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/calls/media/status"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/calls/open-count"
     },
     {
@@ -720,6 +724,10 @@
     {
       "method": "PUT",
       "path": "/api/v1/profiles/:id"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/profiles/:id/calls-settings"
     },
     {
       "method": "POST",

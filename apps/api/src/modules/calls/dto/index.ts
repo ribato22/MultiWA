@@ -3,7 +3,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { isWhatsAppRecipient } from '@multiwa/core';
 import { CALL_FOLLOW_UPS, CALL_OUTCOMES } from '@multiwa/engine-runtime';
 import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
@@ -99,4 +99,16 @@ export class CallLinkDto {
   @IsString()
   @MaxLength(4096)
   text?: string;
+}
+
+export class UpdateCallSettingsDto {
+  @ApiProperty({
+    description:
+      "Ring the organization's agents in the dashboard when this profile gets a call, and let them answer it there. " +
+      'Turning it on needs the profile to be ready (409 with the reasons otherwise).',
+  })
+  // The value as sent: the API-wide pipe converts implicitly, and Boolean('false') is true.
+  @Transform(({ obj, key }) => obj[key])
+  @IsBoolean()
+  answerInDashboard: boolean;
 }

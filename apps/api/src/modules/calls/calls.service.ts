@@ -38,7 +38,9 @@ import { EngineManagerService } from '../profiles/engine-manager.service';
 import { MessagesService } from '../messages/messages.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
-import { CALLS_MAX_LIMIT } from './dto';
+import { CALLS_MAX_LIMIT, UpdateCallSettingsDto } from './dto';
+import { CallSessionService } from './coordinator/call-session.service';
+import { CallMediaService } from './media/call-media.service';
 
 export interface ListCallsQuery {
   profileId: string;
@@ -53,6 +55,7 @@ export interface ListCallsQuery {
 const DEFAULT_LIMIT = 50;
 const CALL_INCLUDE = {
   assignedUser: { select: { id: true, name: true } },
+  answeredBy: { select: { id: true, name: true } },
   conversation: { select: { id: true, name: true } },
 } as const;
 // A stuck WhatsApp Web page would otherwise hold the request for puppeteer's 240 s protocol timeout. The engine
@@ -62,6 +65,16 @@ const CALL_INCLUDE = {
 const CALL_ACTION_TIMEOUT_MS = 30_000;
 const NO_GROUP_ANSWER = 'Group calls cannot be answered from the queue';
 const NO_CALL_LINKS = 'Call links are not available on this engine';
+
+/**
+ * A call as the API answers with it. Until a call is answered, its answeredByUserId holds a claim: an agent whose audio
+ * is still connecting, on a call that can still end unanswered. As in the call payloads (toCallPayload), only an
+ * answered call names its agent.
+ */
+function withoutClaim<T extends { outcome: string; answeredByUserId?: string | null; answeredBy?: unknown }>(row: T): T {
+  if (row.outcome === 'answered' || (!row.answeredByUserId && !row.answeredBy)) return row;
+  return { ...row, answeredByUserId: null, answeredBy: null };
+}
 
 @Injectable()
 export class CallsService {
@@ -74,6 +87,8 @@ export class CallsService {
     private readonly eventEmitter: EventEmitter2,
     // The Socket.IO gateway in the API, whichever process hosts the engine (the same alias the engine manager injects).
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
+    private readonly sessions: CallSessionService,
+    private readonly callMedia: CallMediaService,
   ) {}
 
   async list(q: ListCallsQuery) {
@@ -109,14 +124,14 @@ export class CallsService {
       include: CALL_INCLUDE,
     });
     const hasMore = rows.length > take;
-    const calls = hasMore ? rows.slice(0, take) : rows;
+    const calls = (hasMore ? rows.slice(0, take) : rows).map(withoutClaim);
     return { calls, nextCursor: hasMore ? calls[calls.length - 1].id : null };
   }
 
   async get(id: string) {
     const row = await prisma.call.findUnique({ where: { id }, include: CALL_INCLUDE });
     if (!row) throw new NotFoundException('Call not found');
-    return row;
+    return withoutClaim(row);
   }
 
   async update(id: string, dto: { followUp?: string; assignedUserId?: string | null }) {
@@ -133,7 +148,7 @@ export class CallsService {
       if (assignee !== row.assignedUserId) data.assignedUserId = assignee ? await this.assignableUser(row.profileId, assignee) : null;
     }
     if (Object.keys(data).length === 0) return row; // nothing differs: no write and no call.updated
-    const updated = await prisma.call.update({ where: { id }, data, include: CALL_INCLUDE });
+    const updated = withoutClaim(await prisma.call.update({ where: { id }, data, include: CALL_INCLUDE }));
     this.publishUpdate(updated);
     return updated;
   }
@@ -184,7 +199,7 @@ export class CallsService {
     const metadata = (fresh.metadata ?? {}) as Record<string, unknown>;
     const callLinks = Array.isArray(metadata.callLinks) ? metadata.callLinks : [];
     const opens = fresh.followUp === 'open';
-    const updated = await prisma.call.update({
+    const updated = withoutClaim(await prisma.call.update({
       where: { id: row.id },
       data: {
         metadata: { ...metadata, callLinks: [...callLinks, { type, link, at: new Date().toISOString() }] },
@@ -192,7 +207,7 @@ export class CallsService {
         ...(await this.conversationLink(fresh)),
       },
       include: CALL_INCLUDE,
-    });
+    }));
     if (opens) this.publishUpdate(updated);
     return { call: updated, message, link };
   }
@@ -202,6 +217,46 @@ export class CallsService {
     if (!organizationId) throw new ForbiddenException('Missing organization context');
     const count = await prisma.call.count({ where: { followUp: 'open', profile: { workspace: { organizationId } } } });
     return { count };
+  }
+
+  /** Turn answering the profile's calls in the dashboard on (only when it is ready: 409 with the reasons) or off. */
+  async updateCallSettings(profileId: string, dto: UpdateCallSettingsDto) {
+    const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
+    if (!profile) throw new NotFoundException('Profile not found');
+    if (dto.answerInDashboard) {
+      const readiness = await this.sessions.readiness(profileId, (profile.settings as Record<string, unknown> | null) ?? {});
+      if (!readiness.ready) {
+        throw new ConflictException({ message: 'Answering calls in the dashboard is not available for this profile', reasons: readiness.reasons });
+      }
+    }
+    // The settings JSON is shared with the other profile settings (PUT /profiles/:id), and the readiness check can take
+    // seconds: this key alone, in one statement, so a profile update made meanwhile is kept.
+    const written = await prisma.$executeRaw`UPDATE profiles SET settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('callsAnswerInDashboard', ${dto.answerInDashboard}::boolean) WHERE id = ${profileId}`;
+    if (!written) throw new NotFoundException('Profile not found'); // deleted while it was checked
+    return { profileId, answerInDashboard: dto.answerInDashboard };
+  }
+
+  /** Readiness of answering calls in the dashboard: the media server's, and each profile of the organization. */
+  async mediaStatus(organizationId: string) {
+    // As for openCount: `organizationId: undefined` is no filter to Prisma, and would list every tenant's profiles.
+    if (!organizationId) throw new ForbiddenException('Missing organization context');
+    const profiles = await prisma.profile.findMany({
+      where: { workspace: { organizationId } },
+      select: { id: true, displayName: true, settings: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    // The media server serves every organization: its rooms (all their calls) are not shown, and the sessions are the
+    // organization's own.
+    const { enabled, worker, port } = this.callMedia.status();
+    return {
+      server: { enabled, worker, port, engineHost: isWorkerEngine() ? 'worker' : 'api', activeSessions: this.sessions.activeSessionCount(organizationId) },
+      profiles: await Promise.all(
+        profiles.map(async (p) => {
+          const settings = (p.settings as Record<string, unknown> | null) ?? {};
+          return { profileId: p.id, name: p.displayName ?? p.id, answerInDashboard: settings.callsAnswerInDashboard === true, ...(await this.sessions.readiness(p.id, settings)) };
+        }),
+      ),
+    };
   }
 
   private async assignableUser(profileId: string, userId: string): Promise<string> {
@@ -235,7 +290,7 @@ export class CallsService {
     const opens = fresh.followUp === 'open';
     const link = await this.conversationLink(fresh);
     if (!opens && !link.conversationId) return fresh;
-    const updated = await prisma.call.update({ where: { id }, data: { ...(opens ? { followUp: 'in_progress' } : {}), ...link }, include: CALL_INCLUDE });
+    const updated = withoutClaim(await prisma.call.update({ where: { id }, data: { ...(opens ? { followUp: 'in_progress' } : {}), ...link }, include: CALL_INCLUDE }));
     if (opens) this.publishUpdate(updated);
     return updated;
   }

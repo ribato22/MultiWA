@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  nextOutcome, outcomeForState, followUpAfter, CALL_OUTCOMES, CALL_FOLLOW_UPS, type CallOutcome,
+  nextOutcome, outcomeForState, followUpAfter, toCallPayload, CALL_OUTCOMES, CALL_FOLLOW_UPS, type CallOutcome,
 } from '@multiwa/engine-runtime';
 
 describe('call outcome rules', () => {
@@ -13,7 +13,7 @@ describe('call outcome rules', () => {
   });
 
   it('exports the outcome list', () => {
-    expect(CALL_OUTCOMES).toEqual(['ringing', 'missed', 'rejected', 'answered_elsewhere', 'unknown']);
+    expect(CALL_OUTCOMES).toEqual(['ringing', 'answered', 'missed', 'rejected', 'answered_elsewhere', 'unknown']);
   });
 
   it('exports the follow-up list', () => {
@@ -51,7 +51,7 @@ describe('call outcome rules', () => {
     expect(nextOutcome(current, target)).toBe(expected);
   });
 
-  it.each(CALL_OUTCOMES.filter((o) => o !== 'answered_elsewhere'))('%s leaves an open follow-up open', (outcome) => {
+  it.each(CALL_OUTCOMES.filter((o) => o !== 'answered_elsewhere' && o !== 'answered'))('%s leaves an open follow-up open', (outcome) => {
     expect(followUpAfter(outcome, 'open')).toBe('open');
   });
 
@@ -59,5 +59,43 @@ describe('call outcome rules', () => {
     expect(followUpAfter('answered_elsewhere', 'open')).toBe('done');
     expect(followUpAfter('answered_elsewhere', 'in_progress')).toBe('in_progress');
     expect(followUpAfter('answered_elsewhere', 'done')).toBe('done');
+  });
+});
+
+describe('answered (a call answered in the dashboard)', () => {
+  it('is a known outcome, and final: no later signal, call log or timeout changes it', () => {
+    expect(CALL_OUTCOMES).toContain('answered');
+    for (const target of ['missed', 'rejected', 'answered_elsewhere', 'unknown', 'ringing'] as const) {
+      expect(nextOutcome('answered', target)).toBeNull();
+    }
+  });
+
+  it('is reached only from ringing: a call that stopped ringing (unknown) is never answered', () => {
+    expect(nextOutcome('ringing', 'answered')).toBe('answered');
+    expect(nextOutcome('unknown', 'answered')).toBeNull();
+  });
+
+  it('needs no follow-up, like a call answered on the phone (an open follow-up becomes done; others stay)', () => {
+    expect(followUpAfter('answered', 'open')).toBe('done');
+    expect(followUpAfter('answered', 'in_progress')).toBe('in_progress');
+  });
+});
+
+describe('the call payload', () => {
+  const base = {
+    id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false,
+    direction: 'incoming', outcome: 'answered', rejectedBy: null, startedAt: new Date('2026-10-30T01:00:00Z'),
+    endedAt: new Date('2026-10-30T01:05:00Z'), followUp: 'done', assignedUserId: null, autoReplySentAt: null, conversationId: null,
+  };
+
+  it('carries who answered in the dashboard, when, and how the call ended (null for other calls)', () => {
+    expect(toCallPayload({ ...base, answeredByUserId: 'u1', answeredAt: new Date('2026-10-30T01:00:12Z'), endedBy: 'agent', endReason: 'hangup', talkSeconds: 288 })).toMatchObject({
+      answeredByUserId: 'u1', answeredAt: '2026-10-30T01:00:12.000Z', endedBy: 'agent', endReason: 'hangup', talkSeconds: 288,
+    });
+    expect(toCallPayload(base)).toMatchObject({ answeredByUserId: null, answeredAt: null, endedBy: null, endReason: null, talkSeconds: null });
+  });
+
+  it('names no answerer for a call that was not answered, though an agent still held its claim', () => {
+    expect(toCallPayload({ ...base, outcome: 'missed', followUp: 'open', answeredByUserId: 'u1' })).toMatchObject({ outcome: 'missed', answeredByUserId: null });
   });
 });

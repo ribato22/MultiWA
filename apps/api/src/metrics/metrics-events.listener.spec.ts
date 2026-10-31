@@ -9,6 +9,7 @@ vi.mock('@multiwa/database', () => ({
 
 import { prisma } from '@multiwa/database';
 import { MetricsEventsListener } from './metrics-events.listener';
+import { MetricsService } from './metrics.service';
 
 function makeMetrics() {
   return {
@@ -62,5 +63,36 @@ describe('MetricsEventsListener', () => {
   it('counts a death of the call media worker', () => {
     listener.onCallsMediaWorkerDied({ calls: 2 });
     expect(metrics.callsMediaWorkerDeathsTotal.inc).toHaveBeenCalledTimes(1);
+  });
+});
+
+// On a real registry: the series names and labels are what the alerts and dashboards read.
+describe('MetricsEventsListener: the dashboard call counters', () => {
+  let metrics: MetricsService;
+  let listener: MetricsEventsListener;
+
+  beforeEach(() => {
+    metrics = new MetricsService();
+    listener = new MetricsEventsListener(metrics);
+  });
+
+  it('counts the dashboard calls: rings, answers with their speed, media failures and ends by reason', async () => {
+    listener.onCallsSession({ kind: 'rung' });
+    listener.onCallsSession({ kind: 'answered', answerSeconds: 4.2 });
+    listener.onCallsSession({ kind: 'media_failed', reason: 'connect_timeout' });
+    listener.onCallsSession({ kind: 'ended', endReason: 'hangup' });
+    const text = await metrics.registry.metrics();
+    expect(text).toMatch(/multiwa_calls_dashboard_rings_total\{app="multiwa-api"\} 1/);
+    expect(text).toMatch(/multiwa_calls_dashboard_answers_total\{app="multiwa-api"\} 1/);
+    expect(text).toMatch(/multiwa_calls_dashboard_answer_seconds_count\{app="multiwa-api"\} 1/);
+    expect(text).toMatch(/multiwa_calls_media_failures_total\{reason="connect_timeout",app="multiwa-api"\} 1/);
+    expect(text).toMatch(/multiwa_calls_dashboard_ended_total\{reason="hangup",app="multiwa-api"\} 1/);
+  });
+
+  it('labels its series from closed sets: a reason outside them does not compile', () => {
+    // @ts-expect-error: not a media failure reason
+    listener.onCallsSession({ kind: 'media_failed', reason: 'timeout' });
+    // @ts-expect-error: not an end reason
+    listener.onCallsSession({ kind: 'ended', endReason: 'bye' });
   });
 });

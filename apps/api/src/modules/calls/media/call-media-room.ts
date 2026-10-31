@@ -8,6 +8,7 @@
 // one operation at a time, so these limits hold for calls made together too. Closing a peer (closePeer) voids every
 // operation it had issued before, also one still at the worker, so that the peer can join again.
 // The signalling API speaks mediasoup's JSON: `signalingFor(peer)` binds it to one peer.
+// Each peer's link (its transports' ICE and DTLS state) is told to the onLinkChange listeners.
 import type { types as ms } from 'mediasoup';
 import type { CallMediaSignaling } from '@multiwa/engines';
 
@@ -25,6 +26,11 @@ export class CallMediaRoom {
   private readonly chains: Record<MediaPeer, Promise<unknown>> = { page: Promise.resolve(), agent: Promise.resolve() };
   /** Counts each peer's closePeer calls: an operation issued under an older count belongs to a peer that was closed. */
   private readonly generations: Record<MediaPeer, number> = { page: 0, agent: 0 };
+  /** Each transport's link: ICE connected or completed, and DTLS neither failed nor closed. */
+  private readonly links = new Map<string, boolean>();
+  /** linkUp(peer) as last told to the listeners. */
+  private readonly linkTold: Record<MediaPeer, boolean> = { page: false, agent: false };
+  private readonly linkListeners: Array<(peer: MediaPeer, up: boolean) => void> = [];
   private isClosed = false;
 
   constructor(
@@ -102,6 +108,20 @@ export class CallMediaRoom {
       this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true }),
     );
     this.transports.set(transport.id, { peer, direction, transport });
+    // Its link, from the worker's state events: the coordinator hangs up an agent whose link stays down (agent lost).
+    let ice: string = transport.iceState;
+    let dtls: string = transport.dtlsState;
+    const linked = () => {
+      this.links.set(transport.id, (ice === 'connected' || ice === 'completed') && dtls !== 'failed' && dtls !== 'closed');
+      this.linkChanged(peer);
+    };
+    transport.on('icestatechange', (state) => { ice = state; linked(); });
+    transport.on('dtlsstatechange', (state) => { dtls = state; linked(); });
+    transport.observer.once('close', () => {
+      this.links.delete(transport.id);
+      this.linkChanged(peer);
+    });
+    this.linkChanged(peer); // a transport not linked yet takes a linked peer down
     return {
       id: transport.id,
       iceParameters: transport.iceParameters,
@@ -140,8 +160,42 @@ export class CallMediaRoom {
     this.generations[peer]++;
     for (const [id, t] of [...this.transports]) {
       if (t.peer !== peer) continue;
-      this.transports.delete(id);
+      // Closed while still in the map (as close() does): the link listeners must not see the peer's other transport,
+      // still linked, as its whole link meanwhile.
       t.transport.close();
+      this.transports.delete(id);
+    }
+  }
+
+  /** Whether `peer` has transports and every one of them is linked. */
+  linkUp(peer: MediaPeer): boolean {
+    let any = false;
+    for (const [id, t] of this.transports) {
+      if (t.peer !== peer) continue;
+      if (!this.links.get(id)) return false;
+      any = true;
+    }
+    return any;
+  }
+
+  /** `listener` is called with linkUp(peer)'s new value each time it changes. A listener that throws is skipped. */
+  onLinkChange(listener: (peer: MediaPeer, up: boolean) => void): void {
+    this.linkListeners.push(listener);
+  }
+
+  private linkChanged(peer: MediaPeer): void {
+    // A closing room tells nothing: close() closes its transports while they are still listed, and a dead worker closes
+    // them before their router's close reaches the room.
+    if (this.isClosed || this.router.closed) return;
+    const up = this.linkUp(peer);
+    if (up === this.linkTold[peer]) return;
+    this.linkTold[peer] = up;
+    for (const listener of this.linkListeners) {
+      try {
+        listener(peer, up);
+      } catch {
+        // a listener's failure is its own
+      }
     }
   }
 

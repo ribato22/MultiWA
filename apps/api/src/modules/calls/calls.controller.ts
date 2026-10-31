@@ -7,7 +7,9 @@ import { CallsService } from './calls.service';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
@@ -37,6 +39,14 @@ export class CallsController {
   @ApiOperation({ summary: 'Open call follow-ups across the organization' })
   openCount(@Request() req: any) {
     return this.service.openCount(req.user.organizationId);
+  }
+
+  @Get('media/status')
+  @UseGuards(RolesGuard)
+  @Roles('owner', 'admin')
+  @ApiOperation({ summary: 'Readiness of answering calls in the dashboard: the media server and every profile of the organization' })
+  mediaStatus(@Request() req: any) {
+    return this.service.mediaStatus(req.user.organizationId);
   }
 
   @Get(':id')

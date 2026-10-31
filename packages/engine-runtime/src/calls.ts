@@ -38,6 +38,12 @@ export interface CallRecord {
   assignedUserId: string | null;
   autoReplySentAt: Date | null;
   conversationId: string | null;
+  /** Answered in the dashboard: the claim, then the answering agent (see the calls schema). */
+  answeredByUserId?: string | null;
+  answeredAt?: Date | null;
+  endedBy?: string | null;
+  endReason?: string | null;
+  talkSeconds?: number | null;
   metadata?: unknown;
 }
 
@@ -114,6 +120,13 @@ export function toCallPayload(row: CallRecord): Record<string, unknown> {
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
     followUp: row.followUp,
     assignedUserId: row.assignedUserId,
+    // Before the answer the column holds a claim, and the call may end unanswered (missed, answered on the phone)
+    // while an agent's audio is still connecting: a claimer is not an answerer.
+    answeredByUserId: row.outcome === 'answered' ? row.answeredByUserId ?? null : null,
+    answeredAt: row.answeredAt ? row.answeredAt.toISOString() : null,
+    endedBy: row.endedBy ?? null,
+    endReason: row.endReason ?? null,
+    talkSeconds: row.talkSeconds ?? null,
   };
 }
 

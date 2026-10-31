@@ -220,6 +220,17 @@ describe('the engine call callbacks', () => {
     expect(deps).toMatchObject({ profileId: P, settings: null });
   });
 
+  it('hands every call signal of its engines to the call coordinator, after the runtime got it', async () => {
+    const { config, eventEmitter } = await connect();
+    config.onCall!({ id: 'W1', from: '628111000111@c.us', isVideo: false, isGroup: false });
+    config.onCall!({ id: 'W1', from: '', isVideo: false, isGroup: false, state: 'ended' });
+    expect(runtime.handleEngineCall).toHaveBeenCalledTimes(2);
+    expect(eventEmitter.emit).toHaveBeenCalledWith('internal.calls.engine_signal', { profileId: P, waCallId: 'W1', state: 'ringing' });
+    expect(eventEmitter.emit).toHaveBeenCalledWith('internal.calls.engine_signal', { profileId: P, waCallId: 'W1', state: 'ended' });
+    const firstSignal = eventEmitter.emit.mock.calls.findIndex(([event]) => event === 'internal.calls.engine_signal');
+    expect(runtime.handleEngineCall.mock.invocationCallOrder[0]).toBeLessThan(eventEmitter.emit.mock.invocationCallOrder[firstSignal]);
+  });
+
   it('a runtime that fails is logged, and never throws or rejects into the adapter', async () => {
     const { config, warn } = await connect();
     runtime.handleEngineCall.mockRejectedValueOnce(new Error('boom'));

@@ -31,6 +31,9 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `QUIET_ALARM_TIMEZONE` | ❌ | `Asia/Jakarta` | Time zone of that window |
 | `CALL_RING_TIMEOUT_MS` | ❌ | `90000` | A call still ringing after this long is closed as `unknown` |
 | `CALL_LOG_GRACE_MS` | ❌ | `60000` | How long a call that stopped ringing as `unknown` waits for WhatsApp's call log before the team is told about an unanswered call |
+| `CALLS_MEDIA_ENABLED` | ❌ | `false` | Answering calls in the dashboard: the media server's switch |
+| `CALLS_MEDIA_ANNOUNCED_ADDRESS` | with `CALLS_MEDIA_ENABLED` | - | The address agents' browsers reach the media port on |
+| `CALLS_MAX_TALK_MINUTES` | ❌ | `120` | A call answered in the dashboard is hung up after this long |
 
 ---
 
@@ -346,6 +349,58 @@ CALL_LOG_GRACE_MS=60000
 ```
 
 The timers live in memory. When the engine host starts, every call still `ringing` is closed as `unknown` at once, whatever its age, and no `call.ended` webhook is sent for it. It stays `unknown`, since an engine passes on only the call log of a call it saw ringing since it last connected.
+
+---
+
+## Calls answered in the dashboard
+
+Agents can answer a profile's incoming calls in the dashboard (`PUT /profiles/:id/calls-settings`) through a media server in the API. It runs only where the API hosts the engines (`ENGINE_HOST=api`). The stock Compose files pass these settings to the API, except the last two (add those to the `environment:` of the API service); publish the media port by adding `docker-compose.calls-media.yml`.
+
+### `CALLS_MEDIA_ENABLED`
+**Optional** | `true` / `false` | Default: `false`
+
+The server switch. Off, the media server never starts and no profile can turn dashboard answering on. Changing it needs an API restart.
+
+### `CALLS_MEDIA_PORT`
+**Optional** | Port | Default: `40000`
+
+The one UDP+TCP port of all call audio. Agents' PCs must reach it (UDP preferred, TCP as the fallback).
+
+### `CALLS_MEDIA_ANNOUNCED_ADDRESS`
+**Required when `CALLS_MEDIA_ENABLED=true`** | IP address or host name
+
+The address agents' browsers reach the media port on, e.g. the server's LAN address. The API does not start without it.
+
+### `CALLS_MEDIA_LISTEN_IP`
+**Optional** | IPv4 address | Default: the first external interface
+
+The local address the media server listens on. Set it when the host has several interfaces or the API uses host networking.
+
+### `CALLS_MEDIA_ICE_SERVERS`
+**Optional** | JSON
+
+ICE servers for agents' browsers, e.g. a TURN server for agents outside the LAN: `[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]`.
+
+### `CALLS_MAX_TALK_MINUTES`
+**Optional** | Number (minutes) | Default: `120`
+
+A call answered in the dashboard is hung up after this long (`endReason: time_limit`).
+
+### `CALLS_CONNECT_TIMEOUT_MS`
+**Optional** | Number (milliseconds) | Default: `10000`
+
+From an agent's Answer to its audio connected. Past it the answer is undone and the call rings again for every agent, unless WhatsApp was already answering it: it is hung up then.
+
+### `CALLS_AGENT_GRACE_MS`
+**Optional** | Number (milliseconds) | Default: `15000`
+
+An agent whose browser has no connection to the API, or whose audio link is down, for this long is hung up (`endReason: agent_lost`). A reloaded agent page rejoins its call within it. The WhatsApp Web page's own audio link down for as long ends the call too (`endReason: media_failed`).
+
+```env
+CALLS_MEDIA_ENABLED=true
+CALLS_MEDIA_ANNOUNCED_ADDRESS=192.0.2.10
+CALLS_MAX_TALK_MINUTES=120
+```
 
 ---
 

@@ -23,6 +23,7 @@ const ACTION_MAP: Record<string, AuditAction | string> = {
   'ProfilesController.delete': AuditAction.PROFILE_DELETE,
   'ProfilesController.connect': AuditAction.PROFILE_CONNECT,
   'ProfilesController.disconnect': AuditAction.PROFILE_DISCONNECT,
+  'ProfileCallsController.updateCallSettings': 'profile.calls_settings',
   
   // Messages
   'MessagesController.send': AuditAction.MESSAGE_SEND,
@@ -140,6 +141,7 @@ export class AuditInterceptor implements NestInterceptor {
     if (body.type) metadata.type = body.type;
     if (body.profileId) metadata.profileId = body.profileId;
     if (body.triggerType) metadata.triggerType = body.triggerType;
+    if (typeof body.answerInDashboard === 'boolean') metadata.answerInDashboard = body.answerInDashboard;
     if (params.id) metadata.targetId = params.id;
     
     // User info

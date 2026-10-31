@@ -11,6 +11,7 @@ import { Cron } from '@nestjs/schedule';
 import { prisma } from '@multiwa/database';
 import { MessagesService } from './messages.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
+import { sendOpsAlert } from './ops-alert';
 import { activeMinutesBetween, parseActiveWindow, quietAlarmText, quietRecoveredText, windowLabel, type ActiveWindow } from './quiet-profile';
 
 type QuietSettings = { quietAlarmHours?: number | null; quietAlarmNotify?: string[] };
@@ -28,15 +29,7 @@ interface ProfileRow {
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
-// The send gate's 429 keeps its reason in the body ({ error: 'REPEAT_SUPPRESSED', ... }) and its .message is only "Http Exception".
-// `message` goes first: Nest bodies carry both ({ message: 'Invalid recipient: ...', error: 'Bad Request' }) and the message is the useful one.
-const reason = (e: any) => {
-  const body = typeof e?.getResponse === 'function' ? e.getResponse() : e?.message;
-  return clean(typeof body === 'string' ? body : body?.message ?? body?.error ?? JSON.stringify(body));
-};
 const latest = (a: Date | null, b: Date | null) => (a && b ? (a > b ? a : b) : a ?? b);
-// Digits of a number or JID ("+62 812-3456-789", "62812…@s.whatsapp.net"). A local 08… counts as 628…, the way normalizeJid sends it.
-const digits = (s: unknown) => String(s).replace(/@.*$/, '').replace(/\D/g, '').replace(/^0/, '62');
 
 @Injectable()
 export class QuietProfileCron {
@@ -144,27 +137,14 @@ export class QuietProfileCron {
       this.logger.warn(`Quiet-profile bell for ${p.id} failed: ${clean((e as Error).message)}`);
     }
 
-    const to = Array.isArray(settings.quietAlarmNotify) ? settings.quietAlarmNotify : [];
-    if (!to.length) return;
-    const sender = await prisma.profile.findFirst({
-      where: { id: { not: p.id }, status: 'connected', quietAlarmAt: null, workspace: { organizationId: orgId } },
-      orderBy: { createdAt: 'asc' },
-      select: { id: true },
+    await sendOpsAlert(this.messagesService, this.logger, {
+      what: `Quiet-profile alarm for ${p.id}`,
+      organizationId: orgId,
+      excludeProfileId: p.id,
+      // An alarm sent to the quiet profile's own number would arrive as an incoming message and close its own alarm.
+      ownPhone: p.phoneNumber,
+      recipients: settings.quietAlarmNotify,
+      text,
     });
-    if (!sender) {
-      this.logger.warn(`Quiet-profile alarm for ${p.id}: no other connected profile to send it through, bell only`);
-      return;
-    }
-    // An alarm sent to the quiet profile's own number would arrive as an incoming message and close its own alarm.
-    const own = p.phoneNumber ? digits(p.phoneNumber) : '';
-    for (const recipient of to) {
-      if (own && digits(recipient) === own) continue;
-      try {
-        const res = await this.messagesService.sendText({ profileId: sender.id, to: recipient, text });
-        if (res?.success === false) this.logger.warn(`Quiet-profile alarm for ${p.id} not sent through ${sender.id}: ${clean(res.error ?? 'failed')}`);
-      } catch (e) {
-        this.logger.warn(`Quiet-profile alarm for ${p.id} not sent through ${sender.id}: ${reason(e)}`);
-      }
-    }
   }
 }

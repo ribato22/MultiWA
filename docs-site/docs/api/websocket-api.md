@@ -23,9 +23,9 @@ Credentials go in the handshake, as one of:
 - **JWT** — the `accessToken` from `POST /api/v1/auth/login`: `auth: { token }`, an `Authorization: Bearer <token>` header, or `?token=`.
 - **API key** — `auth: { apiKey }`, an `X-API-Key` header, or `?apiKey=`.
 
-The user must be active and an API key must not have expired. API-key scopes are not checked here: any valid key of the organization can listen.
+The user must be active, a JWT's login session must still be live (as on the REST API, logging out or revoking the session ends it), and an API key must not have expired. API-key scopes are not checked here: any valid key of the organization can listen.
 
-A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one.
+A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one. Its session is checked again every minute: a JWT socket whose session was logged out, revoked or has expired, or whose user was deactivated, is disconnected the same way, so a revoked device stops receiving calls within a minute.
 
 ---
 
@@ -51,6 +51,7 @@ A joined socket receives every event of that profile; there is no per-event filt
 | `message` | An incoming message was stored | `{ type: "message:received", message, conversation }` |
 | `message:ack` | WhatsApp reports a new status for an outgoing message | `{ profileId, messageId, status }` |
 | `call:update` | An incoming call rings, is rejected or ends, or its outcome, follow-up or assignee changes | The call, plus `profileId` |
+| `call:ringing`, `call:claimed`, `call:active`, `call:ended`, `call:availability` | Calls answered in the dashboard (below) | See below |
 
 ### qr:update
 
@@ -109,6 +110,25 @@ Incoming messages only; what you send is not echoed. `message` is the stored mes
 ### call:update
 
 The call with the same fields as the `data` of the [`call.*` webhooks](<webhook-events.md#call-events>) (`callId`, `from`, `outcome`, `followUp`, …), plus `profileId`. It is sent on every change, so keep the newest one per `callId`.
+
+### Calls answered in the dashboard
+
+When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), its incoming calls ring the agents online on `/ws`: every active owner, admin and member of its organization who is available and not on a call. These events go to all of an agent's sockets, whatever profiles they subscribed to. Every command is acked `{ ok: true, … }` or `{ ok: false, reason }`; besides each command's own reasons, any command can answer `error` (it failed on the server). `not_allowed` means the login may not take calls, or not this one: an API key, a viewer, an inactive user, a session that was logged out or revoked, a call of another organization. `not_in_call` means the call is not, or no longer, yours. Calls are answered in the dashboard: only dashboard logins (JWT) are rung, count as online, and may send these commands. A socket on an API key gets none of these events, and its commands are refused.
+
+| Direction | Event | Payload / ack |
+|---|---|---|
+| server → agent | `call:ringing` | `{ callId, profileId, profileName, caller: { name, number }, startedAt, answerable, unavailableReason? }`. `answerable: false`: answer on the phone; `unavailableReason` says why |
+| server → agent | `call:claimed` | `{ callId, byUserId, byUserName }`: an agent took the call. Sent to every agent it rang, that one included (their other tabs stop ringing too): compare `byUserId` with your own |
+| server → agent | `call:ended` | `{ callId, outcome }` when the call stopped ringing; for the agent's own call `{ callId, endedBy, endReason, talkSeconds }`, or `{ callId, endReason }` (`media_failed` or `cancelled`) when it ended before its audio connected |
+| server → agent | `call:active` | `{ callId, answeredAt }`: the agent is on the call |
+| server → agent | `call:availability` | `{ available }`, to all of the agent's tabs when it changes |
+| client → server | `call:answer` | `{ callId }` → `{ ok: true, callId, callerProducerId, iceServers }`, or a reason: `not_allowed`, `not_ringing`, `already_claimed`, `busy`, `media_unavailable`, `media_failed` |
+| client → server | `call:media` | `{ callId, op, … }`, mediasoup signalling (`rtpCapabilities`, `createTransport`, `connectTransport`, `produce`, `consume`, `resumeConsumer`, `closeConsumer`) → `{ ok: true, result }`, or a reason: `not_allowed`, `not_in_call`, `media_error` (with `message`) |
+| client → server | `call:rejoin` | `{ callId }` after a page reload → `{ ok: true, callId, callerProducerId, iceServers }`, or a reason: `not_allowed`, `not_in_call`, `media_failed` |
+| client → server | `call:hangup` | `{ callId }` → `{ ok: true }`, or a reason: `not_allowed`, `not_in_call` |
+| client → server | `call:availability` | `{ available? }` → `{ ok: true, available }`; without `available` it only reads the state (for a new tab). Or `not_allowed`, or `invalid` when `available` is given and is not a boolean |
+
+The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`).
 
 ---
 

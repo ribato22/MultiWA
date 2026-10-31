@@ -98,6 +98,7 @@ model User {
   notifications       Notification[]
   assignedConversations Conversation[] @relation("AssignedAgent")
   assignedCalls         Call[]         @relation("AssignedCalls")
+  answeredCalls         Call[]         @relation("AnsweredCalls")
   sessions            Session[]
   refreshTokens       RefreshToken[]
   pushSubscriptions   PushSubscription[]
@@ -227,12 +228,19 @@ model Call {
   isVideo         Boolean   @default(false)
   isGroup         Boolean   @default(false)
   direction       String    @default("incoming")  // incoming | outgoing (phase 2)
-  outcome         String    @default("ringing")   // ringing | missed | rejected | answered_elsewhere | unknown
+  outcome         String    @default("ringing")   // ringing | answered | missed | rejected | answered_elsewhere | unknown
   rejectedBy      String?                         // auto | agent | device
   startedAt       DateTime  @default(now())
-  endedAt         DateTime?                       // when it stopped ringing
+  endedAt         DateTime?                       // when it stopped ringing; for an answered call, when the conversation ended
   followUp        String    @default("open")      // open | in_progress | done
   assignedUserId  String?
+  // Answered in the dashboard (phase 2). answeredByUserId is the claim while the agent's audio connects (released to
+  // null when that fails) and the answering agent once outcome = answered.
+  answeredByUserId String?
+  answeredAt       DateTime?
+  endedBy          String?                        // agent | caller | server
+  endReason        String?                        // hangup | caller_hangup | agent_lost | media_failed | time_limit | server_restart
+  talkSeconds      Int?
   autoReplySentAt DateTime?
   conversationId  String?
   metadata        Json      @default("{}")        // lidJid, source, callLogMessageId, callLinks
@@ -241,12 +249,14 @@ model Call {
 
   profile      Profile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
   assignedUser User?         @relation("AssignedCalls", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  answeredBy   User?         @relation("AnsweredCalls", fields: [answeredByUserId], references: [id], onDelete: SetNull)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   @@unique([profileId, waCallId])
   @@index([profileId, startedAt])
   @@index([profileId, followUp, startedAt])
   @@index([profileId, fromJid, startedAt])
+  @@index([profileId, outcome, startedAt])
   @@map("calls")
 }
 

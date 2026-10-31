@@ -44,8 +44,9 @@ MultiWA generates the signing secret itself; a `secret` field in the request is 
 | `connection.ready` | WhatsApp connected |
 | `connection.disconnected` | WhatsApp disconnected |
 | `call.received` | An incoming call started ringing |
+| `call.answered` | An agent answered a ringing call in the dashboard |
 | `call.rejected` | A ringing call was rejected: automatically, by an agent, or on the phone |
-| `call.ended` | A ringing call stopped ringing without being rejected: missed, answered on another device, or unknown |
+| `call.ended` | A ringing call stopped ringing without being rejected (missed, answered on another device, or unknown), or a call answered in the dashboard ended |
 | `call.updated` | The call changed after that: its outcome was settled later, or its follow-up status or assignee changed |
 
 ---
@@ -69,7 +70,7 @@ MultiWA generates the signing secret itself; a `secret` field in the request is 
 
 ### Call events
 
-An incoming WhatsApp call produces `call.received`, `call.rejected`, `call.ended` and `call.updated`; subscribe to them by name, like any other event. All four carry the same `data`: the call as it stands when the event is sent.
+An incoming WhatsApp call produces `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated`; subscribe to them by name, like any other event. All five carry the same `data`: the call as it stands when the event is sent.
 
 ```json
 {
@@ -89,7 +90,12 @@ An incoming WhatsApp call produces `call.received`, `call.rejected`, `call.ended
     "startedAt": "2026-10-26T03:00:00.000Z",
     "endedAt": "2026-10-26T03:00:31.000Z",
     "followUp": "open",
-    "assignedUserId": null
+    "assignedUserId": null,
+    "answeredByUserId": null,
+    "answeredAt": null,
+    "endedBy": null,
+    "endReason": null,
+    "talkSeconds": null
   }
 }
 ```
@@ -101,17 +107,23 @@ An incoming WhatsApp call produces `call.received`, `call.rejected`, `call.ended
 | `from` | The caller as a chat JID, in the form MultiWA stores chats under: `<number>@s.whatsapp.net` (never `@c.us`), or `<id>@lid` when WhatsApp hides the number and it could not be resolved |
 | `isVideo`, `isGroup` | Video call; group call |
 | `direction` | Always `incoming` |
-| `outcome` | `ringing`; `missed`; `rejected`; `answered_elsewhere` (answered on another device of the account); `unknown` (it stopped ringing and the engine could not tell how) |
+| `outcome` | `ringing`; `answered` (answered in the dashboard); `missed`; `rejected`; `answered_elsewhere` (answered on another device of the account); `unknown` (it stopped ringing and the engine could not tell how) |
 | `rejectedBy` | Who rejected the call: `auto` (the profile's auto-reject), `agent` (the API or the Calls page), `device` (the phone). `null` unless `outcome` is `rejected` |
 | `startedAt`, `endedAt` | ISO 8601; `endedAt` is `null` while the call rings |
-| `followUp` | `open` (the default), `in_progress` or `done`. An `open` call becomes `done` by itself once it is known to have been answered on another device |
+| `followUp` | `open` (the default), `in_progress` or `done`. An `open` call becomes `done` by itself once it is answered in the dashboard or known to have been answered on another device |
 | `assignedUserId` | The user the call is assigned to, or `null` |
+| `answeredByUserId` | The agent who answered the call in the dashboard, or `null` |
+| `answeredAt` | When WhatsApp connected that agent (ISO 8601), or `null` |
+| `endedBy` | For a call answered in the dashboard: `agent`, `caller` or `server`; else `null` |
+| `endReason` | For a call answered in the dashboard: `hangup`, `caller_hangup`, `agent_lost`, `media_failed`, `time_limit` or `server_restart`; else `null` |
+| `talkSeconds` | For a call answered in the dashboard: its talk time in seconds; else `null` |
 
 **When each event is sent**
 
 - `call.received`: a call started ringing (`outcome` is `ringing`).
+- `call.answered`: an agent answered the call in the dashboard (`outcome` is `answered`).
 - `call.rejected`: a ringing call was rejected.
-- `call.ended`: a ringing call stopped ringing without being rejected; `outcome` is `missed`, `answered_elsewhere` or `unknown`. A call still ringing after `CALL_RING_TIMEOUT_MS` (90 seconds by default) ends as `unknown`.
+- `call.ended`: a ringing call stopped ringing without being rejected; `outcome` is `missed`, `answered_elsewhere` or `unknown`. A call still ringing after `CALL_RING_TIMEOUT_MS` (90 seconds by default) ends as `unknown`. For a call answered in the dashboard it comes when the call is over, with `endedBy`, `endReason` and `talkSeconds`.
 - `call.updated`: any change after that. WhatsApp's call log settles an `unknown` outcome (to `missed`, `rejected` or `answered_elsewhere`), or the follow-up status or the assignee changes, through the API or the Calls page. An agent's reply or call link also moves `open` to `in_progress`.
 
 What the engine reports decides which event carries the final outcome (see [Engine Abstraction](./06-engine-abstraction.md#calls)), so read `outcome` rather than the event name:
@@ -119,10 +131,11 @@ What the engine reports decides which event carries the final outcome (see [Engi
 - Auto-rejected: `call.received`, then `call.rejected` with `rejectedBy: "auto"`.
 - Missed on whatsapp-web.js, which cannot tell how a call ended: `call.received`, `call.ended` with `outcome: "unknown"`, and moments later `call.updated` with `outcome: "missed"`, once WhatsApp's call log arrives.
 - Missed on Baileys: `call.received`, then `call.ended` with `outcome: "missed"` when the call rang out. A caller who hangs up first ends as `unknown`, and Baileys reports no call log to settle it.
+- Answered in the dashboard: `call.received`, `call.answered`, then `call.ended` with `outcome: "answered"` when it is over. A restart of MultiWA ends it with `endReason: "server_restart"`: a normal stop sends its `call.ended` as it shuts down, with the talk time up to then; a crash leaves it to the next start, which sends it with `talkSeconds: null` (unknown).
 
 A call still ringing when MultiWA restarts skips part of this: it is closed as `unknown` at the next start, without a `call.ended`, and stays `unknown`, since an engine passes on only the call log of a call it saw ringing since it last connected.
 
-**Deduplicating.** A delivery is retried when your endpoint fails or times out, and call events carry no event id, so the same event can arrive twice. A call gets at most one `call.received` and at most one of `call.rejected` and `call.ended`, so `callId` plus the event name identifies those. `call.updated` can follow several times for one call, even with the same `outcome` (a follow-up or assignee change), so do not deduplicate it on `outcome`. Every event carries the whole call: keep the newest, and read `GET /calls/:id` when the order matters, since a retried delivery can arrive after a later event of the same call.
+**Deduplicating.** A delivery is retried when your endpoint fails or times out, and call events carry no event id, so the same event can arrive twice. A call gets at most one `call.received`, at most one `call.answered`, and at most one of `call.rejected` and `call.ended`, so `callId` plus the event name identifies those. `call.updated` can follow several times for one call, even with the same `outcome` (a follow-up or assignee change), so do not deduplicate it on `outcome`. Every event carries the whole call: keep the newest, and read `GET /calls/:id` when the order matters, since a retried delivery can arrive after a later event of the same call.
 
 ---
 
