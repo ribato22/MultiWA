@@ -126,6 +126,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/profiles` | Create profile |
 | `GET` | `/profiles/:id` | Get profile |
 | `PUT` | `/profiles/:id` | Update profile |
+| `PUT` | `/profiles/:id/calls-settings` | Turn answering the profile's calls in the dashboard on or off (`answerInDashboard`); owner or admin; 409 with `reasons` when the profile is not ready |
 | `DELETE` | `/profiles/:id` | Delete profile |
 | `POST` | `/profiles/:id/connect` | Start WhatsApp connection |
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
@@ -228,12 +229,13 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Calls (`/calls`)
 
-Incoming WhatsApp calls, recorded per profile and published as the `call.received`, `call.rejected`, `call.ended` and `call.updated` [webhook events](<webhook-events.md>).
+Incoming WhatsApp calls, recorded per profile and published as the `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated` [webhook events](<webhook-events.md>).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/calls` | List calls of a profile, newest first (`profileId` required; filters `outcome`, `followUp`, `from` (caller JID or phone number, e.g. `628111000111`), `since` (ISO 8601 date); paging `limit` 1-100, `cursor`) |
 | `GET` | `/calls/open-count` | Open call follow-ups across the org |
+| `GET` | `/calls/media/status` | Readiness of answering calls in the dashboard: the media server and every profile of the organization (owner or admin) |
 | `GET` | `/calls/:id` | Get a call |
 | `PATCH` | `/calls/:id` | Update the follow-up status (`open`, `in_progress`, `done`) or the assignee |
 | `POST` | `/calls/:id/reject` | Reject a call that is still ringing |

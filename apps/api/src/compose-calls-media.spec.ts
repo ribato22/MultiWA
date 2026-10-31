@@ -20,6 +20,7 @@ describe.each(['docker-compose.yml', 'docker-compose.production.yml', 'docker-co
     for (const name of SETTINGS) expect(api, name).toMatch(new RegExp(`^ +${name}: \\$\\{${name}:-`, 'm'));
     expect(api).toMatch(/CALLS_MEDIA_ENABLED: \$\{CALLS_MEDIA_ENABLED:-false\}/);
     expect(api).toMatch(/CALLS_MEDIA_PORT: \$\{CALLS_MEDIA_PORT:-40000\}/);
+    expect(api).toMatch(/CALLS_MAX_TALK_MINUTES: \$\{CALLS_MAX_TALK_MINUTES:-120\}/);
   });
 
   it('does not publish the media port: docker-compose.calls-media.yml does, on request', () => {

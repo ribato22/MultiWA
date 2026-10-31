@@ -224,7 +224,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Calls (`/calls`)
 
-Incoming WhatsApp calls, recorded per profile and published as the `call.received`, `call.rejected`, `call.ended` and `call.updated` [webhook events](./09-webhook-events.md).
+Incoming WhatsApp calls, recorded per profile and published as the `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated` [webhook events](./09-webhook-events.md).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

@@ -51,6 +51,7 @@ A joined socket receives every event of that profile; there is no per-event filt
 | `message` | An incoming message was stored | `{ type: "message:received", message, conversation }` |
 | `message:ack` | WhatsApp reports a new status for an outgoing message | `{ profileId, messageId, status }` |
 | `call:update` | An incoming call rings, is rejected or ends, or its outcome, follow-up or assignee changes | The call, plus `profileId` |
+| `call:ringing`, `call:claimed`, `call:active`, `call:ended`, `call:availability` | Calls answered in the dashboard (below) | See below |
 
 ### qr:update
 
@@ -109,6 +110,25 @@ Incoming messages only; what you send is not echoed. `message` is the stored mes
 ### call:update
 
 The call with the same fields as the `data` of the [`call.*` webhooks](<webhook-events.md#call-events>) (`callId`, `from`, `outcome`, `followUp`, …), plus `profileId`. It is sent on every change, so keep the newest one per `callId`.
+
+### Calls answered in the dashboard
+
+When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), its incoming calls ring the agents online on `/ws`: every active owner, admin and member of its organization who is available and not on a call. These events go to all of an agent's sockets, whatever profiles they subscribed to. Every command is acked `{ ok: true, … }` or `{ ok: false, reason }`. Calls are answered in the dashboard: only dashboard logins (JWT) are rung, count as online, and may send these commands. A socket on an API key gets none of these events, and its commands are refused.
+
+| Direction | Event | Payload / ack |
+|---|---|---|
+| server → agent | `call:ringing` | `{ callId, profileId, profileName, caller: { name, number }, startedAt, answerable, unavailableReason? }`. `answerable: false`: answer on the phone; `unavailableReason` says why |
+| server → agent | `call:claimed` | `{ callId, byUserId, byUserName }`: another agent answered |
+| server → agent | `call:ended` | `{ callId, outcome }` when the call stopped ringing; for the agent's own call `{ callId, endedBy, endReason, talkSeconds }`, or `{ callId, endReason }` (`media_failed` or `cancelled`) when it ended before its audio connected |
+| server → agent | `call:active` | `{ callId, answeredAt }`: the agent is on the call |
+| server → agent | `call:availability` | `{ available }`, to all of the agent's tabs when it changes |
+| client → server | `call:answer` | `{ callId }` → `{ ok: true, callId, callerProducerId, iceServers }`, or a reason: `not_allowed`, `not_ringing`, `already_claimed`, `busy`, `media_unavailable`, `media_failed` |
+| client → server | `call:media` | `{ callId, op, … }`, mediasoup signalling (`rtpCapabilities`, `createTransport`, `connectTransport`, `produce`, `consume`, `resumeConsumer`, `closeConsumer`) → `{ ok: true, result }`, or a reason: `not_allowed`, `not_in_call`, `media_error` (with `message`) |
+| client → server | `call:rejoin` | `{ callId }` after a page reload → like `call:answer` |
+| client → server | `call:hangup` | `{ callId }` → `{ ok: true }` |
+| client → server | `call:availability` | `{ available }` → `{ ok: true, available }` |
+
+The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`).
 
 ---
 
