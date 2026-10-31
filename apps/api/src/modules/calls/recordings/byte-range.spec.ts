@@ -12,6 +12,7 @@ describe('parseByteRange', () => {
     ['bytes=-5000', { start: 0, end: 999 }],
     ['bytes=999-999', { start: 999, end: 999 }],
     [' bytes=0-0 ', { start: 0, end: 0 }],
+    ['Bytes=0-1', { start: 0, end: 1 }], // range units are case-insensitive (§14.1)
   ])('%s of 1000 bytes', (header, range) => {
     expect(parseByteRange(header, 1000)).toEqual(range);
   });

@@ -11,7 +11,8 @@ export interface ByteRange {
   end: number;
 }
 
-const SINGLE = /^bytes=(\d*)-(\d*)$/;
+// Range units are case-insensitive (§14.1): `Bytes=0-1` is the same request.
+const SINGLE = /^bytes=(\d*)-(\d*)$/i;
 
 export function parseByteRange(header: string | undefined, size: number): ByteRange | 'unsatisfiable' | null {
   const m = header ? SINGLE.exec(header.trim()) : null;

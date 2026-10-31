@@ -22,16 +22,20 @@ export interface AnnouncementAudio {
 // The container and codec as music-metadata names them, for the formats Chromium decodes.
 const FORMATS: Array<{ container: RegExp; codec: RegExp; mimeType: string; ext: string }> = [
   { container: /^MPEG$/, codec: /^MPEG [0-9.]+ Layer 3$/, mimeType: 'audio/mpeg', ext: 'mp3' },
-  { container: /^WAVE$/, codec: /^PCM$/, mimeType: 'audio/wav', ext: 'wav' },
+  // A-law has no name of its own there. WAVE_FORMAT_EXTENSIBLE (`non-PCM (65534)`, ffmpeg's 24-bit) keeps its codec
+  // in a GUID music-metadata does not read, so it stays refused.
+  { container: /^WAVE$/, codec: /^(PCM|IEEE_FLOAT|non-PCM \(6\))$/, mimeType: 'audio/wav', ext: 'wav' },
   { container: /^Ogg$/, codec: /^(Opus|Vorbis I)$/, mimeType: 'audio/ogg', ext: 'ogg' },
   { container: /^EBML\/webm$/, codec: /^(OPUS|VORBIS)$/, mimeType: 'audio/webm', ext: 'webm' },
-  { container: /^M4A\//, codec: /^MPEG-4\/AAC$/, mimeType: 'audio/mp4', ext: 'm4a' },
+  // An MP4's container is its ftyp brands, whatever the major one (ffmpeg's `-f mp4` writes isom/iso2/mp41). Matroska,
+  // ASF and AIFF-C copy their codec name from the file, so one of them could call itself MPEG-4/AAC: not those.
+  { container: /^(?!EBML\/|ASF\/|AIFF)./, codec: /^MPEG-4\/AAC$/, mimeType: 'audio/mp4', ext: 'm4a' },
 ];
 
 export async function inspectAnnouncement(file: Buffer): Promise<AnnouncementAudio> {
   const format = await parseBuffer(file, undefined, { duration: true, skipCovers: true }).then((m) => m.format, () => null);
   const match = format && FORMATS.find((f) => f.container.test(format.container ?? '') && f.codec.test(format.codec ?? ''));
-  if (!format || !match) throw new UnsupportedMediaTypeException('The announcement must be an mp3, wav, ogg, webm or m4a audio file');
+  if (!format || !match) throw new UnsupportedMediaTypeException('The announcement must be an mp3, wav (PCM, float or A-law), ogg, webm or m4a audio file');
   const seconds = format.duration;
   if (!seconds || !Number.isFinite(seconds)) {
     throw new UnprocessableEntityException('The file does not say how long it is (a browser recording, for one): export it again as mp3, ogg or wav');
