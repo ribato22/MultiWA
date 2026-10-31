@@ -48,8 +48,12 @@ export async function sendOpsAlert(messages: Pick<MessagesService, 'sendText'>, 
     return;
   }
   const own = alert.ownPhone ? digits(alert.ownPhone) : '';
+  // The numbers come as typed: one phone entered as 628…, +62 8… and 08… (on two profiles, or twice) is sent to once.
+  const sent = new Set<string>();
   for (const recipient of to) {
-    if (own && digits(recipient) === own) continue;
+    const phone = digits(recipient);
+    if ((own && phone === own) || sent.has(phone)) continue;
+    sent.add(phone);
     try {
       const res = await messages.sendText({ profileId: sender.id, to: recipient, text: alert.text });
       if (res?.success === false) logger.warn(`${alert.what} not sent through ${sender.id}: ${clean(res.error ?? 'failed')}`);

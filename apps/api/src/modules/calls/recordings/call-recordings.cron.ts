@@ -3,9 +3,9 @@
 //
 // At 02:30 server time (the process's TZ): the storage's privacy check, then retention, then the orphan sweep. Each
 // step on its own, so one failing does not skip the others; every step is idempotent, so a second api process doing
-// the same is harmless. Any check that finds the storage public, this job's or an admin's turning recording on, turns
-// recording off on every profile and alerts the admins: the probe's own bytes came back without credentials, so it is
-// never a fluke.
+// the same is harmless for the data, though each process sends its own alerts. Any check that finds the storage
+// public, this job's or an admin's turning recording on, turns recording off on every profile and alerts the admins:
+// the probe's own bytes came back without credentials, so it is never a fluke.
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';
@@ -51,11 +51,24 @@ export class CallRecordingsCron {
     if (payload?.result !== 'not_private') return;
     try {
       const turnedOff = await turnRecordingOffEverywhere();
+      // Before the alert: should it fail, the next check turns nothing off, and only this line says which profiles
+      // lost recording.
+      if (turnedOff.length) {
+        this.logger.warn(`The call recordings storage serves its files without credentials: recording was turned off for ${clean(turnedOff.join(', '))}`);
+      }
       const now = Date.now();
       if (!turnedOff.length && now - this.lastPublicAlertAt < PUBLIC_ALERT_EVERY_MS) return;
+      const previous = this.lastPublicAlertAt;
       this.lastPublicAlertAt = now;
-      const { stored } = await this.recordings.profilesConcerned();
-      await this.alerts.recordingStorage('not_private', [...new Set([...turnedOff, ...stored])], turnedOff);
+      try {
+        const { stored } = await this.recordings.profilesConcerned();
+        await this.alerts.recordingStorage('not_private', [...new Set([...turnedOff, ...stored])], turnedOff);
+      } catch (e) {
+        // An alert that failed starts no window, so the next check alerts. Only if the mark is still this one's: a
+        // check that alerted meanwhile keeps its window.
+        if (this.lastPublicAlertAt === now) this.lastPublicAlertAt = previous;
+        throw e;
+      }
     } catch (e) {
       this.logger.error(`The reaction to a public call recordings storage failed: ${clean((e as Error)?.message ?? e)}`);
     }
