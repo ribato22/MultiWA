@@ -1,5 +1,5 @@
 // The call coordinator with fakes all around it (the store, the media server and room, the page's bridge, the gateway,
-// the bus): who is rung and when banners close; the claim and the connecting (Task 10); every way a call ends (Task 11).
+// the bus): who is rung and when banners close; the claim and the connecting; every way a call ends.
 // The real media path, sockets and two browsers are in call-session.integration.spec.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -428,5 +428,132 @@ describe("CallSessionService: the agent's media and Hang up", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'time_limit', expect.any(Date));
     expect(h.media.hangUp).toHaveBeenCalledWith('W1');
+  });
+});
+
+describe('CallSessionService: the caller, the engine and the media server end calls too', () => {
+  it('the caller hangs up: the call ends as caller_hangup, and nothing hangs it up again', async () => {
+    const h = harness();
+    await answered(h);
+    await h.service.onEngineSignal({ profileId: 'p1', waCallId: 'W1', state: 'ringing' });
+    await h.service.onEngineSignal({ profileId: 'p1', waCallId: 'OTHER', state: 'ended' });
+    expect(S.markEnded).not.toHaveBeenCalled();
+    await h.service.onEngineSignal({ profileId: 'p1', waCallId: 'W1', state: 'ended' });
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'caller', 'caller_hangup', expect.any(Date));
+    expect(h.media.hangUp).not.toHaveBeenCalled();
+    expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+  });
+
+  it('the caller gives up while the audio connects: undone and released, and it does not ring again', async () => {
+    const h = harness();
+    await h.service.answer(as('u1'), 'c1');
+    const rings = h.sent('call:ringing').length;
+    await h.service.onEngineSignal({ profileId: 'p1', waCallId: 'W1', state: 'ended' });
+    expect(S.releaseClaim).toHaveBeenCalledWith('c1', 'u1');
+    expect(h.sent('call:ringing')).toHaveLength(rings);
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it("the media server's worker dies: a call is ended (media_failed, worker_died), one still connecting rings again, the admins are told of the cut call", async () => {
+    const h = harness();
+    h.service.onModuleInit();
+    await answered(h);
+    S.findCallForAnswer.mockResolvedValue(ringing({ id: 'c2', waCallId: 'W2' }));
+    expect(await h.service.answer(as('u2'), 'c2')).toMatchObject({ ok: true });
+    h.callMedia.events.emit('worker-died', ['c1', 'c2']);
+    await vi.waitFor(() => expect(h.alerts.workerDied).toHaveBeenCalledWith(['p1'], expect.any(Date)));
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'media_failed', reason: 'worker_died' });
+    expect(S.releaseClaim).toHaveBeenCalledWith('c2', 'u2');
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it("the profile's WhatsApp disconnects: its call ends (media_failed, engine_lost); other profiles' calls go on", async () => {
+    const h = harness();
+    await answered(h);
+    await h.service.onProfileDisconnected({ profileId: 'p2' });
+    expect(h.service.activeSessionCount()).toBe(1);
+    await h.service.onProfileDisconnected({ profileId: 'p1' });
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
+    expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'media_failed', reason: 'engine_lost' });
+  });
+
+  it('shutdown: an answered call is stored as ended (server_restart) without a hang-up; a claim is given back', async () => {
+    const h = harness();
+    await answered(h);
+    S.findCallForAnswer.mockResolvedValue(ringing({ id: 'c2', waCallId: 'W2' }));
+    await h.service.answer(as('u2'), 'c2');
+    await h.service.onModuleDestroy();
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'server_restart', expect.any(Date));
+    expect(h.media.hangUp).not.toHaveBeenCalled();
+    expect(S.releaseClaim).toHaveBeenCalledWith('c2', 'u2');
+  });
+});
+
+describe('CallSessionService: an agent lost, and back', () => {
+  it('no socket for the whole grace: hung up as agent_lost; a socket back within it cancels', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await answered(h);
+    h.online.delete('u1');
+    h.service.onUserOffline({ userId: 'u1' });
+    await vi.advanceTimersByTimeAsync(14_000);
+    h.online.add('u1');
+    h.service.onUserOnline({ userId: 'u1' });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(S.markEnded).not.toHaveBeenCalled();
+    h.online.delete('u1');
+    h.service.onUserOffline({ userId: 'u1' });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'agent_lost', expect.any(Date));
+    expect(h.media.hangUp).toHaveBeenCalledWith('W1');
+    expect(vi.getTimerCount()).toBe(0); // the talk-time cap went with the call
+  });
+
+  it("the agent's media link down for the grace ends the call; back within it cancels; while either is lost the grace runs on", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await answered(h);
+    const link = (up: boolean) => {
+      for (const l of h.links) l('agent', up);
+    };
+    link(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    link(true);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(S.markEnded).not.toHaveBeenCalled();
+    link(false);
+    h.online.delete('u1');
+    h.service.onUserOffline({ userId: 'u1' });
+    link(true); // the sockets are still gone
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'agent_lost', expect.any(Date));
+  });
+
+  it('a reloaded page rejoins: off the microphone, its transports closed, back on once it produces and listens again', async () => {
+    const h = harness();
+    await answered(h);
+    expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({
+      ok: true, callId: 'c1', callerProducerId: 'caller-producer', iceServers: [{ urls: 'stun:stun.example.com:3478' }],
+    });
+    expect(h.handle.disconnectAgent).toHaveBeenCalled();
+    expect(h.room.closePeer).toHaveBeenCalledWith('agent');
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't2', kind: 'audio', rtpParameters: {} });
+    expect(h.handle.connectAgent).toHaveBeenCalledTimes(1); // not before it listens again
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-2' });
+    await vi.waitFor(() => expect(h.handle.connectAgent).toHaveBeenLastCalledWith('agent-producer-2'));
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
+  });
+
+  it("rejoin: a page that already let its bridge go is fine; another failure ends the call; only one's own call", async () => {
+    const h = harness();
+    await answered(h);
+    expect(await h.service.rejoin(as('u2'), 'c1')).toEqual({ ok: false, reason: 'not_in_call' });
+    h.handle.disconnectAgent.mockRejectedValueOnce(new Error('No media bridge for this call'));
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true });
+    h.handle.disconnectAgent.mockRejectedValueOnce(new Error('Target closed'));
+    expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_failed' });
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
   });
 });

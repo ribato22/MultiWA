@@ -9,7 +9,7 @@
 // failure: every end hangs up what WhatsApp still holds, closes the media, and stores who ended it and why.
 // Sessions live in this process, with the engines and the media server they use: a restart ends them, and the next
 // boot closes their rows.
-import { Inject, Injectable, Logger, OnModuleInit, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, forwardRef } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { prisma } from '@multiwa/database';
 import { AppEvents, REALTIME_EMITTER, type RealtimeEmitter } from '@multiwa/core';
@@ -20,7 +20,7 @@ import { EventsGateway, type SocketPrincipal } from '../../events/events.gateway
 import { AuditService } from '../../audit/audit.service';
 import { CallMediaService } from '../media/call-media.service';
 import type { CallMediaRoom } from '../media/call-media-room';
-import { InternalEvents, type CallMediaFailureReason, type CallsSessionPayload, type WsUserPayload } from '../../../metrics/internal-events';
+import { InternalEvents, type CallEngineSignalPayload, type CallMediaFailureReason, type CallsSessionPayload, type WsUserPayload } from '../../../metrics/internal-events';
 import { isWorkerEngine } from '../../../common/engine-host';
 import { checkReadiness, type CallReadiness } from './call-readiness';
 import { CallAlerts } from './call-alerts';
@@ -99,7 +99,7 @@ interface Session {
 }
 
 @Injectable()
-export class CallSessionService implements OnModuleInit {
+export class CallSessionService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(CallSessionService.name);
   private readonly timing = readCallTimings();
   /** The calls being answered (connecting or talking), by calls row id. */
@@ -120,6 +120,8 @@ export class CallSessionService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    // The rooms a dead worker carried are gone: their calls end (or ring again while connecting), and the admins are told.
+    this.callMedia.events.on('worker-died', (callIds: string[]) => void this.onWorkerDied(callIds));
     // Not awaited: a slow calls table must not hold the boot. It runs before the app listens, so before any command.
     reconcileAfterRestart(new Date())
       .then(({ ended, released }) => {
@@ -128,6 +130,13 @@ export class CallSessionService implements OnModuleInit {
         if (ended.length || released) this.logger.log(`Calls of the previous process: ${ended.length} answered call(s) ended, ${released} claim(s) released`);
       })
       .catch((e) => this.logger.warn(`Call reconciliation failed: ${message(e)}`));
+  }
+
+  /** Shutdown: the engines and the media server go with the process. Answered calls are stored as ended, claims given back. */
+  async onModuleDestroy(): Promise<void> {
+    await Promise.all(
+      [...this.sessions.values()].map((s) => (s.phase === 'connecting' ? this.stopConnecting(s, { reRing: false }) : this.end(s, 'server', 'server_restart'))),
+    );
   }
 
   /** Sessions in progress, connecting or talking. */
@@ -221,6 +230,33 @@ export class CallSessionService implements OnModuleInit {
     return { ok: true };
   }
 
+  /**
+   * A reloaded agent page joins its call again: the old agent goes off the microphone and its transports are closed,
+   * and the reply carries what the page needs to produce anew. Once it has produced and listens, it is back on.
+   */
+  async rejoin(principal: SocketPrincipal, callId: unknown): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
+    const own = await this.ownSession(principal, callId);
+    if (!own.ok) return own;
+    const { session } = own;
+    if (session.phase !== 'active' || !session.handle || !session.room) return { ok: false, reason: 'not_in_call' };
+    session.rejoining = true;
+    session.agentProducerId = null;
+    session.agentListening = false;
+    try {
+      await withTimeout(session.handle.disconnectAgent(), AGENT_CONNECT_MS);
+    } catch (e) {
+      // "No media bridge": the page let its bridge go, the call is over and its end is on its way. Anything else broke it.
+      if (!/No media bridge/.test(message(e))) {
+        await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
+        return { ok: false, reason: 'media_failed' };
+      }
+    }
+    session.room.closePeer('agent');
+    session.socketsLost = false; // it is talking to us
+    this.updateGrace(session);
+    return { ok: true, callId: session.callId, callerProducerId: session.handle.callerProducerId, iceServers: this.callMedia.iceServers() };
+  }
+
   @OnEvent(AppEvents.CALL.RECEIVED)
   async onCallReceived(payload: { callId?: unknown }): Promise<void> {
     if (typeof payload?.callId !== 'string') return;
@@ -246,6 +282,32 @@ export class CallSessionService implements OnModuleInit {
   @OnEvent(InternalEvents.WS_USER_OFFLINE)
   onUserOffline(payload: WsUserPayload): void {
     this.unavailable.delete(payload.userId); // available again at their next connect
+    this.setSocketsLost(payload.userId, true);
+  }
+
+  @OnEvent(InternalEvents.WS_USER_ONLINE)
+  onUserOnline(payload: WsUserPayload): void {
+    this.setSocketsLost(payload.userId, false);
+  }
+
+  // The engine's own signals: the caller hung up, or the call stopped ringing while its audio was connecting.
+  @OnEvent(InternalEvents.CALL_ENGINE_SIGNAL)
+  async onEngineSignal(payload: CallEngineSignalPayload): Promise<void> {
+    if (!payload || payload.state === 'ringing') return;
+    const session = [...this.sessions.values()].find((s) => s.profileId === payload.profileId && s.waCallId === payload.waCallId);
+    if (!session) return;
+    if (session.phase === 'connecting') await this.stopConnecting(session, { reRing: false });
+    else await this.end(session, 'caller', 'caller_hangup');
+  }
+
+  // The profile's WhatsApp connection went, and its call with it.
+  @OnEvent(AppEvents.CONNECTION.DISCONNECTED)
+  async onProfileDisconnected(payload: { profileId?: unknown }): Promise<void> {
+    for (const s of [...this.sessions.values()]) {
+      if (s.profileId !== payload?.profileId) continue;
+      if (s.phase === 'connecting') await this.stopConnecting(s, { failure: 'engine_lost', reRing: false });
+      else await this.end(s, 'server', 'media_failed', { failure: 'engine_lost' });
+    }
   }
 
   /** Ring the eligible agents of a ringing call nobody claimed: each banner says whether it can be answered here. */
@@ -331,6 +393,60 @@ export class CallSessionService implements OnModuleInit {
   private agentMaybeReady(session: Session): void {
     if (!session.agentProducerId || !session.agentListening) return;
     if (session.phase === 'connecting') session.ready.resolve(session.agentProducerId);
+    else if (session.phase === 'active' && session.rejoining) void this.reconnectAgent(session, session.agentProducerId);
+  }
+
+  private async reconnectAgent(session: Session, agentProducerId: string): Promise<void> {
+    session.rejoining = false;
+    try {
+      await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
+      if (session.phase === 'active') this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString() });
+    } catch (e) {
+      await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
+    }
+  }
+
+  /** Agent lost: no socket on /ws, or the room's link to the agent down. Either starts the grace; both recovered cancel it. */
+  private watchAgent(session: Session): void {
+    session.room!.onLinkChange((peer, up) => {
+      if (peer !== 'agent') return;
+      session.linkLost = !up;
+      this.updateGrace(session);
+    });
+    session.linkLost = !session.room!.linkUp('agent');
+    session.socketsLost = !this.gateway.isUserOnline(session.userId);
+    this.updateGrace(session);
+  }
+
+  private setSocketsLost(userId: string, lost: boolean): void {
+    for (const s of this.sessions.values()) {
+      if (s.userId !== userId) continue;
+      s.socketsLost = lost;
+      this.updateGrace(s);
+    }
+  }
+
+  private updateGrace(session: Session): void {
+    if (session.phase !== 'active') return;
+    const lost = session.socketsLost || session.linkLost;
+    if (lost && !session.timers.grace) {
+      session.timers.grace = setTimeout(() => void this.end(session, 'server', 'agent_lost'), this.timing.agentGraceMs);
+    } else if (!lost && session.timers.grace) {
+      clearTimeout(session.timers.grace);
+      session.timers.grace = undefined;
+    }
+  }
+
+  /** The media server's worker died with these rooms: their calls end, or ring again while connecting; admins are told. */
+  private async onWorkerDied(callIds: string[]): Promise<void> {
+    const cut = callIds.map((id) => this.sessions.get(id)).filter((s): s is Session => !!s);
+    const talking = cut.filter((s) => s.phase === 'active').map((s) => s.profileId);
+    await Promise.all(
+      cut.map((s) =>
+        s.phase === 'connecting' ? this.stopConnecting(s, { failure: 'worker_died', reRing: true }) : this.end(s, 'server', 'media_failed', { failure: 'worker_died' }),
+      ),
+    );
+    await this.alerts.workerDied(talking, new Date()).catch((e) => this.logger.warn(`The call media alert failed: ${message(e)}`));
   }
 
   /** The connecting after the ack: the agent's audio, WhatsApp's Accept, then caller and agent put together. */
@@ -361,6 +477,7 @@ export class CallSessionService implements OnModuleInit {
         .log({ action: 'call.answer', userId: session.userId, organizationId: session.organizationId, resourceType: 'call', resourceId: session.callId, metadata: { profileId: session.profileId } })
         .catch((e) => this.logger.warn(`The audit of the answer of call ${session.callId} failed: ${message(e)}`));
       session.timers.talk = setTimeout(() => void this.end(session, 'server', 'time_limit'), this.timing.maxTalkMs);
+      this.watchAgent(session);
       failure = 'attach_failed';
       const pick = await withTimeout(session.handle!.attachCaller(), ATTACH_MS, "the caller's audio did not attach in time");
       if (pick.freshCandidates > 1 || pick.fallback) {
