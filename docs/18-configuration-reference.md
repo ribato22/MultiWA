@@ -29,6 +29,8 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `CALLS_MEDIA_ENABLED` | ❌ | `false` | Answering calls in the dashboard: the media server's switch |
 | `CALLS_MEDIA_ANNOUNCED_ADDRESS` | with `CALLS_MEDIA_ENABLED` | - | The address agents' browsers reach the media port on |
 | `CALLS_MAX_TALK_MINUTES` | ❌ | `120` | A call answered in the dashboard is hung up after this long |
+| `CALL_RECORDINGS_STORAGE` | ❌ | `STORAGE_TYPE`, else `local` | Where call recordings go: `local` or `s3` |
+| `CALL_RECORDINGS_PATH` | for local recordings | - (Docker: `/data/call-recordings`) | The directory of local call recordings |
 
 ---
 
@@ -395,6 +397,59 @@ An agent whose browser has no connection to the API, or whose audio link is down
 CALLS_MEDIA_ENABLED=true
 CALLS_MEDIA_ANNOUNCED_ADDRESS=192.0.2.10
 CALLS_MAX_TALK_MINUTES=120
+```
+
+---
+
+## Call recordings
+
+Calls answered in the dashboard can be recorded (`PUT /profiles/:id/calls-settings` with `recording: true`), always after an announcement the caller hears first (`POST /profiles/:id/calls-announcement`). Recordings and announcements are private:
+
+- nothing serves them without the login of an owner or admin of their organization;
+- every play and download is audited;
+- recording cannot be turned on unless the storage refuses reads without credentials. The API checks this then, and again every night at 02:30 server time (`TZ`). When a check finds the storage public (the nightly one, or the one run to turn recording on), recording is turned off on every profile, and every organization with recording on or recordings stored is alerted: its owners and admins get a bell notification, and the [quiet-profile alarm](#quiet-profile-alarm) numbers of its profiles (`quietAlarmNotify`) a WhatsApp message. A nightly check that proves nothing alerts the organizations whose profiles record the same way, and leaves recording on.
+
+The same nightly job deletes the recordings older than each profile's retention period (`retentionDays`, 90 by default). It also deletes the files nothing points at any more (for one, those of a deleted workspace or organization; a deleted profile's files are deleted with it). The stock Compose files pass all five settings below to the API.
+
+### `CALL_RECORDINGS_STORAGE`
+**Optional** | `local` / `s3` | Default: `STORAGE_TYPE`, else `local`
+
+Where recordings go. Media can stay local while recordings go to a bucket, or the other way round. Changing it leaves the recordings already stored behind: this server can neither play nor delete them until it uses that storage again (retention skips them, and the log says how many).
+
+### `CALL_RECORDINGS_PATH`
+**Required for local recordings** | Path | Docker Compose: `/data/call-recordings` (volume `call_recordings`)
+
+A directory of their own, on a persistent volume.
+
+- It must not be inside or around `STORAGE_PATH` (served without a login) or `SESSIONS_DIR` (its backups would carry every recording), nor around the API's working directory (the nightly sweep would walk the whole application).
+- Unset or refused, recording cannot be turned on. `GET /calls/media/status` says why, in `server.recordings.problem`.
+
+### `CALL_RECORDINGS_BUCKET`
+**Optional** | Bucket name | Default: `S3_BUCKET`
+
+- S3 recordings need `S3_ENDPOINT`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`, and use `S3_REGION` (default `us-east-1`).
+- A private bucket of their own is strongly advised. Objects are written without an ACL, so they are as private as the bucket.
+- The check fetches a probe without credentials at `S3_ENDPOINT`, and at `S3_PUBLIC_URL` when it is set (a loopback `S3_PUBLIC_URL`, such as the dev compose's `http://localhost:9000`, is the same server and is not fetched twice). A refusal (`400`, `401`, `403` or `404`) or a page that is not the probe (a login page) passes, the probe's own bytes are `storage_not_private`, and any other answer, or none within 5 seconds, is `storage_check_failed`.
+- The check sees only those addresses. Turn off every other public way to the recordings bucket: a public bucket URL (Cloudflare R2's `r2.dev`, a custom domain) or a CDN that reads the bucket on its own credentials.
+- Keep versioning off on the recordings bucket, or expire noncurrent versions with a lifecycle rule: with versioning on, a deleted recording stays as a noncurrent version.
+- Compatible stores: AWS S3, MinIO, Wasabi, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, and Google Cloud Storage (XML API).
+
+### `CALL_RECORDINGS_PREFIX`
+**Optional** | Key prefix | Default: `call-recordings/`
+
+Letters, digits, `.`, `_`, `-` and `/` only, without a `.` or `..` segment; another value leaves recording unavailable (`server.recordings.problem` says why).
+
+Changing it, the bucket or `CALL_RECORDINGS_PATH` leaves the recordings already stored behind: each recording remembers its location (`s3:<bucket>/<prefix>` or `local:<path>`), and this server neither plays nor deletes one stored elsewhere (retention skips them, and the log says how many). To move them, copy the objects to the new location first, then point their rows at it: `UPDATE call_recordings SET "storageLocation" = '<new>' WHERE "storageLocation" = '<old>';`. Another provider with the same bucket and prefix keeps the same location (the endpoint is not part of it): copy the objects before switching, or deletes and retention would mark rows deleted while their files stay at the old provider.
+
+### `CALL_RECORDINGS_SSE`
+**Optional** | `AES256` / `aws:kms`
+
+Server-side encryption of every object, for stores that support it. Another value leaves recording unavailable.
+
+```env
+CALL_RECORDINGS_STORAGE=s3
+CALL_RECORDINGS_BUCKET=multiwa-call-recordings
+CALL_RECORDINGS_SSE=AES256
 ```
 
 ---

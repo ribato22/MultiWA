@@ -53,6 +53,7 @@ MultiWA generates the signing secret itself; a `secret` field in the request is 
 | `call.rejected` | A ringing call was rejected: automatically, by an agent, or on the phone |
 | `call.ended` | A ringing call stopped ringing without being rejected (missed, answered on another device, or unknown), or a call answered in the dashboard ended |
 | `call.updated` | The call changed after that: its outcome was settled later, or its follow-up status or assignee changed |
+| `call.recording.deleted` | A call's recording was deleted: by an admin, or at the end of its profile's retention period |
 
 ---
 
@@ -141,6 +142,27 @@ What the engine reports decides which event carries the final outcome (see [Engi
 A call still ringing when MultiWA restarts skips part of this: it is closed as `unknown` at the next start, without a `call.ended`, and stays `unknown`, since an engine passes on only the call log of a call it saw ringing since it last connected.
 
 **Deduplicating.** A delivery is retried when your endpoint fails or times out, and call events carry no event id, so the same event can arrive twice. A call gets at most one `call.received`, at most one `call.answered`, and at most one of `call.rejected` and `call.ended`, so `callId` plus the event name identifies those. `call.updated` can follow several times for one call, even with the same `outcome` (a follow-up or assignee change), so do not deduplicate it on `outcome`. Every event carries the whole call: keep the newest, and read `GET /calls/:id` when the order matters, since a retried delivery can arrive after a later event of the same call.
+
+### Call recording events
+
+`call.recording.deleted` names the recording, never its audio (that is fetched through `GET /calls/:id/recording`):
+
+```json
+{
+  "event": "call.recording.deleted",
+  "profileId": "profile-123",
+  "timestamp": "2026-10-31T19:30:02.120Z",
+  "data": {
+    "profileId": "profile-123",
+    "callId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41",
+    "recordingId": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+    "reason": "retention",
+    "deletedAt": "2026-10-31T19:30:02.000Z"
+  }
+}
+```
+
+`reason` is `admin` (`DELETE /calls/:id/recording`) or `retention` (the nightly job, past the profile's `retentionDays`). A recording is deleted once, so `recordingId` identifies the event.
 
 ---
 
