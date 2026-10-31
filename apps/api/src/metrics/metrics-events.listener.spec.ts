@@ -89,6 +89,14 @@ describe('MetricsEventsListener: the dashboard call counters', () => {
     expect(text).toMatch(/multiwa_calls_dashboard_ended_total\{reason="hangup",app="multiwa-api"\} 1/);
   });
 
+  // A nightly check would otherwise create not_private already at 1, and an increase(...) > 0 alert never fires on it.
+  it('exposes every privacy check result at 0 before the first check', async () => {
+    const text = await metrics.registry.metrics();
+    for (const result of ['ok', 'not_private', 'check_failed']) {
+      expect(text).toMatch(new RegExp(`^multiwa_calls_recordings_privacy_checks_total\\{result="${result}",app="multiwa-api"\\} 0$`, 'm'));
+    }
+  });
+
   it('counts the privacy checks of the recordings storage by result', async () => {
     listener.onCallRecordingsPrivacy({ result: 'ok' });
     listener.onCallRecordingsPrivacy({ result: 'not_private' });

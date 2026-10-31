@@ -188,6 +188,9 @@ export class MetricsService {
           registers: [this.registry],
         }),
     );
+    // Every result from 0: a nightly check would otherwise create not_private already at 1, and an increase(...) > 0
+    // alert never fires on that first, most important, one.
+    for (const result of ['ok', 'not_private', 'check_failed'] as const) this.callsRecordingsPrivacyChecksTotal.inc({ result }, 0);
   }
 
   metrics(): Promise<string> {
