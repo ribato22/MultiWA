@@ -800,6 +800,26 @@ describe('CallSessionService: an agent lost, and back', () => {
     expect(h.service.activeSessionCount()).toBe(1);
   });
 
+  it("a rejoin before the first connect still watches the page's link once the new agent is connected", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    h.room.linkUp.mockImplementation((peer: string) => peer !== 'page'); // the page's link never comes up
+    let attached!: () => void;
+    h.handle.attachCaller.mockReturnValueOnce(new Promise((r) => (attached = () => r({ via: 'destination', freshCandidates: 1, fallback: false }))));
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.handle.attachCaller).toHaveBeenCalled());
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true });
+    attached();
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't2', kind: 'audio', rtpParameters: {} });
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-2' });
+    await vi.waitFor(() => expect(h.handle.connectAgent).toHaveBeenCalledWith('agent-producer-2'));
+    expect(S.markEnded).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
+  });
+
   it('the agent rejoins while it is being connected: no call:active for the old producer, one for the new', async () => {
     const h = harness();
     let connected!: () => void;

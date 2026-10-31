@@ -448,6 +448,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     const current = () => session.agentProducerId === agentProducerId && !session.rejoining;
     try {
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
+      // A rejoin before connect's own connectAgent makes this the page's first consume: its link is first read here.
+      if (current()) this.updatePageLink(session, session.room!.linkUp('page'));
       if (session.phase === 'active' && current()) this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString() });
     } catch (e) {
       if (current()) await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
