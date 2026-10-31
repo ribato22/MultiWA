@@ -157,9 +157,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     );
   }
 
-  /** Sessions in progress, connecting or talking. */
-  activeSessionCount(): number {
-    return this.sessions.size;
+  /** Sessions in progress, connecting or talking: the organization's, or every one. */
+  activeSessionCount(organizationId?: string): number {
+    return organizationId ? [...this.sessions.values()].filter((s) => s.organizationId === organizationId).length : this.sessions.size;
   }
 
   /** Whether the profile's calls can be answered in the dashboard now, and why not. */
@@ -171,10 +171,11 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     });
   }
 
-  /** "Available for calls": an unavailable agent is not rung. Their other tabs are told. */
+  /** "Available for calls": an unavailable agent is not rung. Their other tabs are told. Without a value it only reads the state (a new tab). */
   async setAvailability(principal: SocketPrincipal, available: unknown): Promise<CallCommandReply<{ available: boolean }>> {
     const user = await this.agentOf(principal);
     if (!user) return { ok: false, reason: 'not_allowed' };
+    if (available === undefined) return { ok: true, available: !this.unavailable.has(user.id) };
     if (typeof available !== 'boolean') return { ok: false, reason: 'invalid' };
     if (available) this.unavailable.delete(user.id);
     else this.unavailable.add(user.id);
@@ -212,8 +213,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     } finally {
       this.claiming.delete(user.id);
     }
-    const others = [...(this.rung.get(call.id) ?? [])].filter((id) => id !== user.id);
-    this.gateway.emitToUsers(others, 'call:claimed', { callId: call.id, byUserId: user.id, byUserName: user.name });
+    // To everyone it rang, the agent who answered too: their other tabs stop ringing (a banner compares byUserId).
+    this.gateway.emitToUsers([...(this.rung.get(call.id) ?? [])], 'call:claimed', { callId: call.id, byUserId: user.id, byUserName: user.name });
     let handle: CallMediaHandle;
     try {
       const room = await this.callMedia.createRoom(call.id);

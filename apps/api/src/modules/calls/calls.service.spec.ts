@@ -14,6 +14,7 @@ vi.mock('@multiwa/database', () => ({
     conversation: { findFirst: vi.fn() },
     profile: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     user: { findFirst: vi.fn() },
+    $executeRaw: vi.fn(),
   },
 }));
 vi.mock('../profiles/engine-manager.service', () => ({ EngineManagerService: class {} }));
@@ -85,6 +86,7 @@ beforeEach(() => {
   db.conversation.findFirst.mockReset();
   for (const m of Object.values(db.profile)) (m as any).mockReset();
   db.user.findFirst.mockReset();
+  db.$executeRaw.mockReset().mockResolvedValue(1); // the rows it changed
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -196,6 +198,33 @@ describe('CallsService.get', () => {
   it('404 for a missing call', async () => {
     db.call.findUnique.mockResolvedValue(null);
     await expect(make().svc.get('nope')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+// Until the call is answered, its answeredByUserId holds a claim: an agent whose audio is still connecting, on a call
+// that can still end unanswered. As in the call payloads, a response names the agent of an answered call only.
+describe('CallsService: who answered a call', () => {
+  const BUDI = { id: 'u2', name: 'Budi' };
+  const claimed = (over: Record<string, unknown> = {}) => row({ outcome: 'ringing', answeredByUserId: 'u2', answeredBy: BUDI, ...over });
+
+  it('GET /calls/:id and GET /calls name nobody for a call still being connected, and the agent of an answered call', async () => {
+    const { svc } = make();
+    db.call.findUnique.mockResolvedValueOnce(claimed()).mockResolvedValueOnce(claimed({ outcome: 'answered' }));
+    expect(await svc.get('c1')).toMatchObject({ outcome: 'ringing', answeredByUserId: null, answeredBy: null });
+    expect(await svc.get('c1')).toMatchObject({ outcome: 'answered', answeredByUserId: 'u2', answeredBy: BUDI });
+    db.call.findMany.mockResolvedValue([claimed({ id: 'a' }), claimed({ id: 'b', outcome: 'answered' }), claimed({ id: 'c', outcome: 'missed' })]);
+    const { calls } = await svc.list({ profileId: 'p1' });
+    expect(calls.map((c: any) => [c.id, c.answeredByUserId, c.answeredBy])).toEqual([['a', null, null], ['b', 'u2', BUDI], ['c', null, null]]);
+  });
+
+  it.each([
+    ['PATCH /calls/:id', (svc: CallsService) => svc.update('c1', { followUp: 'done' })],
+    ['POST /calls/:id/reply', (svc: CallsService) => svc.reply('c1', 'x').then((r) => r.call)],
+    ['POST /calls/:id/call-link', (svc: CallsService) => svc.sendCallLink('c1', 'voice').then((r) => r.call)],
+  ])('%s answers with the call, naming nobody while it is being connected', async (_route, run) => {
+    db.call.findUnique.mockResolvedValue(claimed());
+    db.call.update.mockResolvedValue(claimed({ followUp: 'in_progress' }));
+    expect(await run(make().svc)).toMatchObject({ answeredByUserId: null, answeredBy: null });
   });
 });
 
@@ -820,38 +849,54 @@ describe('CallsService: dashboard answering settings and status', () => {
       status: 409,
       response: { message: 'Answering calls in the dashboard is not available for this profile', reasons: ['media_disabled', 'profile_not_connected'] },
     });
+    expect(db.$executeRaw).not.toHaveBeenCalled();
     expect(db.profile.update).not.toHaveBeenCalled();
   });
 
-  it('turns it on for a ready profile and off at any time, keeping the other settings', async () => {
+  // The settings JSON is shared with PUT /profiles/:id, and the readiness check can take seconds (the page probe): the
+  // toggle writes its own key alone, in one statement, never the whole JSON as it was read before the check.
+  it('turns it on for a ready profile and off at any time, writing its own key alone', async () => {
+    const SET_KEY = "UPDATE profiles SET settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('callsAnswerInDashboard', ?::boolean) WHERE id = ?";
     const { svc, sessions } = make();
     db.profile.findUnique.mockResolvedValue({ settings: { autoRejectCalls: false, quietAlarmHours: 2 } });
     expect(await svc.updateCallSettings('p1', { answerInDashboard: true })).toEqual({ profileId: 'p1', answerInDashboard: true });
-    expect(db.profile.update).toHaveBeenLastCalledWith({ where: { id: 'p1' }, data: { settings: { autoRejectCalls: false, quietAlarmHours: 2, callsAnswerInDashboard: true } } });
+    expect(sessions.readiness).toHaveBeenCalledWith('p1', { autoRejectCalls: false, quietAlarmHours: 2 });
     sessions.readiness.mockClear();
     expect(await svc.updateCallSettings('p1', { answerInDashboard: false })).toEqual({ profileId: 'p1', answerInDashboard: false });
     expect(sessions.readiness).not.toHaveBeenCalled(); // off needs no readiness
+    expect(db.$executeRaw.mock.calls.map(([sql, ...values]: any[]) => [sql.join('?'), values])).toEqual([
+      [SET_KEY, [true, 'p1']],
+      [SET_KEY, [false, 'p1']],
+    ]);
+    expect(db.profile.update).not.toHaveBeenCalled();
   });
 
-  it('an unknown profile is 404', async () => {
+  it('an unknown profile is 404, also one deleted while it was checked', async () => {
     const { svc } = make();
     db.profile.findUnique.mockResolvedValue(null);
     await expect(svc.updateCallSettings('nope', { answerInDashboard: false })).rejects.toMatchObject({ status: 404 });
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    db.profile.findUnique.mockResolvedValue({ settings: {} });
+    db.$executeRaw.mockResolvedValue(0); // no row to change
+    await expect(svc.updateCallSettings('p1', { answerInDashboard: true })).rejects.toMatchObject({ status: 404 });
   });
 
-  it("status: the media server's, and each profile of the organization with its readiness", async () => {
-    const { svc } = make();
+  // The media server is shared by every organization: its rooms (every tenant's calls) are not shown, and the sessions
+  // in progress are the organization's own.
+  it("status: the media server's, the organization's calls being answered, and each of its profiles with its readiness", async () => {
+    const { svc, sessions } = make();
     db.profile.findMany.mockResolvedValue([
       { id: 'p1', displayName: 'Line 1', settings: { callsAnswerInDashboard: true } },
       { id: 'p2', displayName: null, settings: {} },
     ]);
     expect(await svc.mediaStatus('o1')).toEqual({
-      server: { enabled: true, worker: 'up', port: 40000, activeRooms: 1, engineHost: 'api', activeSessions: 1 },
+      server: { enabled: true, worker: 'up', port: 40000, engineHost: 'api', activeSessions: 1 },
       profiles: [
         { profileId: 'p1', name: 'Line 1', answerInDashboard: true, ready: true, reasons: [] },
         { profileId: 'p2', name: 'p2', answerInDashboard: false, ready: true, reasons: [] },
       ],
     });
+    expect(sessions.activeSessionCount).toHaveBeenCalledWith('o1');
     expect(db.profile.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspace: { organizationId: 'o1' } } }));
   });
 

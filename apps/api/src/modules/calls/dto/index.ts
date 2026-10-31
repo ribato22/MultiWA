@@ -107,6 +107,8 @@ export class UpdateCallSettingsDto {
       "Ring the organization's agents in the dashboard when this profile gets a call, and let them answer it there. " +
       'Turning it on needs the profile to be ready (409 with the reasons otherwise).',
   })
+  // The value as sent: the API-wide pipe converts implicitly, and Boolean('false') is true.
+  @Transform(({ obj, key }) => obj[key])
   @IsBoolean()
   answerInDashboard: boolean;
 }

@@ -3,7 +3,7 @@
 // the request DTOs as the API-wide ValidationPipe applies them (the options of app.factory.ts), and the
 // hand-over to the service. The service itself is pinned by calls.service.spec.ts.
 import 'reflect-metadata';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { BadRequestException, RequestMethod, ValidationPipe, type ArgumentMetadata, type Type } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 
@@ -17,7 +17,7 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { API_KEY_SCOPE } from '../auth/decorators/require-scope.decorator';
 import { CallsController } from './calls.controller';
-import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './dto';
+import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto, UpdateCallSettingsDto } from './dto';
 
 const proto: any = CallsController.prototype;
 const BY_ID: TenantCheck = { from: 'param', key: 'id', resource: 'call' };
@@ -234,5 +234,25 @@ describe('POST /calls/:id/call-link body', () => {
     await refused(body(CallLinkDto, {}), 'type');
     await refused(body(CallLinkDto, { type: 'audio' }), 'type');
     await refused(body(CallLinkDto, { type: 'voice', text: 'x'.repeat(4097) }), 'text');
+  });
+});
+
+// Turning answering on lets agents talk to the callers: only a real boolean may do it. The API-wide pipe converts
+// implicitly, and Boolean('false') is true.
+describe('PUT /profiles/:id/calls-settings body', () => {
+  // The property's type, as tsc emits it in the app (emitDecoratorMetadata). The specs' transform emits none, and
+  // without it the pipe would convert nothing here.
+  beforeAll(() => Reflect.defineMetadata('design:type', Boolean, UpdateCallSettingsDto.prototype, 'answerInDashboard'));
+
+  it.each([true, false])('takes %s', async (answerInDashboard) => {
+    expect(await body(UpdateCallSettingsDto, { answerInDashboard })).toEqual({ answerInDashboard });
+  });
+
+  it.each(['false', 'true', 0, 1, null])('400 for %j, never read as a boolean', async (answerInDashboard) => {
+    await refused(body(UpdateCallSettingsDto, { answerInDashboard }), 'answerInDashboard');
+  });
+
+  it('400 without it', async () => {
+    await refused(body(UpdateCallSettingsDto, {}), 'answerInDashboard');
   });
 });

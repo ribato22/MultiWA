@@ -1,7 +1,8 @@
-// The call settings are owner/admin only, and tenant-checked on the profile.
+// The call settings are owner/admin only, tenant-checked on the profile, and audited.
 import 'reflect-metadata';
 import { describe, it, expect, vi } from 'vitest';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { lastValueFrom, of } from 'rxjs';
 
 vi.mock('./calls.service', () => ({ CallsService: class {} }));
 
@@ -11,6 +12,7 @@ import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { TENANT_CHECK } from '../../common/tenant/require-tenant.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
+import { AuditInterceptor } from '../audit/audit.interceptor';
 import { ProfileCallsController } from './profile-calls.controller';
 import { CallsController } from './calls.controller';
 
@@ -24,6 +26,26 @@ describe('call settings and status routes', () => {
     const calls = { updateCallSettings: vi.fn().mockResolvedValue({ profileId: 'p1', answerInDashboard: true }) };
     expect(await new ProfileCallsController(calls as any).updateCallSettings('p1', { answerInDashboard: true })).toEqual({ profileId: 'p1', answerInDashboard: true });
     expect(calls.updateCallSettings).toHaveBeenCalledWith('p1', { answerInDashboard: true });
+  });
+
+  it('PUT /profiles/:id/calls-settings is audited as profile.calls_settings, with the value it set', async () => {
+    const audit = { log: vi.fn().mockResolvedValue(undefined) };
+    const put = (body: unknown) => {
+      const req = { method: 'PUT', params: { id: 'p1' }, body, user: { id: 'u1', organizationId: 'o1' }, headers: {} };
+      const context = {
+        switchToHttp: () => ({ getRequest: () => req }),
+        getClass: () => ProfileCallsController,
+        getHandler: () => ProfileCallsController.prototype.updateCallSettings,
+      };
+      return lastValueFrom(new AuditInterceptor(audit as any).intercept(context as any, { handle: () => of({ profileId: 'p1' }) }));
+    };
+    await put({ answerInDashboard: false });
+    expect(audit.log).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: 'profile.calls_settings', userId: 'u1', organizationId: 'o1', resourceId: 'p1',
+      metadata: { answerInDashboard: false, targetId: 'p1', status: 'success' },
+    }));
+    await put({ answerInDashboard: 'yes' }); // not a value it can set (the pipe refuses it)
+    expect(audit.log.mock.lastCall![0].metadata).toEqual({ targetId: 'p1', status: 'success' });
   });
 
   it('GET /calls/media/status: owner and admin only, scoped by their organization', () => {

@@ -87,7 +87,7 @@ export const WebhookEvents = {
   [AppEvents.CALL.RECEIVED]: 'Incoming call started ringing',
   [AppEvents.CALL.ANSWERED]: 'Incoming call answered by an agent in the dashboard',
   [AppEvents.CALL.REJECTED]: 'Incoming call rejected (automatically, by an agent, or on the phone)',
-  [AppEvents.CALL.ENDED]: 'Incoming call stopped ringing without being rejected (missed, or answered on another device)',
+  [AppEvents.CALL.ENDED]: 'Incoming call stopped ringing without being rejected (missed, or answered on another device), or a call answered in the dashboard ended',
   [AppEvents.CALL.UPDATED]: 'Call changed after it stopped ringing (late outcome, follow-up or assignee)',
 
   // Other

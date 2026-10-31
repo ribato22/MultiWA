@@ -2,11 +2,12 @@
 // answered, also for an unauthenticated socket or a command that throws.
 import 'reflect-metadata';
 import { describe, it, expect, vi } from 'vitest';
-import { MESSAGE_METADATA } from '@nestjs/websockets/constants';
+import { GATEWAY_OPTIONS, MESSAGE_METADATA } from '@nestjs/websockets/constants';
 
 vi.mock('./coordinator/call-session.service', () => ({ CallSessionService: class {} }));
-vi.mock('../events/events.gateway', () => ({ EventsGateway: class {}, WS_GATEWAY_OPTIONS: { namespace: '/ws' } }));
+vi.mock('@multiwa/database', () => ({ prisma: {} }));
 
+import { EventsGateway, WS_GATEWAY_OPTIONS } from '../events/events.gateway';
 import { CallsGateway } from './calls.gateway';
 
 const principal = { userId: 'u1', organizationId: 'o1' };
@@ -24,6 +25,14 @@ function make(auth: unknown = principal) {
 }
 
 describe('CallsGateway', () => {
+  // Nest binds a gateway to the namespace of its options: both on /ws, the commands reach the sockets EventsGateway
+  // authenticated, and the coordinator's emits reach the agents.
+  it('shares /ws with EventsGateway: both declare the same options', () => {
+    expect(Reflect.getMetadata(GATEWAY_OPTIONS, CallsGateway)).toBe(WS_GATEWAY_OPTIONS);
+    expect(Reflect.getMetadata(GATEWAY_OPTIONS, EventsGateway)).toBe(WS_GATEWAY_OPTIONS);
+    expect(WS_GATEWAY_OPTIONS.namespace).toBe('/ws');
+  });
+
   it('subscribes the five call commands', () => {
     const proto = CallsGateway.prototype as any;
     expect(['answer', 'media', 'rejoin', 'hangup', 'availability'].map((m) => Reflect.getMetadata(MESSAGE_METADATA, proto[m]))).toEqual([

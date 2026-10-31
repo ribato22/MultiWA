@@ -3,6 +3,9 @@
 // The real media path, sockets and two browsers are in call-session.integration.spec.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { EVENT_LISTENER_METADATA } from '@nestjs/event-emitter/dist/constants';
+import { AppEvents } from '@multiwa/core';
+import { InternalEvents } from '../../../metrics/internal-events';
 
 vi.mock('@multiwa/database', () => ({ prisma: { user: { findUnique: vi.fn(), findMany: vi.fn() }, session: { findUnique: vi.fn() } } }));
 vi.mock('./call-session-store', () => ({
@@ -233,6 +236,16 @@ describe('CallSessionService: availability', () => {
     expect(await h.service.setAvailability(as('u1', ['*']), false)).toEqual({ ok: false, reason: 'not_allowed' });
     expect(await h.service.setAvailability(as('u1'), true)).toEqual({ ok: true, available: true });
     expect(await h.service.setAvailability(as('u1'), 'no')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await h.service.setAvailability(as('u1'), null)).toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('without a value it reads the state, for a new tab, and tells the other tabs nothing', async () => {
+    const h = harness();
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: true });
+    await h.service.setAvailability(as('u2'), false);
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: false });
+    expect(h.sent('call:availability')).toEqual([{ to: ['u2'], payload: { available: false } }]); // the change only
+    expect(await h.service.setAvailability(as('u3'), undefined)).toEqual({ ok: false, reason: 'not_allowed' });
   });
 });
 
@@ -245,6 +258,27 @@ describe('CallSessionService: banners', () => {
     h.service.onCallChanged({ callId: 'c1', outcome: 'answered_elsewhere' });
     h.service.onCallChanged({ callId: 'c1', outcome: 'missed' });
     expect(h.sent('call:ended')).toEqual([{ to: ['u1', 'u2'], payload: { callId: 'c1', outcome: 'answered_elsewhere' } }]);
+  });
+});
+
+describe('CallSessionService: the Nest wiring', () => {
+  // Nest's event-emitter module subscribes the handlers that carry @OnEvent: a handler without it is never called.
+  it('each handler listens to its own events, and no other method listens to any', () => {
+    const proto = CallSessionService.prototype as any;
+    const listening = Object.fromEntries(
+      Object.getOwnPropertyNames(proto)
+        .map((name): [string, Array<{ event: string }> | undefined] => [name, Reflect.getMetadata(EVENT_LISTENER_METADATA, proto[name])])
+        .filter(([, listeners]) => listeners)
+        .map(([name, listeners]) => [name, listeners!.map((l) => l.event).sort()]),
+    );
+    expect(listening).toEqual({
+      onCallReceived: [AppEvents.CALL.RECEIVED],
+      onCallChanged: [AppEvents.CALL.ENDED, AppEvents.CALL.REJECTED, AppEvents.CALL.UPDATED].sort(),
+      onUserOffline: [InternalEvents.WS_USER_OFFLINE],
+      onUserOnline: [InternalEvents.WS_USER_ONLINE],
+      onEngineSignal: [InternalEvents.CALL_ENGINE_SIGNAL],
+      onProfileDisconnected: [AppEvents.CONNECTION.DISCONNECTED],
+    });
   });
 });
 
@@ -274,7 +308,7 @@ describe('CallSessionService: boot and settings', () => {
 });
 
 describe('CallSessionService: answering', () => {
-  it('claims the call, opens its room and the page bridge, acks what the browser needs; the others are told who answered', async () => {
+  it('claims the call, opens its room and the page bridge, acks what the browser needs; everyone it rang is told who answered', async () => {
     const h = harness();
     await h.service.onCallReceived({ callId: 'c1' }); // rings u1 and u2
     expect(await h.service.answer(as('u1'), 'c1')).toEqual({
@@ -283,7 +317,8 @@ describe('CallSessionService: answering', () => {
     expect(S.claimCall).toHaveBeenCalledWith('c1', 'u1');
     expect(h.callMedia.createRoom).toHaveBeenCalledWith('c1');
     expect(h.media.startCallMedia).toHaveBeenCalledWith('W1', expect.anything()); // the ENGINE's call id
-    expect(h.sent('call:claimed')).toEqual([{ to: ['u2'], payload: { callId: 'c1', byUserId: 'u1', byUserName: 'Ana' } }]);
+    // Every user it rang, the one who answered too: their other tabs stop ringing (a banner compares byUserId).
+    expect(h.sent('call:claimed')).toEqual([{ to: ['u1', 'u2'], payload: { callId: 'c1', byUserId: 'u1', byUserName: 'Ana' } }]);
     expect(h.media.answer).not.toHaveBeenCalled(); // not before the agent's audio is ready
     expect(h.service.activeSessionCount()).toBe(1);
   });
@@ -335,6 +370,15 @@ describe('CallSessionService: answering', () => {
     ]);
     expect(S.claimCall.mock.calls).toEqual([['c1', 'u1']]);
     expect(h.service.activeSessionCount()).toBe(1);
+  });
+
+  it("counts the sessions in progress of one organization, or of all", async () => {
+    const h = harness();
+    await h.service.answer(as('u1'), 'c1');
+    const other = ringing({ id: 'c2', waCallId: 'W2', profileId: 'p2' });
+    S.findCallForAnswer.mockResolvedValueOnce({ ...other, profile: { ...other.profile, id: 'p2', organizationId: 'o2' } });
+    expect(await h.service.answer(as('u4'), 'c2')).toMatchObject({ ok: true });
+    expect([h.service.activeSessionCount('o1'), h.service.activeSessionCount('o2'), h.service.activeSessionCount('o3'), h.service.activeSessionCount()]).toEqual([1, 1, 0, 2]);
   });
 
   it('WhatsApp gets what is left of the connect budget to answer, never less than a second', async () => {
