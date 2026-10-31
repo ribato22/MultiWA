@@ -321,7 +321,11 @@ export class CallRecordingsService {
    * install without recordings is told nothing.
    */
   private async unreachable(what: string, where: { profileId?: string } = {}): Promise<void> {
-    const count = await prisma.callRecording.count({ where: { ...where, deletedAt: null } });
+    // The count is for this log line only: a database failing it must not stop a profile's delete.
+    const count = await prisma.callRecording.count({ where: { ...where, deletedAt: null } }).catch((e) => {
+      this.logger.warn(`The call recordings storage is not configured, and ${what} could not count its recordings: ${message(e)}`);
+      return 0;
+    });
     if (count) this.logger.warn(`The call recordings storage is not configured: ${what} cannot reach ${count} recording(s)`);
   }
 

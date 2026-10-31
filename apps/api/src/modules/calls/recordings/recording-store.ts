@@ -17,7 +17,7 @@ import { mkdirSync } from 'fs';
 import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import type { Readable } from 'stream';
-import { HttpException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand, S3Client,
   type GetObjectCommandOutput, type HeadObjectCommandOutput, type ListObjectsV2CommandOutput, type S3ClientConfig,
@@ -94,14 +94,13 @@ const reasonOf = (e: unknown) => String((e as Error)?.message ?? e);
 const notFound = (e: unknown) => (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode === 404;
 
 /**
- * The catch of a store call made for a request: an HttpException passes as it is, and anything else (the storage
- * refusing, timing out, a disk failing) is a 503, not a bare 500: the storage is the problem, and the next try may find
- * it answering. The error goes to the server log only, as it may name the directory or the bucket's address.
+ * The catch of a store call made for a request: the storage refusing, timing out, a disk failing is a 503, not a bare
+ * 500: the storage is the problem, and the next try may find it answering. The error goes to the server log only, as
+ * it may name the directory or the bucket's address.
  */
 export const storageFailed =
   (log: Logger, what: string) =>
   (e: unknown): never => {
-    if (e instanceof HttpException) throw e;
     log.warn(`${what}: the recordings storage failed: ${clean(reasonOf(e))}`);
     throw new ServiceUnavailableException('The recordings storage did not answer; try again');
   };

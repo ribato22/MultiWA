@@ -479,6 +479,14 @@ describe('CallRecordingsService.purgeProfile', () => {
     expect(del).not.toHaveBeenCalled();
     expect(warn.mock.calls).toEqual([[`The call recordings storage is not configured: the purge of profile ${PROFILE} cannot reach 2 recording(s)`]]);
   });
+
+  // The count is for the log line only: a database failing it must not stop the profile's delete.
+  it('with the storage not configured, a count that fails still lets the profile go, the failure logged', async () => {
+    const { service, warn } = make(unconfigured());
+    db.callRecording.count.mockRejectedValueOnce(new Error('pool timeout\nforged'));
+    await expect(service.purgeProfile(PROFILE)).resolves.toBeUndefined();
+    expect(warn.mock.calls).toEqual([[`The call recordings storage is not configured, and the purge of profile ${PROFILE} could not count its recordings: pool timeoutforged`]]);
+  });
 });
 
 describe('CallRecordingsService.applyRetention', () => {
