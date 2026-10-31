@@ -358,12 +358,20 @@ describe('CallRecordingsService.deleteByAdmin', () => {
     expect(audit.log).not.toHaveBeenCalled();
   });
 
-  it('a file that will not delete is left to the nightly sweep: the delete still succeeds', async () => {
-    const { service, store } = make();
+  // The row is claimed, so the recording is deleted for everyone: the admin's audit entry is written all the same.
+  it('a file that will not delete is left to the nightly sweep: the delete still succeeds, audited with the admin', async () => {
+    const { service, store, audit } = make();
+    store.file(KEY);
     vi.spyOn(store, 'delete').mockRejectedValue(new Error('EACCES'));
     db.callRecording.findUnique.mockResolvedValue(rec());
     db.callRecording.updateMany.mockResolvedValue({ count: 1 });
     await expect(service.deleteByAdmin(CALL, ADMIN)).resolves.toMatchObject({ recordingId: 'r1' });
+    expect(store.files.has(KEY)).toBe(true);
+    expect(audit.log).toHaveBeenCalledTimes(1);
+    expect(audit.log).toHaveBeenCalledWith({
+      action: 'call.recording.delete', userId: 'u1', organizationId: ORG, ip: '203.0.113.7', userAgent: 'Mozilla/5.0',
+      resourceType: 'call', resourceId: CALL, metadata: { recordingId: 'r1', profileId: PROFILE, reason: 'admin' },
+    });
   });
 
   it('404 for a call without a live recording', async () => {
