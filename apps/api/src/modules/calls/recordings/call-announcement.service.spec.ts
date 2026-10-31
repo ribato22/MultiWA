@@ -94,7 +94,17 @@ describe('CallAnnouncementService.read', () => {
     db.profile.findUnique.mockResolvedValue(profileWith({ storageKey: KEY, mimeType: 'audio/mpeg', durationSec: 2 }));
     const out = await new CallAnnouncementService(store).read(PROFILE);
     expect(out).toMatchObject({ mimeType: 'audio/mpeg', size: 9 });
-    expect(await text(out.body)).toBe('mp3-bytes');
+    expect(await text(out.body!)).toBe('mp3-bytes');
+  });
+
+  // Up to 2 MB, read only to be dropped.
+  it('for a HEAD, its type and size, and nothing read', async () => {
+    const store = new MemoryRecordingStore();
+    store.file(KEY, 'mp3-bytes');
+    const read = vi.spyOn(store, 'read');
+    db.profile.findUnique.mockResolvedValue(profileWith({ storageKey: KEY, mimeType: 'audio/mpeg', durationSec: 2 }));
+    expect(await new CallAnnouncementService(store).read(PROFILE, true)).toEqual({ mimeType: 'audio/mpeg', size: 9, body: null });
+    expect(read).not.toHaveBeenCalled();
   });
 
   it("404 for none, for a missing file, and for a key that is not the profile's own", async () => {

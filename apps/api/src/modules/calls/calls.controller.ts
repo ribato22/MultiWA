@@ -4,6 +4,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
+import { PassThrough } from 'stream';
 import { CallsService } from './calls.service';
 import { CallRecordingsService, type RecordingReader } from './recordings/call-recordings.service';
 import { AuditService } from '../audit/audit.service';
@@ -118,12 +119,12 @@ export class CallsController {
   @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server, or the access could not be audited: nothing is sent' })
   @ApiNotFound('Recording')
   async recording(@Param('id') id: string, @Query('download') download: string | undefined, @Request() req: any, @Res() reply: FastifyReply): Promise<void> {
-    const playback = await this.recordings.play(id, readerOf(req), req.headers?.range, download === '1' || download === 'true');
-    // Fastify answers a HEAD with this handler, so play() has audited it: a HEAD asks for the recording too. Fastify reads
-    // the body it is handed to the end only to drop it (on S3, the whole download); destroyed, it is dropped unread and
-    // the headers stay the GET's. An empty body instead would make Fastify answer Content-Length: 0.
-    if (req.method === 'HEAD') playback.body?.destroy();
-    reply.code(playback.status).headers(playback.headers).send(playback.body ?? '');
+    // Fastify answers a HEAD with this handler. A HEAD asks for the recording too: play() checks, sizes and audits it as
+    // a GET, and reads none of it. Handed a stream, Fastify keeps the headers as they are, the GET's Content-Length and
+    // Content-Range (an empty body would make it answer Content-Length: 0), and one already destroyed it drops unread.
+    const head = req.method === 'HEAD';
+    const playback = await this.recordings.play(id, readerOf(req), req.headers?.range, download === '1' || download === 'true', head);
+    reply.code(playback.status).headers(playback.headers).send(head ? new PassThrough().destroy() : playback.body ?? '');
   }
 
   @Delete(':id/recording')

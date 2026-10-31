@@ -50,6 +50,7 @@ export type RecordingDeleteReason = 'admin' | 'retention';
 export interface Playback {
   status: 200 | 206 | 416;
   headers: Record<string, string>;
+  /** None for a 416, and for a HEAD. */
   body: Readable | null;
 }
 
@@ -127,8 +128,12 @@ export class CallRecordingsService {
     return reasons;
   }
 
-  /** A call's recording for playback or a download: the audit first, then the bytes (or one range of them). */
-  async play(callId: string, actor: RecordingReader, rangeHeader: string | undefined, download: boolean): Promise<Playback> {
+  /**
+   * A call's recording for playback or a download: the audit first, then the bytes (or one range of them). A HEAD asks
+   * for the recording too, so it is checked, sized and audited all the same, but nothing is read: on S3 a GetObject
+   * opened only to be dropped would have its connection aborted, not reused.
+   */
+  async play(callId: string, actor: RecordingReader, rangeHeader: string | undefined, download: boolean, head = false): Promise<Playback> {
     const rec = await this.liveRecording(callId);
     if (this.store.problem) throw new ServiceUnavailableException(UNCONFIGURED);
     if (rec.storageLocation !== this.store.location) throw new NotFoundException(ELSEWHERE);
@@ -142,10 +147,11 @@ export class CallRecordingsService {
       'X-Content-Type-Options': 'nosniff',
       ...(download ? { 'Content-Disposition': `attachment; filename="call-${rec.callId}.webm"` } : {}),
     };
-    if (range === 'unsatisfiable') return { status: 416, headers: { ...headers, 'Content-Range': `bytes */${size}` }, body: null };
+    // Its own Content-Length too, so that a HEAD, handed no body, answers the same.
+    if (range === 'unsatisfiable') return { status: 416, headers: { ...headers, 'Content-Length': '0', 'Content-Range': `bytes */${size}` }, body: null };
     const { start, end } = range ?? { start: 0, end: size - 1 };
     await this.auditRead(rec, actor, download ? 'call.recording.download' : 'call.recording.play');
-    const body = await this.store.read(rec.storageKey, range ?? undefined).catch((e: unknown) => {
+    const body = head ? null : await this.store.read(rec.storageKey, range ?? undefined).catch((e: unknown) => {
       if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') throw new NotFoundException('The recording file is missing'); // gone since its size was read
       throw e;
     });

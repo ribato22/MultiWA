@@ -30,8 +30,8 @@ export class CallAnnouncementService {
     return { profileId, announcement: { mimeType: announcement.mimeType, durationSec: announcement.durationSec } };
   }
 
-  /** The profile's announcement, to listen to. */
-  async read(profileId: string): Promise<{ mimeType: string; size: number; body: Readable }> {
+  /** The profile's announcement, to listen to; for a HEAD (`head`) sized, not read. */
+  async read(profileId: string, head = false): Promise<{ mimeType: string; size: number; body: Readable | null }> {
     const profile = await this.profile(profileId);
     const announcement = announcementOf(profile.settings);
     // A key read from the settings is served only when it is the profile's own.
@@ -40,7 +40,7 @@ export class CallAnnouncementService {
     }
     const size = await this.store.size(announcement.storageKey);
     if (size === null) throw new NotFoundException('The announcement file is missing');
-    return { mimeType: announcement.mimeType, size, body: await this.store.read(announcement.storageKey) };
+    return { mimeType: announcement.mimeType, size, body: head ? null : await this.store.read(announcement.storageKey) };
   }
 
   /** Removes the announcement; refused while recording is on (409 recording_on). */

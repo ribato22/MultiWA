@@ -7,6 +7,7 @@
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, PayloadTooLargeException, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { PassThrough } from 'stream';
 import { CallsService } from './calls.service';
 import { CallAnnouncementService } from './recordings/call-announcement.service';
 import { ANNOUNCEMENT_MAX_BYTES } from './recordings/announcement-audio';
@@ -23,10 +24,15 @@ import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/dec
 type MultipartLimits = { fileSize: number; files: number; fieldSize: number };
 type MultipartRequest = { file(options: { limits: MultipartLimits }): Promise<{ toBuffer(): Promise<Buffer> } | undefined> };
 const codeOf = (e: unknown) => (e as { code?: unknown } | null)?.code;
-// The parser's own errors (no boundary, a body cut short) carry no status, and Nest would answer them with a 500; the
-// plugin's errors carry theirs, which Nest answers with.
-const malformedUnlessStatus = (e: unknown) =>
-  (e as { statusCode?: unknown } | null)?.statusCode === undefined ? new BadRequestException('The multipart/form-data body is malformed') : e;
+// The parser's own errors (no boundary, a malformed part, a body cut short) carry no status, and Nest would answer them
+// with a 500; the plugin's errors carry theirs, which Nest answers with. On the parser's own, the plugin stopped reading
+// the request (unpiped, paused): the rest of a body larger than what the sockets hold would stay on the wire, and the
+// next request on the same kept-alive connection would never be answered. So it is read off and dropped.
+function malformedUnlessStatus(request: FastifyRequest, e: unknown) {
+  if ((e as { statusCode?: unknown } | null)?.statusCode !== undefined) return e;
+  request.raw.resume();
+  return new BadRequestException('The multipart/form-data body is malformed');
+}
 
 /**
  * The one file of a multipart request, at most `maxBytes`: past it 413, the rest of the file read off the wire and
@@ -40,14 +46,14 @@ export async function readUpload(request: FastifyRequest, maxBytes: number): Pro
     part = await (request as unknown as MultipartRequest).file({ limits: { fileSize: maxBytes, files: 1, fieldSize: 1024 } });
   } catch (e) {
     if (codeOf(e) === 'FST_INVALID_MULTIPART_CONTENT_TYPE') throw new BadRequestException('Send the file as multipart/form-data');
-    throw malformedUnlessStatus(e);
+    throw malformedUnlessStatus(request, e);
   }
   if (!part) throw new BadRequestException('No file uploaded');
   try {
     return await part.toBuffer();
   } catch (e) {
     if (codeOf(e) === 'FST_REQ_FILE_TOO_LARGE') throw new PayloadTooLargeException(`The file must be at most ${maxBytes / (1024 * 1024)} MB`);
-    throw malformedUnlessStatus(e);
+    throw malformedUnlessStatus(request, e);
   }
 }
 
@@ -107,9 +113,14 @@ export class ProfileCallsController {
   @ApiOperation({ summary: "The profile's announcement, to listen to" })
   @ApiProduces('audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4')
   @ApiNotFound('Announcement')
-  async announcement(@Param('id') id: string, @Res() reply: FastifyReply): Promise<void> {
-    const { mimeType, size, body } = await this.announcements.read(id);
-    reply.headers({ 'Content-Type': mimeType, 'Content-Length': String(size), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }).send(body);
+  async announcement(@Param('id') id: string, @Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
+    // Fastify answers a HEAD with this handler: sized, not read (up to 2 MB read only to be dropped). Handed a stream,
+    // Fastify keeps the Content-Length as it is (an empty body would make it 0), and one already destroyed it drops unread.
+    const head = request.method === 'HEAD';
+    const { mimeType, size, body } = await this.announcements.read(id, head);
+    reply
+      .headers({ 'Content-Type': mimeType, 'Content-Length': String(size), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' })
+      .send(body ?? new PassThrough().destroy());
   }
 
   @Delete(':id/calls-announcement')

@@ -118,9 +118,26 @@ describe('CallRecordingsService.play', () => {
   it('416 past the end, with the size; nothing read, nothing audited', async () => {
     const { service, audit, store } = stored();
     const read = vi.spyOn(store, 'read');
-    expect(await service.play(CALL, ACTOR, 'bytes=10-', false)).toMatchObject({ status: 416, headers: { 'Content-Range': 'bytes */10' }, body: null });
+    expect(await service.play(CALL, ACTOR, 'bytes=10-', false)).toMatchObject({ status: 416, headers: { 'Content-Range': 'bytes */10', 'Content-Length': '0' }, body: null });
     expect(read).not.toHaveBeenCalled();
     expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  // A HEAD asks for the recording too, so it is checked, sized and audited as the GET is; but nothing is read: on S3 a
+  // GetObject opened only to be dropped would have its connection aborted, not reused.
+  it.each([
+    ['the whole file', undefined],
+    ['a range', 'bytes=2-5'],
+    ['a range past the end', 'bytes=10-'],
+  ])('a HEAD of %s: the answer of the GET without its body, audited as the GET is, and nothing read', async (_what, range) => {
+    const { service, audit, store } = stored();
+    const read = vi.spyOn(store, 'read');
+    const head = await service.play(CALL, ACTOR, range, false, true);
+    expect(read).not.toHaveBeenCalled();
+    const fromGet = stored();
+    const get = await fromGet.service.play(CALL, ACTOR, range, false);
+    expect(head).toEqual({ status: get.status, headers: get.headers, body: null });
+    expect(audit.log.mock.calls).toEqual(fromGet.audit.log.mock.calls);
   });
 
   it('a read that cannot be audited is refused (503), before any byte', async () => {

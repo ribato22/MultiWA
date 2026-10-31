@@ -172,13 +172,13 @@ describe('CallsController hands over to the service', () => {
     return reply;
   };
 
-  it('recording: the caller as the actor, the Range header, the download flag; the reply gets the status, headers and body', async () => {
+  it('recording: the caller as the actor, the Range header, the download flag, not a HEAD; the reply gets the status, headers and body', async () => {
     const { recordings, controller } = make();
     const audio = Readable.from(['x']);
     recordings.play.mockResolvedValue({ status: 206, headers: { 'Content-Range': 'bytes 0-0/1' }, body: audio });
     const reply = fakeReply();
-    await controller.recording('c1', '1', { user: { id: 'u1', organizationId: 'o1' }, ip: '203.0.113.7', headers: { range: 'bytes=0-0', 'user-agent': 'test-agent' } }, reply);
-    expect(recordings.play).toHaveBeenCalledWith('c1', { userId: 'u1', organizationId: 'o1', ip: '203.0.113.7', userAgent: 'test-agent' }, 'bytes=0-0', true);
+    await controller.recording('c1', '1', { method: 'GET', user: { id: 'u1', organizationId: 'o1' }, ip: '203.0.113.7', headers: { range: 'bytes=0-0', 'user-agent': 'test-agent' } }, reply);
+    expect(recordings.play).toHaveBeenCalledWith('c1', { userId: 'u1', organizationId: 'o1', ip: '203.0.113.7', userAgent: 'test-agent' }, 'bytes=0-0', true, false);
     expect(reply.code).toHaveBeenCalledWith(206);
     expect(reply.headers).toHaveBeenCalledWith({ 'Content-Range': 'bytes 0-0/1' });
     expect(reply.send).toHaveBeenCalledWith(audio);
@@ -193,15 +193,15 @@ describe('CallsController hands over to the service', () => {
     expect(reply.send).toHaveBeenCalledWith('');
   });
 
-  // Fastify answers a HEAD with the GET handler, and reads a body it is handed to the end only to drop it (on S3, the
-  // whole download). The read is still audited: a HEAD asks for the recording all the same.
-  it('recording: a HEAD reads none of it, answers with the headers of the GET, Content-Length too, and is audited like it', async () => {
+  // Fastify answers a HEAD with the GET handler. The service checks, sizes and audits a HEAD as the GET (it asks for the
+  // recording too) and reads none of it; handed no stream, Fastify would answer Content-Length: 0.
+  it.each([
+    ['a range', 206, { 'Content-Type': 'audio/webm', 'Content-Length': '4', 'Content-Range': 'bytes 0-3/10' }, '0123'],
+    ['a range past the end', 416, { 'Content-Type': 'audio/webm', 'Content-Length': '0', 'Content-Range': 'bytes */10' }, null],
+  ] as const)('recording: a HEAD of %s asks the service for no bytes, and answers with the headers of the GET', async (_what, status, headers, bytes) => {
     const { recordings, controller } = make();
-    let reads = 0;
-    recordings.play.mockImplementation(async () => ({
-      status: 200,
-      headers: { 'Content-Type': 'audio/webm', 'Content-Length': String(64 * 1024) },
-      body: new Readable({ read() { reads++; this.push(reads > 64 ? null : Buffer.alloc(1024)); } }),
+    recordings.play.mockImplementation(async (_id, _reader, _range, _download, head) => ({
+      status, headers, body: head || bytes === null ? null : Readable.from([Buffer.from(bytes)]),
     }));
     const app = Fastify();
     app.addHook('onRequest', async (req) => { (req as any).user = { id: 'u1', organizationId: 'o1' }; });
@@ -213,11 +213,12 @@ describe('CallsController hands over to the service', () => {
     });
     try {
       const head = await app.inject({ method: 'HEAD', url: '/calls/c1/recording' });
-      expect([head.statusCode, head.headers['content-length'], head.rawPayload.length, reads]).toEqual([200, String(64 * 1024), 0, 0]);
-      expect(recordings.play).toHaveBeenCalledTimes(1);
-      reads = 0;
       const get = await app.inject({ method: 'GET', url: '/calls/c1/recording' });
-      expect([get.statusCode, get.rawPayload.length]).toEqual([200, 64 * 1024]);
+      expect(recordings.play.mock.calls.map((call) => call[4])).toEqual([true, false]);
+      const { date: _headDate, ...headHeaders } = head.headers;
+      const { date: _getDate, ...getHeaders } = get.headers;
+      expect([head.statusCode, headHeaders, head.rawPayload.length]).toEqual([status, getHeaders, 0]);
+      expect([get.statusCode, get.headers['content-length'], get.rawPayload.toString()]).toEqual([status, headers['Content-Length'], bytes ?? '']);
     } finally {
       await app.close();
     }

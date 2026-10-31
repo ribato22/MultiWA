@@ -5,6 +5,7 @@ import { BadRequestException, ForbiddenException, RequestMethod } from '@nestjs/
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
 import { lastValueFrom, of } from 'rxjs';
+import Fastify from 'fastify';
 
 vi.mock('./calls.service', () => ({ CallsService: class {} }));
 vi.mock('./recordings/call-announcement.service', () => ({ CallAnnouncementService: class {} }));
@@ -131,9 +132,36 @@ describe('the call announcement routes', () => {
     const reply: any = {};
     reply.headers = vi.fn(() => reply);
     reply.send = vi.fn(() => reply);
-    await new ProfileCallsController({} as any, announcements as any).announcement('p1', reply);
+    await new ProfileCallsController({} as any, announcements as any).announcement('p1', { method: 'GET' } as any, reply);
+    expect(announcements.read).toHaveBeenCalledWith('p1', false);
     expect(reply.headers).toHaveBeenCalledWith({ 'Content-Type': 'audio/mpeg', 'Content-Length': '1', 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
     expect(reply.send).toHaveBeenCalledWith(audio);
+  });
+
+  // Fastify answers a HEAD with the GET handler: the service sizes the announcement and reads none of it, and handed no
+  // stream, Fastify would answer Content-Length: 0.
+  it('preview: a HEAD asks the service for no bytes, and answers with the headers of the GET', async () => {
+    const announcements = {
+      read: vi.fn(async (_id: string, head: boolean) => ({ mimeType: 'audio/mpeg', size: 3, body: head ? null : Readable.from([Buffer.from('mp3')]) })),
+    };
+    const controller = new ProfileCallsController({} as any, announcements as any);
+    const app = Fastify();
+    // Waiting for the reply, as Nest's route handler does.
+    app.get('/profiles/:id/calls-announcement', async (req, reply) => {
+      await controller.announcement('p1', req, reply);
+      return reply;
+    });
+    try {
+      const head = await app.inject({ method: 'HEAD', url: '/profiles/p1/calls-announcement' });
+      const get = await app.inject({ method: 'GET', url: '/profiles/p1/calls-announcement' });
+      expect(announcements.read.mock.calls).toEqual([['p1', true], ['p1', false]]);
+      const { date: _headDate, ...headHeaders } = head.headers;
+      const { date: _getDate, ...getHeaders } = get.headers;
+      expect([head.statusCode, headHeaders, head.rawPayload.length]).toEqual([200, getHeaders, 0]);
+      expect([get.statusCode, get.headers['content-length'], get.rawPayload.toString()]).toEqual([200, '3', 'mp3']);
+    } finally {
+      await app.close();
+    }
   });
 
   it('remove: to the service', async () => {
@@ -156,7 +184,7 @@ describe('the call announcement routes', () => {
 });
 
 describe('readUpload', () => {
-  const request = (file: () => Promise<unknown>) => ({ file: vi.fn(file) }) as any;
+  const request = (file: () => Promise<unknown>) => ({ file: vi.fn(file), raw: { resume: vi.fn() } }) as any;
   const failing = (code: string) => Object.assign(new Error(code), { code });
 
   it('400 without a file, and for a request that is not multipart', async () => {
@@ -169,16 +197,25 @@ describe('readUpload', () => {
     await expect(readUpload(tooLarge, 2 * 1024 * 1024)).rejects.toMatchObject({ status: 413, message: 'The file must be at most 2 MB' });
   });
 
-  // The parser's own errors (no boundary, a body cut short) carry no status: as they are, Nest would answer 500.
-  it('an error without a status is a malformed body (400), before the file and while it is read', async () => {
+  // The parser's own errors (no boundary, a body cut short) carry no status: as they are, Nest would answer 500. The
+  // plugin stopped reading the request then, so the rest of its body is read off (profile-calls.upload.spec.ts shows why).
+  it('an error without a status is a malformed body (400), before the file and while it is read; the body is read off', async () => {
     const malformed = { status: 400, message: 'The multipart/form-data body is malformed' };
-    await expect(readUpload(request(async () => { throw new Error('Multipart: Boundary not found'); }), 10)).rejects.toMatchObject(malformed);
-    await expect(readUpload(request(async () => ({ toBuffer: async () => { throw failing('ERR_STREAM_PREMATURE_CLOSE'); } })), 10)).rejects.toMatchObject(malformed);
+    const noBoundary = request(async () => { throw new Error('Multipart: Boundary not found'); });
+    await expect(readUpload(noBoundary, 10)).rejects.toMatchObject(malformed);
+    expect(noBoundary.raw.resume).toHaveBeenCalledTimes(1);
+    const cutShort = request(async () => ({ toBuffer: async () => { throw failing('ERR_STREAM_PREMATURE_CLOSE'); } }));
+    await expect(readUpload(cutShort, 10)).rejects.toMatchObject(malformed);
+    expect(cutShort.raw.resume).toHaveBeenCalledTimes(1);
   });
 
+  // The plugin still reads the rest of the request then (a limit), or there is none left (a request closed early).
   it('an error with a status as it is: Nest answers with its status', async () => {
     const limit = Object.assign(failing('FST_PARTS_LIMIT'), { statusCode: 413 });
-    await expect(readUpload(request(async () => { throw limit; }), 10)).rejects.toBe(limit);
-    await expect(readUpload(request(async () => ({ toBuffer: async () => { throw limit; } })), 10)).rejects.toBe(limit);
+    const before = request(async () => { throw limit; });
+    await expect(readUpload(before, 10)).rejects.toBe(limit);
+    const reading = request(async () => ({ toBuffer: async () => { throw limit; } }));
+    await expect(readUpload(reading, 10)).rejects.toBe(limit);
+    expect([before.raw.resume, reading.raw.resume].map((resume) => resume.mock.calls.length)).toEqual([0, 0]);
   });
 });
