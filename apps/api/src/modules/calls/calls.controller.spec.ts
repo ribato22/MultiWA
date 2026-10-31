@@ -237,22 +237,34 @@ describe('POST /calls/:id/call-link body', () => {
   });
 });
 
-// Turning answering on lets agents talk to the callers: only a real boolean may do it. The API-wide pipe converts
-// implicitly, and Boolean('false') is true.
+// Turning answering or recording on changes who hears the callers: only a real boolean may do it (the API-wide pipe
+// converts implicitly, and Boolean('false') is true). The retention is a whole number of days.
 describe('PUT /profiles/:id/calls-settings body', () => {
-  // The property's type, as tsc emits it in the app (emitDecoratorMetadata). The specs' transform emits none, and
-  // without it the pipe would convert nothing here.
-  beforeAll(() => Reflect.defineMetadata('design:type', Boolean, UpdateCallSettingsDto.prototype, 'answerInDashboard'));
-
-  it.each([true, false])('takes %s', async (answerInDashboard) => {
-    expect(await body(UpdateCallSettingsDto, { answerInDashboard })).toEqual({ answerInDashboard });
+  // The properties' types, as tsc emits them in the app (emitDecoratorMetadata). The specs' transform emits none, and
+  // without them the pipe would convert nothing here.
+  beforeAll(() => {
+    for (const [key, type] of [['answerInDashboard', Boolean], ['recording', Boolean], ['retentionDays', Number]] as const) {
+      Reflect.defineMetadata('design:type', type, UpdateCallSettingsDto.prototype, key);
+    }
   });
 
-  it.each(['false', 'true', 0, 1, null])('400 for %j, never read as a boolean', async (answerInDashboard) => {
-    await refused(body(UpdateCallSettingsDto, { answerInDashboard }), 'answerInDashboard');
+  it('takes any of its fields, alone or together', async () => {
+    expect(await body(UpdateCallSettingsDto, { answerInDashboard: true })).toEqual({ answerInDashboard: true });
+    expect(await body(UpdateCallSettingsDto, { recording: false })).toEqual({ recording: false });
+    expect(await body(UpdateCallSettingsDto, { retentionDays: 3650 })).toEqual({ retentionDays: 3650 });
+    expect(await body(UpdateCallSettingsDto, { answerInDashboard: false, recording: true, retentionDays: 1 })).toEqual({ answerInDashboard: false, recording: true, retentionDays: 1 });
   });
 
-  it('400 without it', async () => {
-    await refused(body(UpdateCallSettingsDto, {}), 'answerInDashboard');
+  it.each(['false', 'true', 0, 1, null])('400 for %j, never read as a boolean', async (value) => {
+    await refused(body(UpdateCallSettingsDto, { answerInDashboard: value }), 'answerInDashboard');
+    await refused(body(UpdateCallSettingsDto, { recording: value }), 'recording');
+  });
+
+  it.each([0, 3651, 7.5, '30', null])('400 for a retention of %j days', async (retentionDays) => {
+    await refused(body(UpdateCallSettingsDto, { retentionDays }), 'retentionDays');
+  });
+
+  it('an empty body passes the pipe: the service refuses it (400, nothing to change)', async () => {
+    expect(await body(UpdateCallSettingsDto, {})).toEqual({});
   });
 });

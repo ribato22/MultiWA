@@ -13,13 +13,14 @@ import { CallsGateway } from './calls.gateway';
 import { EventsGateway } from '../events/events.gateway';
 import { ProfilesModule } from '../profiles/profiles.module';
 import { MessagesModule } from '../messages/messages.module';
+import { CallRecordingsModule } from './recordings/call-recordings.module';
 
 // EventsModule and EngineCommandsModule are @Global (EventsGateway, EngineCommandsService); the event bus comes from
 // the app-wide EventEmitterModule.
 @Module({
   // EngineManagerService (ProfilesModule) and MessagesService (MessagesModule) are exported; the two import each
   // other, hence forwardRef.
-  imports: [forwardRef(() => ProfilesModule), forwardRef(() => MessagesModule)],
+  imports: [forwardRef(() => ProfilesModule), forwardRef(() => MessagesModule), CallRecordingsModule],
   controllers: [CallsController, ProfileCallsController],
   providers: [
     CallsService,

@@ -142,6 +142,8 @@ export class AuditInterceptor implements NestInterceptor {
     if (body.profileId) metadata.profileId = body.profileId;
     if (body.triggerType) metadata.triggerType = body.triggerType;
     if (typeof body.answerInDashboard === 'boolean') metadata.answerInDashboard = body.answerInDashboard;
+    if (typeof body.recording === 'boolean') metadata.recording = body.recording;
+    if (Number.isInteger(body.retentionDays)) metadata.retentionDays = body.retentionDays;
     if (params.id) metadata.targetId = params.id;
     
     // User info

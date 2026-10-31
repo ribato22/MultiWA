@@ -46,6 +46,10 @@ describe('call settings and status routes', () => {
     }));
     await put({ answerInDashboard: 'yes' }); // not a value it can set (the pipe refuses it)
     expect(audit.log.mock.lastCall![0].metadata).toEqual({ targetId: 'p1', status: 'success' });
+    await put({ recording: true, retentionDays: 30 });
+    expect(audit.log.mock.lastCall![0].metadata).toEqual({ recording: true, retentionDays: 30, targetId: 'p1', status: 'success' });
+    await put({ retentionDays: '30' }); // not a value it can set
+    expect(audit.log.mock.lastCall![0].metadata).toEqual({ targetId: 'p1', status: 'success' });
   });
 
   it('GET /calls/media/status: owner and admin only, scoped by their organization', () => {
