@@ -13,7 +13,7 @@ import {
 
 const db = prisma as any;
 const sent = () => db.$queryRaw.mock.calls.map(([sql, ...values]: any[]) => [sql.join('?'), values]);
-const MERGE = `UPDATE profiles SET settings = coalesce(settings, '{}'::jsonb) || ?::jsonb, "updatedAt" = now() WHERE id = ?`;
+const MERGE = `UPDATE profiles SET settings = (CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END) || ?::jsonb, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE id = ?`;
 
 beforeEach(() => db.$queryRaw.mockReset().mockResolvedValue([{ settings: { theme: 'dark' } }]));
 
@@ -31,9 +31,18 @@ describe('profile settings writes', () => {
   it('the announcement is removed only while recording is off', async () => {
     await removeAnnouncementUnlessRecording('p1');
     expect(sent()).toEqual([[
-      `UPDATE profiles SET settings = settings - 'callsAnnouncement', "updatedAt" = now() WHERE id = ? AND coalesce(settings->>'callsRecording', 'false') <> 'true' RETURNING settings`,
+      `UPDATE profiles SET settings = (CASE WHEN jsonb_typeof(settings) = 'object' THEN settings - 'callsAnnouncement' ELSE '{}'::jsonb END), "updatedAt" = now() AT TIME ZONE 'UTC' WHERE id = ? AND coalesce(settings->>'callsRecording', 'false') <> 'true' RETURNING settings`,
       ['p1'],
     ]]);
+  });
+
+  it('a plain merge never turns recording on, nor sets an announcement that is not whole: both are programming errors', async () => {
+    await expect(mergeProfileSettings('p1', { callsRecording: true })).rejects.toThrow('mergeProfileSettingsIfAnnounced');
+    await expect(mergeProfileSettings('p1', { callsAnnouncement: null })).rejects.toThrow('whole announcement');
+    await expect(mergeProfileSettings('p1', { callsAnnouncement: { storageKey: 'k' } })).rejects.toThrow('whole announcement');
+    expect(db.$queryRaw).not.toHaveBeenCalled();
+    await mergeProfileSettings('p1', { callsRecording: false, callsAnnouncement: { storageKey: 'k', mimeType: 'audio/mpeg', durationSec: 2 } });
+    expect(db.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('null when nothing was written: no such profile, or the condition failed', async () => {
@@ -47,7 +56,7 @@ describe('profile settings writes', () => {
     db.$queryRaw.mockResolvedValue([{ id: 'p1' }, { id: 'p2' }]);
     expect(await turnRecordingOffEverywhere()).toEqual(['p1', 'p2']);
     expect(sent()).toEqual([[
-      `UPDATE profiles SET settings = settings || '{"callsRecording": false}'::jsonb, "updatedAt" = now() WHERE settings->>'callsRecording' = 'true' RETURNING id`,
+      `UPDATE profiles SET settings = settings || '{"callsRecording": false}'::jsonb, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE settings->>'callsRecording' = 'true' RETURNING id`,
       [],
     ]]);
   });

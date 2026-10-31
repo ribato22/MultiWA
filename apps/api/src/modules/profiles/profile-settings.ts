@@ -6,6 +6,9 @@
 // none of them writes the JSON back as it read it: each merges the keys it sets, in one statement, and the keys it
 // does not name stay as they are now. The recording rule sits in the same statements: recording is never on without
 // an announcement, whatever runs at the same time (an UPDATE re-checks its WHERE on the row version it finally locks).
+//
+// A settings value that is not a JSON object (the API never writes one) counts as no settings. "updatedAt" is a Prisma
+// timestamp without a time zone, which Prisma reads as UTC: now() is turned into UTC, whatever the session's zone.
 import { prisma } from '@multiwa/database';
 
 export type ProfileSettings = Record<string, unknown>;
@@ -13,25 +16,31 @@ type Written = { settings: ProfileSettings }[];
 
 /** Merges `patch` into the profile's settings. The settings as written, or null when there is no such profile. */
 export async function mergeProfileSettings(profileId: string, patch: ProfileSettings): Promise<ProfileSettings | null> {
-  const rows = await prisma.$queryRaw<Written>`UPDATE profiles SET settings = coalesce(settings, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb, "updatedAt" = now() WHERE id = ${profileId} RETURNING settings`;
+  // The recording rule is kept by the two conditional statements below: a plain merge never turns recording on, and sets
+  // an announcement only whole (what mergeProfileSettingsIfAnnounced counts as one).
+  if (patch.callsRecording === true) throw new Error('Recording is turned on with mergeProfileSettingsIfAnnounced');
+  if ('callsAnnouncement' in patch && !announcementOf(patch)) {
+    throw new Error('callsAnnouncement must be a whole announcement (removeAnnouncementUnlessRecording removes it)');
+  }
+  const rows = await prisma.$queryRaw<Written>`UPDATE profiles SET settings = (CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END) || ${JSON.stringify(patch)}::jsonb, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE id = ${profileId} RETURNING settings`;
   return rows[0]?.settings ?? null;
 }
 
 /** As mergeProfileSettings, only while the profile has an announcement (turning recording on). Null otherwise. */
 export async function mergeProfileSettingsIfAnnounced(profileId: string, patch: ProfileSettings): Promise<ProfileSettings | null> {
-  const rows = await prisma.$queryRaw<Written>`UPDATE profiles SET settings = coalesce(settings, '{}'::jsonb) || ${JSON.stringify(patch)}::jsonb, "updatedAt" = now() WHERE id = ${profileId} AND jsonb_typeof(settings->'callsAnnouncement') = 'object' RETURNING settings`;
+  const rows = await prisma.$queryRaw<Written>`UPDATE profiles SET settings = (CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END) || ${JSON.stringify(patch)}::jsonb, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE id = ${profileId} AND jsonb_typeof(settings->'callsAnnouncement') = 'object' RETURNING settings`;
   return rows[0]?.settings ?? null;
 }
 
 /** Removes the announcement, only while recording is off. Null when recording is on, or there is no such profile. */
 export async function removeAnnouncementUnlessRecording(profileId: string): Promise<ProfileSettings | null> {
-  const rows = await prisma.$queryRaw<Written>`UPDATE profiles SET settings = settings - 'callsAnnouncement', "updatedAt" = now() WHERE id = ${profileId} AND coalesce(settings->>'callsRecording', 'false') <> 'true' RETURNING settings`;
+  const rows = await prisma.$queryRaw<Written>`UPDATE profiles SET settings = (CASE WHEN jsonb_typeof(settings) = 'object' THEN settings - 'callsAnnouncement' ELSE '{}'::jsonb END), "updatedAt" = now() AT TIME ZONE 'UTC' WHERE id = ${profileId} AND coalesce(settings->>'callsRecording', 'false') <> 'true' RETURNING settings`;
   return rows[0]?.settings ?? null;
 }
 
 /** The recordings storage turned out to be public: recording off on every profile. The profiles it was on for. */
 export async function turnRecordingOffEverywhere(): Promise<string[]> {
-  const rows = await prisma.$queryRaw<{ id: string }[]>`UPDATE profiles SET settings = settings || '{"callsRecording": false}'::jsonb, "updatedAt" = now() WHERE settings->>'callsRecording' = 'true' RETURNING id`;
+  const rows = await prisma.$queryRaw<{ id: string }[]>`UPDATE profiles SET settings = settings || '{"callsRecording": false}'::jsonb, "updatedAt" = now() AT TIME ZONE 'UTC' WHERE settings->>'callsRecording' = 'true' RETURNING id`;
   return rows.map((r) => r.id);
 }
 
