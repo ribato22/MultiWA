@@ -7,6 +7,11 @@ import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { EngineManagerService } from './engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { mergeProfileSettings } from './profile-settings';
+import { CallRecordingsService } from '../calls/recordings/call-recordings.service';
+
+/** The keys of the settings JSON a profile update sets (the call recording keys have routes of their own). */
+const SETTINGS_KEYS = ['autoRejectCalls', 'autoRejectCallMessage', 'callReplyMessage', 'quietAlarmHours', 'quietAlarmNotify'] as const;
 
 @Injectable()
 export class ProfilesService {
@@ -16,6 +21,8 @@ export class ProfilesService {
     // Engine commands client — used to drive the worker-hosted engine when
     // ENGINE_HOST=worker; unused (idle) when ENGINE_HOST=api.
     private readonly engineCommands: EngineCommandsService,
+    // A profile's recording rows go with it (the cascade): their files, and the announcement, are deleted first.
+    private readonly recordings: CallRecordingsService,
   ) {}
 
   async findAll(organizationId: string, workspaceId?: string) {
@@ -122,23 +129,12 @@ export class ProfilesService {
       if (dto.warmupEnabled && !wasEnabled) data.warmupStartedAt = new Date();
     }
     if (dto.engine !== undefined) data.engine = dto.engine;
-    // Call and quiet-alarm config live in the settings JSON — merge so we never clobber
-    // other settings keys.
-    if (
-      dto.autoRejectCalls !== undefined ||
-      dto.autoRejectCallMessage !== undefined ||
-      dto.callReplyMessage !== undefined ||
-      dto.quietAlarmHours !== undefined ||
-      dto.quietAlarmNotify !== undefined
-    ) {
-      const settings = { ...(((existing as any).settings as Record<string, unknown>) || {}) };
-      if (dto.autoRejectCalls !== undefined) settings.autoRejectCalls = dto.autoRejectCalls;
-      if (dto.autoRejectCallMessage !== undefined) settings.autoRejectCallMessage = dto.autoRejectCallMessage;
-      if (dto.callReplyMessage !== undefined) settings.callReplyMessage = dto.callReplyMessage;
-      if (dto.quietAlarmHours !== undefined) settings.quietAlarmHours = dto.quietAlarmHours;
-      if (dto.quietAlarmNotify !== undefined) settings.quietAlarmNotify = dto.quietAlarmNotify;
-      data.settings = settings;
-    }
+    // Call and quiet-alarm config live in the settings JSON, which other routes write too (the call settings, the
+    // announcement): only the keys given here are merged in, in one statement, so a key changed meanwhile is kept.
+    // Merged first, so that the row the update returns carries them.
+    const settings: Record<string, unknown> = {};
+    for (const key of SETTINGS_KEYS) if (dto[key] !== undefined) settings[key] = dto[key];
+    if (Object.keys(settings).length && !(await mergeProfileSettings(id, settings))) throw new NotFoundException('Profile not found');
 
     const updated = await prisma.profile.update({ where: { id }, data });
 
@@ -159,7 +155,8 @@ export class ProfilesService {
     
     // Disconnect if connected
     await this.disconnect(id).catch(() => {});
-    
+
+    await this.recordings.purgeProfile(id);
     await prisma.profile.delete({ where: { id } });
     return { success: true };
   }

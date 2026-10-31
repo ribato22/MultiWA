@@ -12,7 +12,7 @@ import { ProfilesController } from './profiles.controller';
 import { ProfilesService } from './profiles.service';
 
 const db = prisma as any;
-const service = new ProfilesService({} as any, {} as any);
+const service = new ProfilesService({} as any, {} as any, {} as any);
 const listedWorkspaces = () => db.profile.findMany.mock.calls[0][0].where.workspaceId.in;
 
 beforeEach(() => {

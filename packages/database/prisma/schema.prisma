@@ -251,6 +251,7 @@ model Call {
   assignedUser User?         @relation("AssignedCalls", fields: [assignedUserId], references: [id], onDelete: SetNull)
   answeredBy   User?         @relation("AnsweredCalls", fields: [answeredByUserId], references: [id], onDelete: SetNull)
   conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  recording    CallRecording?
 
   @@unique([profileId, waCallId])
   @@index([profileId, startedAt])
@@ -258,6 +259,33 @@ model Call {
   @@index([profileId, fromJid, startedAt])
   @@index([profileId, outcome, startedAt])
   @@map("calls")
+}
+
+// The recording of a call answered in the dashboard, made after the caller heard the profile's announcement. The row
+// stays after its file is deleted (by the retention job or an admin) as the evidence of what was recorded and when it
+// went. A profile's recordings go with the profile (its calls cascade), their files first.
+model CallRecording {
+  id                 String    @id @default(uuid())
+  callId             String    @unique
+  profileId          String
+  storageType        String                          // local | s3: the storage the file was written to
+  storageLocation    String                          // where in that storage: "s3:<bucket>/<prefix>" or "local:<root>"; a recording elsewhere is neither played nor deleted here
+  storageKey         String    @unique               // its key there; never a phone number
+  mimeType           String    @default("audio/webm")
+  bytes              Int
+  durationSec        Int
+  channels           Int       @default(2)           // the caller and the agent
+  announcementPlayed Boolean
+  partial            Boolean   @default(false)       // cut short by a restart: what was recorded until then
+  createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
+  deletedByUserId    String?                         // a plain id, not a relation: the evidence outlives the user
+  deleteReason       String?                         // retention | admin
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, createdAt])
+  @@map("call_recordings")
 }
 
 // ============================================

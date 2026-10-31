@@ -3,10 +3,11 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { isWhatsAppRecipient } from '@multiwa/core';
 import { CALL_FOLLOW_UPS, CALL_OUTCOMES } from '@multiwa/engine-runtime';
 import { IsWhatsAppRecipient } from '../../../common/validators/is-whatsapp-recipient.validator';
+import { DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS } from '../../profiles/profile-settings';
 
 /** Largest page of GET /calls; CallsService clamps to the same. */
 export const CALLS_MAX_LIMIT = 100;
@@ -102,13 +103,39 @@ export class CallLinkDto {
 }
 
 export class UpdateCallSettingsDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     description:
       "Ring the organization's agents in the dashboard when this profile gets a call, and let them answer it there. " +
       'Turning it on needs the profile to be ready (409 with the reasons otherwise).',
   })
-  // The value as sent: the API-wide pipe converts implicitly, and Boolean('false') is true.
+  // The value as sent: the API-wide pipe converts implicitly, and Boolean('false') is true. ValidateIf rather than
+  // IsOptional: a null is refused, not read as "not given".
+  @ValidateIf((o) => o.answerInDashboard !== undefined)
   @Transform(({ obj, key }) => obj[key])
   @IsBoolean()
-  answerInDashboard: boolean;
+  answerInDashboard?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Record the calls answered in the dashboard, after the announcement the caller hears first. No call is recorded ' +
+      'yet: the recorder comes in a later release. Turning it on needs an announcement and a recordings storage that ' +
+      'refuses reads without credentials (409 with the reasons otherwise).',
+  })
+  @ValidateIf((o) => o.recording !== undefined)
+  @Transform(({ obj, key }) => obj[key])
+  @IsBoolean()
+  recording?: boolean;
+
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: MAX_RETENTION_DAYS,
+    default: DEFAULT_RETENTION_DAYS,
+    description: 'Days a recording of this profile is kept; older ones are deleted every night.',
+  })
+  @ValidateIf((o) => o.retentionDays !== undefined)
+  @Transform(({ obj, key }) => obj[key])
+  @IsInt()
+  @Min(1)
+  @Max(MAX_RETENTION_DAYS)
+  retentionDays?: number;
 }

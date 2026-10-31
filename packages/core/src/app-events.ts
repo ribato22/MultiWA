@@ -39,6 +39,7 @@ export const AppEvents = {
     REJECTED: 'call.rejected',
     ENDED: 'call.ended',
     UPDATED: 'call.updated',
+    RECORDING_DELETED: 'call.recording.deleted',
   },
 } as const;
 

@@ -111,10 +111,18 @@ services:
       CALLS_MEDIA_LISTEN_IP: ${CALLS_MEDIA_LISTEN_IP:-}
       CALLS_MEDIA_ICE_SERVERS: ${CALLS_MEDIA_ICE_SERVERS:-}
       CALLS_MAX_TALK_MINUTES: ${CALLS_MAX_TALK_MINUTES:-120}
+      # Recordings of the calls answered in the dashboard: private, on a volume of their own (never the sessions volume,
+      # whose snapshots would carry every recording). For S3 instead: CALL_RECORDINGS_STORAGE=s3 with the S3_* settings.
+      CALL_RECORDINGS_STORAGE: ${CALL_RECORDINGS_STORAGE:-}
+      CALL_RECORDINGS_PATH: ${CALL_RECORDINGS_PATH:-/data/call-recordings}
+      CALL_RECORDINGS_BUCKET: ${CALL_RECORDINGS_BUCKET:-}
+      CALL_RECORDINGS_PREFIX: ${CALL_RECORDINGS_PREFIX:-}
+      CALL_RECORDINGS_SSE: ${CALL_RECORDINGS_SSE:-}
     ports:
       - "3333:3333"
     volumes:
       - sessions_data:/data/sessions
+      - call_recordings:/data/call-recordings
     networks:
       - multiwa-network
     depends_on:
@@ -163,3 +171,4 @@ volumes:
   redis_data:
   minio_data:
   sessions_data:
+  call_recordings:

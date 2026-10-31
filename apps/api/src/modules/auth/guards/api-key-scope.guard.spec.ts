@@ -3,7 +3,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
-import { ApiKeyScopeGuard } from './api-key-scope.guard';
+import { ApiKeyScopeGuard, apiKeyLacksScope } from './api-key-scope.guard';
 
 function ctx(user: any) {
   return {
@@ -48,5 +48,17 @@ describe('ApiKeyScopeGuard', () => {
 
   it('JWT principal (no apiKeyScopes) is never blocked by the scope guard', () => {
     expect(guardWith(['message:send']).canActivate(ctx({ role: 'owner' }))).toBe(true);
+  });
+});
+
+// The same rule for a check a route makes itself (a scope only some of its input needs).
+describe('apiKeyLacksScope', () => {
+  it('only an API key with a scope list that does not name the scope lacks it', () => {
+    expect(apiKeyLacksScope({ apiKeyScopes: ['message:read'] }, 'message:send')).toBe(true);
+    expect(apiKeyLacksScope({ apiKeyScopes: ['message:read', 'message:send'] }, 'message:send')).toBe(false);
+    expect(apiKeyLacksScope({ apiKeyScopes: [] }, 'message:send')).toBe(false); // unscoped: full access
+    expect(apiKeyLacksScope({ apiKeyScopes: ['*'] }, 'message:send')).toBe(false);
+    expect(apiKeyLacksScope({ role: 'owner' } as any, 'message:send')).toBe(false); // a login
+    expect(apiKeyLacksScope(undefined, 'message:send')).toBe(false);
   });
 });

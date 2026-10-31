@@ -19,10 +19,16 @@ vi.mock('@multiwa/database', () => ({
 }));
 vi.mock('../profiles/engine-manager.service', () => ({ EngineManagerService: class {} }));
 vi.mock('../messages/messages.service', () => ({ MessagesService: class {} }));
+vi.mock('../profiles/profile-settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../profiles/profile-settings')>()),
+  mergeProfileSettings: vi.fn(),
+  mergeProfileSettingsIfAnnounced: vi.fn(),
+}));
 
 import { prisma } from '@multiwa/database';
 import { AppEvents } from '@multiwa/core';
 import { CallsService } from './calls.service';
+import { mergeProfileSettings, mergeProfileSettingsIfAnnounced } from '../profiles/profile-settings';
 
 const db = prisma as any;
 const START = new Date('2026-10-26T03:00:00.000Z');
@@ -41,6 +47,7 @@ const row = (over: Record<string, unknown> = {}): any => ({
   assignedUserId: null, autoReplySentAt: null, conversationId: null, metadata: {}, assignedUser: null, conversation: null, ...over,
 });
 
+const STORAGE = { storage: 'local', configured: true, problem: null, lastCheck: null };
 function make() {
   const engine = { createCallLink: vi.fn().mockResolvedValue(LINK) };
   const engineManager = { getEngine: vi.fn().mockReturnValue(engine), rejectCallByAgent: vi.fn().mockResolvedValue({ callId: 'c1' }) };
@@ -50,8 +57,9 @@ function make() {
   const realtime = { emitCallUpdate: vi.fn() };
   const sessions = { readiness: vi.fn().mockResolvedValue({ ready: true, reasons: [] }), activeSessionCount: vi.fn(() => 1) };
   const callMedia = { status: vi.fn(() => ({ enabled: true, worker: 'up', port: 40000, activeRooms: 1 })) };
-  const svc = new CallsService(engineManager as any, messages as any, engineCommands as any, eventEmitter as any, realtime as any, sessions as any, callMedia as any);
-  return { svc, engine, engineManager, messages, engineCommands, eventEmitter, realtime, sessions, callMedia };
+  const recordings = { recordingReasons: vi.fn().mockResolvedValue([]), storageStatus: vi.fn(() => STORAGE) };
+  const svc = new CallsService(engineManager as any, messages as any, engineCommands as any, eventEmitter as any, realtime as any, sessions as any, callMedia as any, recordings as any);
+  return { svc, engine, engineManager, messages, engineCommands, eventEmitter, realtime, sessions, callMedia, recordings };
 }
 type Ctx = ReturnType<typeof make>;
 
@@ -182,7 +190,7 @@ describe('CallsService.list', () => {
 });
 
 describe('CallsService.get', () => {
-  it('returns the call with its assignee, the agent who answered it, and its conversation', async () => {
+  it("returns the call with its assignee, the agent who answered it, its conversation and its recording's facts", async () => {
     db.call.findUnique.mockResolvedValue(row());
     await expect(make().svc.get('c1')).resolves.toMatchObject({ id: 'c1' });
     expect(db.call.findUnique).toHaveBeenCalledWith({
@@ -191,6 +199,7 @@ describe('CallsService.get', () => {
         assignedUser: { select: { id: true, name: true } },
         answeredBy: { select: { id: true, name: true } },
         conversation: { select: { id: true, name: true } },
+        recording: { select: { id: true, durationSec: true, bytes: true, partial: true, announcementPlayed: true, createdAt: true, deletedAt: true, deleteReason: true } },
       },
     });
   });
@@ -840,60 +849,135 @@ describe('CallsService.openCount', () => {
   });
 });
 
-describe('CallsService: dashboard answering settings and status', () => {
-  it('turning answering on needs a ready profile: 409 with the reasons, the settings untouched', async () => {
+describe('CallsService: call settings and status', () => {
+  const merge = vi.mocked(mergeProfileSettings);
+  const mergeIfAnnounced = vi.mocked(mergeProfileSettingsIfAnnounced);
+  const ANNOUNCEMENT = { storageKey: 'announcements/o/p/a.mp3', mimeType: 'audio/mpeg', durationSec: 4 };
+  beforeEach(() => {
+    merge.mockReset().mockImplementation(async (_id, patch) => ({ quietAlarmHours: 2, ...patch }));
+    mergeIfAnnounced.mockReset().mockImplementation(async (_id, patch) => ({ callsAnnouncement: ANNOUNCEMENT, ...patch }));
+    db.profile.findUnique.mockReset().mockResolvedValue({ settings: { autoRejectCalls: false, quietAlarmHours: 2 } });
+  });
+
+  it('turning answering on needs a ready profile: 409 with the reasons, nothing written', async () => {
     const { svc, sessions } = make();
-    db.profile.findUnique.mockResolvedValue({ settings: { autoRejectCalls: false, quietAlarmHours: 2 } });
     sessions.readiness.mockResolvedValueOnce({ ready: false, reasons: ['media_disabled', 'profile_not_connected'] });
     await expect(svc.updateCallSettings('p1', { answerInDashboard: true })).rejects.toMatchObject({
       status: 409,
       response: { message: 'Answering calls in the dashboard is not available for this profile', reasons: ['media_disabled', 'profile_not_connected'] },
     });
-    expect(db.$executeRaw).not.toHaveBeenCalled();
-    expect(db.profile.update).not.toHaveBeenCalled();
+    expect(merge).not.toHaveBeenCalled();
   });
 
-  // The settings JSON is shared with PUT /profiles/:id, and the readiness check can take seconds (the page probe): the
-  // toggle writes its own key alone, in one statement, never the whole JSON as it was read before the check.
-  it('turns it on for a ready profile and off at any time, writing its own key alone', async () => {
-    const SET_KEY = "UPDATE profiles SET settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('callsAnswerInDashboard', ?::boolean) WHERE id = ?";
-    const { svc, sessions } = make();
-    db.profile.findUnique.mockResolvedValue({ settings: { autoRejectCalls: false, quietAlarmHours: 2 } });
-    expect(await svc.updateCallSettings('p1', { answerInDashboard: true })).toEqual({ profileId: 'p1', answerInDashboard: true });
-    expect(sessions.readiness).toHaveBeenCalledWith('p1', { autoRejectCalls: false, quietAlarmHours: 2 });
-    sessions.readiness.mockClear();
-    expect(await svc.updateCallSettings('p1', { answerInDashboard: false })).toEqual({ profileId: 'p1', answerInDashboard: false });
+  it('turning recording on needs an announcement and a private storage: 409 with the reasons, nothing written', async () => {
+    const { svc, recordings } = make();
+    recordings.recordingReasons.mockResolvedValueOnce(['no_announcement', 'storage_not_private']);
+    await expect(svc.updateCallSettings('p1', { recording: true })).rejects.toMatchObject({
+      status: 409,
+      response: { message: 'Recording calls is not available for this profile', reasons: ['no_announcement', 'storage_not_private'] },
+    });
+    expect(recordings.recordingReasons).toHaveBeenCalledWith('p1', { autoRejectCalls: false, quietAlarmHours: 2 });
+    expect(mergeIfAnnounced).not.toHaveBeenCalled();
+  });
+
+  it('both refused at once: every reason in one 409', async () => {
+    const { svc, sessions, recordings } = make();
+    sessions.readiness.mockResolvedValueOnce({ ready: false, reasons: ['media_disabled'] });
+    recordings.recordingReasons.mockResolvedValueOnce(['no_announcement']);
+    await expect(svc.updateCallSettings('p1', { answerInDashboard: true, recording: true })).rejects.toMatchObject({
+      response: { message: 'Answering calls in the dashboard and recording them are not available for this profile', reasons: ['media_disabled', 'no_announcement'] },
+    });
+  });
+
+  // The checks can take seconds (the page probe, the storage check), and other routes write the settings JSON too:
+  // only the keys given are merged, in one statement, and the answer is the settings as written.
+  it('writes only the keys it was given, and answers with the settings as written', async () => {
+    const { svc, sessions, recordings } = make();
+    expect(await svc.updateCallSettings('p1', { answerInDashboard: false, retentionDays: 30 })).toEqual({
+      profileId: 'p1', answerInDashboard: false, recording: false, retentionDays: 30, announcement: null,
+    });
+    expect(merge).toHaveBeenCalledWith('p1', { callsAnswerInDashboard: false, callsRecordingRetentionDays: 30 });
     expect(sessions.readiness).not.toHaveBeenCalled(); // off needs no readiness
-    expect(db.$executeRaw.mock.calls.map(([sql, ...values]: any[]) => [sql.join('?'), values])).toEqual([
-      [SET_KEY, [true, 'p1']],
-      [SET_KEY, [false, 'p1']],
-    ]);
-    expect(db.profile.update).not.toHaveBeenCalled();
+    expect(recordings.recordingReasons).not.toHaveBeenCalled();
+  });
+
+  it('turning recording on writes only while the announcement is still there', async () => {
+    const { svc } = make();
+    expect(await svc.updateCallSettings('p1', { recording: true })).toEqual({
+      profileId: 'p1', answerInDashboard: false, recording: true, retentionDays: 90, announcement: { mimeType: 'audio/mpeg', durationSec: 4 },
+    });
+    expect(mergeIfAnnounced).toHaveBeenCalledWith('p1', { callsRecording: true });
+    expect(merge).not.toHaveBeenCalled();
+  });
+
+  it('409 no_announcement when the announcement was removed between the check and the write', async () => {
+    const { svc } = make();
+    mergeIfAnnounced.mockResolvedValueOnce(null);
+    await expect(svc.updateCallSettings('p1', { recording: true })).rejects.toMatchObject({ status: 409, response: { reasons: ['no_announcement'] } });
+  });
+
+  // The conditional write gives null for both: the profile is looked up again to tell them apart.
+  it('404, not 409, when the profile was deleted between the check and the write of recording on', async () => {
+    const { svc } = make();
+    mergeIfAnnounced.mockResolvedValueOnce(null);
+    db.profile.findUnique.mockResolvedValueOnce({ settings: {} }).mockResolvedValueOnce(null);
+    await expect(svc.updateCallSettings('p1', { recording: true })).rejects.toMatchObject({ status: 404 });
+    expect(mergeIfAnnounced).toHaveBeenCalledWith('p1', { callsRecording: true });
+  });
+
+  // A form that always sends every field would re-run the check of a value already on, and while that check fails for a
+  // while (the storage check, a phone offline) nothing else could change. Nothing is written for it either, so a value
+  // the nightly privacy check turned off (false then) never comes back on this way.
+  it('a stored true sent again is left as it is: neither checked nor written, and the rest is written', async () => {
+    const { svc, sessions, recordings } = make();
+    const stored = { callsAnswerInDashboard: true, callsRecording: true, callsAnnouncement: ANNOUNCEMENT };
+    db.profile.findUnique.mockReset().mockResolvedValue({ settings: stored });
+    merge.mockImplementation(async (_id, patch) => ({ ...stored, ...patch }));
+    sessions.readiness.mockResolvedValue({ ready: false, reasons: ['profile_not_connected'] });
+    recordings.recordingReasons.mockResolvedValue(['storage_check_failed']);
+    expect(await svc.updateCallSettings('p1', { answerInDashboard: true, recording: true, retentionDays: 30 })).toEqual({
+      profileId: 'p1', answerInDashboard: true, recording: true, retentionDays: 30, announcement: { mimeType: 'audio/mpeg', durationSec: 4 },
+    });
+    expect(merge).toHaveBeenCalledWith('p1', { callsRecordingRetentionDays: 30 });
+    expect(mergeIfAnnounced).not.toHaveBeenCalled();
+    expect(sessions.readiness).not.toHaveBeenCalled();
+    expect(recordings.recordingReasons).not.toHaveBeenCalled();
+  });
+
+  it('turning recording off needs no check', async () => {
+    const { svc, recordings } = make();
+    await svc.updateCallSettings('p1', { recording: false });
+    expect(recordings.recordingReasons).not.toHaveBeenCalled();
+    expect(merge).toHaveBeenCalledWith('p1', { callsRecording: false });
+  });
+
+  it('400 when nothing is given', async () => {
+    await expect(make().svc.updateCallSettings('p1', {})).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.profile.findUnique).not.toHaveBeenCalled();
   });
 
   it('an unknown profile is 404, also one deleted while it was checked', async () => {
     const { svc } = make();
-    db.profile.findUnique.mockResolvedValue(null);
+    db.profile.findUnique.mockResolvedValueOnce(null);
     await expect(svc.updateCallSettings('nope', { answerInDashboard: false })).rejects.toMatchObject({ status: 404 });
-    expect(db.$executeRaw).not.toHaveBeenCalled();
-    db.profile.findUnique.mockResolvedValue({ settings: {} });
-    db.$executeRaw.mockResolvedValue(0); // no row to change
+    merge.mockResolvedValueOnce(null);
+    db.profile.findUnique.mockResolvedValueOnce({ settings: {} }).mockResolvedValueOnce(null);
     await expect(svc.updateCallSettings('p1', { answerInDashboard: true })).rejects.toMatchObject({ status: 404 });
   });
 
-  // The media server is shared by every organization: its rooms (every tenant's calls) are not shown, and the sessions
-  // in progress are the organization's own.
-  it("status: the media server's, the organization's calls being answered, and each of its profiles with its readiness", async () => {
+  // The media server and the recordings storage serve every organization: their rooms and files are not shown, and the
+  // sessions in progress are the organization's own.
+  it("status: the media server's, the recordings storage's, and each profile with its call settings and readiness", async () => {
     const { svc, sessions } = make();
     db.profile.findMany.mockResolvedValue([
-      { id: 'p1', displayName: 'Line 1', settings: { callsAnswerInDashboard: true } },
+      { id: 'p1', displayName: 'Line 1', settings: { callsAnswerInDashboard: true, callsRecording: true, callsRecordingRetentionDays: 30, callsAnnouncement: ANNOUNCEMENT } },
       { id: 'p2', displayName: null, settings: {} },
     ]);
     expect(await svc.mediaStatus('o1')).toEqual({
-      server: { enabled: true, worker: 'up', port: 40000, engineHost: 'api', activeSessions: 1 },
+      server: { enabled: true, worker: 'up', port: 40000, engineHost: 'api', activeSessions: 1, recordings: STORAGE },
       profiles: [
-        { profileId: 'p1', name: 'Line 1', answerInDashboard: true, ready: true, reasons: [] },
-        { profileId: 'p2', name: 'p2', answerInDashboard: false, ready: true, reasons: [] },
+        { profileId: 'p1', name: 'Line 1', answerInDashboard: true, recording: true, retentionDays: 30, announcement: { mimeType: 'audio/mpeg', durationSec: 4 }, ready: true, reasons: [] },
+        { profileId: 'p2', name: 'p2', answerInDashboard: false, recording: false, retentionDays: 90, announcement: null, ready: true, reasons: [] },
       ],
     });
     expect(sessions.activeSessionCount).toHaveBeenCalledWith('o1');

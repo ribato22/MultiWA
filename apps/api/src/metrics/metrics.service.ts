@@ -43,6 +43,8 @@ export class MetricsService {
   readonly callsDashboardAnswerSeconds: Histogram;
   readonly callsMediaFailuresTotal: Counter<'reason'>;
   readonly callsDashboardEndedTotal: Counter<'reason'>;
+  // The recordings storage's privacy check, by result: any not_private means anyone can read the recordings.
+  readonly callsRecordingsPrivacyChecksTotal: Counter<'result'>;
 
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
@@ -176,6 +178,19 @@ export class MetricsService {
           registers: [this.registry],
         }),
     );
+    this.callsRecordingsPrivacyChecksTotal = this.getOrCreate(
+      'multiwa_calls_recordings_privacy_checks_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_recordings_privacy_checks_total',
+          help: 'Checks that the call recordings storage refuses reads without credentials, by result (not_private: anyone can read the recordings).',
+          labelNames: ['result'] as const,
+          registers: [this.registry],
+        }),
+    );
+    // Every result from 0: a nightly check would otherwise create not_private already at 1, and an increase(...) > 0
+    // alert never fires on that first, most important, one.
+    for (const result of ['ok', 'not_private', 'check_failed'] as const) this.callsRecordingsPrivacyChecksTotal.inc({ result }, 0);
   }
 
   metrics(): Promise<string> {

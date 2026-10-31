@@ -39,6 +39,8 @@ import { MessagesService } from '../messages/messages.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
 import { CALLS_MAX_LIMIT, UpdateCallSettingsDto } from './dto';
+import { CallRecordingsService } from './recordings/call-recordings.service';
+import { announcementOf, mergeProfileSettings, mergeProfileSettingsIfAnnounced, recordingOn, retentionDaysOf } from '../profiles/profile-settings';
 import { CallSessionService } from './coordinator/call-session.service';
 import { CallMediaService } from './media/call-media.service';
 
@@ -57,6 +59,8 @@ const CALL_INCLUDE = {
   assignedUser: { select: { id: true, name: true } },
   answeredBy: { select: { id: true, name: true } },
   conversation: { select: { id: true, name: true } },
+  // A recording's facts, never its file: the audio is GET /calls/:id/recording (owner/admin, audited).
+  recording: { select: { id: true, durationSec: true, bytes: true, partial: true, announcementPlayed: true, createdAt: true, deletedAt: true, deleteReason: true } },
 } as const;
 // A stuck WhatsApp Web page would otherwise hold the request for puppeteer's 240 s protocol timeout. The engine
 // managers give up on an agent's reject first (AGENT_REJECT_TIMEOUT_MS, 25 s), so the runtime lets go of the call before
@@ -76,6 +80,17 @@ function withoutClaim<T extends { outcome: string; answeredByUserId?: string | n
   return { ...row, answeredByUserId: null, answeredBy: null };
 }
 
+/** A profile's call settings as the API shows them (the announcement's key stays inside). */
+function callSettingsOf(settings: Record<string, unknown>) {
+  const announcement = announcementOf(settings);
+  return {
+    answerInDashboard: settings.callsAnswerInDashboard === true,
+    recording: recordingOn(settings),
+    retentionDays: retentionDaysOf(settings),
+    announcement: announcement ? { mimeType: announcement.mimeType, durationSec: announcement.durationSec } : null,
+  };
+}
+
 @Injectable()
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
@@ -89,6 +104,7 @@ export class CallsService {
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
     private readonly sessions: CallSessionService,
     private readonly callMedia: CallMediaService,
+    private readonly recordings: CallRecordingsService,
   ) {}
 
   async list(q: ListCallsQuery) {
@@ -219,21 +235,43 @@ export class CallsService {
     return { count };
   }
 
-  /** Turn answering the profile's calls in the dashboard on (only when it is ready: 409 with the reasons) or off. */
+  /**
+   * The profile's call settings: answering in the dashboard (only when the profile is ready), recording (only with an
+   * announcement and a private recordings storage), the retention period. 409 with every reason; nothing written then.
+   */
   async updateCallSettings(profileId: string, dto: UpdateCallSettingsDto) {
+    if (dto.answerInDashboard === undefined && dto.recording === undefined && dto.retentionDays === undefined) {
+      throw new BadRequestException('Nothing to change: give answerInDashboard, recording or retentionDays');
+    }
     const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
     if (!profile) throw new NotFoundException('Profile not found');
-    if (dto.answerInDashboard) {
-      const readiness = await this.sessions.readiness(profileId, (profile.settings as Record<string, unknown> | null) ?? {});
-      if (!readiness.ready) {
-        throw new ConflictException({ message: 'Answering calls in the dashboard is not available for this profile', reasons: readiness.reasons });
-      }
+    const settings = (profile.settings as Record<string, unknown> | null) ?? {};
+    // A true already stored is left out, neither checked nor written: a form that sends every field would otherwise
+    // re-run the check of a value already on, and while it fails for a while (the storage check, a phone offline) not
+    // even the retention could change. Unwritten, it cannot turn back on what was turned off meanwhile (false then).
+    const answerInDashboard = dto.answerInDashboard === true && settings.callsAnswerInDashboard === true ? undefined : dto.answerInDashboard;
+    const recording = dto.recording === true && recordingOn(settings) ? undefined : dto.recording;
+    const answer = answerInDashboard ? await this.sessions.readiness(profileId, settings) : { ready: true, reasons: [] };
+    const record = recording ? await this.recordings.recordingReasons(profileId, settings) : [];
+    if (!answer.ready || record.length) {
+      const what = !answer.ready && record.length
+        ? 'Answering calls in the dashboard and recording them are'
+        : !answer.ready ? 'Answering calls in the dashboard is' : 'Recording calls is';
+      throw new ConflictException({ message: `${what} not available for this profile`, reasons: [...answer.reasons, ...record] });
     }
-    // The settings JSON is shared with the other profile settings (PUT /profiles/:id), and the readiness check can take
-    // seconds: this key alone, in one statement, so a profile update made meanwhile is kept.
-    const written = await prisma.$executeRaw`UPDATE profiles SET settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('callsAnswerInDashboard', ${dto.answerInDashboard}::boolean) WHERE id = ${profileId}`;
-    if (!written) throw new NotFoundException('Profile not found'); // deleted while it was checked
-    return { profileId, answerInDashboard: dto.answerInDashboard };
+    // Only the keys given, merged in one statement: the checks above can take seconds, and other routes write the
+    // settings JSON too. Recording goes on only if the announcement is still there then (the condition is in the statement).
+    const patch: Record<string, unknown> = {
+      ...(answerInDashboard !== undefined ? { callsAnswerInDashboard: answerInDashboard } : {}),
+      ...(recording !== undefined ? { callsRecording: recording } : {}),
+      ...(dto.retentionDays !== undefined ? { callsRecordingRetentionDays: dto.retentionDays } : {}),
+    };
+    const written = recording ? await mergeProfileSettingsIfAnnounced(profileId, patch) : await mergeProfileSettings(profileId, patch);
+    if (!written) {
+      if (!(await prisma.profile.findUnique({ where: { id: profileId }, select: { id: true } }))) throw new NotFoundException('Profile not found');
+      throw new ConflictException({ message: 'Recording calls is not available for this profile', reasons: ['no_announcement'] }); // removed meanwhile
+    }
+    return { profileId, ...callSettingsOf(written) };
   }
 
   /** Readiness of answering calls in the dashboard: the media server's, and each profile of the organization. */
@@ -245,15 +283,22 @@ export class CallsService {
       select: { id: true, displayName: true, settings: true },
       orderBy: { createdAt: 'asc' },
     });
-    // The media server serves every organization: its rooms (all their calls) are not shown, and the sessions are the
-    // organization's own.
+    // The media server and the recordings storage serve every organization: their rooms (all their calls) and files are
+    // not shown, and the sessions are the organization's own.
     const { enabled, worker, port } = this.callMedia.status();
     return {
-      server: { enabled, worker, port, engineHost: isWorkerEngine() ? 'worker' : 'api', activeSessions: this.sessions.activeSessionCount(organizationId) },
+      server: {
+        enabled,
+        worker,
+        port,
+        engineHost: isWorkerEngine() ? 'worker' : 'api',
+        activeSessions: this.sessions.activeSessionCount(organizationId),
+        recordings: this.recordings.storageStatus(),
+      },
       profiles: await Promise.all(
         profiles.map(async (p) => {
           const settings = (p.settings as Record<string, unknown> | null) ?? {};
-          return { profileId: p.id, name: p.displayName ?? p.id, answerInDashboard: settings.callsAnswerInDashboard === true, ...(await this.sessions.readiness(p.id, settings)) };
+          return { profileId: p.id, name: p.displayName ?? p.id, ...callSettingsOf(settings), ...(await this.sessions.readiness(p.id, settings)) };
         }),
       ),
     };
