@@ -185,8 +185,9 @@ export class CallRecordingsService {
 
   /**
    * Before a profile is deleted: its recording files and its announcement. Its rows go with the profile (the cascade).
-   * A file whose delete fails is left to the nightly sweep, and the profile is deleted all the same. A file in another
-   * storage location than this server's is out of reach: its key and location go to the log, for whoever can reach it.
+   * The first delete that fails leaves that file and the rest to the nightly sweep, and the profile is deleted all the
+   * same. A file in another storage location than this server's is out of reach: its key and location go to the log,
+   * for whoever can reach it.
    */
   async purgeProfile(profileId: string): Promise<void> {
     if (this.store.problem) return;
@@ -202,8 +203,12 @@ export class CallRecordingsService {
     // A key read back from the settings is deleted only when it is the profile's own announcement.
     const announcement = announcementOf(profile?.settings)?.storageKey;
     if (announcement && isAnnouncementOf(announcement, profileId)) keys.push(announcement);
-    for (const key of keys) {
-      await this.store.delete(key).catch((e) => this.logger.warn(`A recording file of profile ${clean(profileId)} was not deleted (the nightly sweep will): ${message(e)}`));
+    // One failure stops it: this runs inside the DELETE request, and a storage that stopped answering would hold the
+    // request for one wait per file.
+    try {
+      for (const key of keys) await this.store.delete(key);
+    } catch (e) {
+      this.logger.warn(`The recording files of profile ${clean(profileId)} were not all deleted (the nightly sweep will): ${message(e)}`);
     }
   }
 

@@ -380,15 +380,29 @@ describe('CallRecordingsService.deleteByAdmin', () => {
 });
 
 describe('CallRecordingsService.purgeProfile', () => {
-  it("deletes the profile's live recording files and its announcement; one failing does not stop the others", async () => {
-    const { service, store } = make();
-    const announcement = announcementKey(ORG, PROFILE, 'mp3');
-    const del = vi.spyOn(store, 'delete').mockRejectedValueOnce(new Error('EACCES'));
+  const announcement = announcementKey(ORG, PROFILE, 'mp3');
+  const purging = () => {
     db.callRecording.findMany.mockResolvedValue([{ storageKey: 'a', storageType: 'local', storageLocation: HERE }, { storageKey: 'b', storageType: 'local', storageLocation: HERE }]);
     db.profile.findUnique.mockResolvedValue({ settings: { callsAnnouncement: { storageKey: announcement, mimeType: 'audio/mpeg', durationSec: 3 } } });
+  };
+
+  it("deletes the profile's live recording files and its announcement", async () => {
+    const { service, store } = make();
+    const del = vi.spyOn(store, 'delete');
+    purging();
     await service.purgeProfile(PROFILE);
     expect(db.callRecording.findMany).toHaveBeenCalledWith({ where: { profileId: PROFILE, deletedAt: null }, select: { storageKey: true, storageLocation: true } });
     expect(del.mock.calls.map(([key]) => key)).toEqual(['a', 'b', announcement]);
+  });
+
+  // Inside the DELETE request: a storage that stopped answering would hold it for one wait per file.
+  it('stops at the first file that will not delete, leaving the rest to the nightly sweep; the profile is deleted all the same', async () => {
+    const { service, store, warn } = make();
+    const del = vi.spyOn(store, 'delete').mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('ETIMEDOUT\nforged'));
+    purging();
+    await expect(service.purgeProfile(PROFILE)).resolves.toBeUndefined();
+    expect(del.mock.calls.map(([key]) => key)).toEqual(['a', 'b']);
+    expect(warn).toHaveBeenCalledWith(`The recording files of profile ${PROFILE} were not all deleted (the nightly sweep will): ETIMEDOUTforged`);
   });
 
   it('leaves the files of the same type in another location, naming them and where for the operator: the cascade is about to drop their rows', async () => {

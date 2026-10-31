@@ -368,7 +368,13 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
     }
     const publicUrl = value('S3_PUBLIC_URL')?.replace(/\/+$/, '');
     return new S3RecordingStore(
-      makeS3({ endpoint, region: value('S3_REGION') ?? 'us-east-1', credentials: { accessKeyId, secretAccessKey }, forcePathStyle: true }),
+      makeS3({
+        endpoint, region: value('S3_REGION') ?? 'us-east-1', credentials: { accessKeyId, secretAccessKey }, forcePathStyle: true,
+        // Without them a storage that stops answering holds the request for as long as it stays silent (a profile's
+        // purge runs inside its DELETE request): 5 s to connect, and two minutes of a silent socket, generous as a
+        // streamed read pauses the socket while the client reads slowly. Not requestTimeout: this SDK only warns past it.
+        requestHandler: { connectionTimeout: 5_000, socketTimeout: 120_000 },
+      }),
       {
         bucket,
         prefix: `${prefix}/`,
