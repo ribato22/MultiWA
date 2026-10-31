@@ -125,12 +125,6 @@ describe('the call announcement routes', () => {
     expect(announcements.upload).toHaveBeenCalledWith('p1', Buffer.from('mp3'));
   });
 
-  // Each upload is read in a worker thread that can take seconds of CPU: a tight limit, under the app-wide one.
-  it('upload: at most 5 a minute', () => {
-    const handler = ProfileCallsController.prototype.uploadAnnouncement;
-    expect([Reflect.getMetadata('THROTTLER:LIMITdefault', handler), Reflect.getMetadata('THROTTLER:TTLdefault', handler)]).toEqual([5, 60_000]);
-  });
-
   it('preview: the audio with its type and size, never cached, never sniffed', async () => {
     const audio = Readable.from(['x']);
     const announcements = { read: vi.fn().mockResolvedValue({ mimeType: 'audio/mpeg', size: 1, body: audio }) };

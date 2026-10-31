@@ -5,7 +5,6 @@
 // talk to the callers, whether the calls are recorded, and what the callers hear first. So an API key with a scope
 // list needs profiles:write (the admin's "Manage Profiles") for any of them.
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, PayloadTooLargeException, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { CallsService } from './calls.service';
@@ -82,8 +81,8 @@ export class ProfileCallsController {
   }
 
   @Post(':id/calls-announcement')
-  // Reading an audio file costs a worker thread up to seconds of CPU; uploads are rare, so a tight limit costs nobody.
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  // No throttle of its own: the global ThrottlerGuard keys on req.ip, which behind a proxy (no trustProxy) is the proxy's
+  // for every organization. The two-readers limit of announcement-audio.ts bounds the cost.
   @Roles('owner', 'admin')
   @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
