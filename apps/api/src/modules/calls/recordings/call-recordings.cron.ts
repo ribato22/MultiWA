@@ -60,14 +60,14 @@ export class CallRecordingsCron {
       if (!turnedOff.length && now - this.lastPublicAlertAt < PUBLIC_ALERT_EVERY_MS) return;
       const previous = this.lastPublicAlertAt;
       this.lastPublicAlertAt = now;
+      let told = false;
       try {
         const { stored } = await this.recordings.profilesConcerned();
-        await this.alerts.recordingStorage('not_private', [...new Set([...turnedOff, ...stored])], turnedOff);
-      } catch (e) {
-        // An alert that failed starts no window, so the next check alerts. Only if the mark is still this one's: a
-        // check that alerted meanwhile keeps its window.
-        if (this.lastPublicAlertAt === now) this.lastPublicAlertAt = previous;
-        throw e;
+        told = await this.alerts.recordingStorage('not_private', [...new Set([...turnedOff, ...stored])], turnedOff);
+      } finally {
+        // An alert that failed, or reached nobody (every bell failed), starts no window, so the next check alerts. Only
+        // if the mark is still this one's: a check that alerted meanwhile keeps its window.
+        if (!told && this.lastPublicAlertAt === now) this.lastPublicAlertAt = previous;
       }
     } catch (e) {
       this.logger.error(`The reaction to a public call recordings storage failed: ${clean((e as Error)?.message ?? e)}`);

@@ -1,6 +1,6 @@
 // The nightly job, and the reaction to a public storage. Any check that finds the storage public (the nightly one, or
 // an admin turning recording on) turns recording off everywhere, logs the profiles turned off, and alerts; with nothing
-// left to turn off, the alert repeats at most every 20 hours, counted from an alert that went out. The nightly check
+// left to turn off, the alert repeats at most every 20 hours, counted from an alert that told someone. The nightly check
 // that proves nothing only alerts. Retention and the sweep run after it; one step failing does not skip the others.
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -25,7 +25,8 @@ function make() {
     applyRetention: vi.fn().mockResolvedValue(0),
     sweepOrphans: vi.fn().mockResolvedValue(0),
   };
-  const alerts = { recordingStorage: vi.fn().mockResolvedValue(undefined) };
+  // Resolves whether a bell went out.
+  const alerts = { recordingStorage: vi.fn().mockResolvedValue(true) };
   return { recordings, alerts, cron: new CallRecordingsCron(recordings as any, alerts as any) };
 }
 
@@ -176,11 +177,44 @@ describe('CallRecordingsCron', () => {
     vi.spyOn((cron as any).logger, 'error').mockImplementation(() => {});
     let answer!: (ids: string[]) => void;
     turnOff.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
-    alerts.recordingStorage.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('db down'));
+    alerts.recordingStorage.mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('db down'));
     const first = cron.onPrivacyCheck({ result: 'not_private' });
     await cron.onPrivacyCheck({ result: 'not_private' }); // its alert went out
     vi.setSystemTime(NOW.getTime() + HOUR);
     answer(['p3']);
+    await first;
+    turnOff.mockResolvedValue([]);
+    vi.setSystemTime(NOW.getTime() + 2 * HOUR);
+    await cron.onPrivacyCheck({ result: 'not_private' });
+    expect(alerts.recordingStorage).toHaveBeenCalledTimes(2); // within 20 hours of the second check's alert
+  });
+
+  // Every bell failed (the database failing after the profiles were read): the alert resolved, but told nobody.
+  it('an alert that reached nobody starts no 20-hour window either: the next check alerts, nothing left to turn off', async () => {
+    const { cron, alerts } = make();
+    alerts.recordingStorage.mockResolvedValueOnce(false);
+    await cron.onPrivacyCheck({ result: 'not_private' });
+    turnOff.mockResolvedValue([]);
+    vi.setSystemTime(NOW.getTime() + HOUR);
+    await cron.onPrivacyCheck({ result: 'not_private' });
+    expect(alerts.recordingStorage).toHaveBeenCalledTimes(2);
+  });
+
+  it("an alert that reached nobody after another check's went out keeps that one's window", async () => {
+    const { cron, alerts } = make();
+    let answer!: (told: boolean) => void;
+    const alerting = new Promise<void>((reached) => {
+      alerts.recordingStorage.mockImplementationOnce(() => {
+        reached();
+        return new Promise((resolve) => (answer = resolve));
+      });
+    });
+    const first = cron.onPrivacyCheck({ result: 'not_private' });
+    await alerting;
+    turnOff.mockResolvedValue(['p3']); // turned on since: alerted at once
+    vi.setSystemTime(NOW.getTime() + HOUR);
+    await cron.onPrivacyCheck({ result: 'not_private' });
+    answer(false);
     await first;
     turnOff.mockResolvedValue([]);
     vi.setSystemTime(NOW.getTime() + 2 * HOUR);

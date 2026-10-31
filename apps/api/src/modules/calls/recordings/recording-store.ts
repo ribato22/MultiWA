@@ -371,9 +371,12 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
       makeS3({
         endpoint, region: value('S3_REGION') ?? 'us-east-1', credentials: { accessKeyId, secretAccessKey }, forcePathStyle: true,
         // Without them a storage that stops answering holds the request for as long as it stays silent (a profile's
-        // purge runs inside its DELETE request): 5 s to connect, and two minutes of a silent socket, generous as a
-        // streamed read pauses the socket while the client reads slowly. Not requestTimeout: this SDK only warns past it.
-        requestHandler: { connectionTimeout: 5_000, socketTimeout: 120_000 },
+        // purge runs inside its DELETE request). 5 s to connect, and 20 s for an answer: this SDK arms a socketTimeout
+        // of 6 s or more 3 s into a request, and only if no answer has come by then. So it bounds a storage slow to
+        // answer, not the body of an answer that came within those 3 s, which a client reading slowly may pause (that
+        // of a later one fails after 17 s paused). Each of the SDK's three attempts waits for it: about a minute for one
+        // call to a silent storage. Not requestTimeout: this SDK only warns past it.
+        requestHandler: { connectionTimeout: 5_000, socketTimeout: 20_000 },
       }),
       {
         bucket,

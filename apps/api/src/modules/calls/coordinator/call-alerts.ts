@@ -80,9 +80,12 @@ export class CallAlerts {
    * about it, and should not be told that the recordings can be read), and WhatsApp to the alarm numbers of its profiles
    * concerned. The storage's address is never in the alert (the server log has it): the storage serves every
    * organization of the server, so only whoever runs the server can fix it.
+   *
+   * Each failure is only logged, so it resolves all the same: with whether at least one bell went out, for the caller
+   * not to count an alert that reached nobody (every bell failing, the database down after the profiles were read).
    */
-  async recordingStorage(kind: 'not_private' | 'check_failed', profileIds: string[], turnedOff: string[]): Promise<void> {
-    if (!profileIds.length) return;
+  async recordingStorage(kind: 'not_private' | 'check_failed', profileIds: string[], turnedOff: string[]): Promise<boolean> {
+    if (!profileIds.length) return false;
     const profiles = await prisma.profile.findMany({
       where: { id: { in: profileIds } },
       select: { id: true, displayName: true, settings: true, workspace: { select: { organizationId: true } } },
@@ -97,6 +100,7 @@ export class CallAlerts {
       else this.logger.warn(`Call recordings storage alert for ${clean(p.id)} skipped: the profile has no organization`);
     }
     const nameOf = (p: (typeof profiles)[number]) => p.displayName || p.id;
+    let told = false;
     for (const [orgId, own] of byOrg) {
       const off = own.filter((p) => turnedOff.includes(p.id)).map(nameOf);
       const title = kind === 'not_private' ? 'Call recordings can be read without a login' : 'Call recordings storage could not be checked';
@@ -109,6 +113,7 @@ export class CallAlerts {
             'If this repeats, ask whoever runs this MultiWA server to check the storage.';
       try {
         await this.notifications.createForOrg(orgId, NotificationType.SYSTEM, title, text, { kind: 'call_recordings_storage', status: kind }, ['owner', 'admin']);
+        told = true;
       } catch (e) {
         this.logger.warn(`Call recordings storage bell for ${orgId} failed: ${clean((e as Error)?.message ?? e)}`);
       }
@@ -133,5 +138,6 @@ export class CallAlerts {
         this.logger.warn(`Call recordings storage alert for ${orgId} failed: ${clean((e as Error)?.message ?? e)}`);
       }
     }
+    return told;
   }
 }

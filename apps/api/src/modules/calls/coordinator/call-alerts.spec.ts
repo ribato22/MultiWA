@@ -138,7 +138,7 @@ describe('CallAlerts.recordingStorage', () => {
 
   it('public: each organization told of its own profiles turned off; WhatsApp to their alarm numbers, once each', async () => {
     const warn = vi.spyOn((alerts as any).logger, 'warn').mockImplementation(() => {});
-    await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3', 'p4'], ['p1', 'p2', 'p4']);
+    expect(await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3', 'p4'], ['p1', 'p2', 'p4'])).toBe(true);
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['p1', 'p2', 'p3', 'p4'] } } }));
     const o1 = `${PUBLIC}Recording was turned off for Line 1, p2. ${FIX}`;
     const o2 = `${PUBLIC}${FIX}`;
@@ -168,16 +168,29 @@ describe('CallAlerts.recordingStorage', () => {
       { kind: 'call_recordings_storage', status: 'check_failed' }, ADMINS);
   });
 
-  it('nobody concerned: nothing at all', async () => {
-    await alerts.recordingStorage('not_private', [], []);
+  it('nobody concerned, or none in an organization: nothing at all, and nobody told', async () => {
+    expect(await alerts.recordingStorage('not_private', [], [])).toBe(false);
     expect(findMany).not.toHaveBeenCalled();
+    vi.spyOn((alerts as any).logger, 'warn').mockImplementation(() => {});
+    findMany.mockResolvedValue([{ id: 'p4', displayName: 'Line 4', settings: {}, workspace: null }]);
+    expect(await alerts.recordingStorage('not_private', ['p4'], ['p4'])).toBe(false);
     expect(notifications.createForOrg).not.toHaveBeenCalled();
   });
 
-  it('a bell that fails still sends the WhatsApp alert, and the next organization gets its own', async () => {
+  it('a bell that fails still sends the WhatsApp alert, and the next organization gets its own: someone was told', async () => {
     notifications.createForOrg.mockRejectedValueOnce(new Error('db down'));
-    await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3'], []);
+    expect(await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3'], [])).toBe(true);
     expect(notifications.createForOrg).toHaveBeenCalledTimes(2);
     expect(sendOpsAlert).toHaveBeenCalledTimes(2);
+  });
+
+  // The database failing after the profiles were read: each failure is only logged, so it resolves all the same, and
+  // says that no bell went out, for the caller not to count it as an alert.
+  it('every bell failing: resolves, saying that nobody was told', async () => {
+    const warn = vi.spyOn((alerts as any).logger, 'warn').mockImplementation(() => {});
+    notifications.createForOrg.mockRejectedValue(new Error('db down'));
+    expect(await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3'], [])).toBe(false);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith('Call recordings storage bell for o1 failed: db down');
   });
 });

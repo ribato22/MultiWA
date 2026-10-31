@@ -164,8 +164,8 @@ describe('createRecordingStore: S3', () => {
   const S3_ENV = { CALL_RECORDINGS_STORAGE: 's3', S3_ENDPOINT: 'http://minio:9000/', S3_ACCESS_KEY: 'a', S3_SECRET_KEY: 'b', S3_BUCKET: 'media' };
   const configOf = (env: Record<string, string>) => (createRecordingStore({ ...S3_ENV, ...env }, () => client()) as any).config;
 
-  // A storage that stops answering fails a request instead of holding it: a short time to connect, and a generous one
-  // for a silent socket (a streamed read pauses it while the client reads slowly).
+  // A storage that stops answering fails a request instead of holding it: 5 s to connect, 20 s for an answer (each of
+  // the SDK's three attempts, so about a minute for one call to a silent storage).
   it('its own bucket when given, path style, timeouts, and the endpoint and S3_PUBLIC_URL as the addresses checked', () => {
     const made: unknown[] = [];
     const store = createRecordingStore(
@@ -178,7 +178,7 @@ describe('createRecordingStore: S3', () => {
     expect(store).toBeInstanceOf(S3RecordingStore);
     expect(made).toEqual([{
       endpoint: 'http://minio:9000', region: 'ap-southeast-3', credentials: { accessKeyId: 'a', secretAccessKey: 'b' }, forcePathStyle: true,
-      requestHandler: { connectionTimeout: 5_000, socketTimeout: 120_000 },
+      requestHandler: { connectionTimeout: 5_000, socketTimeout: 20_000 },
     }]);
     expect((store as any).config).toEqual({ bucket: 'recs', prefix: 'call-recordings/', sse: 'AES256', publicBases: ['http://minio:9000', 'https://cdn.example.com'] });
     expect(store.location).toBe('s3:recs/call-recordings/');
