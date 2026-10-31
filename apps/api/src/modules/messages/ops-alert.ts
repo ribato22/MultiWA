@@ -27,13 +27,13 @@ export interface OpsAlert {
   excludeProfileId: string;
   /** That profile's own number: never a recipient. */
   ownPhone: string | null;
-  /** The numbers (a profile's settings, unchecked here): anything but an array sends nothing. */
+  /** The numbers (a profile's settings, unchecked here): only the strings of an array are sent to. */
   recipients: unknown;
   text: string;
 }
 
 export async function sendOpsAlert(messages: Pick<MessagesService, 'sendText'>, logger: { warn: (m: string) => void }, alert: OpsAlert): Promise<void> {
-  const to = Array.isArray(alert.recipients) ? alert.recipients : [];
+  const to = Array.isArray(alert.recipients) ? alert.recipients.filter((r): r is string => typeof r === 'string') : [];
   if (!to.length) return;
   const sender = await prisma.profile.findFirst({
     where: { id: { not: alert.excludeProfileId }, status: 'connected', quietAlarmAt: null, workspace: { organizationId: alert.organizationId } },
@@ -48,7 +48,7 @@ export async function sendOpsAlert(messages: Pick<MessagesService, 'sendText'>, 
   for (const recipient of to) {
     if (own && digits(recipient) === own) continue;
     try {
-      const res: any = await messages.sendText({ profileId: sender.id, to: recipient, text: alert.text } as any);
+      const res = await messages.sendText({ profileId: sender.id, to: recipient, text: alert.text });
       if (res?.success === false) logger.warn(`${alert.what} not sent through ${sender.id}: ${clean(res.error ?? 'failed')}`);
     } catch (e) {
       logger.warn(`${alert.what} not sent through ${sender.id}: ${reason(e)}`);

@@ -82,15 +82,20 @@ describe('answered (a call answered in the dashboard)', () => {
 });
 
 describe('the call payload', () => {
+  const base = {
+    id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false,
+    direction: 'incoming', outcome: 'answered', rejectedBy: null, startedAt: new Date('2026-10-30T01:00:00Z'),
+    endedAt: new Date('2026-10-30T01:05:00Z'), followUp: 'done', assignedUserId: null, autoReplySentAt: null, conversationId: null,
+  };
+
   it('carries who answered in the dashboard, when, and how the call ended (null for other calls)', () => {
-    const base = {
-      id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false,
-      direction: 'incoming', outcome: 'answered', rejectedBy: null, startedAt: new Date('2026-10-30T01:00:00Z'),
-      endedAt: new Date('2026-10-30T01:05:00Z'), followUp: 'done', assignedUserId: null, autoReplySentAt: null, conversationId: null,
-    };
     expect(toCallPayload({ ...base, answeredByUserId: 'u1', answeredAt: new Date('2026-10-30T01:00:12Z'), endedBy: 'agent', endReason: 'hangup', talkSeconds: 288 })).toMatchObject({
       answeredByUserId: 'u1', answeredAt: '2026-10-30T01:00:12.000Z', endedBy: 'agent', endReason: 'hangup', talkSeconds: 288,
     });
     expect(toCallPayload(base)).toMatchObject({ answeredByUserId: null, answeredAt: null, endedBy: null, endReason: null, talkSeconds: null });
+  });
+
+  it('names no answerer for a call that was not answered, though an agent still held its claim', () => {
+    expect(toCallPayload({ ...base, outcome: 'missed', followUp: 'open', answeredByUserId: 'u1' })).toMatchObject({ outcome: 'missed', answeredByUserId: null });
   });
 });

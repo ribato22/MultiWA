@@ -120,7 +120,9 @@ export function toCallPayload(row: CallRecord): Record<string, unknown> {
     endedAt: row.endedAt ? row.endedAt.toISOString() : null,
     followUp: row.followUp,
     assignedUserId: row.assignedUserId,
-    answeredByUserId: row.answeredByUserId ?? null,
+    // Before the answer the column holds a claim, and the call may end unanswered (missed, answered on the phone)
+    // while an agent's audio is still connecting: a claimer is not an answerer.
+    answeredByUserId: row.outcome === 'answered' ? row.answeredByUserId ?? null : null,
     answeredAt: row.answeredAt ? row.answeredAt.toISOString() : null,
     endedBy: row.endedBy ?? null,
     endReason: row.endReason ?? null,

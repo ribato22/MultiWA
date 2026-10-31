@@ -29,7 +29,7 @@ describe('checkReadiness', () => {
     expect((await checkReadiness({}, { engineHostWorker: false, media: UP, engine: unsupported })).reasons).toEqual(['web_calling_disabled', 'not_prepared']);
   });
 
-  it('a probe that throws, hangs, or says no without a reason reads as page_error', async () => {
+  it('a probe that throws, hangs, or says no without a reason (or without a reasons list) reads as page_error', async () => {
     vi.useFakeTimers();
     try {
       const hung = { callMedia: { getSupport: () => new Promise(() => {}) } as any };
@@ -42,6 +42,7 @@ describe('checkReadiness', () => {
     const throws = { callMedia: { getSupport: async () => { throw new Error('Target closed'); } } as any };
     expect((await checkReadiness({}, { engineHostWorker: false, media: UP, engine: throws })).reasons).toEqual(['page_error']);
     expect((await checkReadiness({}, { engineHostWorker: false, media: UP, engine: engine({ supported: false, reasons: [] }) })).reasons).toEqual(['page_error']);
+    expect((await checkReadiness({}, { engineHostWorker: false, media: UP, engine: engine({ supported: false }) })).reasons).toEqual(['page_error']);
   });
 
   it('with call media off, the page is not probed (its engine has none)', async () => {

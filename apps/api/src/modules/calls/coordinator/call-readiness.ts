@@ -41,7 +41,8 @@ export async function checkReadiness(settings: Record<string, unknown>, deps: Re
     if (!media) reasons.push('engine_not_supported');
     else {
       const support = await withTimeout(media.getSupport(), READINESS_PROBE_MS).catch(() => null);
-      if (!support?.supported) reasons.push(...(support?.reasons.length ? support.reasons : (['page_error'] as const)));
+      // A reply without its reasons list (from any engine) is a page error too, not a throw.
+      if (!support?.supported) reasons.push(...(support?.reasons?.length ? support.reasons : (['page_error'] as const)));
     }
   }
   return { ready: reasons.length === 0, reasons };

@@ -29,7 +29,7 @@ export async function findCallForAnswer(callId: string): Promise<CallForAnswer |
   if (!row) return null;
   const { profile, conversation, ...call } = row;
   return {
-    call: call as unknown as CallRecord,
+    call,
     profile: {
       id: profile.id,
       displayName: profile.displayName,
@@ -63,30 +63,40 @@ export async function markAnswered(callId: string, userId: string, at: Date): Pr
   });
   if (res.count !== 1) return null;
   await prisma.call.updateMany({ where: { id: callId, followUp: 'open' }, data: { followUp: followUpAfter('answered', 'open') } });
-  return (await prisma.call.findUnique({ where: { id: callId } })) as unknown as CallRecord | null;
+  return prisma.call.findUnique({ where: { id: callId } });
 }
 
-/** The end of an answered call: when, by whom, why, and its talk time from the answer. Null when it was ended already. */
+/**
+ * The end of an answered call: when, by whom, why, and its talk time from the answer. Returns the row as stored after
+ * the write (its call.ended payload); null when it was ended already.
+ */
 export async function markEnded(callId: string, endedBy: CallEndedBy, endReason: CallEndReason, at: Date): Promise<CallRecord | null> {
-  const row = (await prisma.call.findUnique({ where: { id: callId } })) as unknown as CallRecord | null;
+  const row = await prisma.call.findUnique({ where: { id: callId } });
   if (!row || row.outcome !== 'answered' || row.endedAt || !row.answeredAt) return null;
   const talkSeconds = Math.max(0, Math.round((at.getTime() - row.answeredAt.getTime()) / 1000));
   const res = await prisma.call.updateMany({
     where: { id: callId, outcome: 'answered', endedAt: null },
     data: { endedAt: at, endedBy, endReason, talkSeconds },
   });
-  return res.count === 1 ? { ...row, endedAt: at, endedBy, endReason, talkSeconds } : null;
+  if (res.count !== 1) return null;
+  return prisma.call.findUnique({ where: { id: callId } });
 }
 
 /**
  * Boot: the previous process's sessions went with it (the engines and the media server restart too). An answered call
- * with no end gets one (server_restart, talking until now); a claim whose call was never answered is let go. Run it
- * before the gateway takes agents' commands.
+ * with no end gets one (server_restart, without talk time: the downtime is not talk time, and the real one is
+ * unknown); a claim on a call that was never answered is let go. Each write touches only what the previous process
+ * left (a call answered before `at`, a claim on a call that rang before it), so it may run while this process takes
+ * calls. Run it once, on the engine host, at boot: with another process hosting calls it would end them.
  */
 export async function reconcileAfterRestart(at: Date): Promise<{ ended: number; released: number }> {
-  const open = await prisma.call.findMany({ where: { outcome: 'answered', endedAt: null }, select: { id: true } });
-  let ended = 0;
-  for (const { id } of open) if (await markEnded(id, 'server', 'server_restart', at)) ended++;
-  const released = await prisma.call.updateMany({ where: { answeredByUserId: { not: null }, outcome: { not: 'answered' } }, data: { answeredByUserId: null } });
-  return { ended, released: released.count };
+  const ended = await prisma.call.updateMany({
+    where: { outcome: 'answered', endedAt: null, answeredAt: { lt: at } },
+    data: { endedAt: at, endedBy: 'server', endReason: 'server_restart', talkSeconds: null },
+  });
+  const released = await prisma.call.updateMany({
+    where: { answeredByUserId: { not: null }, outcome: { not: 'answered' }, startedAt: { lt: at } },
+    data: { answeredByUserId: null },
+  });
+  return { ended: ended.count, released: released.count };
 }

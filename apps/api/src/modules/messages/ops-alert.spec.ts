@@ -1,5 +1,5 @@
 // An ops alert goes through ANOTHER connected profile of the organization (the alert may be about a profile whose own
-// session is in doubt), never to that profile's own number, and never throws.
+// session is in doubt), never to that profile's own number; a failed send is logged, never thrown.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findFirst: vi.fn() } } }));
@@ -26,6 +26,11 @@ describe('sendOpsAlert', () => {
       orderBy: { createdAt: 'asc' },
       select: { id: true },
     });
+    expect(messages.sendText.mock.calls).toEqual([[{ profileId: 'p2', to: '628222000222', text: 'hi' }]]);
+  });
+
+  it('sends only to the string entries of the numbers it is given', async () => {
+    await sendOpsAlert(messages as any, logger, { ...alert, recipients: ['628222000222', 628333000333, null, { to: '628444000444' }] });
     expect(messages.sendText.mock.calls).toEqual([[{ profileId: 'p2', to: '628222000222', text: 'hi' }]]);
   });
 

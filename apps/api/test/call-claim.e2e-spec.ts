@@ -52,7 +52,7 @@ describe('call claims (e2e, real Postgres)', () => {
     expect(await markEnded(call.id, 'caller', 'caller_hangup', new Date())).toBeNull();
   });
 
-  it("boot reconciliation: an answered call left open is ended, a claim left on a call that stopped ringing is released", async () => {
+  it("boot reconciliation: an answered call left open is ended without talk time, a claim left on a call that stopped ringing is released", async () => {
     const open = await ringing();
     await claimCall(open.id, agents[0]);
     await markAnswered(open.id, agents[0], new Date(Date.now() - 30_000));
@@ -62,7 +62,7 @@ describe('call claims (e2e, real Postgres)', () => {
     const { ended, released } = await reconcileAfterRestart(new Date());
     expect(ended).toBeGreaterThanOrEqual(1);
     expect(released).toBeGreaterThanOrEqual(1);
-    expect(await prisma.call.findUnique({ where: { id: open.id } })).toMatchObject({ endedBy: 'server', endReason: 'server_restart' });
+    expect(await prisma.call.findUnique({ where: { id: open.id } })).toMatchObject({ endedBy: 'server', endReason: 'server_restart', talkSeconds: null });
     expect((await prisma.call.findUnique({ where: { id: stale.id } }))!.answeredByUserId).toBeNull();
   });
 });

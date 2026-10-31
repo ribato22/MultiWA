@@ -42,9 +42,11 @@ describe('call-session-store', () => {
     expect(db.updateMany).toHaveBeenCalledTimes(1); // the follow-up is left alone
   });
 
-  it('an end stores who, why and the talk time from the answer, once', async () => {
-    db.findUnique.mockResolvedValue(ANSWERED);
-    expect(await markEnded('c1', 'agent', 'hangup', AT)).toMatchObject({ endedAt: AT, endedBy: 'agent', endReason: 'hangup', talkSeconds: 90 });
+  it('an end stores who, why and the talk time from the answer, once, and returns the row as stored', async () => {
+    // assignedUserId: changed by someone else between the read and the write, so only a re-read has it
+    const stored = { ...ANSWERED, endedAt: AT, endedBy: 'agent', endReason: 'hangup', talkSeconds: 90, assignedUserId: 'u9' };
+    db.findUnique.mockResolvedValueOnce(ANSWERED).mockResolvedValueOnce(stored);
+    expect(await markEnded('c1', 'agent', 'hangup', AT)).toEqual(stored);
     expect(db.updateMany).toHaveBeenCalledWith({
       where: { id: 'c1', outcome: 'answered', endedAt: null },
       data: { endedAt: AT, endedBy: 'agent', endReason: 'hangup', talkSeconds: 90 },
@@ -58,13 +60,20 @@ describe('call-session-store', () => {
     expect(await markEnded('c1', 'caller', 'caller_hangup', AT)).toBeNull(); // read as open, but another end won the write
   });
 
-  it("boot: ends the previous process's answered calls (server_restart) and lets its claims go", async () => {
-    db.findMany.mockResolvedValue([{ id: 'c1' }, { id: 'c2' }]);
-    db.findUnique.mockImplementation(async ({ where }: any) => ({ ...ANSWERED, id: where.id }));
-    db.updateMany.mockImplementation(async ({ where }: any) => ({ count: where.answeredByUserId ? 3 : 1 }));
+  it("boot: two writes bounded by the boot end the previous process's answered calls (server_restart, no talk time) and let its claims go", async () => {
+    db.updateMany.mockImplementation(async ({ where }: any) => ({ count: where.answeredByUserId ? 3 : 2 }));
     expect(await reconcileAfterRestart(AT)).toEqual({ ended: 2, released: 3 });
-    expect(db.findMany).toHaveBeenCalledWith({ where: { outcome: 'answered', endedAt: null }, select: { id: true } });
-    expect(db.updateMany).toHaveBeenCalledWith({ where: { answeredByUserId: { not: null }, outcome: { not: 'answered' } }, data: { answeredByUserId: null } });
+    expect(db.updateMany).toHaveBeenCalledTimes(2);
+    expect(db.updateMany).toHaveBeenCalledWith({
+      where: { outcome: 'answered', endedAt: null, answeredAt: { lt: AT } },
+      data: { endedAt: AT, endedBy: 'server', endReason: 'server_restart', talkSeconds: null },
+    });
+    expect(db.updateMany).toHaveBeenCalledWith({
+      where: { answeredByUserId: { not: null }, outcome: { not: 'answered' }, startedAt: { lt: AT } },
+      data: { answeredByUserId: null },
+    });
+    expect(db.findMany).not.toHaveBeenCalled();
+    expect(db.findUnique).not.toHaveBeenCalled();
   });
 
   it('reads a call with its profile settings, organization and caller name', async () => {
