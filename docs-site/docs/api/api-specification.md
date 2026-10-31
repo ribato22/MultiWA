@@ -473,7 +473,7 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 | `POST` | `/workspaces` | Create workspace |
 | `GET` | `/workspaces/:id` | Get workspace |
 | `PUT` | `/workspaces/:id` | Update workspace |
-| `DELETE` | `/workspaces/:id` | Delete workspace |
+| `DELETE` | `/workspaces/:id` | Delete workspace (owner or admin) |
 
 ### RBAC (`/rbac`)
 
