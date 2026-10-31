@@ -119,8 +119,8 @@ export class AuditInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest();
     const method = req.method;
     
-    // Only audit mutating requests
-    if (method === 'GET') return next.handle();
+    // Only audit mutating requests. Fastify answers a HEAD with the GET route's handler: a read too.
+    if (method === 'GET' || method === 'HEAD') return next.handle();
     
     const controllerName = context.getClass().name;
     const handlerName = context.getHandler().name;

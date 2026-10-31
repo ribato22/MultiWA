@@ -92,6 +92,16 @@ describe('CallsController routes', () => {
     expect(audit.log).not.toHaveBeenCalled();
   });
 
+  // Fastify answers a HEAD with the GET route's handler: a read, which the interceptor never audits. For the recording,
+  // the service has audited it as a play, and an interceptor entry would be a second one.
+  it('the interceptor writes nothing for a HEAD, as for a GET', async () => {
+    const audit = { log: vi.fn().mockResolvedValue(undefined) };
+    const req = { method: 'HEAD', params: { id: 'c1' }, user: { id: 'u1', organizationId: 'o1' }, headers: {} };
+    const context = { switchToHttp: () => ({ getRequest: () => req }), getClass: () => CallsController, getHandler: () => proto.recording };
+    await lastValueFrom(new AuditInterceptor(audit as any).intercept(context as any, { handle: () => of({}) }));
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
   it.each(ROUTES)('%s: verb, path and tenant check', (name, method, path, checks) => {
     expect(Reflect.getMetadata(METHOD_METADATA, proto[name])).toBe(method);
     expect(Reflect.getMetadata(PATH_METADATA, proto[name])).toBe(path);
