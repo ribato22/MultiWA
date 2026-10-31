@@ -6,6 +6,10 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagg
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { AccountsService } from './accounts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateAccountDto, UpdateAccountDto, CreateProfileDto } from './dto';
@@ -95,7 +99,12 @@ export class AccountsController {
     return this.accountsService.getProfile(accountId, profileId);
   }
 
+  // As the flat route: deleting a profile deletes every recording file of it, so an owner or admin only, and an API
+  // key with a scope list needs profiles:write.
   @Delete(':accountId/profiles/:profileId')
+  @UseGuards(ApiKeyScopeGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @RequireScope('profiles:write')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },

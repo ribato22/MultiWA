@@ -6,6 +6,10 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '
 import { ProfilesService } from './profiles.service';
 import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
@@ -54,7 +58,12 @@ export class ProfilesController {
     return this.profilesService.update(id, dto);
   }
 
+  // Deleting a profile deletes every recording file of it, which only an owner or admin may: so an owner or admin only,
+  // and an API key with a scope list needs profiles:write.
   @Delete(':id')
+  @UseGuards(ApiKeyScopeGuard, RolesGuard)
+  @Roles('owner', 'admin')
+  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Delete profile' })
   @ApiResponse({ status: 200, description: 'Profile deleted' })

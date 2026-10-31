@@ -113,7 +113,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/accounts/:accountId/profiles` | List profiles inside an account |
 | `POST` | `/accounts/:accountId/profiles` | Create a profile in an account |
 | `GET` | `/accounts/:accountId/profiles/:profileId` | Get profile (account-scoped) |
-| `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped) |
+| `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped; owner or admin) |
 | `POST` | `/accounts/:accountId/profiles/:profileId/connect` | Start WhatsApp connection |
 | `POST` | `/accounts/:accountId/profiles/:profileId/disconnect` | Disconnect |
 | `GET` | `/accounts/:accountId/profiles/:profileId/qr` | Retrieve current QR code |
@@ -130,7 +130,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (owner or admin; multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds) |
 | `GET` | `/profiles/:id/calls-announcement` | The profile's announcement, to listen to (owner or admin) |
 | `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (owner or admin; 409 while recording is on; its file goes at a nightly sweep once it is an hour old) |
-| `DELETE` | `/profiles/:id` | Delete profile |
+| `DELETE` | `/profiles/:id` | Delete profile (owner or admin) |
 | `POST` | `/profiles/:id/connect` | Start WhatsApp connection |
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
 | `GET` | `/profiles/:id/status` | Get connection status |
