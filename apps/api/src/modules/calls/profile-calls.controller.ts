@@ -21,24 +21,34 @@ import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
 
-type MultipartRequest = { file(options: { limits: { fileSize: number } }): Promise<{ toBuffer(): Promise<Buffer> } | undefined> };
+type MultipartLimits = { fileSize: number; files: number; fieldSize: number };
+type MultipartRequest = { file(options: { limits: MultipartLimits }): Promise<{ toBuffer(): Promise<Buffer> } | undefined> };
 const codeOf = (e: unknown) => (e as { code?: unknown } | null)?.code;
+// The parser's own errors (no boundary, a body cut short) carry no status, and Nest would answer them with a 500; the
+// plugin's errors carry theirs, which Nest answers with.
+const malformedUnlessStatus = (e: unknown) =>
+  (e as { statusCode?: unknown } | null)?.statusCode === undefined ? new BadRequestException('The multipart/form-data body is malformed') : e;
 
-/** The one file of a multipart request, at most `maxBytes` (413 past it, before more is read). */
+/**
+ * The one file of a multipart request, at most `maxBytes`: past it 413, the rest of the file read off the wire and
+ * dropped, never kept. The rest of the request is read too: a second file is skipped (left unread, it would stall the
+ * next request on the same kept-alive connection, an unrelated one behind nginx), and a field is cut at 1 KB (the
+ * fields are held in memory, up to the plugin's 1000 parts).
+ */
 export async function readUpload(request: FastifyRequest, maxBytes: number): Promise<Buffer> {
   let part: { toBuffer(): Promise<Buffer> } | undefined;
   try {
-    part = await (request as unknown as MultipartRequest).file({ limits: { fileSize: maxBytes } });
+    part = await (request as unknown as MultipartRequest).file({ limits: { fileSize: maxBytes, files: 1, fieldSize: 1024 } });
   } catch (e) {
     if (codeOf(e) === 'FST_INVALID_MULTIPART_CONTENT_TYPE') throw new BadRequestException('Send the file as multipart/form-data');
-    throw e;
+    throw malformedUnlessStatus(e);
   }
   if (!part) throw new BadRequestException('No file uploaded');
   try {
     return await part.toBuffer();
   } catch (e) {
     if (codeOf(e) === 'FST_REQ_FILE_TOO_LARGE') throw new PayloadTooLargeException(`The file must be at most ${maxBytes / (1024 * 1024)} MB`);
-    throw e;
+    throw malformedUnlessStatus(e);
   }
 }
 
@@ -80,6 +90,7 @@ export class ProfileCallsController {
   @ApiOperation({ summary: 'Upload the announcement callers hear before a recorded call: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds' })
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiResponse({ status: 400, description: 'No file, not multipart/form-data, or a malformed body' })
   @ApiResponse({ status: 409, description: 'The recordings storage is not configured (`reasons`)' })
   @ApiResponse({ status: 413, description: 'Larger than 2 MB' })
   @ApiResponse({ status: 415, description: 'Not one of the audio formats' })

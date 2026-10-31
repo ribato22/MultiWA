@@ -116,11 +116,12 @@ describe('the call announcement routes', () => {
     expect(Reflect.getMetadata(TENANT_CHECK, handler)).toEqual([{ from: 'param', key: 'id', resource: 'profile' }]);
   });
 
+  // One file of at most 2 MB, and fields of at most 1 KB: whatever else the request holds is read and dropped.
   it('upload: the one file of the request, at most 2 MB, to the service', async () => {
     const announcements = { upload: vi.fn().mockResolvedValue('stored') };
     const file = vi.fn().mockResolvedValue({ toBuffer: async () => Buffer.from('mp3') });
     await expect(new ProfileCallsController({} as any, announcements as any).uploadAnnouncement('p1', { file } as any)).resolves.toBe('stored');
-    expect(file).toHaveBeenCalledWith({ limits: { fileSize: 2 * 1024 * 1024 } });
+    expect(file).toHaveBeenCalledWith({ limits: { fileSize: 2 * 1024 * 1024, files: 1, fieldSize: 1024 } });
     expect(announcements.upload).toHaveBeenCalledWith('p1', Buffer.from('mp3'));
   });
 
@@ -174,8 +175,16 @@ describe('readUpload', () => {
     await expect(readUpload(tooLarge, 2 * 1024 * 1024)).rejects.toMatchObject({ status: 413, message: 'The file must be at most 2 MB' });
   });
 
-  it('any other error as it is', async () => {
-    const boom = new Error('boom');
-    await expect(readUpload(request(async () => ({ toBuffer: async () => { throw boom; } })), 10)).rejects.toBe(boom);
+  // The parser's own errors (no boundary, a body cut short) carry no status: as they are, Nest would answer 500.
+  it('an error without a status is a malformed body (400), before the file and while it is read', async () => {
+    const malformed = { status: 400, message: 'The multipart/form-data body is malformed' };
+    await expect(readUpload(request(async () => { throw new Error('Multipart: Boundary not found'); }), 10)).rejects.toMatchObject(malformed);
+    await expect(readUpload(request(async () => ({ toBuffer: async () => { throw failing('ERR_STREAM_PREMATURE_CLOSE'); } })), 10)).rejects.toMatchObject(malformed);
+  });
+
+  it('an error with a status as it is: Nest answers with its status', async () => {
+    const limit = Object.assign(failing('FST_PARTS_LIMIT'), { statusCode: 413 });
+    await expect(readUpload(request(async () => { throw limit; }), 10)).rejects.toBe(limit);
+    await expect(readUpload(request(async () => ({ toBuffer: async () => { throw limit; } })), 10)).rejects.toBe(limit);
   });
 });
