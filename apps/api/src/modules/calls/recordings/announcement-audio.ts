@@ -47,8 +47,9 @@ const FORMATS: Array<{ container: RegExp; codec: RegExp; bitsPerSample?: number;
 // thread that would hold every request and timer of the api. Its memory cap is about 224 MB: 128 MB of old space plus
 // the young generation. A process-wide --max-old-space-size (on the command line or in NODE_OPTIONS) overrides
 // resourceLimits and lifts the cap; the image runs `node dist/main.js` without one, so it holds there. The worker
-// requires the module by the path resolved here and posts back plain fields only.
-const MUSIC_METADATA = createRequire(__filename).resolve('music-metadata');
+// requires the module by the path resolved here and posts back plain fields only. Resolved at the first inspection, not
+// at import: an install without it fails the announcement upload, not the boot of the whole API.
+let musicMetadataPath: string | undefined;
 const READER = `
 const { parentPort, workerData } = require('worker_threads');
 // skipCovers is load-bearing: with covers read, an ID3 picture with an empty MIME type goes through the same sniffing.
@@ -72,9 +73,9 @@ const logger = new Logger('AnnouncementAudio');
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 
 /** The file's format; null when music-metadata does not know it; 'unreadable' when its reader died or ran out of time. */
-function readFormat(file: Buffer, timeoutMs: number): Promise<AudioFormat | null | 'unreadable'> {
+function readFormat(file: Buffer, timeoutMs: number, musicMetadata: string): Promise<AudioFormat | null | 'unreadable'> {
   return new Promise((resolve) => {
-    const worker = new Worker(READER, { eval: true, workerData: { musicMetadata: MUSIC_METADATA, file }, resourceLimits: { maxOldGenerationSizeMb: 128 } });
+    const worker = new Worker(READER, { eval: true, workerData: { musicMetadata, file }, resourceLimits: { maxOldGenerationSizeMb: 128 } });
     // The first of the answer, an error, the exit and the time limit decides, and says why; what follows is its echo
     // (terminate() makes the thread exit, and an error is followed by an exit).
     let settled = false;
@@ -152,8 +153,10 @@ function wavSeconds(file: Buffer, { sampleRate = 0, numberOfChannels = 0, bitsPe
 
 export async function inspectAnnouncement(file: Buffer, { timeoutMs = READ_TIMEOUT_MS }: { timeoutMs?: number } = {}): Promise<AnnouncementAudio> {
   if (reading >= MAX_READS_AT_ONCE) throw new ServiceUnavailableException('Another announcement is being read; try again in a moment');
+  // Before a reader slot is taken: a resolve that fails keeps none.
+  musicMetadataPath ??= createRequire(__filename).resolve('music-metadata');
   reading++;
-  const format = await readFormat(file, timeoutMs).finally(() => reading--);
+  const format = await readFormat(file, timeoutMs, musicMetadataPath).finally(() => reading--);
   if (format === 'unreadable') throw new UnsupportedMediaTypeException('The announcement file could not be read: export it again as mp3, ogg or wav');
   const match =
     format &&

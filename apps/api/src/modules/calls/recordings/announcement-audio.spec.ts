@@ -229,3 +229,36 @@ describe("inspectAnnouncement's reader thread", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('exited with code 0'));
   });
 });
+
+// Resolved on the first inspection, not at import: an install without music-metadata fails the announcement upload, not
+// the boot of the whole API.
+describe("inspectAnnouncement's music-metadata", () => {
+  afterEach(() => {
+    vi.doUnmock('module');
+    vi.resetModules();
+  });
+
+  it('missing: the import works, and every inspection fails, none of them keeping a reader slot', async () => {
+    vi.resetModules();
+    vi.doMock('module', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('module')>()),
+      createRequire: () => ({ resolve: () => { throw new Error("Cannot find module 'music-metadata'"); } }),
+    }));
+    const { inspectAnnouncement: inspect } = await import('./announcement-audio');
+    for (let i = 0; i < 3; i++) await expect(inspect(fixture('tone.mp3'))).rejects.toThrow("Cannot find module 'music-metadata'");
+  });
+
+  it('resolved once, at the first inspection, and kept', async () => {
+    vi.resetModules();
+    const resolve = vi.fn();
+    vi.doMock('module', async (importOriginal) => {
+      const real = await importOriginal<typeof import('module')>();
+      return { ...real, createRequire: (from: string) => ({ resolve: resolve.mockImplementation((id: string) => real.createRequire(from).resolve(id)) }) };
+    });
+    const { inspectAnnouncement: inspect } = await import('./announcement-audio');
+    expect(resolve).not.toHaveBeenCalled();
+    expect(await inspect(fixture('tone.mp3'))).toMatchObject({ ext: 'mp3' });
+    expect(await inspect(fixture('tone.wav'))).toMatchObject({ ext: 'wav' });
+    expect(resolve.mock.calls).toEqual([['music-metadata']]);
+  });
+});
