@@ -110,3 +110,65 @@ describe('CallAlerts.workerDied', () => {
     expect(await rings([], 1)).toEqual(['o1']);
   });
 });
+
+// The recordings storage failed a privacy check: found public (by any check), or not checkable (at night). One bell per
+// organization, naming only its own profiles, and WhatsApp to its profiles' alarm numbers (each once). The storage's
+// address is never in it: one storage serves every organization of the server.
+describe('CallAlerts.recordingStorage', () => {
+  const PUBLIC = 'The storage of call recordings serves its files without credentials: anyone who has an address can read them. ';
+  const FIX = 'Make the storage private, then turn recording on again.';
+  let notifications: { createForOrg: ReturnType<typeof vi.fn> };
+  let alerts: CallAlerts;
+  beforeEach(() => {
+    findMany.mockReset().mockResolvedValue([
+      { id: 'p1', displayName: 'Line 1', settings: { quietAlarmNotify: ['628111000111', '628111000222'] }, workspace: { organizationId: 'o1' } },
+      { id: 'p2', displayName: null, settings: { quietAlarmNotify: ['628111000111'] }, workspace: { organizationId: 'o1' } },
+      { id: 'p3', displayName: 'Line 3', settings: {}, workspace: { organizationId: 'o2' } },
+    ]);
+    (sendOpsAlert as any).mockReset().mockResolvedValue(undefined);
+    notifications = { createForOrg: vi.fn().mockResolvedValue([]) };
+    alerts = new CallAlerts(notifications as any, {} as any);
+  });
+
+  it('public: each organization told of its own profiles turned off; WhatsApp to their alarm numbers, once each', async () => {
+    await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3'], ['p1', 'p2']);
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['p1', 'p2', 'p3'] } } }));
+    const o1 = `${PUBLIC}Recording was turned off for Line 1, p2. ${FIX}`;
+    const o2 = `${PUBLIC}${FIX}`;
+    expect(notifications.createForOrg.mock.calls).toEqual([
+      ['o1', 'system', 'Call recordings can be read without a login', o1, { kind: 'call_recordings_storage', status: 'not_private' }],
+      ['o2', 'system', 'Call recordings can be read without a login', o2, { kind: 'call_recordings_storage', status: 'not_private' }],
+    ]);
+    expect((sendOpsAlert as any).mock.calls).toEqual([
+      [{}, expect.anything(), {
+        what: 'Call recordings storage alert for o1', organizationId: 'o1', excludeProfileId: '', ownPhone: null,
+        recipients: ['628111000111', '628111000222'], text: `⚠️ Call recordings can be read without a login. ${o1}`,
+      }],
+      [{}, expect.anything(), {
+        what: 'Call recordings storage alert for o2', organizationId: 'o2', excludeProfileId: '', ownPhone: null,
+        recipients: [], text: `⚠️ Call recordings can be read without a login. ${o2}`,
+      }],
+    ]);
+  });
+
+  it('unchecked: the bell says recording stays on, for those profiles', async () => {
+    findMany.mockResolvedValue([{ id: 'p3', displayName: 'Line 3', settings: {}, workspace: { organizationId: 'o2' } }]);
+    await alerts.recordingStorage('check_failed', ['p3'], []);
+    expect(notifications.createForOrg).toHaveBeenCalledWith('o2', 'system', 'Call recordings storage could not be checked',
+      'MultiWA could not check that the storage of call recordings refuses requests without credentials. Recording stays on for Line 3.',
+      { kind: 'call_recordings_storage', status: 'check_failed' });
+  });
+
+  it('nobody concerned: nothing at all', async () => {
+    await alerts.recordingStorage('not_private', [], []);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(notifications.createForOrg).not.toHaveBeenCalled();
+  });
+
+  it('a bell that fails still sends the WhatsApp alert, and the next organization gets its own', async () => {
+    notifications.createForOrg.mockRejectedValueOnce(new Error('db down'));
+    await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3'], []);
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(2);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(2);
+  });
+});
