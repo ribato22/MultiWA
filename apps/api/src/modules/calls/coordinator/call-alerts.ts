@@ -13,8 +13,8 @@ import { sendOpsAlert } from '../../messages/ops-alert';
 import { parseActiveWindow } from '../../messages/quiet-profile';
 
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
-// A worker in a crash loop is restarted within 30 s of each death (the backoff's cap): a death that cut no call rings
-// the bell at most this often.
+// A worker in a crash loop is restarted within 30 s of each death (the backoff's cap): an organization whose calls a
+// death did not cut gets its bell at most this often.
 const NO_CUT_BELL_MS = 10 * 60 * 1000;
 
 @Injectable()
@@ -22,8 +22,9 @@ export class CallAlerts {
   private readonly logger = new Logger(CallAlerts.name);
   // The quiet-profile alarm's time zone, so that both alerts read the same clock.
   private readonly timeZone = parseActiveWindow(process.env.QUIET_ALARM_ACTIVE_HOURS, process.env.QUIET_ALARM_TIMEZONE).timeZone;
-  // The last round of bells, on the deaths' own clock (`at`).
-  private lastBellAt = -Infinity;
+  // Each organization's last bell that was sent, on the deaths' own clock (`at`): a bell lost to a database outage
+  // starts no quiet window.
+  private readonly lastBellAt = new Map<string, number>();
 
   constructor(
     private readonly notifications: NotificationsService,
@@ -32,8 +33,6 @@ export class CallAlerts {
 
   /** `cutProfileIds`: one profile id per call that was cut. */
   async workerDied(cutProfileIds: string[], at: Date): Promise<void> {
-    if (!cutProfileIds.length && at.getTime() - this.lastBellAt < NO_CUT_BELL_MS) return;
-    this.lastBellAt = at.getTime();
     const profiles = await prisma.profile.findMany({
       where: { OR: [{ settings: { path: ['callsAnswerInDashboard'], equals: true } }, { id: { in: cutProfileIds } }] },
       select: { id: true, displayName: true, phoneNumber: true, settings: true, workspace: { select: { organizationId: true } } },
@@ -44,10 +43,12 @@ export class CallAlerts {
     const orgs = new Set(profiles.map((p) => p.workspace?.organizationId).filter((o): o is string => !!o));
     for (const orgId of orgs) {
       const cut = cutProfileIds.filter((id) => orgOf.get(id) === orgId).length;
+      if (!cut && at.getTime() - (this.lastBellAt.get(orgId) ?? -Infinity) < NO_CUT_BELL_MS) continue;
       const title = cut ? `Call audio server restarting: ${cut} call(s) cut off` : 'Call audio server restarting';
       const text = `The ${stopped}` + (cut ? ` ${cut} call(s) lost their audio and were ended.` : ' No call was in progress.');
       try {
         await this.notifications.createForOrg(orgId, NotificationType.SYSTEM, title, text, { kind: 'calls_media_worker_died', calls: cut });
+        this.lastBellAt.set(orgId, at.getTime());
       } catch (e) {
         this.logger.warn(`Call media bell for ${orgId} failed: ${clean((e as Error)?.message ?? e)}`);
       }

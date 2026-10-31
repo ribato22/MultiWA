@@ -1,6 +1,6 @@
 // The media server's worker died, through the quiet-profile alarm's channel: the bell for every user of each
-// organization that answers calls in the dashboard, told only of its own calls, and WhatsApp to the alarm numbers of
-// the profiles whose calls were cut.
+// organization that answers calls in the dashboard, told only of its own calls (and, when it lost none, at most every
+// ten minutes), and WhatsApp to the alarm numbers of the profiles whose calls were cut.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findMany: vi.fn() } } }));
@@ -77,14 +77,36 @@ describe('CallAlerts.workerDied', () => {
     expect(warn).toHaveBeenCalledWith('Call media alert for p1 failed: dbdown');
   });
 
-  it('a crash loop that cuts no call rings the bell at most every ten minutes; a death that cuts a call always alerts', async () => {
+  // The organizations whose bell one death rang.
+  const rings = async (cutProfileIds: string[], minutes: number) => {
+    notifications.createForOrg.mockClear();
+    await alerts.workerDied(cutProfileIds, later(minutes));
+    return notifications.createForOrg.mock.calls.map((c) => c[0]).sort();
+  };
+
+  it('a crash loop that cuts a call of o1 at every death: o1 is told every time, o2 (no call cut) at most every ten minutes', async () => {
+    const told: string[][] = [];
+    for (let minute = 0; minute <= 12; minute++) told.push(await rings(['p1'], minute));
+    expect(told.filter((orgs) => orgs.includes('o1'))).toHaveLength(13);
+    expect(told.flatMap((orgs, minute) => (orgs.includes('o2') ? [minute] : []))).toEqual([0, 10]);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(13);
+  });
+
+  it("an organization's quiet window restarts at every bell it was sent, for a cut call or not", async () => {
+    expect(await rings([], 0)).toEqual(['o1', 'o2']);
+    expect(await rings(['p1'], 2)).toEqual(['o1']); // a cut call is always told
+    expect(await rings([], 5)).toEqual([]);
+    expect(await rings([], 11)).toEqual(['o2']); // 11 minutes after the first round, 9 after o1's bell at +2
+    expect(await rings([], 13)).toEqual(['o1']);
+  });
+
+  it('a bell that failed starts no quiet window', async () => {
+    notifications.createForOrg.mockImplementation(async (orgId: string) => {
+      if (orgId === 'o1') throw new Error('db down');
+      return [];
+    });
     await alerts.workerDied([], AT);
-    await alerts.workerDied([], later(1));
-    expect(notifications.createForOrg).toHaveBeenCalledTimes(2); // one round: o1 and o2
-    await alerts.workerDied(['p1'], later(2));
-    expect(notifications.createForOrg).toHaveBeenCalledTimes(4);
-    expect(sendOpsAlert).toHaveBeenCalledTimes(1);
-    await alerts.workerDied([], later(13));
-    expect(notifications.createForOrg).toHaveBeenCalledTimes(6);
+    notifications.createForOrg.mockReset().mockResolvedValue([]);
+    expect(await rings([], 1)).toEqual(['o1']);
   });
 });

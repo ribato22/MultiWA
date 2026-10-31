@@ -49,4 +49,17 @@ describe('sendOpsAlert', () => {
     expect(messages.sendText).toHaveBeenCalledTimes(2);
     expect(logger.warn).toHaveBeenCalledWith('Test alert for p1 not sent through p2: REPEATSUPPRESSED');
   });
+
+  it("the reason logged is the exception's body, as text or as JSON when it names none, else the error's message", async () => {
+    messages.sendText
+      .mockRejectedValueOnce(Object.assign(new Error('Http Exception'), { getResponse: () => 'Too many requests' }))
+      .mockRejectedValueOnce(Object.assign(new Error('Http Exception'), { getResponse: () => ({ statusCode: 503 }) }))
+      .mockRejectedValueOnce(new Error('Profile is not connected'));
+    await sendOpsAlert(messages as any, logger, { ...alert, ownPhone: null, recipients: ['628111000111', '628222000222', '628333000333'] });
+    expect(logger.warn.mock.calls).toEqual([
+      ['Test alert for p1 not sent through p2: Too many requests'],
+      ['Test alert for p1 not sent through p2: {"statusCode":503}'],
+      ['Test alert for p1 not sent through p2: Profile is not connected'],
+    ]);
+  });
 });

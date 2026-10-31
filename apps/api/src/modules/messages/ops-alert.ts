@@ -12,9 +12,12 @@ import type { MessagesService } from './messages.service';
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 // The send gate's 429 keeps its reason in the body ({ error: 'REPEAT_SUPPRESSED', ... }) and its .message is only "Http Exception".
 // `message` goes first: Nest bodies carry both ({ message: 'Invalid recipient: ...', error: 'Bad Request' }) and the message is the useful one.
-const reason = (e: any) => {
-  const body = typeof e?.getResponse === 'function' ? e.getResponse() : e?.message;
-  return clean(typeof body === 'string' ? body : body?.message ?? body?.error ?? JSON.stringify(body));
+const reason = (e: unknown) => {
+  const thrown: { getResponse?: unknown; message?: unknown } = typeof e === 'object' && e !== null ? e : {};
+  const body: unknown = typeof thrown.getResponse === 'function' ? thrown.getResponse() : thrown.message;
+  if (typeof body === 'string') return clean(body);
+  const fields: { message?: unknown; error?: unknown } = typeof body === 'object' && body !== null ? body : {};
+  return clean(fields.message ?? fields.error ?? JSON.stringify(body));
 };
 // Digits of a number or JID ("+62 812-3456-789", "62812…@s.whatsapp.net"). A local 08… counts as 628…, the way normalizeJid sends it.
 const digits = (s: unknown) => String(s).replace(/@.*$/, '').replace(/\D/g, '').replace(/^0/, '62');

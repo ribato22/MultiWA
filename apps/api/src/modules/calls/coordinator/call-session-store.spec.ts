@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({
-  prisma: { call: { findUnique: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() } },
+  prisma: { call: { findUnique: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), updateManyAndReturn: vi.fn() } },
 }));
 
 import { prisma } from '@multiwa/database';
@@ -17,6 +17,7 @@ beforeEach(() => {
   db.findUnique.mockReset();
   db.findMany.mockReset();
   db.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  db.updateManyAndReturn.mockReset();
 });
 
 describe('call-session-store', () => {
@@ -60,14 +61,17 @@ describe('call-session-store', () => {
     expect(await markEnded('c1', 'caller', 'caller_hangup', AT)).toBeNull(); // read as open, but another end won the write
   });
 
-  it("boot: two writes bounded by the boot end the previous process's answered calls (server_restart, no talk time) and let its claims go", async () => {
-    db.updateMany.mockImplementation(async ({ where }: any) => ({ count: where.answeredByUserId ? 3 : 2 }));
-    expect(await reconcileAfterRestart(AT)).toEqual({ ended: 2, released: 3 });
-    expect(db.updateMany).toHaveBeenCalledTimes(2);
-    expect(db.updateMany).toHaveBeenCalledWith({
+  it("boot: two writes bounded by the boot end the previous process's answered calls (server_restart, no talk time), returning them, and let its claims go", async () => {
+    const ended = ['c1', 'c2'].map((id) => ({ ...ANSWERED, id, endedAt: AT, endedBy: 'server', endReason: 'server_restart', talkSeconds: null }));
+    db.updateManyAndReturn.mockResolvedValue(ended);
+    db.updateMany.mockResolvedValue({ count: 3 });
+    expect(await reconcileAfterRestart(AT)).toEqual({ ended, released: 3 });
+    expect(db.updateManyAndReturn).toHaveBeenCalledTimes(1);
+    expect(db.updateManyAndReturn).toHaveBeenCalledWith({
       where: { outcome: 'answered', endedAt: null, answeredAt: { lt: AT } },
       data: { endedAt: AT, endedBy: 'server', endReason: 'server_restart', talkSeconds: null },
     });
+    expect(db.updateMany).toHaveBeenCalledTimes(1);
     expect(db.updateMany).toHaveBeenCalledWith({
       where: { answeredByUserId: { not: null }, outcome: { not: 'answered' }, startedAt: { lt: AT } },
       data: { answeredByUserId: null },

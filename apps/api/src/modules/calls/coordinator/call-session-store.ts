@@ -84,13 +84,15 @@ export async function markEnded(callId: string, endedBy: CallEndedBy, endReason:
 
 /**
  * Boot: the previous process's sessions went with it (the engines and the media server restart too). An answered call
- * with no end gets one (server_restart, without talk time: the downtime is not talk time, and the real one is
- * unknown); a claim on a call that was never answered is let go. Each write touches only what the previous process
- * left (a call answered before `at`, a claim on a call that rang before it), so it may run while this process takes
- * calls. Run it once, on the engine host, at boot: with another process hosting calls it would end them.
+ * with no end gets one (server_restart); a claim on a call that was never answered is let go. The ended call's
+ * `talkSeconds: null` is unknown: the call was cut by the restart and its real talk time was never seen. Each write
+ * touches only what the previous process left (a call answered before `at`, a claim on a call that rang before it), so
+ * it may run while this process takes calls. Run it once, on the engine host, at boot: with another process hosting
+ * calls it would end them. Returns the calls it ended, as stored: the caller publishes their call.ended, which the
+ * process that answered them could not send.
  */
-export async function reconcileAfterRestart(at: Date): Promise<{ ended: number; released: number }> {
-  const ended = await prisma.call.updateMany({
+export async function reconcileAfterRestart(at: Date): Promise<{ ended: CallRecord[]; released: number }> {
+  const ended = await prisma.call.updateManyAndReturn({
     where: { outcome: 'answered', endedAt: null, answeredAt: { lt: at } },
     data: { endedAt: at, endedBy: 'server', endReason: 'server_restart', talkSeconds: null },
   });
@@ -98,5 +100,5 @@ export async function reconcileAfterRestart(at: Date): Promise<{ ended: number; 
     where: { answeredByUserId: { not: null }, outcome: { not: 'answered' }, startedAt: { lt: at } },
     data: { answeredByUserId: null },
   });
-  return { ended: ended.count, released: released.count };
+  return { ended, released: released.count };
 }
