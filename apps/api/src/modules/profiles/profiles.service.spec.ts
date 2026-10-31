@@ -1,68 +1,62 @@
-// ProfilesService.update and the call settings: auto-reject and the default call reply live in the profile's
-// settings JSON, next to whatever else is kept there, so an update merges into what is stored and never replaces it.
+// ProfilesService.update and the call settings: auto-reject and the default call reply live in the profile's settings
+// JSON, next to keys other routes write (the call settings, the announcement). An update merges only the keys it was
+// given, in one statement (mergeProfileSettings), so it never writes back a key another request changed meanwhile.
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ValidationPipe } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), update: vi.fn() } } }));
 vi.mock('./engine-manager.service', () => ({ EngineManagerService: class {} }));
+vi.mock('./profile-settings', () => ({ mergeProfileSettings: vi.fn() }));
 
 import { prisma } from '@multiwa/database';
 import { UpdateProfileDto } from './dto';
 import { ProfilesService } from './profiles.service';
+import { mergeProfileSettings } from './profile-settings';
 
 const db = prisma as any;
-const stored = (settings: unknown) => ({ id: 'p1', displayName: 'Line 1', settings, workspace: {} });
+const merge = vi.mocked(mergeProfileSettings);
 const update = (dto: UpdateProfileDto) => new ProfilesService({} as any, {} as any).update('p1', dto);
 const savedData = () => db.profile.update.mock.calls[0][0].data;
 
 beforeEach(() => {
-  db.profile.findUnique.mockReset();
+  db.profile.findUnique.mockReset().mockResolvedValue({ id: 'p1', displayName: 'Line 1', settings: { theme: 'dark' }, workspace: {} });
   db.profile.update.mockReset().mockImplementation(async ({ data }: any) => ({ id: 'p1', ...data }));
+  merge.mockReset().mockResolvedValue({ theme: 'dark' });
 });
 
 describe('ProfilesService.update call settings', () => {
-  it('stores the default call reply in settings, keeping every other key', async () => {
-    db.profile.findUnique.mockResolvedValue(stored({ autoRejectCalls: true, autoRejectCallMessage: 'Busy', theme: 'dark' }));
+  it('merges the default call reply alone, never the settings it read', async () => {
     await update({ callReplyMessage: 'We will call you back' });
-    expect(db.profile.update).toHaveBeenCalledWith({
-      where: { id: 'p1' },
-      data: expect.objectContaining({
-        settings: { autoRejectCalls: true, autoRejectCallMessage: 'Busy', theme: 'dark', callReplyMessage: 'We will call you back' },
-      }),
-    });
+    expect(merge).toHaveBeenCalledWith('p1', { callReplyMessage: 'We will call you back' });
+    expect(savedData()).not.toHaveProperty('settings');
   });
 
-  it('changes the three call settings independently of each other', async () => {
-    const before = { autoRejectCalls: true, autoRejectCallMessage: 'Busy', callReplyMessage: 'Call back soon', theme: 'dark' };
-    db.profile.findUnique.mockResolvedValue(stored(before));
+  it('merges the three call settings independently of each other', async () => {
     await update({ autoRejectCalls: false });
-    expect(savedData().settings).toEqual({ ...before, autoRejectCalls: false });
-    db.profile.update.mockClear();
+    expect(merge).toHaveBeenLastCalledWith('p1', { autoRejectCalls: false });
     await update({ autoRejectCallMessage: 'Not now' });
-    expect(savedData().settings).toEqual({ ...before, autoRejectCallMessage: 'Not now' });
-    db.profile.update.mockClear();
+    expect(merge).toHaveBeenLastCalledWith('p1', { autoRejectCallMessage: 'Not now' });
     await update({ autoRejectCalls: true, autoRejectCallMessage: 'Hi', callReplyMessage: 'Bye' });
-    expect(savedData().settings).toEqual({ ...before, autoRejectCalls: true, autoRejectCallMessage: 'Hi', callReplyMessage: 'Bye' });
+    expect(merge).toHaveBeenLastCalledWith('p1', { autoRejectCalls: true, autoRejectCallMessage: 'Hi', callReplyMessage: 'Bye' });
   });
 
   // Blank means "no default reply": it is stored as given, not skipped (the reply route reads a blank as none).
   it('stores a blank reply, which switches the default off', async () => {
-    db.profile.findUnique.mockResolvedValue(stored({ callReplyMessage: 'Call back soon' }));
     await update({ callReplyMessage: '' });
-    expect(savedData().settings).toEqual({ callReplyMessage: '' });
+    expect(merge).toHaveBeenCalledWith('p1', { callReplyMessage: '' });
   });
 
-  it('starts from nothing for a profile without settings', async () => {
-    db.profile.findUnique.mockResolvedValue(stored(null));
-    await update({ callReplyMessage: 'Hi' });
-    expect(savedData().settings).toEqual({ callReplyMessage: 'Hi' });
-  });
-
-  it('leaves settings out of the update when no call setting is given', async () => {
-    db.profile.findUnique.mockResolvedValue(stored({ callReplyMessage: 'Call back soon' }));
+  it('writes no settings when no setting is given', async () => {
     await update({ name: 'Renamed' });
-    expect(savedData()).not.toHaveProperty('settings');
+    expect(merge).not.toHaveBeenCalled();
+    expect(savedData()).toMatchObject({ displayName: 'Renamed' });
+  });
+
+  it('a profile deleted between its read and the merge is 404, and nothing else is written', async () => {
+    merge.mockResolvedValue(null);
+    await expect(update({ callReplyMessage: 'Hi' })).rejects.toMatchObject({ status: 404 });
+    expect(db.profile.update).not.toHaveBeenCalled();
   });
 });
 
