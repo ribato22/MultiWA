@@ -124,7 +124,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `PUT` | `/profiles/:id/calls-settings` | The profile's call settings (owner or admin): `answerInDashboard`, `recording`, `retentionDays` (1-3650); 409 with `reasons` when one cannot be turned on |
 | `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (owner or admin; multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds) |
 | `GET` | `/profiles/:id/calls-announcement` | The profile's announcement, to listen to (owner or admin) |
-| `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (owner or admin; 409 while recording is on; its file goes at the next nightly sweep) |
+| `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (owner or admin; 409 while recording is on; its file goes at a nightly sweep once it is an hour old) |
 | `DELETE` | `/profiles/:id` | Delete profile |
 | `POST` | `/profiles/:id/connect` | Start WhatsApp connection |
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
@@ -258,7 +258,7 @@ Other errors of the call actions:
 
 **Auto-reject.** A profile with `autoRejectCalls` on (set with `PUT /profiles/:id`) rejects a ringing call at once (`rejectedBy` is `auto`). A non-blank `autoRejectCallMessage` is then sent to the caller, also when the reject failed because the caller had already hung up. That reply goes through the same send gate and is sent at most once per caller per 24 hours; it is never sent for a group call or for a call known only from its call log. A reply the gate refuses or the engine fails to send is not retried and does not use up the 24 hours, so the caller's next call can try again.
 
-**Recordings.** A call answered in the dashboard on a profile with `recording` on is recorded, after the profile's announcement. Each call in `GET /calls` and `GET /calls/:id` has `recording`: `null`, or the recording's facts:
+**Recordings.** Calls are not recorded yet: the recorder that writes the recordings is still being built. This release has the settings, the announcement, the private storage and its check, and playing, deleting and expiring recordings. Once the recorder is in, a call answered in the dashboard on a profile with `recording` on is recorded after the profile's announcement. Each call in `GET /calls` and `GET /calls/:id` has `recording`: `null`, or the recording's facts:
 
 - `id`, `durationSec`, `bytes`, `announcementPlayed`, `createdAt`;
 - `partial`: cut short by a restart;
@@ -285,7 +285,7 @@ Turning `recording` on answers `409` with `reasons` when it cannot be on:
 
 A `true` sent for a setting that is already on (`recording` or `answerInDashboard`) is left as it is, without a check, so a form may send every field.
 
-The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read. It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at the next nightly sweep.
+The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read. It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
 
 ### Contacts (`/contacts`)
 

@@ -408,6 +408,8 @@ CALLS_MAX_TALK_MINUTES=120
 
 ## Call recordings
 
+> **In development.** Calls are not recorded yet: the recorder that writes the recordings is still being built. This release has the settings, the announcement, the private storage and its checks, playback, deletion and retention.
+
 Calls answered in the dashboard can be recorded (`PUT /profiles/:id/calls-settings` with `recording: true`), always after an announcement the caller hears first (`POST /profiles/:id/calls-announcement`). Recordings and announcements are private:
 
 - nothing serves them without the login of an owner or admin of their organization;
