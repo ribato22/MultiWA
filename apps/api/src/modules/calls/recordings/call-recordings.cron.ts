@@ -8,6 +8,8 @@
 // are per process too, and one api process is the supported setup. Any check that finds the storage public, this job's
 // or an admin's turning recording on, turns recording off on every profile and alerts the admins: the probe's own bytes
 // came back without credentials, so it is never a fluke.
+// The privacy check's step also reminds the admins, each night, of the profiles that record on a server whose
+// recordings storage is not set up.
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';
@@ -84,9 +86,17 @@ export class CallRecordingsCron {
   // A public storage is handled by onPrivacyCheck, which this check's own event reaches.
   private async checkPrivacy(now: Date): Promise<void> {
     const check = await this.recordings.checkStorage(now);
-    if (check.ok || check.reason !== 'storage_check_failed') return;
-    const { recording } = await this.recordings.profilesConcerned();
-    await this.alerts.recordingStorage('check_failed', recording, []);
+    if (!check.ok && check.reason === 'storage_check_failed') {
+      const { recording } = await this.recordings.profilesConcerned();
+      await this.alerts.recordingStorage('check_failed', recording, []);
+    }
+    // The storage or CALL_RECORDINGS_TMP lost after recording was turned on (an env or compose change at a redeploy):
+    // recording stays on, but the recorder plans no recording, so the calls ring unrecorded, and only
+    // GET /calls/media/status says why. Each night, so the admins are reminded until it is set up again.
+    if (this.recordings.storageStatus().problem) {
+      const { recording } = await this.recordings.profilesConcerned();
+      if (recording.length) await this.alerts.recordingStorage('unset', recording, []);
+    }
   }
 
   private async step(name: string, work: () => Promise<unknown>): Promise<void> {

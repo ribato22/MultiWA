@@ -1,7 +1,8 @@
 // The nightly job, and the reaction to a public storage. Any check that finds the storage public (the nightly one, or
 // an admin turning recording on) turns recording off everywhere, logs the profiles turned off, and alerts; with nothing
 // left to turn off, the alert repeats at most every 20 hours, counted from an alert that told someone. The nightly check
-// that proves nothing only alerts. Retention and the sweep run after it; one step failing does not skip the others.
+// that proves nothing only alerts. Profiles that record on a server whose recordings storage is not set up are reminded
+// of each night. Retention and the sweep run after it; one step failing does not skip the others.
 import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EVENT_LISTENER_METADATA } from '@nestjs/event-emitter/dist/constants';
@@ -22,6 +23,7 @@ const turnOff = vi.mocked(turnRecordingOffEverywhere);
 function make() {
   const recordings = {
     checkStorage: vi.fn().mockResolvedValue({ ok: true }),
+    storageStatus: vi.fn().mockReturnValue({ problem: null }),
     profilesConcerned: vi.fn().mockResolvedValue({ recording: ['p1', 'p2'], stored: ['p2', 'p3'] }),
     applyRetention: vi.fn().mockResolvedValue(0),
     sweepOrphans: vi.fn().mockResolvedValue(0),
@@ -232,12 +234,27 @@ describe('CallRecordingsCron', () => {
     expect(alerts.recordingStorage).toHaveBeenCalledWith('check_failed', ['p1', 'p2'], []);
   });
 
-  it('no storage configured: nothing to check, nobody alerted', async () => {
+  it('no storage configured and no profile recording: nothing to check, nobody alerted', async () => {
     const { cron, recordings, alerts } = make();
     recordings.checkStorage.mockResolvedValue({ ok: false, reason: 'recordings_storage_unset', detail: 'x' });
+    recordings.storageStatus.mockReturnValue({ problem: 'CALL_RECORDINGS_PATH is not set' });
+    recordings.profilesConcerned.mockResolvedValue({ recording: [], stored: ['p3'] });
     await cron.run(NOW);
     expect(alerts.recordingStorage).not.toHaveBeenCalled();
     expect(recordings.sweepOrphans).toHaveBeenCalled();
+  });
+
+  // Lost after recording was turned on (an env or compose change at a redeploy): the recorder plans no recording, the
+  // calls ring unrecorded, and only GET /calls/media/status says why. Each night until it is set up again.
+  it.each([
+    ['the storage', { ok: false, reason: 'recordings_storage_unset', detail: 'x' }, 'CALL_RECORDINGS_PATH is not set'],
+    ['CALL_RECORDINGS_TMP', { ok: true }, 'CALL_RECORDINGS_TMP is not set'],
+  ])('%s not set up while profiles record: the admins of those profiles are reminded', async (_what, check, problem) => {
+    const { cron, recordings, alerts } = make();
+    recordings.checkStorage.mockResolvedValue(check);
+    recordings.storageStatus.mockReturnValue({ problem });
+    await cron.run(NOW);
+    expect(alerts.recordingStorage.mock.calls).toEqual([['unset', ['p1', 'p2'], []]]);
   });
 
   // After the check: a recording is never stored to a storage that check found public. Before the sweep: a recording

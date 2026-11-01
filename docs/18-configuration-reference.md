@@ -412,6 +412,8 @@ Calls answered in the dashboard can be recorded (`PUT /profiles/:id/calls-settin
 
 A recorded call is recorded in stereo, from before the announcement: left the caller, right what the caller heard (the announcement, then the agent). The agent is connected once the announcement has played. When the recorder does not start, or the announcement does not play, the call goes on unrecorded with the agent connected, and the owners and admins are told the same way (each at most once an hour per profile).
 
+When recording is on for a profile but this server's recordings storage, or `CALL_RECORDINGS_TMP`, is not set up, its calls are not recorded, and every night its organization's owners and admins are reminded.
+
 A recording is written to `CALL_RECORDINGS_TMP` while its call lasts, and stored when the call ends, with four tries over about 40 seconds. When they all fail, it stays on the server, the owners and admins are told, and it is tried again at the next start and every night. It is never stored to a storage last found public, and it is deleted unstored once older than its profile's retention period. A recording cut short by a restart is stored at the next start, marked `partial`.
 
 The same nightly job deletes the recordings older than each profile's retention period (`retentionDays`, 90 by default). It also deletes the files nothing points at any more (for one, those of a deleted workspace or organization; a deleted profile's files are deleted with it). The stock Compose files pass all six settings below to the API.
