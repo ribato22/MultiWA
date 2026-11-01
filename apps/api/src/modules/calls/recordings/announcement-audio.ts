@@ -14,6 +14,8 @@ export const ANNOUNCEMENT_MAX_SECONDS = 30;
 // Encoders pad the end of a file, and an mp3's header frame is one of its frames (30 s of tone at 8 kbps says 30.17 s
 // in its Info header, 30.24 s by its frames): this much over is not "longer".
 const PADDING_SECONDS = 0.5;
+/** The longest announcement, with the padding: the page refuses one that decodes longer. */
+export const ANNOUNCEMENT_LIMIT_SECONDS = ANNOUNCEMENT_MAX_SECONDS + PADDING_SECONDS;
 // A real file is read in milliseconds; this is for one made to keep the parser busy.
 const READ_TIMEOUT_MS = 5000;
 // Readers at once: a hostile file holds one at its memory cap (below) for seconds. The next is turned away (503), not
