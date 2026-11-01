@@ -1,0 +1,180 @@
+{
+  "routerRtpCapabilities": {
+    "codecs": [
+      {
+        "kind": "audio",
+        "mimeType": "audio/opus",
+        "clockRate": 48000,
+        "channels": 2,
+        "rtcpFeedback": [
+          {
+            "type": "nack",
+            "parameter": ""
+          },
+          {
+            "type": "transport-cc",
+            "parameter": ""
+          }
+        ],
+        "parameters": {},
+        "preferredPayloadType": 100
+      }
+    ],
+    "headerExtensions": [
+      {
+        "kind": "audio",
+        "uri": "urn:ietf:params:rtp-hdrext:sdes:mid",
+        "preferredId": 1,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+        "preferredId": 5,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
+        "preferredId": 6,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time",
+        "preferredId": 9,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay",
+        "preferredId": 10,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      },
+      {
+        "kind": "audio",
+        "uri": "urn:mediasoup:params:rtp-hdrext:packet-id",
+        "preferredId": 11,
+        "preferredEncrypt": false,
+        "direction": "sendrecv"
+      }
+    ]
+  },
+  "recv": {
+    "id": "recv-transport",
+    "iceParameters": {
+      "usernameFragment": "7h5d9hem9rbseco32ugizwo40y0illv5",
+      "password": "6rq8xpl3n41rbtrv2zrkgs6ij5a1vsbs",
+      "iceLite": true
+    },
+    "iceCandidates": [
+      {
+        "foundation": "udpcandidate",
+        "priority": 1076302079,
+        "ip": "127.0.0.1",
+        "protocol": "udp",
+        "port": 45123,
+        "type": "host"
+      }
+    ],
+    "dtlsParameters": {
+      "role": "server",
+      "fingerprints": [
+        {
+          "algorithm": "sha-256",
+          "value": "EC:A5:98:8A:39:F1:E5:A9:14:CD:BD:FE:70:25:48:50:07:3D:42:72:0B:C7:F0:86:07:0C:3B:31:B9:0B:6C:4C"
+        }
+      ]
+    }
+  },
+  "send": {
+    "id": "send-transport",
+    "iceParameters": {
+      "usernameFragment": "lfdmfljjj19kmgbyab42pfsbs8pbcj6e",
+      "password": "lxhano1gqzxvpprmz1q92okvxqhv97yv",
+      "iceLite": true
+    },
+    "iceCandidates": [
+      {
+        "foundation": "udpcandidate",
+        "priority": 1076302079,
+        "ip": "127.0.0.1",
+        "protocol": "udp",
+        "port": 45123,
+        "type": "host"
+      }
+    ],
+    "dtlsParameters": {
+      "role": "server",
+      "fingerprints": [
+        {
+          "algorithm": "sha-256",
+          "value": "EC:A5:98:8A:39:F1:E5:A9:14:CD:BD:FE:70:25:48:50:07:3D:42:72:0B:C7:F0:86:07:0C:3B:31:B9:0B:6C:4C"
+        }
+      ]
+    }
+  },
+  "consumer": {
+    "id": "caller-consumer",
+    "producerId": "caller-producer",
+    "kind": "audio",
+    "rtpParameters": {
+      "codecs": [
+        {
+          "mimeType": "audio/opus",
+          "payloadType": 100,
+          "clockRate": 48000,
+          "channels": 2,
+          "parameters": {},
+          "rtcpFeedback": [
+            {
+              "type": "transport-cc",
+              "parameter": ""
+            }
+          ]
+        }
+      ],
+      "headerExtensions": [
+        {
+          "uri": "urn:ietf:params:rtp-hdrext:sdes:mid",
+          "id": 1,
+          "encrypt": false,
+          "parameters": {}
+        },
+        {
+          "uri": "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
+          "id": 5,
+          "encrypt": false,
+          "parameters": {}
+        },
+        {
+          "uri": "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
+          "id": 6,
+          "encrypt": false,
+          "parameters": {}
+        },
+        {
+          "uri": "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay",
+          "id": 10,
+          "encrypt": false,
+          "parameters": {}
+        }
+      ],
+      "encodings": [
+        {
+          "ssrc": 797854777
+        }
+      ],
+      "rtcp": {
+        "cname": "d9902e3a",
+        "reducedSize": true
+      },
+      "mid": "0"
+    }
+  }
+}

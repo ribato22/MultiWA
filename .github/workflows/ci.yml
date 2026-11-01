@@ -71,6 +71,11 @@ jobs:
       - name: Typecheck Admin
         run: pnpm --filter admin typecheck
 
+      # The admin's end-to-end tests: the pages of the build above, in the runner's Chrome, against a fake backend
+      # (REST answered in the browser, realtime from a socket.io server on the build's NEXT_PUBLIC_API_URL port).
+      - name: Admin e2e (fake backend)
+        run: pnpm --filter admin test:e2e
+
       # Lint gate (ESLint 9 flat config). Backend TS only (admin uses Next's own
       # eslint). Errors fail the build; stylistic/any rules are warnings for now.
       - name: Lint (ESLint)
