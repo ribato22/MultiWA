@@ -337,10 +337,31 @@ describe('CallSessionService: recorded calls', () => {
   it('the end stops the recorder before the media closes', async () => {
     const h = harness();
     h.recorder.plan.mockReturnValue({ announcement });
+    let stopped!: () => void;
+    h.recorder.end.mockReturnValueOnce(new Promise((r) => (stopped = () => r(undefined))));
     await answered(h);
-    await h.service.hangup(as('u1'), 'c1');
-    expect(h.recorder.end).toHaveBeenCalledWith('c1');
-    expect(h.recorder.end.mock.invocationCallOrder[0]).toBeLessThan(h.media.closeCallMedia.mock.invocationCallOrder[0]);
+    const hungUp = h.service.hangup(as('u1'), 'c1');
+    await vi.waitFor(() => expect(h.recorder.end).toHaveBeenCalledWith('c1'));
+    await flush();
+    expect(h.media.closeCallMedia).not.toHaveBeenCalled(); // the last chunks come with the stop
+    stopped();
+    expect(await hungUp).toEqual({ ok: true });
+    expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+  });
+
+  it('a call that ends during its announcement never connects its agent', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    const played = holdBegin(h, true);
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:announcing')).toHaveLength(1));
+    await h.service.onEngineSignal({ profileId: 'p1', waCallId: 'W1', state: 'ended' }); // the caller hangs up
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'caller', 'caller_hangup', expect.any(Date));
+    played();
+    await flush();
+    expect(h.handle.connectAgent).not.toHaveBeenCalled();
+    expect(h.sent('call:active')).toEqual([]);
   });
 
   // begin never throws; one that did anyway must not end the call as a media failure.
