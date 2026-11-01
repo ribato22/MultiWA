@@ -167,9 +167,10 @@ export async function openFakeWhatsAppPage(browser: any, url: string, initScript
 
 /**
  * In the agent's page (consoleAgentBundle() evaluated in): the console's startAgentMedia, with a `hz` tone as the
- * microphone and the page binding `__agentSignal(op, json)` as its signalling. What the agent hears goes to an analyser.
+ * microphone and the page binding `__agentSignal(op, json)` as its signalling, started muted if `muted`. What the agent
+ * hears goes to an analyser.
  */
-export async function startConsoleAgentInPage(callerProducerId: string, hz: number): Promise<{ agentProducerId: string }> {
+export async function startConsoleAgentInPage(callerProducerId: string, hz: number, muted = false): Promise<{ agentProducerId: string }> {
   const w = window as any;
   const ctx = new AudioContext();
   const osc = ctx.createOscillator();
@@ -182,6 +183,7 @@ export async function startConsoleAgentInPage(callerProducerId: string, hz: numb
     callerProducerId,
     iceServers: [],
     mic: mic.stream.getAudioTracks()[0],
+    muted,
   });
   const keepAlive = new Audio(); // Chrome feeds a remote track to Web Audio only while a media element plays it
   keepAlive.muted = true;

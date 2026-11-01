@@ -126,6 +126,33 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
     }
   }, 60_000);
 
+  it('an agent that starts muted (a call rebuilt muted) sends silence until it unmutes', async () => {
+    const waPage = await openWaPage();
+    const agentPage = await openAgentPage();
+    const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
+    try {
+      room = await service.createRoom('CALL5');
+      const handle = await media.startCallMedia('CALL1', room.signalingFor('page'));
+      const { agentProducerId } = await agentPage.evaluate(startConsoleAgentInPage, handle.callerProducerId, 660, true);
+      await media.answer('CALL1');
+      await handle.connectAgent(agentProducerId);
+      let loudest = 0; // over 3 s on the microphone, the agent never reaches the caller
+      for (const end = Date.now() + 3_000; Date.now() < end; ) {
+        loudest = Math.max(loudest, await waPage.evaluate(micCarriesInPage, 660));
+        await sleep(100);
+      }
+      expect(loudest).toBeLessThan(ABSENT);
+      await agentPage.evaluate(() => (window as any).__agent.media.setMuted(false));
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
+      await handle.close();
+    } finally {
+      await media.closeCallMedia('CALL1');
+      room?.close();
+      await waPage.close();
+      await agentPage.close();
+    }
+  }, 60_000);
+
   it('the bridge refuses a call that is not the active one, and a second bridge while one runs', async () => {
     const waPage = await openWaPage();
     const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
