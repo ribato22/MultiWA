@@ -41,6 +41,8 @@ import {
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
 import { DemoBanner } from '@/components/demo-banner';
+import { CallsProvider } from '@/components/calls/calls-provider';
+import { AvailabilityToggle } from '@/components/calls/availability-toggle';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
 type MenuItem = { name: string; href: string; Icon: LucideIcon };
@@ -195,7 +197,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
-  return (
+  const shell = (
     <div className="min-h-screen bg-background">
       {/* Demo Mode Banner */}
       <DemoBanner />
@@ -311,6 +313,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
             <div className="flex items-center gap-4">
+              <AvailabilityToggle />
               {/* Notification Bell */}
               <div className="relative" ref={notifRef}>
                 <button
@@ -474,4 +477,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </main>
     </div>
   );
+  // The call console wraps every dashboard page: a call outlives page changes.
+  return <CallsProvider user={user}>{shell}</CallsProvider>;
 }
