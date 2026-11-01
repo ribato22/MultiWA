@@ -33,11 +33,29 @@ test('this tab’s own answer: its claim marks the banner as this agent’s, ano
 
 test('two tabs of this agent answer at once: the tab that lost shows the call as the other tab’s, in either order', () => {
   const answering: ConsoleEvent[] = [{ type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' }];
-  const refused: ConsoleEvent = { type: 'answerFailed', callId: 'c1', message: 'You are already on a call' };
-  for (const s of [run(...answering, claimed('u1', 'Ada'), refused), run(...answering, refused, claimed('u1', 'Ada'))]) {
-    expect(s.banners).toEqual([]);
-    expect(s.active).toEqual({ call: call(), phase: 'connecting', local: false, muted: false });
+  // the refusals that come before a claim
+  for (const reason of ['busy', 'already_claimed', 'not_ringing']) {
+    const refused: ConsoleEvent = { type: 'answerFailed', callId: 'c1', message: 'Could not answer', reason };
+    for (const s of [run(...answering, claimed('u1', 'Ada'), refused), run(...answering, refused, claimed('u1', 'Ada'))]) {
+      expect(s.banners).toEqual([]);
+      expect(s.active).toEqual({ call: call(), phase: 'connecting', local: false, muted: false });
+    }
   }
+});
+
+test('this tab’s own claim failing before its end comes fades as a failed answer, and the call then rings again', () => {
+  // The server's order when the call stopped connecting while the answer was under way: the claim, the reply, the end,
+  // then the new ring.
+  const claimedHere: ConsoleEvent[] = [{ type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' }, claimed('u1', 'Ada')];
+  const failed: ConsoleEvent = { type: 'answerFailed', callId: 'c1', message: 'Could not connect audio', reason: 'media_failed' };
+  expect(run(...claimedHere, failed)).toMatchObject({ banners: [{ call: call(), status: 'failed', message: 'Could not connect audio' }], active: null });
+  expect(run(...claimedHere, failed, { type: 'ended', callId: 'c1', text: 'Could not connect audio' }, { type: 'ringing', call: call() })).toMatchObject({
+    banners: [{ call: call(), status: 'ringing' }],
+    active: null,
+  });
+  // a reply without a reason cannot be another tab's
+  const noReason = run(...claimedHere, { type: 'answerFailed', callId: 'c1', message: 'Could not answer' });
+  expect(noReason).toMatchObject({ banners: [{ call: call(), status: 'failed', message: 'Could not answer' }], active: null });
 });
 
 test('rung again before this tab’s answer was refused: it still rings, and says why the answer did not go through', () => {
@@ -51,9 +69,9 @@ test('rung again before this tab’s answer was refused: it still rings, and say
   expect(reduce(s, { type: 'answering', callId: 'c1' }).banners).toEqual([{ call: call(), status: 'answering' }]);
 });
 
-test('a call rung again after its answer failed here rings over the ended call still on the bar, never over a live one', () => {
+test('a call rung again after its answer failed here rings over the ended call still on the bar, saying why it ended, never over a live one', () => {
   const s = run({ type: 'answered', call: call() }, { type: 'ended', callId: 'c1', text: 'Could not connect audio' }, { type: 'ringing', call: call() });
-  expect(s).toMatchObject({ banners: [{ call: call(), status: 'ringing' }], active: null });
+  expect(s).toMatchObject({ banners: [{ call: call(), status: 'ringing', notice: 'Could not connect audio' }], active: null });
   expect(run({ type: 'answered', call: call() }, { type: 'ringing', call: call() })).toMatchObject({ banners: [], active: { phase: 'connecting' } });
 });
 
@@ -96,10 +114,21 @@ test('a hang-up holds until the end; a failed one goes back, with the problem', 
   expect(reduce(s, { type: 'hangUpFailed', callId: 'c1', text: 'try again' }).active).toMatchObject({ phase: 'active', problem: 'try again' });
 });
 
-test('call:active during a hang-up keeps it hanging up, and a failed hang-up then goes back to the active call', () => {
-  const s = run({ type: 'answered', call: call() }, { type: 'hangingUp', callId: 'c1' }, { type: 'active', callId: 'c1', answeredAt: 'T1' });
+test('call:active during a hang-up keeps it hanging up, ends the announcement, and a failed hang-up then goes back to the active call', () => {
+  const s = run(
+    { type: 'answered', call: call() }, { type: 'announcing', callId: 'c1', durationSec: 6, at: 1000 }, { type: 'hangingUp', callId: 'c1' },
+    { type: 'active', callId: 'c1', answeredAt: 'T1' },
+  );
   expect(s.active).toMatchObject({ phase: 'hanging_up', answeredAt: 'T1' });
+  expect(s.active?.announcing).toBeUndefined();
   expect(reduce(s, { type: 'hangUpFailed', callId: 'c1', text: 'try again' }).active).toMatchObject({ phase: 'active', answeredAt: 'T1', problem: 'try again' });
+});
+
+test('a hang-up that failed before call:active goes back to the announcement, or else to connecting', () => {
+  const failed: ConsoleEvent = { type: 'hangUpFailed', callId: 'c1', text: 'try again' };
+  const announcing = run({ type: 'answered', call: call() }, { type: 'announcing', callId: 'c1', durationSec: 6, at: 1000 }, { type: 'hangingUp', callId: 'c1' });
+  expect(reduce(announcing, failed).active).toMatchObject({ phase: 'announcing', announcing: { durationSec: 6, since: 1000 }, problem: 'try again' });
+  expect(run({ type: 'answered', call: call() }, { type: 'hangingUp', callId: 'c1' }, failed).active).toMatchObject({ phase: 'connecting', problem: 'try again' });
 });
 
 test('a late result for another call leaves the call on the bar alone', () => {

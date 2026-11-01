@@ -52,7 +52,7 @@ export type ConsoleEvent =
   | { type: 'ringing'; call: RingingCall }
   | { type: 'claimed'; callId: string; byUserId: string; byUserName: string; me: string }
   | { type: 'answering'; callId: string }
-  | { type: 'answerFailed'; callId: string; message: string }
+  | { type: 'answerFailed'; callId: string; message: string; reason?: string } // reason: the call:answer reply's
   | { type: 'answered'; call: RingingCall }
   | { type: 'restored'; call: RingingCall; local: boolean }
   | { type: 'announcing'; callId: string; durationSec: number; at: number }
@@ -82,11 +82,14 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
     active: a && a.phase !== 'ended' ? a : { call, phase: 'connecting', local: false, muted: false },
   });
   switch (e.type) {
-    case 'ringing':
+    case 'ringing': {
       // A call rings again after an answer failed, for the agent who tried too; one dismissed here stays dismissed. The
-      // ended call of a failed answer, still fading on the bar, gives way to the banner.
+      // ended call of a failed answer, still fading on the bar, gives way to the banner, which keeps why it ended.
       if (s.dismissed.includes(e.call.callId) || live(e.call.callId)) return s;
-      return { ...s, banners: [...without(e.call.callId), { call: e.call, status: 'ringing' }], active: isActive(e.call.callId) ? null : a };
+      const notice = isActive(e.call.callId) ? a!.endedText : undefined;
+      const ring: Banner = notice ? { call: e.call, status: 'ringing', notice } : { call: e.call, status: 'ringing' };
+      return { ...s, banners: [...without(e.call.callId), ring], active: isActive(e.call.callId) ? null : a };
+    }
     case 'claimed': {
       const b = banner(e.callId);
       if (!b) return s;
@@ -99,7 +102,9 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       return { ...s, banners: s.banners.map((x) => (x.call.callId === e.callId && x.status === 'ringing' ? { call: x.call, status: 'answering' } : x)) };
     case 'answerFailed': {
       const b = banner(e.callId);
-      if (b?.status === 'answering' && b.mine) return theirs(b.call); // another tab of this agent won the claim
+      // Refused before this tab could claim: the claim seen here is another tab's. Any other refusal is this tab's own
+      // claim failing (the audio did not connect), and fades like any failed answer.
+      if (b?.status === 'answering' && b.mine && ['busy', 'already_claimed', 'not_ringing'].includes(e.reason)) return theirs(b.call);
       // Rung again before the reply came: it still rings, and says why this answer did not go through.
       if (b?.status === 'ringing') return { ...s, banners: swap(b, { ...b, notice: e.message }) };
       if (b?.status === 'answering') return { ...s, banners: swap(b, { call: b.call, status: 'failed', message: e.message }) };
@@ -126,7 +131,7 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
     case 'active':
       if (!live(e.callId)) return s;
       // A hang-up under way stays one, but a failed one then goes back to the call it hung up.
-      if (a!.phase === 'hanging_up') return { ...s, active: { ...a!, answeredAt: e.answeredAt } };
+      if (a!.phase === 'hanging_up') return { ...s, active: { ...a!, answeredAt: e.answeredAt, announcing: undefined } };
       return { ...s, active: { ...a!, phase: 'active', answeredAt: e.answeredAt, announcing: undefined, problem: undefined } };
     case 'ended':
       if (!live(e.callId)) return { ...s, banners: without(e.callId) };
@@ -136,7 +141,7 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       return live(e.callId) ? { ...s, active: { ...a!, phase: 'hanging_up', problem: undefined } } : s;
     case 'hangUpFailed':
       if (!isActive(e.callId) || a!.phase !== 'hanging_up') return s;
-      return { ...s, active: { ...a!, phase: a!.answeredAt ? 'active' : 'connecting', problem: e.text } };
+      return { ...s, active: { ...a!, phase: a!.answeredAt ? 'active' : a!.announcing ? 'announcing' : 'connecting', problem: e.text } };
     case 'problem':
       return live(e.callId) ? { ...s, active: { ...a!, problem: e.text } } : s;
     case 'local':
