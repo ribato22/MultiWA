@@ -8,8 +8,8 @@
 // that matters. Any other layout (a SeekHead, Cues or a Cluster Position, which point at offsets; a Segment of known
 // size, which would have to grow; blocks in BlockGroups, which MediaRecorder does not write; more than one Info, or one
 // after the Clusters) is copied as it is, and so is a file whose bytes stop making sense anywhere but at its very end.
-// A file with no whole block in it, or that is no EBML at all, is copied too, and said to hold no audio: an empty one is
-// a recording whose first chunk never came.
+// A file of that layout with no whole block in it, or that is no EBML at all, is copied too, and said to hold no
+// audio: an empty one is a recording whose first chunk never came.
 // The file is read through a window, never whole: two hours of a call are about 60 MB. Both copies are 0600: a
 // recording is this server's user's alone.
 import { createReadStream, createWriteStream } from 'fs';
@@ -154,6 +154,8 @@ async function walk(r: Reader): Promise<Layout | false | null> {
   // anything else) holds no audio this can read.
   if (!ebml || ebml.id !== EBML) return false;
   if (ebml.size === null) return null;
+  // A header said to run past the file (up to 2^56 bytes) leaves no room for a Segment, and no offset a read can reach.
+  if (ebml.data + ebml.size >= r.size) return false;
   const segment = await r.header(ebml.data + ebml.size);
   // A file that ends inside the Segment's header holds no block; 12 bytes there that are no header are another layout.
   if (!segment) return ebml.data + ebml.size + 12 <= r.size ? null : false;

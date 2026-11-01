@@ -157,6 +157,8 @@ describe('finalizeWebm', () => {
     ['no block at all (cut right after Tracks)', FIXTURE.subarray(0, TRACKS_END)],
     ['cut inside its first block', FIXTURE.subarray(0, FIRST_BLOCK_END - 1)],
     ['not a WebM at all', Buffer.from('not a recording')],
+    // its size (2^53) runs past any file: read as an offset, it would be one no read can reach
+    ['an EBML header of an impossible size', Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x20, 0, 0, 0, 0, 0, 0, 0x42, 0x86])],
   ])('holds no audio, and is copied as it is: %s', async (_what, body) => {
     const dst = out();
     expect(await finalizeWebm(file(body), dst)).toEqual({ durationMs: 0, bytes: body.length, rewritten: false, audio: false });

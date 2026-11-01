@@ -193,7 +193,7 @@ export class CallAlerts {
       const title = kind === 'upload_failed' ? `Call recording not stored: ${name}` : `Call not recorded: ${name}`;
       const text =
         kind === 'upload_failed'
-          ? `A call recording of ${name} could not be stored: the recordings storage did not take it. It is kept on this server and tried again at the next restart and each night.`
+          ? `A call recording of ${name} could not be stored: the recordings storage did not take it, or this server could not prepare it (the API log says which). It is kept on this server and tried again at the next restart and each night.`
           : `A call on ${name} was answered in the dashboard but not recorded: ` +
             (kind === 'recorder_failed' ? 'the recorder did not start. The call was connected.' : 'the announcement did not play to the caller. The call was connected without it.');
       try {

@@ -666,6 +666,26 @@ describe('CallRecordingsService: the storage status and its privacy check', () =
     ]);
   });
 
+  // The other order: a storage found public stands whichever check found it, until a check started after it finds the
+  // storage private again (an eventually consistent store can answer a newer probe's anonymous read with a 404).
+  it('an older check that finds the storage public stands, though a newer one found it private first', async () => {
+    const { service, store } = make();
+    let older!: (check: PrivacyCheck) => void;
+    vi.spyOn(store, 'checkPrivate')
+      .mockImplementationOnce(() => new Promise((resolve) => (older = resolve)))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true });
+    const first = service.checkStorage(NOW);
+    await service.checkStorage(new Date(NOW.getTime() + MINUTE));
+    older({ ok: false, reason: 'storage_not_private', detail: 'x' });
+    await first;
+    expect(service.storageStatus().lastCheck).toEqual({ at: NOW.toISOString(), ok: false, reason: 'storage_not_private' });
+    // a check started after it, that finds the storage private, then counts again
+    const later = new Date(NOW.getTime() + 2 * MINUTE);
+    await service.checkStorage(later);
+    expect(service.storageStatus().lastCheck).toEqual({ at: later.toISOString(), ok: true });
+  });
+
   // No check at all: an install without recordings would warn every night.
   it('an unconfigured storage is neither counted as a check nor warned about', async () => {
     const { service, events, warn } = make(unconfigured());

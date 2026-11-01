@@ -103,9 +103,12 @@ export class CallRecordingsService {
     const check = await this.store.checkPrivate();
     // The status keeps the check that started last, whichever finishes last: a slow older one that found the storage
     // private must not undo a newer one that found it public, as the recorder trusts the status before every upload.
-    // In the order they started, not by `at`: a wall clock stepped back would make every newer check lose.
-    if (no > this.lastCheckNo) {
-      this.lastCheckNo = no;
+    // In the order they started, not by `at`: a wall clock stepped back would make every newer check lose. A storage
+    // found public stands, whichever check found it, until one started after that finds it private again: the
+    // reaction turns recording off on that finding, and an eventually consistent store can answer a newer probe's
+    // anonymous read with a 404.
+    if (no > this.lastCheckNo || (!check.ok && check.reason === 'storage_not_private')) {
+      this.lastCheckNo = Math.max(no, this.lastCheckNo);
       this.lastCheck = check.ok ? { at: at.toISOString(), ok: true } : { at: at.toISOString(), ok: false, reason: check.reason };
     }
     // An unconfigured storage is no check: neither counted nor warned about, or an install without recordings would

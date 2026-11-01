@@ -238,7 +238,7 @@ describe('CallAlerts.recordingFailed', () => {
 
   it.each([
     ['recorder_failed', 'Call not recorded: Line p1', 'A call on Line p1 was answered in the dashboard but not recorded: the recorder did not start. The call was connected.'],
-    ['upload_failed', 'Call recording not stored: Line p1', 'A call recording of Line p1 could not be stored: the recordings storage did not take it. It is kept on this server and tried again at the next restart and each night.'],
+    ['upload_failed', 'Call recording not stored: Line p1', 'A call recording of Line p1 could not be stored: the recordings storage did not take it, or this server could not prepare it (the API log says which). It is kept on this server and tried again at the next restart and each night.'],
   ] as const)('%s says so', async (kind, title, text) => {
     await alerts.recordingFailed(kind, 'p1', AT);
     expect(notifications.createForOrg.mock.calls[0].slice(2, 4)).toEqual([title, text]);
