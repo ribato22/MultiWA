@@ -43,7 +43,7 @@
     "eslint": "^9",
     "globals": "^17",
     "prettier": "^3.9.10",
-    "turbo": "^2.11.8",
+    "turbo": "^2.11.10",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8"
   },
