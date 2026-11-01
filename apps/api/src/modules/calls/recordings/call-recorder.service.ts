@@ -154,8 +154,12 @@ export class CallRecorderService implements OnApplicationBootstrap {
   async finishLeftovers(now = new Date()): Promise<Record<KeepResult, number>> {
     const counts: Record<KeepResult, number> = { stored: 0, kept: 0, discarded: 0 };
     if (this.store.problem || !this.store.tmpDir) return counts;
-    for (const { callId, modifiedAt } of await leftovers(this.store.tmpDir)) {
-      if (this.runs.has(callId) || this.keeping.has(callId)) continue;
+    const listed = await leftovers(this.store.tmpDir);
+    // The calls held as the files were listed: one whose storing ends before its turn would be met without its files,
+    // and counted as discarded.
+    const busy = new Set([...this.runs.keys(), ...this.keeping.keys()]);
+    for (const { callId, modifiedAt } of listed) {
+      if (busy.has(callId) || this.runs.has(callId) || this.keeping.has(callId)) continue;
       const result = await this.track(callId, this.leftover(callId, modifiedAt, now));
       if (result) counts[result]++;
     }
@@ -358,12 +362,17 @@ export class CallRecorderService implements OnApplicationBootstrap {
         await removeFiles(dir, callId); // stored already, by an earlier try whose files were not deleted
         return 'stored';
       }
-      await removeFiles(dir, callId);
+      // Stored once its row exists: a later pass meets P2002 and sends nothing, so ready cannot wait for the files.
       this.counter({ kind: 'upload', result: 'ok' });
       this.ready(row, call.profileId);
+      await removeFiles(dir, callId).catch((e) =>
+        this.logger.warn(`The recording of call ${clean(callId)} is stored, but its files were not deleted; the next pass will: ${message(e)}`),
+      );
       return 'stored';
     } catch (e) {
       this.logger.warn(`The recording of call ${clean(callId)} was not stored; it is kept on this server for the next try: ${message(e)}`);
+      // Counted, but no alert: a database that is down (a row not written) cannot store the bell either.
+      this.counter({ kind: 'upload', result: 'failed' });
       return 'kept';
     } finally {
       await rm(files.final, { force: true }).catch(() => undefined);

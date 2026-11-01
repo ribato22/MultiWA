@@ -11,6 +11,11 @@ import { join } from 'path';
 vi.mock('@multiwa/database', () => ({ prisma: { callRecording: { create: vi.fn() }, call: { findUnique: vi.fn() } } }));
 vi.mock('../coordinator/call-alerts', () => ({ CallAlerts: class {} }));
 vi.mock('./call-recordings.service', () => ({ CallRecordingsService: class {} }));
+// The real listing; a spec may set the order a pass meets the calls in (a directory's own order is the filesystem's).
+vi.mock('./recording-tmp', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./recording-tmp')>();
+  return { ...actual, leftovers: vi.fn(actual.leftovers) };
+});
 
 import { prisma } from '@multiwa/database';
 import { AppEvents } from '@multiwa/core';
@@ -18,7 +23,7 @@ import { InternalEvents } from '../../../metrics/internal-events';
 import { MemoryRecordingStore } from '../../../testing/memory-recording-store';
 import { CallRecorderService } from './call-recorder.service';
 import { recordingKey } from './recording-store';
-import { readState, writeState } from './recording-tmp';
+import { leftovers, readState, writeState } from './recording-tmp';
 
 const db = prisma as any;
 const FIXTURE = readFileSync(join(__dirname, 'fixtures', 'recorded.webm'));
@@ -346,6 +351,16 @@ describe('CallRecorderService.end', () => {
     expect(h.counted()).toEqual([]);
   });
 
+  it('stored, but its files could not be deleted: call.recording.ready goes out all the same', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    mkdirSync(join(h.store.tmpDir, `${CALL}.json.1a2b3c4d.part`)); // a directory: its rm rejects
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['stored']);
+    expect(h.events.emit).toHaveBeenCalledWith(AppEvents.CALL.RECORDING_READY, expect.objectContaining({ callId: CALL, recordingId: 'r1' }));
+    expect(h.counted()).toEqual([{ kind: 'upload', result: 'ok' }]);
+  });
+
   it('its call gone when its row is written (its profile deleted meanwhile): the stored file and the files go', async () => {
     const h = harness();
     db.callRecording.create.mockRejectedValue(Object.assign(new Error('Foreign key constraint violated'), { code: 'P2003' }));
@@ -355,6 +370,17 @@ describe('CallRecorderService.end', () => {
     expect(h.store.files.has(KEY)).toBe(false);
     expect(h.files()).toEqual([]);
     expect(h.events.emit).not.toHaveBeenCalledWith(AppEvents.CALL.RECORDING_READY, expect.anything());
+  });
+
+  it('its row not written (the database down): counted as not stored, the files stay, nobody alerted', async () => {
+    const h = harness();
+    db.callRecording.create.mockRejectedValue(new Error('Connection terminated unexpectedly'));
+    await h.recorder.begin(h.call);
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['kept']);
+    expect(h.counted()).toEqual([{ kind: 'upload', result: 'failed' }]);
+    expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]);
+    expect(h.alerts.recordingFailed).not.toHaveBeenCalled(); // a database that is down cannot store the bell either
   });
 
   it('stored already (an earlier try whose files were not deleted): the files go, no second event', async () => {
@@ -437,6 +463,35 @@ describe('CallRecorderService.finishLeftovers', () => {
     await leftover(h, OTHER, { announced: false, stopped: false });
     expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
     expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]);
+  });
+
+  it('leaves alone a call it was storing when the pass listed it, though that storing is over by its turn', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    let upload!: () => void;
+    const put = vi.spyOn(h.store, 'putFile').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => (upload = resolve));
+      return MemoryRecordingStore.prototype.putFile.apply(h.store, args);
+    });
+    await h.recorder.end(CALL);
+    const storing = (h.recorder as any).keeping.get(CALL);
+    await vi.waitFor(() => expect(put).toHaveBeenCalled());
+    await leftover(h, OTHER, { announced: true, stopped: true });
+    let other!: () => void;
+    const held = new Promise<void>((resolve) => (other = resolve));
+    db.call.findUnique.mockImplementation(async ({ where }: any) => {
+      if (where.id === OTHER) await held;
+      return row();
+    });
+    // OTHER first: CALL's storing finishes while the pass holds on OTHER, before CALL's turn
+    const actual = await vi.importActual<typeof import('./recording-tmp')>('./recording-tmp');
+    vi.mocked(leftovers).mockImplementationOnce(async (dir) => (await actual.leftovers(dir)).sort((a, b) => Number(a.callId === CALL) - Number(b.callId === CALL)));
+    const pass = h.recorder.finishLeftovers(NOW);
+    await vi.waitFor(() => expect(db.call.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: OTHER } })));
+    upload();
+    expect(await storing).toBe('stored');
+    other();
+    expect(await pass).toEqual({ stored: 1, kept: 0, discarded: 0 }); // OTHER's alone
   });
 
   it('does nothing without a storage set up', async () => {
