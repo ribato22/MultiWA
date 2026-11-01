@@ -53,6 +53,7 @@ MultiWA generates the signing secret itself; a `secret` field in the request is 
 | `call.rejected` | A ringing call was rejected: automatically, by an agent, or on the phone |
 | `call.ended` | A ringing call stopped ringing without being rejected (missed, answered on another device, or unknown), or a call answered in the dashboard ended |
 | `call.updated` | The call changed after that: its outcome was settled later, or its follow-up status or assignee changed |
+| `call.recording.ready` | A call's recording is stored, after its call ended |
 | `call.recording.deleted` | A call's recording was deleted: by an admin, or at the end of its profile's retention period |
 
 ---
@@ -145,9 +146,29 @@ A call still ringing when MultiWA restarts skips part of this: it is closed as `
 
 ### Call recording events
 
-No call is recorded yet: the recorder that writes the recordings comes in a later release, and this event does not fire until then.
+`call.recording.ready` and `call.recording.deleted` name the recording, never its audio (that is fetched through `GET /calls/:id/recording`).
 
-`call.recording.deleted` names the recording, never its audio (that is fetched through `GET /calls/:id/recording`):
+`call.recording.ready` comes once a call's recording is stored: within about a minute of the call's end; after a restart, once the server is up again; or, when the storage did not take it, at a later start or night:
+
+```json
+{
+  "event": "call.recording.ready",
+  "profileId": "profile-123",
+  "timestamp": "2026-11-01T09:12:40.512Z",
+  "data": {
+    "profileId": "profile-123",
+    "callId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41",
+    "recordingId": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+    "durationSec": 184,
+    "bytes": 1478201,
+    "partial": false
+  }
+}
+```
+
+`partial: true`: the recording may end before its call did: a restart cut the call short, its recorder did not stop cleanly, or a write to its file failed. A recording is stored once, so `recordingId` identifies the event.
+
+`call.recording.deleted`:
 
 ```json
 {

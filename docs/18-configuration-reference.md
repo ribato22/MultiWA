@@ -31,6 +31,7 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `CALLS_MAX_TALK_MINUTES` | ❌ | `120` | A call answered in the dashboard is hung up after this long |
 | `CALL_RECORDINGS_STORAGE` | ❌ | `STORAGE_TYPE`, else `local` | Where call recordings go: `local` or `s3` |
 | `CALL_RECORDINGS_PATH` | for local recordings | - (Docker: `/data/call-recordings`) | The directory of local call recordings |
+| `CALL_RECORDINGS_TMP` | for recording | - (Docker: `/data/call-recordings-tmp`) | The directory of recordings in progress |
 
 ---
 
@@ -403,15 +404,17 @@ CALLS_MAX_TALK_MINUTES=120
 
 ## Call recordings
 
-> **In development.** Calls are not recorded yet: the recorder that writes the recordings is still being built. This release has the settings, the announcement, the private storage and its checks, playback, deletion and retention.
-
-Calls answered in the dashboard can be recorded (`PUT /profiles/:id/calls-settings` with `recording: true`), always after an announcement the caller hears first (`POST /profiles/:id/calls-announcement`). Recordings and announcements are private:
+Calls answered in the dashboard can be recorded (`PUT /profiles/:id/calls-settings` with `recording: true`), always with an announcement the caller hears first (`POST /profiles/:id/calls-announcement`). Recordings and announcements are private:
 
 - nothing serves them without the login of an owner or admin of their organization;
 - every play and download is audited;
 - recording cannot be turned on unless the storage refuses reads without credentials. The API checks this then, and again every night at 02:30 server time (`TZ`). When a check finds the storage public (the nightly one, or the one run to turn recording on), recording is turned off on every profile, and every organization with recording on or recordings stored is alerted: its owners and admins get a bell notification, and the [quiet-profile alarm](#quiet-profile-alarm) numbers of its profiles (`quietAlarmNotify`) a WhatsApp message. A nightly check that proves nothing alerts the organizations whose profiles record the same way, and leaves recording on.
 
-The same nightly job deletes the recordings older than each profile's retention period (`retentionDays`, 90 by default). It also deletes the files nothing points at any more (for one, those of a deleted workspace or organization; a deleted profile's files are deleted with it). The stock Compose files pass all five settings below to the API.
+A recorded call is recorded in stereo, from before the announcement: left the caller, right what the caller heard (the announcement, then the agent). The agent is connected once the announcement has played. When the recorder does not start, or the announcement does not play, the call goes on unrecorded with the agent connected, and the owners and admins are told the same way (each at most once an hour per profile).
+
+A recording is written to `CALL_RECORDINGS_TMP` while its call lasts, and stored when the call ends, with four tries over about 40 seconds. When they all fail, it stays on the server, the owners and admins are told, and it is tried again at the next start and every night. It is never stored to a storage last found public, and it is deleted unstored once older than its profile's retention period. A recording cut short by a restart is stored at the next start, marked `partial`.
+
+The same nightly job deletes the recordings older than each profile's retention period (`retentionDays`, 90 by default). It also deletes the files nothing points at any more (for one, those of a deleted workspace or organization; a deleted profile's files are deleted with it). The stock Compose files pass all six settings below to the API.
 
 > ⚠️ **One recordings location per MultiWA database**: never point two installations, or a restored copy, at the same bucket and prefix or the same directory — each night each would delete the other's files.
 
@@ -455,6 +458,17 @@ CALL_RECORDINGS_STORAGE=s3
 CALL_RECORDINGS_BUCKET=multiwa-call-recordings
 CALL_RECORDINGS_SSE=AES256
 ```
+
+### `CALL_RECORDINGS_TMP`
+**Required for recording** | Path | Docker Compose: `/data/call-recordings-tmp` (volume `call_recordings_tmp`)
+
+Where a recording is written while its call lasts, whatever `CALL_RECORDINGS_STORAGE` is. It holds about 0.5 MB a minute per recorded call, and as much again for a moment while that call's recording is stored.
+
+- On a persistent volume, a recording cut short by a restart is stored at the next start (`partial`). Elsewhere, it is lost with the container.
+- The same rules as `CALL_RECORDINGS_PATH` apply: not inside or around `STORAGE_PATH`, `SESSIONS_DIR` or `CALL_RECORDINGS_PATH`, nor around the API's working directory.
+- It must belong to the API's user alone. It is made 0700; one of another user, a shared (sticky) directory such as `/tmp`, or a symlink is refused. The API image runs as root, so a named Docker volume is made 0700; a bind mount must belong to the container's user.
+- Unset or refused, recording cannot be turned on, and `GET /calls/media/status` says why, in `server.recordings.problem`. Recordings already stored stay playable, deletable and under retention.
+- One per API process: two processes sharing one would take each other's recordings in progress for leftovers. (The engines run in one API process; that is the supported setup.)
 
 ---
 
