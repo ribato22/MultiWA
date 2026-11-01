@@ -380,6 +380,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         profileId: profile.id,
         profileName: profile.displayName ?? profile.id,
         caller: { name: found.callerName, number: callerNumber(call.fromJid) },
+        // The banner's link to the caller's chat, when the call has one.
+        conversationId: call.conversationId ?? null,
         startedAt: call.startedAt.toISOString(),
         answerable: !unavailableReason,
         // Recorded from before an announcement the caller hears first: the agent's banner says so.

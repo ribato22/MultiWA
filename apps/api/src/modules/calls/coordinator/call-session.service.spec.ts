@@ -39,7 +39,7 @@ const as = (userId: string, apiKeyScopes?: string[]) => ({
   userId, organizationId: USERS[userId].organizationId, ...(apiKeyScopes !== undefined ? { apiKeyScopes } : { sessionTokenHash: `session-of-${userId}` }),
 });
 const ringing = (call: Record<string, unknown> = {}, settings: Record<string, unknown> = {}) => ({
-  call: { id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false, outcome: 'ringing', answeredByUserId: null, startedAt: STARTED, ...call },
+  call: { id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false, outcome: 'ringing', answeredByUserId: null, startedAt: STARTED, conversationId: 'conv1', ...call },
   profile: { id: 'p1', displayName: 'Line 1', settings: { callsAnswerInDashboard: true, ...settings }, organizationId: 'o1' },
   callerName: 'Pak Joko',
 });
@@ -166,7 +166,7 @@ describe('CallSessionService: who is rung', () => {
       to: ['u1', 'u2'],
       payload: {
         callId: 'c1', profileId: 'p1', profileName: 'Line 1', caller: { name: 'Pak Joko', number: '628111000111' },
-        startedAt: STARTED.toISOString(), answerable: true, recorded: false,
+        startedAt: STARTED.toISOString(), answerable: true, recorded: false, conversationId: 'conv1',
       },
     }]);
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'rung' });
