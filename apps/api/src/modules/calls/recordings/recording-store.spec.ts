@@ -1,7 +1,7 @@
 // The private store of call recordings on a local directory: keys of its own shapes only (the sweep deletes nothing
 // else), never outside its root, written whole or not at all, ranges read as asked. And the settings that make a
 // store: a directory of its own, or a store that says what is wrong.
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,6 +62,7 @@ describe('LocalRecordingStore', () => {
     const key = recordingKey(ORG, PROFILE, CALL, new Date('2026-10-31T00:00:00Z'));
     await store.put(key, Buffer.from('0123456789'), 'audio/webm');
     expect(existsSync(join(root, ORG, PROFILE, '2026', '10', `${CALL}.webm`))).toBe(true);
+    expect(statSync(join(root, ORG)).mode & 0o777).toBe(0o700);
     expect(await store.size(key)).toBe(10);
     expect(await text(await store.read(key))).toBe('0123456789');
     expect(await text(await store.read(key, { start: 2, end: 4 }))).toBe('234');
@@ -122,19 +123,17 @@ describe('LocalRecordingStore', () => {
     const broken = new LocalRecordingStore(join(root, 'a-file'));
     expect(await broken.checkPrivate()).toMatchObject({ ok: false, reason: 'storage_check_failed' });
   });
-});
 
-describe('LocalRecordingStore.putFile', () => {
   it('stores a file under its key: copied aside, then renamed into place; the file itself stays', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'rec-putfile-'));
-    const src = join(mkdtempSync(join(tmpdir(), 'rec-putfile-src-')), 'a.webm');
+    const src = join(root, 'a.webm');
     writeFileSync(src, 'a recording');
-    const store = new LocalRecordingStore(root, '/x');
-    await store.putFile('o/p/2026/10/c.webm', src, 'audio/webm');
+    const withTmp = new LocalRecordingStore(root, { dir: '/x' });
+    await withTmp.putFile('o/p/2026/10/c.webm', src, 'audio/webm');
     expect(readFileSync(join(root, 'o/p/2026/10/c.webm'), 'utf8')).toBe('a recording');
     expect(readdirSync(join(root, 'o/p/2026/10'))).toEqual(['c.webm']); // no .part left behind
+    expect(statSync(join(root, 'o')).mode & 0o777).toBe(0o700);
     expect(readFileSync(src, 'utf8')).toBe('a recording');
-    expect(store.tmpDir).toBe('/x');
+    expect(withTmp).toMatchObject({ tmpDir: '/x', tmpProblem: null });
   });
 });
 
@@ -156,6 +155,7 @@ describe('createRecordingStore: local', () => {
     expect(store).toBeInstanceOf(LocalRecordingStore);
     expect(store).toMatchObject({ type: 'local', problem: null, location: `local:${root}` });
     expect(existsSync(root)).toBe(true);
+    expect(statSync(root).mode & 0o777).toBe(0o700);
   });
 
   it.each([
@@ -197,11 +197,21 @@ describe('createRecordingStore: local', () => {
     );
   });
 
-  it('a directory for recordings in progress: CALL_RECORDINGS_TMP, created when missing; unset, the system temp directory', () => {
+  it('a directory for recordings in progress: CALL_RECORDINGS_TMP, created when missing', () => {
     const tmp = join(dir(), 'in-progress');
-    expect(createRecordingStore({ CALL_RECORDINGS_PATH: join(dir(), 'recordings'), CALL_RECORDINGS_TMP: tmp }).tmpDir).toBe(tmp);
+    expect(createRecordingStore({ CALL_RECORDINGS_PATH: join(dir(), 'recordings'), CALL_RECORDINGS_TMP: tmp })).toMatchObject({ tmpDir: tmp, tmpProblem: null });
     expect(existsSync(tmp)).toBe(true);
-    expect(createRecordingStore({ CALL_RECORDINGS_PATH: join(dir(), 'recordings') }).tmpDir).toBe(join(tmpdir(), 'multiwa-call-recordings'));
+    expect(statSync(tmp).mode & 0o777).toBe(0o700);
+  });
+
+  // No default in the system's temp directory: another local user could take it there, a reboot loses it where /tmp is
+  // in RAM, and two installations on one host would share it.
+  it('CALL_RECORDINGS_TMP unset: recording cannot be made here, and the store still works', async () => {
+    const root = join(dir(), 'recordings');
+    const store = createRecordingStore({ CALL_RECORDINGS_PATH: root });
+    expect(store).toBeInstanceOf(LocalRecordingStore);
+    expect(store).toMatchObject({ problem: null, location: `local:${root}`, tmpDir: '', tmpProblem: 'CALL_RECORDINGS_TMP is not set' });
+    expect(await store.checkPrivate()).toEqual({ ok: true });
   });
 
   // Recordings in progress are recordings: under the media they would be served without a login, under the sessions
@@ -211,12 +221,60 @@ describe('createRecordingStore: local', () => {
     ['SESSIONS_DIR', (d: string) => ({ SESSIONS_DIR: join(d, 'sessions'), CALL_RECORDINGS_TMP: join(d, 'sessions', 'call-recordings-tmp') })],
     ['CALL_RECORDINGS_PATH', (d: string) => ({ CALL_RECORDINGS_TMP: join(d, 'recordings', 'tmp') })],
     ['CALL_RECORDINGS_PATH', (d: string) => ({ CALL_RECORDINGS_TMP: d })],
-  ])('refuses a directory for recordings in progress inside or around %s', (name, env) => {
+  ])('refuses a directory for recordings in progress inside or around %s: recording only, what is stored stays reachable', (name, env) => {
     const d = dir();
     const store = createRecordingStore({ CALL_RECORDINGS_PATH: join(d, 'recordings'), ...env(d) });
-    expect(store).toBeInstanceOf(UnsetRecordingStore);
-    expect(store.problem).toBe(`CALL_RECORDINGS_TMP must be a directory of its own, not inside or around ${name}`);
-    expect(store.tmpDir).toBe('');
+    expect(store).toBeInstanceOf(LocalRecordingStore);
+    expect(store).toMatchObject({
+      problem: null, location: `local:${join(d, 'recordings')}`, tmpDir: '',
+      tmpProblem: `CALL_RECORDINGS_TMP must be a directory of its own, not inside or around ${name}`,
+    });
+  });
+
+  // Recordings are personal data: both their directories are this server's user's alone. CALL_RECORDINGS_TMP is checked
+  // on S3, where it is the only directory: on a local store CALL_RECORDINGS_PATH, checked first, would answer for it.
+  const problemOf = {
+    CALL_RECORDINGS_PATH: (d: string) => createRecordingStore({ CALL_RECORDINGS_PATH: d, CALL_RECORDINGS_TMP: join(dir(), 'tmp') }).problem,
+    CALL_RECORDINGS_TMP: (d: string) =>
+      createRecordingStore(
+        { CALL_RECORDINGS_STORAGE: 's3', S3_ENDPOINT: 'http://minio:9000', S3_ACCESS_KEY: 'a', S3_SECRET_KEY: 'b', S3_BUCKET: 'media', CALL_RECORDINGS_TMP: d },
+        () => ({ send: async () => ({}) }),
+      ).tmpProblem,
+  };
+  const SETTINGS = Object.keys(problemOf) as Array<keyof typeof problemOf>;
+  const notAlone = (name: string) => `${name} must be a directory of this server's user alone`;
+
+  it.each(SETTINGS)('%s: a directory others may read (a Docker volume: root, 0755) is made 0700', (name) => {
+    const d = dir();
+    chmodSync(d, 0o755);
+    expect(problemOf[name](d)).toBeNull();
+    expect(statSync(d).mode & 0o7777).toBe(0o700);
+  });
+
+  it.each(SETTINGS)('%s: refused when another user owns it', (name) => {
+    const d = dir();
+    const uid = process.getuid!();
+    vi.spyOn(process as Required<NodeJS.Process>, 'getuid').mockReturnValue(uid + 1);
+    expect(problemOf[name](d)).toBe(notAlone(name));
+  });
+
+  it.each(SETTINGS)('%s: refused when shared (the sticky bit, as on /tmp)', (name) => {
+    const d = dir();
+    chmodSync(d, 0o1777);
+    expect(problemOf[name](d)).toBe(notAlone(name));
+  });
+
+  it.each(SETTINGS)('%s: refused when a symlink, even to a directory of its own', (name) => {
+    const link = join(dir(), 'link');
+    symlinkSync(dir(), link);
+    expect(problemOf[name](link)).toBe(notAlone(name));
+  });
+
+  it.each(SETTINGS)('%s: a directory that cannot be created says so', (name) => {
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const d = dir();
+    writeFileSync(join(d, 'a-file'), 'x');
+    expect(problemOf[name](join(d, 'a-file', 'x'))).toBe(`${name} cannot be created (the server log says why)`);
   });
 });
 

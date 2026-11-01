@@ -670,6 +670,17 @@ describe('CallRecordingsService: the storage status and its privacy check', () =
     expect(await service.recordingReasons(PROFILE, { callsAnnouncement: announcement })).toEqual(['recordings_storage_unset']);
   });
 
+  // CALL_RECORDINGS_TMP missing or refused: recordings cannot be made here, but what is stored stays reachable.
+  it('a store that cannot make recordings here: that is the only reason, and the status says why', async () => {
+    const store = new MemoryRecordingStore();
+    store.tmpProblem = 'CALL_RECORDINGS_TMP is not set';
+    const { service } = make(store);
+    const announcement = { storageKey: announcementKey(ORG, PROFILE, 'mp3'), mimeType: 'audio/mpeg', durationSec: 3 };
+    store.file(announcement.storageKey);
+    expect(await service.recordingReasons(PROFILE, { callsAnnouncement: announcement })).toEqual(['recordings_storage_unset']);
+    expect(service.storageStatus()).toEqual({ storage: 'local', configured: false, problem: 'CALL_RECORDINGS_TMP is not set', lastCheck: null });
+  });
+
   it('a storage that cannot say whether the announcement is there fails the check, and no probe is put', async () => {
     const { service, store } = make();
     const announcement = { storageKey: announcementKey(ORG, PROFILE, 'mp3'), mimeType: 'audio/mpeg', durationSec: 3 };

@@ -8,6 +8,8 @@ export class MemoryRecordingStore implements RecordingStore {
   problem: string | null = null;
   /** A directory the spec makes (mkdtemp): the recorder's files go there. */
   tmpDir = '';
+  /** Set: recordings cannot be made here (as with CALL_RECORDINGS_TMP missing), and what is stored stays reachable. */
+  tmpProblem: string | null = null;
   /** What checkPrivate answers. */
   privacy: PrivacyCheck = { ok: true };
   readonly files = new Map<string, { body: Buffer; lastModified: Date }>();

@@ -85,9 +85,13 @@ export class CallRecordingsService {
     private readonly events: EventEmitter2,
   ) {}
 
-  /** Where recordings go, whether that works, and the last privacy check (GET /calls/media/status). */
+  /**
+   * Where recordings go, whether that works, and the last privacy check (GET /calls/media/status). A store that cannot
+   * make recordings here (its tmpProblem) is not configured for recording, though what it holds stays reachable.
+   */
   storageStatus() {
-    return { storage: this.store.type, configured: this.store.problem === null, problem: this.store.problem, lastCheck: this.lastCheck };
+    const problem = this.store.problem ?? this.store.tmpProblem;
+    return { storage: this.store.type, configured: problem === null, problem, lastCheck: this.lastCheck };
   }
 
   /** The privacy check of the storage (turning recording on, and nightly): counted, and kept for the status. */
@@ -105,12 +109,13 @@ export class CallRecordingsService {
   }
 
   /**
-   * Why the profile cannot record now (its announcement, then the storage); empty when it can. An unconfigured storage
-   * is the one reason then, and a storage that cannot even say whether the announcement is there fails the check
-   * without a probe: the storage is the problem, not the announcement.
+   * Why the profile cannot record now (its announcement, then the storage); empty when it can. An unconfigured storage,
+   * or one that cannot make recordings here (its tmpProblem), is the one reason then, and a storage that cannot even
+   * say whether the announcement is there fails the check without a probe: the storage is the problem, not the
+   * announcement.
    */
   async recordingReasons(profileId: string, settings: Record<string, unknown>): Promise<RecordingReason[]> {
-    if (this.store.problem) return ['recordings_storage_unset'];
+    if (this.store.problem ?? this.store.tmpProblem) return ['recordings_storage_unset'];
     const reasons: RecordingReason[] = [];
     const key = announcementOf(settings)?.storageKey;
     // A key read back from the settings counts only when it is the profile's own announcement.

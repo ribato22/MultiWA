@@ -322,11 +322,15 @@ describe('createRecordingStore: S3', () => {
     expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_STORAGE: 'local', STORAGE_TYPE: 's3' }).type).toBe('local');
   });
 
-  it('a directory for recordings in progress, as for local recordings; refused, the store says why', () => {
+  it('a directory for recordings in progress, as for local recordings; refused or unset, recording only: what is stored stays reachable', () => {
     const tmp = dir();
-    expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_TMP: tmp }, () => client()).tmpDir).toBe(tmp);
+    expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_TMP: tmp }, () => client())).toMatchObject({ tmpDir: tmp, tmpProblem: null });
     const refused = createRecordingStore({ ...S3_ENV, STORAGE_PATH: tmp, CALL_RECORDINGS_TMP: join(tmp, 'x') }, () => client());
-    expect(refused.problem).toBe('CALL_RECORDINGS_TMP must be a directory of its own, not inside or around STORAGE_PATH');
-    expect(refused.type).toBe('s3');
+    expect(refused).toBeInstanceOf(S3RecordingStore);
+    expect(refused).toMatchObject({
+      type: 's3', problem: null, location: 's3:media/call-recordings/', tmpDir: '',
+      tmpProblem: 'CALL_RECORDINGS_TMP must be a directory of its own, not inside or around STORAGE_PATH',
+    });
+    expect(createRecordingStore(S3_ENV, () => client())).toMatchObject({ problem: null, location: 's3:media/call-recordings/', tmpDir: '', tmpProblem: 'CALL_RECORDINGS_TMP is not set' });
   });
 });
