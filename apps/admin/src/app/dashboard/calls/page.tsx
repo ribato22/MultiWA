@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { io } from 'socket.io-client';
 import {
-  CheckCircle2, Link2, Loader2, MessageSquareText, MessagesSquare, Phone, PhoneIncoming,
+  CheckCircle2, Link2, Loader2, MessageSquareText, MessagesSquare, Phone, PhoneCall, PhoneIncoming,
   PhoneMissed, PhoneOff, RotateCcw, UserPlus, Video,
 } from 'lucide-react';
 import { api, type CallFollowUp, type CallRecord, type Profile } from '@/lib/api';
@@ -40,6 +40,7 @@ const GATE_REASON: Record<string, string> = {
 };
 
 function OutcomeIcon({ call }: { call: CallRecord }) {
+  if (call.outcome === 'answered') return <PhoneCall className="w-4 h-4 text-emerald-400" aria-hidden="true" />;
   if (call.outcome === 'ringing') return <PhoneIncoming className="w-4 h-4 text-primary animate-pulse" aria-hidden="true" />;
   if (call.outcome === 'rejected') return <PhoneOff className="w-4 h-4 text-amber-400" aria-hidden="true" />;
   if (call.outcome === 'answered_elsewhere') return <Phone className="w-4 h-4 text-emerald-400" aria-hidden="true" />;
