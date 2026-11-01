@@ -4,7 +4,7 @@
 // its row, call.recording.ready). The real page is in call-session.integration.spec.ts; a real Postgres in
 // test/call-recordings.e2e-spec.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -159,6 +159,19 @@ describe('CallRecorderService.begin', () => {
     if (stage === 'start') expect(h.media.playAnnouncement).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['its tmpDir does not exist', (h: ReturnType<typeof make>) => rmSync(h.store.tmpDir, { recursive: true })],
+    // a full disk or a refused permission on the state alone (the recording file opens): a directory in its place
+    ['its state cannot be written', (h: ReturnType<typeof make>) => mkdirSync(join(h.store.tmpDir, `${CALL}.json`))],
+  ] as const)('%s: the recorder does not start, the agent is let in all the same, the admins are told', async (_case, arrange) => {
+    const h = harness();
+    arrange(h);
+    await h.recorder.begin(h.call);
+    expect(h.media.startRecording).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalledWith('recorder_failed', PROFILE));
+    expect(h.counted()).toEqual([{ kind: 'failed', stage: 'start' }]);
+  });
+
   it('a start that does not answer in 8 s is a recorder that did not start', async () => {
     vi.useFakeTimers();
     const h = harness();
@@ -269,6 +282,16 @@ describe('CallRecorderService.end', () => {
     await h.recorder.end(CALL);
     await h.idle();
     expect(db.callRecording.create.mock.calls[0][0].data.partial).toBe(true);
+  });
+
+  it('a file that could not be written on is saved as partial, for the boot or the nightly job to store as such', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    (h.recorder as any).runs.get(CALL).out.emit('error', Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }));
+    vi.spyOn(h.store, 'putFile').mockRejectedValue(new Error('connect ETIMEDOUT'));
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['kept']);
+    expect(await readState(h.store.tmpDir, CALL)).toEqual({ announced: true, stopped: false });
   });
 
   it('the upload is tried four times: stored on the fourth', async () => {

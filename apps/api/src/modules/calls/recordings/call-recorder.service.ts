@@ -174,8 +174,9 @@ export class CallRecorderService implements OnApplicationBootstrap {
     const { call } = run;
     let failure: RecordingFailure = 'recorder_failed';
     try {
-      // The state first: a recording file is never without one, whatever stops this process.
-      await this.save(run);
+      // The state first: a recording file is never without one, whatever stops this process. Not through save, which
+      // only logs: a file without its state goes unnoticed, and is discarded after a crash.
+      await writeState(this.store.tmpDir, call.callId, { announced: false, stopped: false });
       run.out = createWriteStream(tmpFiles(this.store.tmpDir, call.callId).recording, { flags: 'a', mode: 0o600 });
       run.out.on('error', (e) => {
         run.broken = true;
@@ -226,10 +227,13 @@ export class CallRecorderService implements OnApplicationBootstrap {
     return Buffer.concat(parts);
   }
 
-  /** Writes what is known of the run's recording; the writes queue, so the last one has the latest. */
+  /**
+   * Writes what is known of the run's recording; the writes queue, so the last one has the latest. A file that could
+   * not be written on reads as not stopped: the boot or the nightly job then stores it as partial too.
+   */
   private save(run: Run): Promise<void> {
     run.saving = run.saving
-      .then(() => writeState(this.store.tmpDir, run.call.callId, { announced: run.announced, stopped: run.stopped }))
+      .then(() => writeState(this.store.tmpDir, run.call.callId, { announced: run.announced, stopped: run.stopped && !run.broken }))
       .catch((e) => this.logger.warn(`Call ${clean(run.call.callId)}: its recording's state was not written: ${message(e)}`));
     return run.saving;
   }
