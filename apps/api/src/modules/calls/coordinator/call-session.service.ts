@@ -25,6 +25,7 @@ import { InternalEvents, type CallEngineSignalPayload, type CallMediaFailureReas
 import { isWorkerEngine } from '../../../common/engine-host';
 import { checkReadiness, type CallReadiness } from './call-readiness';
 import { CallAlerts } from './call-alerts';
+import { CallRecorderService, type RecordingPlan } from '../recordings/call-recorder.service';
 import { claimCall, findCallForAnswer, markAnswered, markEnded, reconcileAfterRestart, releaseClaim, type CallEndReason, type CallEndedBy } from './call-session-store';
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
@@ -86,6 +87,8 @@ interface Session {
   /** When the connect budget (CALLS_CONNECT_TIMEOUT_MS from the claim) runs out, in epoch ms. */
   connectDeadline: number;
   media: CallMediaEngine;
+  /** What the call is recorded with: the plan at its answer (null: it is not recorded). */
+  recording: RecordingPlan | null;
   /** Active from WhatsApp's accept on: every stop is then an end. */
   phase: 'connecting' | 'active' | 'ending';
   room: CallMediaRoom | null;
@@ -128,6 +131,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     @Inject(REALTIME_EMITTER) private readonly realtime: RealtimeEmitter,
     private readonly audit: AuditService,
     private readonly alerts: CallAlerts,
+    private readonly recorder: CallRecorderService,
   ) {}
 
   onModuleInit(): void {
@@ -201,6 +205,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     if (profile.settings.callsAnswerInDashboard !== true || call.isVideo || call.isGroup || !media || this.callMedia.publicStatus().worker !== 'up') {
       return { ok: false, reason: 'media_unavailable' };
     }
+    const recording = this.recorder.plan(profile.id, profile.settings);
     // Busy from the check above on, nothing awaited in between: two Answers of one agent cannot both claim.
     this.claiming.add(user.id);
     let session: Session;
@@ -209,7 +214,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         const now = await findCallForAnswer(call.id);
         return { ok: false, reason: now?.call.outcome === 'ringing' ? 'already_claimed' : 'not_ringing' };
       }
-      session = this.open(call, user.organizationId, user.id, media);
+      session = this.open(call, user.organizationId, user.id, media, recording);
     } finally {
       this.claiming.delete(user.id);
     }
@@ -375,6 +380,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         caller: { name: found.callerName, number: callerNumber(call.fromJid) },
         startedAt: call.startedAt.toISOString(),
         answerable: !unavailableReason,
+        // Recorded after an announcement the caller hears first: the agent's banner says so.
+        recorded: !!this.recorder.plan(profile.id, profile.settings),
         ...(unavailableReason ? { unavailableReason } : {}),
       });
       this.metric({ kind: 'rung' });
@@ -401,7 +408,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     return false;
   }
 
-  private open(call: CallRecord, organizationId: string, userId: string, media: CallMediaEngine): Session {
+  private open(call: CallRecord, organizationId: string, userId: string, media: CallMediaEngine, recording: RecordingPlan | null): Session {
     let resolve!: (agentProducerId: string) => void;
     let reject!: (e: Error) => void;
     const promise = new Promise<string>((res, rej) => {
@@ -411,7 +418,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     promise.catch(() => undefined); // a session can stop before anything waits on it
     const session: Session = {
       callId: call.id, waCallId: call.waCallId, profileId: call.profileId, organizationId, userId, startedAt: call.startedAt,
-      connectDeadline: Date.now() + this.timing.connectMs, media,
+      connectDeadline: Date.now() + this.timing.connectMs, media, recording,
       phase: 'connecting', room: null, handle: null, agent: null, agentProducerId: null, agentListening: false,
       ready: { promise, resolve, reject }, answerTried: false, answeredAt: null, answering: null, rejoining: false, socketsLost: false, linkLost: false,
       timers: {},
@@ -568,6 +575,19 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       }
       // A rejoin meanwhile took this producer off the call (or replaced it): reconnectAgent connects the new one.
       if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
+      if (session.recording) {
+        // Never throws: a recorder or an announcement that fails leaves the call unrecorded, not ended. Caught all the
+        // same, so that a failure of the recorder never reaches the catch below, which ends the call.
+        await this.recorder
+          .begin({
+            callId: session.callId, waCallId: session.waCallId, profileId: session.profileId, organizationId: session.organizationId,
+            startedAt: session.startedAt, media: session.media, announcement: session.recording.announcement,
+            live: () => session.phase === 'active',
+            onAnnouncing: (durationSec) => this.gateway.emitToUsers([session.userId], 'call:announcing', { callId: session.callId, durationSec }),
+          })
+          .catch((e) => this.logger.warn(`Call ${session.callId}: its recording failed, and it goes on unrecorded: ${message(e)}`));
+        if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
+      }
       failure = 'agent_connect_failed';
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
       // The page's receive transport links at its first consume, this one: until now it was never linked.
@@ -612,6 +632,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     this.clearTimers(session);
     // The caller's own end needs no hang-up, and neither does a shutdown: the engines close with the process.
     if (endedBy !== 'caller' && endReason !== 'server_restart') await this.hangUpQuietly(session);
+    // The recorder's last chunks come with its stop, before the media closes; storing it goes on in the background.
+    if (session.recording) await this.recorder.end(session.callId);
     await this.teardown(session);
     this.sessions.delete(session.callId);
     // An end while the answer is stored waits for it: its call.ended follows the call.answered, and an answer that did

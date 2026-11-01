@@ -18,6 +18,7 @@ vi.mock('./call-session-store', () => ({
 }));
 vi.mock('../../profiles/engine-manager.service', () => ({ EngineManagerService: class {} }));
 vi.mock('./call-alerts', () => ({ CallAlerts: class {} }));
+vi.mock('../recordings/call-recorder.service', () => ({ CallRecorderService: class {} }));
 
 import { prisma } from '@multiwa/database';
 import * as store from './call-session-store';
@@ -52,6 +53,11 @@ function harness() {
   const realtime = { emitCallUpdate: vi.fn() };
   const audit = { log: vi.fn().mockResolvedValue(undefined) };
   const alerts = { workerDied: vi.fn().mockResolvedValue(undefined) };
+  const recorder = {
+    plan: vi.fn((_profileId: string, _settings: unknown): null | { announcement: unknown } => null),
+    begin: vi.fn(async (_call: any) => undefined),
+    end: vi.fn(async (_callId: string) => undefined),
+  };
   const links: Array<(peer: string, up: boolean) => void> = [];
   const peer = () => ({
     rtpCapabilities: vi.fn(async () => ({ codecs: [] })),
@@ -92,7 +98,7 @@ function harness() {
     closeCallMedia: vi.fn(async () => undefined),
   };
   const engines = { getEngine: vi.fn(() => ({ callMedia: media })) };
-  const service = new CallSessionService(callMedia as any, engines as any, gateway as any, bus as any, realtime as any, audit as any, alerts as any);
+  const service = new CallSessionService(callMedia as any, engines as any, gateway as any, bus as any, realtime as any, audit as any, alerts as any, recorder as any);
   /** What `event` sent, to whom. */
   const sent = (event: string) => gateway.emitToUsers.mock.calls.filter((c) => c[1] === event).map((c) => ({ to: c[0], payload: c[2] }));
   /** The call events published on the bus, in order; and the counters. */
@@ -101,7 +107,7 @@ function harness() {
   const link = (peer: string, up: boolean) => {
     for (const l of links) l(peer, up);
   };
-  const h = { service, gateway, bus, realtime, audit, alerts, room, agentPeer, links, callMedia, handle, media, engines, online, sent, published, counted, link };
+  const h = { service, gateway, bus, realtime, audit, alerts, recorder, room, agentPeer, links, callMedia, handle, media, engines, online, sent, published, counted, link };
   live.push(h);
   return h;
 }
@@ -160,7 +166,7 @@ describe('CallSessionService: who is rung', () => {
       to: ['u1', 'u2'],
       payload: {
         callId: 'c1', profileId: 'p1', profileName: 'Line 1', caller: { name: 'Pak Joko', number: '628111000111' },
-        startedAt: STARTED.toISOString(), answerable: true,
+        startedAt: STARTED.toISOString(), answerable: true, recorded: false,
       },
     }]);
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'rung' });
@@ -213,6 +219,61 @@ describe('CallSessionService: who is rung', () => {
     S.findCallForAnswer.mockResolvedValueOnce(ringing({ fromJid: '123456789012345@lid' }));
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing')[0].payload.caller).toEqual({ name: 'Pak Joko', number: null });
+  });
+});
+
+describe('CallSessionService: recorded calls', () => {
+  const announcement = { storageKey: 'announcements/o/p/a.wav', mimeType: 'audio/wav', durationSec: 1.5 };
+
+  it('rings saying whether the call is recorded', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValueOnce({ announcement });
+    await h.service.onCallReceived({ callId: 'c1' });
+    expect(h.sent('call:ringing')[0].payload).toMatchObject({ recorded: true });
+    expect(h.recorder.plan).toHaveBeenCalledWith('p1', ringing().profile.settings);
+  });
+
+  it('records after the caller is attached and before the agent is connected, telling the agent before the announcement', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    h.recorder.begin.mockImplementation(async (call: any) => call.onAnnouncing(1.5));
+    await answered(h);
+    expect(h.recorder.begin).toHaveBeenCalledTimes(1);
+    const call = h.recorder.begin.mock.calls[0][0];
+    expect(call).toMatchObject({ callId: 'c1', waCallId: 'W1', profileId: 'p1', organizationId: 'o1', startedAt: STARTED, media: h.media, announcement });
+    expect(h.handle.attachCaller.mock.invocationCallOrder[0]).toBeLessThan(h.recorder.begin.mock.invocationCallOrder[0]);
+    expect(h.recorder.begin.mock.invocationCallOrder[0]).toBeLessThan(h.handle.connectAgent.mock.invocationCallOrder[0]);
+    expect(h.sent('call:announcing')).toEqual([{ to: ['u1'], payload: { callId: 'c1', durationSec: 1.5 } }]);
+    expect(call.live()).toBe(true);
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: true });
+    expect(call.live()).toBe(false);
+  });
+
+  it('the end stops the recorder before the media closes', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    await answered(h);
+    await h.service.hangup(as('u1'), 'c1');
+    expect(h.recorder.end).toHaveBeenCalledWith('c1');
+    expect(h.recorder.end.mock.invocationCallOrder[0]).toBeLessThan(h.media.closeCallMedia.mock.invocationCallOrder[0]);
+  });
+
+  // begin never throws; one that did anyway must not end the call as a media failure.
+  it('a recorder that throws all the same leaves the call unrecorded, not ended: the agent is connected', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    h.recorder.begin.mockRejectedValueOnce(new Error('EIO'));
+    await answered(h);
+    expect(h.handle.connectAgent).toHaveBeenCalledWith('agent-producer');
+    expect(S.markEnded).not.toHaveBeenCalled();
+  });
+
+  it('a call that is not recorded never reaches the recorder', async () => {
+    const h = harness();
+    await answered(h);
+    await h.service.hangup(as('u1'), 'c1');
+    expect(h.recorder.begin).not.toHaveBeenCalled();
+    expect(h.recorder.end).not.toHaveBeenCalled();
   });
 });
 

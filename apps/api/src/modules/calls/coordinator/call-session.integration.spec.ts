@@ -117,7 +117,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     events = new EventsGateway(jwt, bus);
     const audit = { log: vi.fn(async () => undefined) };
     const alerts = { workerDied: vi.fn(async () => undefined) };
-    sessions = new CallSessionService(callMedia, { getEngine: () => ({ callMedia: media }) } as any, events, bus, events, audit as any, alerts as any);
+    sessions = new CallSessionService(callMedia, { getEngine: () => ({ callMedia: media }) } as any, events, bus, events, audit as any, alerts as any, { plan: () => null } as any);
     const gateway = new CallsGateway(events, sessions);
     // What Nest's event-emitter module does for the coordinator's @OnEvent handlers, and its lifecycle hooks
     bus.on(AppEvents.CALL.RECEIVED, (p) => void sessions.onCallReceived(p));

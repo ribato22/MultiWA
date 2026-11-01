@@ -15,6 +15,7 @@ import { ProfilesModule } from '../profiles/profiles.module';
 import { MessagesModule } from '../messages/messages.module';
 import { CallRecordingsModule } from './recordings/call-recordings.module';
 import { CallRecordingsCron } from './recordings/call-recordings.cron';
+import { CallRecorderService } from './recordings/call-recorder.service';
 
 // EventsModule and EngineCommandsModule are @Global (EventsGateway, EngineCommandsService); the event bus comes from
 // the app-wide EventEmitterModule.
@@ -29,6 +30,7 @@ import { CallRecordingsCron } from './recordings/call-recordings.cron';
     CallSessionService,
     CallAlerts,
     CallRecordingsCron,
+    CallRecorderService,
     CallsGateway,
     // The token CallsService and the coordinator push call.updated (and the dashboard answer's events) to Socket.IO
     // through. ProfilesModule binds it too, but does not export it, so it is not visible here.
