@@ -8,6 +8,8 @@
 // that matters. Any other layout (a SeekHead, Cues or a Cluster Position, which point at offsets; a Segment of known
 // size, which would have to grow; blocks in BlockGroups, which MediaRecorder does not write; more than one Info, or one
 // after the Clusters) is copied as it is, and so is a file whose bytes stop making sense anywhere but at its very end.
+// A file with no whole block in it, or that is no EBML at all, is copied too, and said to hold no audio: an empty one is
+// a recording whose first chunk never came.
 // The file is read through a window, never whole: two hours of a call are about 60 MB. Both copies are 0600: a
 // recording is this server's user's alone.
 import { createReadStream, createWriteStream } from 'fs';
@@ -34,6 +36,11 @@ export interface FinalizedWebm {
   bytes: number;
   /** False: copied as it is. */
   rewritten: boolean;
+  /**
+   * True: it has a whole block (rewritten). False: no audio this can read (empty, no EBML at all, or MediaRecorder's
+   * layout with no whole block). Null: another layout, not walked.
+   */
+  audio: boolean | null;
 }
 
 interface Header {
@@ -137,12 +144,20 @@ interface Layout {
   step: number | null;
 }
 
-/** The layout MediaRecorder writes, walked to its last whole element; null for any other. */
-async function walk(r: Reader): Promise<Layout | null> {
+/**
+ * The layout MediaRecorder writes, walked to its last whole element; false for a file with no audio this can read in it
+ * (FinalizedWebm.audio); null for any other layout.
+ */
+async function walk(r: Reader): Promise<Layout | false | null> {
   const ebml = await r.header(0);
-  if (!ebml || ebml.id !== EBML || ebml.size === null) return null;
+  // MediaRecorder starts every file with its EBML header: one without it (an empty file, one cut inside that header,
+  // anything else) holds no audio this can read.
+  if (!ebml || ebml.id !== EBML) return false;
+  if (ebml.size === null) return null;
   const segment = await r.header(ebml.data + ebml.size);
-  if (!segment || segment.id !== SEGMENT || segment.size !== null) return null;
+  // A file that ends inside the Segment's header holds no block; 12 bytes there that are no header are another layout.
+  if (!segment) return ebml.data + ebml.size + 12 <= r.size ? null : false;
+  if (segment.id !== SEGMENT || segment.size !== null) return null;
   let info: Layout['info'] | null = null;
   let scale = 1_000_000;
   let clustered = false;
@@ -190,13 +205,14 @@ async function walk(r: Reader): Promise<Layout | null> {
     end = next;
     pos = next;
   }
-  return info && last !== null ? { info, scale, end, last, step } : null;
+  if (last === null) return false; // walked to its end without a whole block
+  return info ? { info, scale, end, last, step } : null;
 }
 
 /** Writes `src` to `dst` with its Duration (see the top of this file). */
 export async function finalizeWebm(src: string, dst: string, { windowBytes = WINDOW }: { windowBytes?: number } = {}): Promise<FinalizedWebm> {
   const fd = await open(src, 'r');
-  let layout: Layout | null;
+  let layout: Layout | false | null;
   let before = Buffer.alloc(0);
   try {
     const r = new Reader(fd, (await fd.stat()).size, windowBytes);
@@ -209,7 +225,7 @@ export async function finalizeWebm(src: string, dst: string, { windowBytes = WIN
     if (!layout) {
       await copyFile(src, dst);
       await chmod(dst, 0o600); // copyFile gives the copy its source's mode
-      return { durationMs: 0, bytes: (await stat(dst)).size, rewritten: false };
+      return { durationMs: 0, bytes: (await stat(dst)).size, rewritten: false, audio: layout }; // false or null, as walked
     }
     const { info, scale, end, last, step } = layout;
     const ticks = last + (step ?? ONE_FRAME_NS / scale);
@@ -226,7 +242,7 @@ export async function finalizeWebm(src: string, dst: string, { windowBytes = WIN
       },
       createWriteStream(dst, { mode: 0o600 }),
     );
-    return { durationMs: Math.round((ticks * scale) / 1e6), bytes: head.length + (end - info.end), rewritten: true };
+    return { durationMs: Math.round((ticks * scale) / 1e6), bytes: head.length + (end - info.end), rewritten: true, audio: true };
   } catch (e) {
     // A disk that filled up, or a read that failed: no half copy is left for the caller to store. Its own error, not
     // one of the cleanup's, is what it gets.

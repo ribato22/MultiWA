@@ -388,7 +388,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
   /**
    * Stores the recording in tmpDir: its length written in, put (a first try, then one after each of `waits`), its
    * row, then its files go and call.recording.ready goes out. 'kept': not stored now; its files stay for the next try.
-   * 'discarded': its file ends before its announcement did (`announcedAtMs`).
+   * 'discarded': its file holds no audio, or ends before its announcement did (`announcedAtMs`).
    */
   private async keep(callId: string, call: CallFacts, partial: boolean, waits: number[], announcedAtMs: number | undefined): Promise<KeepResult> {
     const dir = this.store.tmpDir;
@@ -400,8 +400,16 @@ export class CallRecorderService implements OnApplicationBootstrap {
     };
     if (this.storagePublic()) return keptHere(); // before the copy too: none is made in vain
     const key = recordingKey(call.organizationId, call.profileId, callId, call.startedAt);
+    let uploaded = false;
     try {
       const webm = await finalizeWebm(files.recording, files.final);
+      if (webm.audio === false) {
+        // The page sends its first chunk 5 s into the recording, so a shorter announcement can play before any came,
+        // and a stop that failed or hung, or a crash, then leaves an empty file. No row and no alert: the call ended, or
+        // the server stopped, before any audio was delivered.
+        this.logger.warn(`The recording of call ${clean(callId)} is discarded: its file holds no audio`);
+        return await this.filesGone(callId, 'discarded');
+      }
       if (!webm.rewritten) this.logger.warn(`The recording of call ${clean(callId)} is stored without its length: it is not laid out as a browser records`);
       else if (webm.durationMs < (announcedAtMs ?? 0)) {
         // The page sends its chunks every 5 s, and the one with the announcement's last seconds never came (a stop that
@@ -417,6 +425,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
         void this.alerts.recordingFailed('upload_failed', call.profileId).catch((e) => this.logger.warn(`The recording alert for ${clean(call.profileId)} failed: ${message(e)}`));
         return 'kept';
       }
+      uploaded = true;
       let row: { id: string; callId: string; durationSec: number; bytes: number; partial: boolean };
       try {
         row = await prisma.callRecording.create({
@@ -441,8 +450,11 @@ export class CallRecorderService implements OnApplicationBootstrap {
       return await this.filesGone(callId, 'stored');
     } catch (e) {
       this.logger.warn(`The recording of call ${clean(callId)} was not stored; it is kept on this server for the next try: ${message(e)}`);
-      // Counted, but no alert: a database that is down (a row not written) cannot store the bell either.
       this.counter({ kind: 'upload', result: 'failed' });
+      // A row not written after the upload alerts nobody: a database that is down cannot store the bell either. Before
+      // the upload (a copy that could not be written: a full tmp disk), the database is fine, and nobody else would
+      // hear of it, night after night until retention discards the recording.
+      if (!uploaded) void this.alerts.recordingFailed('upload_failed', call.profileId).catch((err) => this.logger.warn(`The recording alert for ${clean(call.profileId)} failed: ${message(err)}`));
       return 'kept';
     } finally {
       await rm(files.final, { force: true }).catch(() => undefined);

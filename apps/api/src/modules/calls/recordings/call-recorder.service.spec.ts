@@ -434,6 +434,20 @@ describe('CallRecorderService.end', () => {
     expect(h.alerts.recordingFailed).not.toHaveBeenCalled(); // the caller hung up, or the server stopped, then
   });
 
+  // The page sends its first chunk 5 s into the recording: a shorter announcement has played before any came.
+  it('a stop that fails before any chunk came, though the announcement played: no row, no event, its files gone', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    h.media.stopRecording.mockRejectedValue(new Error('1 of 1 recording chunks were not delivered'));
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['discarded']);
+    expect(db.callRecording.create).not.toHaveBeenCalled();
+    expect(h.store.files.has(KEY)).toBe(false);
+    expect(h.events.emit).not.toHaveBeenCalledWith(AppEvents.CALL.RECORDING_READY, expect.anything());
+    expect(h.files()).toEqual([]);
+    expect(h.alerts.recordingFailed).not.toHaveBeenCalled(); // the caller hung up, or the server stopped, then
+  });
+
   it('a file that could not be written on, though stopped cleanly and uploaded, is stored as partial', async () => {
     const h = harness();
     await h.recorder.begin(h.call);
@@ -488,6 +502,21 @@ describe('CallRecorderService.end', () => {
     await h.idle();
     expect(put).not.toHaveBeenCalled();
     expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]);
+  });
+
+  // A full tmp disk, where the database is fine: nobody else would hear of it, night after night.
+  it('a recording whose copy for the upload cannot be written is kept for the next try, and the admins are told once', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    mkdirSync(join(h.store.tmpDir, `${CALL}.final.webm`)); // a directory in its place: the copy fails (EISDIR), as on ENOSPC
+    const put = vi.spyOn(h.store, 'putFile');
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['kept']);
+    expect(put).not.toHaveBeenCalled();
+    expect(h.files()).toEqual([`${CALL}.final.webm`, `${CALL}.json`, `${CALL}.webm`]);
+    expect(h.counted()).toEqual([{ kind: 'upload', result: 'failed' }]);
+    expect(h.alerts.recordingFailed).toHaveBeenCalledTimes(1);
+    expect(h.alerts.recordingFailed).toHaveBeenCalledWith('upload_failed', PROFILE);
   });
 
   it('a storage found readable without a login during the tries gets no further try; the files stay, and its own alert covers it', async () => {
@@ -572,11 +601,11 @@ describe('CallRecorderService.finishLeftovers', () => {
   const OTHER = '55555555-5555-4555-8555-555555555555';
   const NOW = new Date('2026-11-01T02:30:00Z');
   const row = (settings: Record<string, unknown> = {}) => ({ ...ROW, profile: { settings, workspace: { organizationId: ORG } } });
-  /** Files a crash left for `callId`: the fixture recording and a state, last written `daysAgo` before NOW. */
-  const leftover = async (h: ReturnType<typeof make>, callId: string, state: RecordingState | null, daysAgo = 0) => {
+  /** Files a crash left for `callId`: a recording (the fixture) and a state, last written `daysAgo` before NOW. */
+  const leftover = async (h: ReturnType<typeof make>, callId: string, state: RecordingState | null, daysAgo = 0, body = FIXTURE) => {
     if (state) await writeState(h.store.tmpDir, callId, state);
     const recording = join(h.store.tmpDir, `${callId}.webm`);
-    writeFileSync(recording, FIXTURE);
+    writeFileSync(recording, body);
     const at = new Date(NOW.getTime() - daysAgo * 86_400_000);
     utimesSync(recording, at, at);
     if (state) utimesSync(join(h.store.tmpDir, `${callId}.json`), at, at);
@@ -630,6 +659,17 @@ describe('CallRecorderService.finishLeftovers', () => {
     db.call.findUnique.mockResolvedValue(found());
     expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
     expect(h.files()).toEqual([]);
+    expect(db.callRecording.create).not.toHaveBeenCalled();
+  });
+
+  it('discards one whose file holds no audio, though its announcement had played (a crash before the first chunk)', async () => {
+    const h = harness();
+    checkedPrivate(h);
+    await leftover(h, CALL, { announced: true, stopped: false, announcedAtMs: 3_100 }, 0, Buffer.alloc(0));
+    db.call.findUnique.mockResolvedValue(row());
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
+    expect(h.files()).toEqual([]);
+    expect(h.store.files.has(KEY)).toBe(false);
     expect(db.callRecording.create).not.toHaveBeenCalled();
   });
 
