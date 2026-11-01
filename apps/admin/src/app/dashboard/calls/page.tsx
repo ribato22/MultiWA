@@ -12,7 +12,7 @@ import { api, type CallFollowUp, type CallOutcome, type CallRecord, type Profile
 import { getSocketUrl } from '@/lib/socket';
 import { formatFull, formatRelative } from '@/lib/datetime';
 import {
-  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, callerLabel, filterQuery, fromPayload, matchesFilter, upsertCall,
+  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, callerLabel, filterQuery, fromPayload, knownOutcome, matchesFilter, upsertCall,
   type CallFilter, type CallUpdatePayload,
 } from '@/lib/calls';
 import { Button } from '@/components/ui/button';
@@ -49,8 +49,9 @@ const OUTCOME_COLOUR: Record<CallOutcome, string> = {
 };
 
 function OutcomeIcon({ call }: { call: CallRecord }) {
-  const Icon = outcomeIcon(call.outcome);
-  return <Icon className={`w-4 h-4 ${OUTCOME_COLOUR[call.outcome]}${call.outcome === 'ringing' ? ' animate-pulse' : ''}`} aria-hidden="true" />;
+  const outcome = knownOutcome(call.outcome);
+  const Icon = outcomeIcon(outcome);
+  return <Icon className={`w-4 h-4 ${OUTCOME_COLOUR[outcome]}${outcome === 'ringing' ? ' animate-pulse' : ''}`} aria-hidden="true" />;
 }
 
 export default function CallsPage() {
@@ -306,7 +307,7 @@ export default function CallsPage() {
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={call.outcome === 'missed' ? 'destructive' : 'secondary'}>{OUTCOME_LABEL[call.outcome]}</Badge>
+                      <Badge variant={call.outcome === 'missed' ? 'destructive' : 'secondary'}>{OUTCOME_LABEL[knownOutcome(call.outcome)]}</Badge>
                       <Badge variant="outline">{FOLLOW_UP_LABEL[call.followUp]}</Badge>
                       {call.conversationId && (
                         <Button asChild size="sm" variant="ghost">

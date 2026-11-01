@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test';
 import { PhoneCall, PhoneMissed } from 'lucide-react';
 import {
-  OUTCOME_LABEL, answeredFacts, endedText, formatDuration, fromPayload, reasonTexts, ringingCallerLabel, type CallUpdatePayload,
+  OUTCOME_LABEL, answeredFacts, endedText, formatDuration, fromPayload, knownOutcome, reasonTexts, ringingCallerLabel, type CallUpdatePayload,
 } from '@/lib/calls';
 import type { CallOutcome, CallRecord } from '@/lib/api';
 import { outcomeIcon } from '@/components/calls/outcome-icon';
@@ -23,6 +23,13 @@ test('a call answered in the dashboard has its label', () => {
 test('an outcome this admin does not know yet shows the missed-call icon, never nothing', () => {
   expect(outcomeIcon('answered')).toBe(PhoneCall);
   expect(outcomeIcon('call_x' as CallOutcome)).toBe(PhoneMissed);
+});
+
+test('an outcome this admin does not know yet reads as unknown, so its label, colour and icon are the unknown ones', () => {
+  expect(knownOutcome('answered_elsewhere')).toBe('answered_elsewhere');
+  expect(knownOutcome('call_x')).toBe('unknown');
+  expect(knownOutcome('toString')).toBe('unknown'); // a name every object has is no outcome either
+  expect(OUTCOME_LABEL[knownOutcome('call_x')]).toBe('Unknown');
 });
 
 test('a realtime update keeps what its payload lacks: the recording, and who answered while it is still them', () => {

@@ -12,6 +12,10 @@ export const OUTCOME_LABEL: Record<CallOutcome, string> = {
   unknown: 'Unknown',
 };
 
+/** The outcome to show: a newer API can send one this admin does not know yet (the column is plain text), shown as unknown. */
+export const knownOutcome = (outcome: string): CallOutcome =>
+  Object.prototype.hasOwnProperty.call(OUTCOME_LABEL, outcome) ? (outcome as CallOutcome) : 'unknown';
+
 export const FOLLOW_UP_LABEL: Record<CallFollowUp, string> = {
   open: 'Open',
   in_progress: 'In progress',
