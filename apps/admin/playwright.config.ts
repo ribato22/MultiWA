@@ -1,9 +1,11 @@
 // The admin's end-to-end tests: the real pages in Google Chrome against a FAKE backend, so no API, database or
 // WhatsApp runs. REST is answered inside the browser (page.route); realtime by a socket.io server the tests start on
-// E2E_API_PORT (3000, the NEXT_PUBLIC_API_URL CI builds the pages with). Pure modules use the same runner (e2e/unit).
+// E2E_API_PORT, the port the pages' NEXT_PUBLIC_API_URL names. Pure modules use the same runner (e2e/unit).
 import { defineConfig } from '@playwright/test';
 
-const apiPort = process.env.E2E_API_PORT ?? '3000';
+// The fake API's port: CI builds the pages for :3000; locally 3900, clear of a dev server another project runs on :3000.
+process.env.E2E_API_PORT ??= process.env.CI ? '3000' : '3900';
+const apiPort = process.env.E2E_API_PORT;
 
 export default defineConfig({
   testDir: './e2e',
@@ -21,7 +23,8 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    // CI serves the build its earlier step made; locally `next dev` (left running, it is reused between runs).
+    // CI serves the build its earlier step made. Locally Playwright starts `next dev` and stops it after the run; only
+    // a server the developer started on 3001 is reused, and it keeps its own NEXT_PUBLIC_API_URL.
     command: process.env.CI ? 'pnpm exec next start --port 3001' : 'pnpm exec next dev --port 3001',
     url: 'http://localhost:3001/auth/login',
     reuseExistingServer: !process.env.CI,

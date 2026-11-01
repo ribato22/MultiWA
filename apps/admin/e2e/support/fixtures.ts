@@ -2,6 +2,7 @@
 // socket.io `/ws` for the realtime events, and a record of what the pages sent. Every test gets a fresh context.
 import { test as base, expect, type Page, type Route } from '@playwright/test';
 import { createServer } from 'node:http';
+import { connect } from 'node:net';
 import { Server, type Socket } from 'socket.io';
 import media from './mediasoup.json';
 import { installBrowserFakes } from './browser';
@@ -16,6 +17,7 @@ export const PROFILE = {
   status: 'connected',
   workspaceId: 'w-1',
   phoneNumber: '628120000001',
+  // On, so the console shows its controls; STATUS has it off, for the settings tests to turn on.
   settings: { callsAnswerInDashboard: true },
   dailyMessageLimit: 1000,
   dailyMessageCount: 0,
@@ -37,7 +39,7 @@ export const ringing = (over: Record<string, unknown> = {}) => ({
   recorded: false,
   ...over,
 });
-/** `GET /calls/media/status` of a server and a profile that are ready, before any setting is on. */
+/** `GET /calls/media/status` of a server and a profile that are ready, before any setting is on (the settings tests turn them on). */
 export const STATUS = {
   server: {
     enabled: true,
@@ -62,8 +64,8 @@ export const on = (method: string, path: string | RegExp, reply: Reply | ((req: 
     : undefined;
 export const get = (path: string | RegExp, json: unknown): Rest => on('GET', path, { json });
 
+// `/auth/me` is the `user` option's, routed by the backend fixture.
 const DEFAULT_REST: Rest[] = [
-  get('/auth/me', ME),
   get('/auth/preferences', {}),
   get('/profiles', [PROFILE]),
   get('/notifications/unread-count', { count: 0 }),
@@ -165,11 +167,30 @@ async function fulfill(backend: FakeBackend, route: Route) {
   await route.fulfill({ status: out.status ?? 200, headers: out.headers, ...(out.body !== undefined ? { body: out.body } : { json: out.json ?? {} }) });
 }
 
+/** Whether something accepts connections on `host:port`. */
+const accepts = (host: string, port: number) =>
+  new Promise<boolean>((resolve) => {
+    const socket = connect({ host, port, timeout: 500 });
+    const done = (taken: boolean) => {
+      socket.destroy();
+      resolve(taken);
+    };
+    socket.once('connect', () => done(true)).once('timeout', () => done(false)).on('error', () => done(false));
+  });
+
 export const test = base.extend<{ backend: FakeBackend; user: typeof ME }, { fakeServer: Server }>({
   // One socket.io server for the run, on the port the pages are built for; each test's backend serves it.
   fakeServer: [
     async ({}, use) => {
-      const http = createServer();
+      // The port the pages' NEXT_PUBLIC_API_URL names (playwright.config.ts).
+      const port = Number(process.env.E2E_API_PORT);
+      // A port in use, on either address of localhost, is refused: the listen below binds one address only, and can
+      // even succeed beside another server's wildcard bind, silently sharing that server's traffic.
+      for (const host of ['127.0.0.1', '::1']) {
+        if (await accepts(host, port)) throw new Error(`Port ${port} is in use: set E2E_API_PORT to a free port`);
+      }
+      // Plain HTTP answers 404: a page's request here outside /socket.io/ fails at once instead of holding up its load.
+      const http = createServer((_req, res) => res.writeHead(404).end());
       const io = new Server(http, { cors: { origin: true, credentials: true } });
       io.of('/ws').on('connection', (socket: Socket) => {
         socket.join(`user:${ME.id}`);
@@ -185,35 +206,37 @@ export const test = base.extend<{ backend: FakeBackend; user: typeof ME }, { fak
           });
         }
       });
-      // The port the pages' NEXT_PUBLIC_API_URL names (playwright.config.ts).
-      await new Promise<void>((resolve) => http.listen(Number(process.env.E2E_API_PORT ?? 3000), 'localhost', resolve));
+      await new Promise<void>((resolve, reject) => {
+        http.once('error', reject);
+        http.listen(port, 'localhost', resolve);
+      });
       await use(io);
-      io.close();
+      await io.close();
     },
     { scope: 'worker' },
   ],
   user: [ME, { option: true }],
-  backend: async ({ fakeServer, context, user }, use) => {
-    const backend = new FakeBackend(fakeServer);
-    current = backend;
-    const errors: string[] = [];
-    const watch = (p: Page) => p.on('pageerror', (e) => errors.push(e.message));
-    context.pages().forEach(watch);
-    context.on('page', watch);
-    await context.addInitScript(installBrowserFakes);
-    await context.addInitScript((u) => {
-      localStorage.setItem('user', JSON.stringify(u));
-      localStorage.setItem('accessToken', 'test-token');
-      localStorage.setItem('refreshToken', 'test-refresh');
-    }, user);
-    await context.route('**/api/v1/**', (route) => fulfill(backend, route));
-    await use(backend);
-    backend.dropSockets();
-    current = null;
-    expect(errors, 'uncaught errors in the pages').toEqual([]);
-  },
-  // Every page of a test runs against the backend: it is set up before the page is used.
-  page: async ({ page, backend: _backend }, use) => {
-    await use(page);
-  },
+  // Automatic, so every test of this `test` runs against the backend, set up before its first page.
+  backend: [
+    async ({ fakeServer, context, user }, use) => {
+      const backend = new FakeBackend(fakeServer);
+      backend.route(get('/auth/me', user));
+      current = backend;
+      const errors: string[] = [];
+      context.on('page', (p: Page) => p.on('pageerror', (e) => errors.push(e.message)));
+      await context.addInitScript(installBrowserFakes);
+      await context.addInitScript((u) => {
+        if (window.origin === 'null') return; // the blank page a new tab opens on: it has no storage
+        localStorage.setItem('user', JSON.stringify(u));
+        localStorage.setItem('accessToken', 'test-token');
+        localStorage.setItem('refreshToken', 'test-refresh');
+      }, user);
+      await context.route('**/api/v1/**', (route) => fulfill(backend, route));
+      await use(backend);
+      backend.dropSockets();
+      current = null;
+      expect(errors, 'uncaught errors in the pages').toEqual([]);
+    },
+    { auto: true },
+  ],
 });
