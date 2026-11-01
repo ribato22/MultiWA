@@ -22,6 +22,7 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `DURABLE_SEND` | ❌ | `false` | Enqueue outbound sends in Redis (BullMQ) with retry |
 | `OUTBOUND_SEND_CONCURRENCY` | ❌ | `10` | Max concurrent durable send deliveries |
 | `SEND_TIMEOUT_MS` | ❌ | `60000` | The longest one WhatsApp send may take before it fails with `504 SEND_TIMEOUT` |
+| `WWEBJS_MEMORY_LIMIT_MB` | ❌ | `2500` | Memory (MB) above which a profile's Chromium is restarted from its session; `0` = off |
 | `WEBHOOK_TIMEOUT_MS` | ❌ | `30000` | Webhook delivery timeout |
 | `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
 | `QUIET_ALARM_ACTIVE_HOURS` | ❌ | `07:00-22:00` | Daily window in which a connected profile's silence counts toward its quiet-profile alarm |
@@ -211,6 +212,26 @@ worker give both services the one in `.env`.
 
 ```env
 ENGINE_HOST=api
+```
+
+---
+
+## WhatsApp Web Engine
+
+A profile on the `whatsapp-web-js` engine runs its own headless Chromium. When that page crashes or the
+browser dies (for example when the host runs out of memory and the kernel kills it), the profile's engine is
+restarted from its stored session automatically, without a QR, and the other profiles are not touched.
+
+### `WWEBJS_MEMORY_LIMIT_MB`
+**Optional** | Number (MB) | Default: `2500`
+
+The memory a profile's Chromium (the browser and its pages) may hold before that profile's engine is restarted
+from its session, checked every minute while the profile is online. A WhatsApp Web page grows over days; on a
+small host one page can take enough memory for the kernel to kill processes. `0` turns the check off. It is
+measured on Linux only. The restart briefly takes that profile offline (up to a few minutes).
+
+```env
+WWEBJS_MEMORY_LIMIT_MB=2500
 ```
 
 ---
