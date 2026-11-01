@@ -6,6 +6,7 @@ import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
 import { readCallLog, isCallLogWithoutOutcome, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
 import { WebJsCallMedia, CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT } from './webjs-call-media';
+import { processTreeRssAnonMb } from './process-memory';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -43,6 +44,13 @@ const MAX_WARNED_SHAPES = 20;
 // At most one line per this long about dropped call logs: a fresh link's history sync drops hundreds.
 const DROPPED_CALL_LOG_NOTE_MS = 60_000;
 
+/** Reasons the adapter reports through onDisconnected when the browser side failed, not WhatsApp. */
+export const BROWSER_LOSS_REASONS = {
+  pageCrashed: 'PAGE_CRASHED',
+  browserClosed: 'BROWSER_CLOSED',
+  memoryLimit: 'MEMORY_LIMIT',
+} as const;
+
 export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   readonly engineType = 'whatsapp-web-js' as const;
   
@@ -68,6 +76,8 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   private warnedCallLogShapes = new Set<string>();
   // Call media: only when the server switch is on (EngineConfig.callMedia.enabled).
   callMedia?: WebJsCallMedia;
+  // Clients whose page or browser loss was already reported: a crash followed by the browser closing is one loss.
+  private lostClients = new WeakSet<object>();
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -388,7 +398,9 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
     
     console.log(`[WhatsApp-WebJS] Connecting profile ${this.config?.profileId}...`);
-    await this.client.initialize();
+    const client = this.client;
+    await client.initialize();
+    this.watchBrowser(client);
   }
 
   async disconnect(): Promise<void> {
@@ -403,15 +415,41 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   }
 
   async destroy(): Promise<void> {
-    if (this.client) {
-      try {
-        await this.client.destroy();
-      } catch (e) {
-        // Ignore destroy errors
-      }
-      this.client = null;
-      this.status = { isConnected: false, isAuthenticated: false };
+    const client = this.client;
+    if (!client) return;
+    // Let go first: closing the browser below fires its 'disconnected', which is not a loss.
+    this.client = null;
+    try {
+      await client.destroy();
+    } catch (e) {
+      // Ignore destroy errors
     }
+    this.status = { isConnected: false, isAuthenticated: false };
+  }
+
+  /**
+   * whatsapp-web.js reports WhatsApp's own disconnects, never a crashed page or a dead browser: on 2026-10-31
+   * the OOM killer took a profile's renderer and the profile read "connected" with a dead page for 21 hours.
+   * Report those as disconnects, so the engine-managers recycle the engine from its stored session.
+   */
+  private watchBrowser(client: Client): void {
+    (client as any).pupPage?.on?.('error', () => this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.pageCrashed));
+    (client as any).pupBrowser?.on?.('disconnected', () =>
+      this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.browserClosed),
+    );
+  }
+
+  /** Once per client, and only for the client this adapter still holds: its own destroy() is not a loss. */
+  private reportBrowserLoss(client: Client, reason: string): void {
+    if (client !== this.client || this.lostClients.has(client)) return;
+    this.lostClients.add(client);
+    console.warn(
+      `[WhatsApp-WebJS] ${reason} for profile ${this.config?.profileId}: reported as a disconnect to recycle its engine from the stored session`,
+    );
+    this.status = { isConnected: false, isAuthenticated: false };
+    this.calls.clear();
+    this.callsRungThisSession.clear();
+    this.config?.onDisconnected?.(reason);
   }
 
   getStatus(): EngineStatus {
