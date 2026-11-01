@@ -146,7 +146,7 @@ By default, `POST /messages/...` sends synchronously and returns the result
 
 ## Global Rate Limit
 
-- **API throttle**: 120 requests/minute per IP (global `ThrottlerGuard`).
+- **API throttle**: 120 requests/minute per route and client IP (global `ThrottlerGuard`). Behind a reverse proxy, set `TRUST_PROXY` to its address, or every client shares the proxy's.
 - **Bulk API**: use `POST /api/v1/bulk/send` for high-volume sends — it routes
   through the same per-profile send gate (so `messageDelayMs` and the daily limit
   apply) plus its own configurable inter-message delay.

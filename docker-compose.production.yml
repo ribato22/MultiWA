@@ -98,6 +98,8 @@ services:
       # Must match the API upstream port in docker/nginx/nginx.conf (api:3333).
       API_PORT: 3333
       API_HOST: 0.0.0.0
+      # Only nginx reaches the API, from this file's Docker network.
+      TRUST_PROXY: ${TRUST_PROXY:-172.16.0.0/12}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}

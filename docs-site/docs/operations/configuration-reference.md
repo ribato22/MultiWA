@@ -20,6 +20,7 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `API_HOST` | ❌ | `0.0.0.0` | API bind address |
 | `NODE_ENV` | ❌ | `development` | Environment mode |
 | `CORS_ORIGINS` | ❌ | `http://localhost:3001,http://localhost:3333` (Docker) | Comma-separated allowed origins |
+| `TRUST_PROXY` | ❌ | - (`172.16.0.0/12` in `docker-compose.production.yml`) | Address of the reverse proxy in front of the API, so rate limits and logins see the client's address |
 | `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:3333` (Docker) | URL the browser uses to reach the API. **Build-time** in the admin image. |
 | `DEFAULT_ENGINE` | ❌ | `whatsapp-web-js` | WhatsApp engine (`whatsapp-web-js` or `baileys`) |
 | `ENGINE_HOST` | ❌ | `api` | Where the engine runs: `api` or `worker` |
@@ -137,6 +138,18 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:3001
 CORS_ORIGINS=https://admin.yourdomain.com,https://app.yourdomain.com
 ```
 
+### `TRUST_PROXY`
+**Optional** | String (comma-separated IP addresses or CIDRs) | Default: unset (`172.16.0.0/12` in `docker-compose.production.yml`)
+
+The address of the reverse proxy in front of the API. Without it, behind nginx every request comes from nginx's address: every client shares one rate limit, and logins record nginx's address. With it, the API takes the client address that proxy appended to `X-Forwarded-For`.
+
+Only the hop that connects to the API is trusted, and only from a listed address, so a client cannot choose its address by sending its own `X-Forwarded-For`. Keep client networks out of the list: a client that connects to the API port directly from a listed address is taken for the proxy. A value that is not an address list, such as `1` or `true`, stops the API at boot.
+
+```env
+# nginx on a Docker network of the stock compose files
+TRUST_PROXY=172.16.0.0/12
+```
+
 ---
 
 ## WhatsApp Sessions
@@ -160,23 +173,10 @@ SESSIONS_DIR=/data/sessions
 
 ## Rate Limiting
 
-### `RATE_LIMIT_TTL`
-**Optional** | Number | Default: `60`
-
-Time window in seconds for rate limiting.
-
-### `RATE_LIMIT_MAX`
-**Optional** | Number | Default: `100`
-
-Maximum requests per time window.
-
-### Advanced Rate Limiting (Production)
-
-```env
-RATE_LIMIT_SHORT=10/1s    # 10 requests per second
-RATE_LIMIT_MEDIUM=100/1m  # 100 requests per minute
-RATE_LIMIT_LONG=1000/1h   # 1000 requests per hour
-```
+The API allows **120 requests per minute per route and client address** (the global
+`ThrottlerGuard`; some routes, such as `POST /auth/register`, allow fewer). The limit
+is not set by an environment variable. Behind a reverse proxy, set
+[`TRUST_PROXY`](#trust_proxy) so the client address is the caller's, not the proxy's.
 
 ---
 
