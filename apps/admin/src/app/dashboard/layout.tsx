@@ -75,10 +75,11 @@ const notifIcons: Record<string, NotifTypeInfo> = {
   security:      { Icon: Lock,          tone: 'text-rose-300' },
   call:          { Icon: PhoneMissed,   tone: 'text-rose-300' },
 };
-// The call alerts (the media server died, a recording failed, the recording storage) come as `system`, with a kind.
+// The call alerts (the media server died, a recording failed, the recording storage) come as `system`, with a kind
+// that starts `call_` or `calls_`.
 const CALL_ALERT: NotifTypeInfo = { Icon: PhoneOff, tone: 'text-amber-300' };
 const notifIcon = (n: Notification): NotifTypeInfo =>
-  (String(n.metadata?.kind ?? '').startsWith('call') ? CALL_ALERT : notifIcons[n.type]) ?? { Icon: Bell, tone: 'text-muted-foreground' };
+  (n.type === 'system' && /^calls?_/.test(String(n.metadata?.kind ?? '')) ? CALL_ALERT : notifIcons[n.type]) ?? { Icon: Bell, tone: 'text-muted-foreground' };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();

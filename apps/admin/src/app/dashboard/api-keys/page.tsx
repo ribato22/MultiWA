@@ -70,8 +70,8 @@ const PERMISSIONS = [
   { value: 'webhooks:read', label: 'Read Webhooks', group: 'Webhooks' },
   { value: 'webhooks:write', label: 'Manage Webhooks', group: 'Webhooks' },
   { value: 'broadcast:write', label: 'Send Broadcasts', group: 'Broadcast' },
-  { value: 'recordings:read', label: 'Play recordings', group: 'Recordings' },
-  { value: 'recordings:delete', label: 'Delete recordings', group: 'Recordings' },
+  { value: 'recordings:read', label: 'Read Recordings', group: 'Recordings' },
+  { value: 'recordings:delete', label: 'Delete Recordings', group: 'Recordings' },
 ];
 
 export default function ApiKeysPage() {
