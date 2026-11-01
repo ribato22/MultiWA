@@ -2,6 +2,7 @@
 // else), never outside its root, written whole or not at all, ranges read as asked. And the settings that make a
 // store: a directory of its own, or a store that says what is wrong.
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'fs';
+import { open } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -69,6 +70,25 @@ describe('LocalRecordingStore', () => {
     await store.delete(key);
     expect(await store.size(key)).toBeNull();
     await expect(store.delete(key)).resolves.toBeUndefined();
+  });
+
+  // Some filesystems (network and FUSE ones among them) refuse to flush a directory: that refusal is no failed store.
+  it('a directory the filesystem will not flush does not fail the put; another failure of its flush does', async () => {
+    const handle = await open(root, 'r');
+    const proto = Object.getPrototypeOf(handle);
+    await handle.close();
+    const sync = proto.sync;
+    const failing = (code: string) =>
+      vi.spyOn(proto, 'sync')
+        .mockImplementationOnce(function (this: unknown) { return sync.call(this); }) // the file's own flush
+        .mockRejectedValueOnce(Object.assign(new Error(`${code}: directory flush`), { code })); // its directory's
+    const key = announcementKey(ORG, PROFILE, 'mp3');
+    failing('EINVAL');
+    await expect(store.put(key, Buffer.from('x'), 'audio/mpeg')).resolves.toBeUndefined();
+    vi.restoreAllMocks();
+    failing('EIO');
+    await expect(store.put(key, Buffer.from('y'), 'audio/mpeg')).rejects.toThrow('EIO');
+    vi.restoreAllMocks();
   });
 
   it('leaves no unfinished file behind a put', async () => {

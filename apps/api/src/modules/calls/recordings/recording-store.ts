@@ -170,15 +170,22 @@ async function flush(path: string, flags = 'r+'): Promise<void> {
   }
 }
 
+// How a filesystem that does not flush directories answers (see moveIntoPlace).
+const DIRECTORY_FLUSH_REFUSED = new Set(['EINVAL', 'EBADF', 'ENOTSUP']);
+
 /**
  * Renames a flushed `.part` file into place, then flushes its directory: the rename is only an entry there, which a
  * power cut can undo until the directory is on the disk too. The row would then point at a missing key, the bytes
  * would sit in a `.part` file that the sweep deletes an hour later, and the recorder's own copy would already be gone.
- * Windows cannot open a directory, so there it is not flushed.
+ * Windows cannot open a directory, so there it is not flushed; and some filesystems (network and FUSE ones among them)
+ * refuse to flush one (EINVAL, EBADF, ENOTSUP), which, as PostgreSQL does, is taken as nothing more to do.
  */
 async function moveIntoPlace(part: string, target: string): Promise<void> {
   await rename(part, target);
-  if (process.platform !== 'win32') await flush(dirname(target), 'r');
+  if (process.platform === 'win32') return;
+  await flush(dirname(target), 'r').catch((e) => {
+    if (!DIRECTORY_FLUSH_REFUSED.has((e as NodeJS.ErrnoException)?.code ?? '')) throw e;
+  });
 }
 
 /** Recordings in a directory of their own (CALL_RECORDINGS_PATH), each file 0600: this server's user's alone. */
