@@ -5,6 +5,7 @@ import type { CallFollowUp, CallOutcome, CallRecord } from './api';
 
 export const OUTCOME_LABEL: Record<CallOutcome, string> = {
   ringing: 'Ringing',
+  answered: 'Answered',
   missed: 'Missed',
   rejected: 'Rejected',
   answered_elsewhere: 'Answered on phone',
@@ -63,6 +64,13 @@ export interface CallUpdatePayload {
   endedAt: string | null;
   followUp: CallFollowUp;
   assignedUserId: string | null;
+  answeredByUserId: string | null;
+  answeredAt: string | null;
+  endedBy: CallRecord['endedBy'];
+  endReason: CallRecord['endReason'];
+  talkSeconds: number | null;
+  /** Sent once, when the call's recording is stored: read the call again for its facts. */
+  hasRecording?: true;
 }
 
 /** The list row for a payload: `callId` is the row `id` and `from` its `fromJid`; relations the payload lacks come from the previous row. */
@@ -71,6 +79,8 @@ export function fromPayload(p: CallUpdatePayload, previous?: CallRecord): CallRe
     conversationId: previous?.conversationId ?? null,
     conversation: previous?.conversation ?? null,
     assignedUser: previous && previous.assignedUserId === p.assignedUserId ? previous.assignedUser : null,
+    answeredBy: previous && previous.answeredByUserId === p.answeredByUserId ? previous.answeredBy : null,
+    recording: previous?.recording ?? null,
     id: p.callId,
     profileId: p.profileId,
     waCallId: p.waCallId,
@@ -84,6 +94,12 @@ export function fromPayload(p: CallUpdatePayload, previous?: CallRecord): CallRe
     endedAt: p.endedAt,
     followUp: p.followUp,
     assignedUserId: p.assignedUserId,
+    // `?? null`: a payload from a server older than these fields
+    answeredByUserId: p.answeredByUserId ?? null,
+    answeredAt: p.answeredAt ?? null,
+    endedBy: p.endedBy ?? null,
+    endReason: p.endReason ?? null,
+    talkSeconds: p.talkSeconds ?? null,
   };
 }
 

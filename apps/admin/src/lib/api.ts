@@ -9,6 +9,8 @@ export interface ApiResponse<T> {
   data?: T;
   error?: string;
   status: number;
+  /** The body of a failed request (a 409's `reasons`, for one); null when it was not JSON. */
+  body?: any;
 }
 
 export interface User {
@@ -134,8 +136,22 @@ export interface Conversation {
   lastMessageAt: string;
 }
 
-export type CallOutcome = 'ringing' | 'missed' | 'rejected' | 'answered_elsewhere' | 'unknown';
+export type CallOutcome = 'ringing' | 'answered' | 'missed' | 'rejected' | 'answered_elsewhere' | 'unknown';
 export type CallFollowUp = 'open' | 'in_progress' | 'done';
+export type CallEndReason = 'hangup' | 'caller_hangup' | 'agent_lost' | 'media_failed' | 'time_limit' | 'server_restart';
+
+/** A call's recording facts: every role sees them; owner and admin play, download and delete. */
+export interface CallRecording {
+  id: string;
+  durationSec: number;
+  bytes: number;
+  /** The server stopped before the call ended: the file holds the call up to then. */
+  partial: boolean;
+  announcementPlayed: boolean;
+  createdAt: string;
+  deletedAt: string | null;
+  deleteReason: 'retention' | 'admin' | 'profile_deleted' | null;
+}
 
 export interface CallRecord {
   id: string;
@@ -152,8 +168,47 @@ export interface CallRecord {
   followUp: CallFollowUp;
   assignedUserId: string | null;
   conversationId: string | null;
+  answeredByUserId: string | null;
+  answeredAt: string | null;
+  endedBy: 'agent' | 'caller' | 'server' | null;
+  endReason: CallEndReason | null;
+  talkSeconds: number | null;
   assignedUser: { id: string; name: string } | null;
+  answeredBy: { id: string; name: string } | null;
   conversation: { id: string; name: string | null } | null;
+  recording: CallRecording | null;
+}
+
+export interface CallsAnnouncement {
+  mimeType: string;
+  durationSec: number;
+}
+
+/** A profile's calls settings, as `PUT /profiles/:id/calls-settings` answers them. */
+export interface CallsSettings {
+  profileId: string;
+  answerInDashboard: boolean;
+  recording: boolean;
+  retentionDays: number;
+  announcement: CallsAnnouncement | null;
+}
+
+/** `GET /calls/media/status` (owner and admin): the server's readiness, and each profile's settings and readiness. */
+export interface CallsMediaStatus {
+  server: {
+    enabled: boolean;
+    worker: 'up' | 'down';
+    port: number | null;
+    engineHost: 'api' | 'worker';
+    activeSessions: number;
+    recordings: {
+      storage: 'local' | 's3';
+      configured: boolean;
+      problem: string | null;
+      lastCheck: { at: string; ok: boolean; reason?: string } | null;
+    };
+  };
+  profiles: Array<CallsSettings & { name: string; ready: boolean; reasons: string[] }>;
 }
 
 // Result of POST /notifications/push/test — the endpoint returns per-endpoint
@@ -265,6 +320,7 @@ class ApiClient {
         return {
           error: data?.message || data?.error || `Request failed with status ${response.status}`,
           status: response.status,
+          body: data,
         };
       }
 
@@ -277,6 +333,22 @@ class ApiClient {
         error: error instanceof Error ? error.message : 'Network error',
         status: 0,
       };
+    }
+  }
+
+  /** A route that answers bytes (a recording, an announcement), with the Bearer header and the 401 refresh of request(). */
+  async fetchBlob(endpoint: string, _isRetry = false): Promise<{ blob?: Blob; error?: string; status: number }> {
+    const token = this.getToken();
+    try {
+      const response = await fetch(`${this.baseUrl}${endpoint}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (response.status === 401 && !_isRetry && (await this.tryRefreshToken())) return this.fetchBlob(endpoint, true);
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        return { error: data?.message || `Request failed with status ${response.status}`, status: response.status };
+      }
+      return { blob: await response.blob(), status: response.status };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error', status: 0 };
     }
   }
 
@@ -590,6 +662,43 @@ class ApiClient {
 
   async sendCallLink(id: string, type: 'voice' | 'video', text?: string) {
     return this.request<{ call: CallRecord; message: unknown; link: string }>(`/calls/${id}/call-link`, { method: 'POST', body: JSON.stringify(text ? { type, text } : { type }) });
+  }
+
+  // Calls answered in the dashboard: readiness, a profile's settings and announcement, recordings (owner and admin).
+  async getCallsMediaStatus() {
+    return this.request<CallsMediaStatus>('/calls/media/status');
+  }
+
+  async updateCallsSettings(profileId: string, body: { answerInDashboard?: boolean; recording?: boolean; retentionDays?: number }) {
+    return this.request<CallsSettings>(`/profiles/${profileId}/calls-settings`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async uploadCallsAnnouncement(profileId: string, file: File) {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await this.request<{ profileId: string; announcement: CallsAnnouncement }>(`/profiles/${profileId}/calls-announcement`, {
+      method: 'POST',
+      body: form,
+    });
+    // A proxy's own size refusal (nginx answers 413 in HTML) says what the API would have said.
+    return res.status === 413 && !res.body ? { ...res, error: 'The file must be at most 2 MB' } : res;
+  }
+
+  fetchCallsAnnouncement(profileId: string) {
+    return this.fetchBlob(`/profiles/${profileId}/calls-announcement`);
+  }
+
+  async deleteCallsAnnouncement(profileId: string) {
+    return this.request<{ profileId: string; announcement: null }>(`/profiles/${profileId}/calls-announcement`, { method: 'DELETE' });
+  }
+
+  /** The recording's bytes, for a blob: URL: an <audio src> cannot send the Bearer header. Each fetch is audited. */
+  fetchCallRecording(callId: string, download = false) {
+    return this.fetchBlob(`/calls/${callId}/recording${download ? '?download=1' : ''}`);
+  }
+
+  async deleteCallRecording(callId: string) {
+    return this.request<{ callId: string; recordingId: string; deletedAt: string }>(`/calls/${callId}/recording`, { method: 'DELETE' });
   }
 
   async getMessages(conversationId: string) {
