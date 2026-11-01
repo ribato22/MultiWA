@@ -3,14 +3,15 @@
 //
 // In the store's tmpDir, per call (its calls row id, a lowercase uuid):
 //   <callId>.webm        the recording, appended chunk by chunk as the page sends them
-//   <callId>.json        what is known of it: { announced, stopped }, written whole (aside, then renamed)
+//   <callId>.json        what is known of it: { announced, stopped }, written whole and flushed (aside, then renamed)
 //   <callId>.final.webm  the copy with its length written in, while it is being stored
 // The state is written FIRST, so a recording never lacks one; a crash leaves both, and the next boot (or the nightly
 // job) finishes them: discarded when the announcement had not played, stored as partial when not stopped cleanly.
 // Only names of these shapes are ever touched: the directory may hold anything else.
 import { randomBytes } from 'crypto';
-import { readdir, readFile, rename, rm, stat, writeFile } from 'fs/promises';
+import { readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
+import { flush, moveIntoPlace } from './recording-store';
 
 export interface RecordingState {
   /** The caller heard the whole announcement: without it a recording is never kept. */
@@ -29,20 +30,31 @@ export const tmpFiles = (dir: string, callId: string) => ({
   final: join(dir, `${callId}.final.webm`),
 });
 
+/**
+ * Written aside and flushed, then moved into place (its directory flushed too): the state alone decides whether a
+ * recording is kept, and an empty one after a power cut (XFS, or ext4 without auto_da_alloc) would discard a recording
+ * whose announcement played.
+ */
 export async function writeState(dir: string, callId: string, state: RecordingState): Promise<void> {
   const path = tmpFiles(dir, callId).state;
   const part = `${path}.${randomBytes(4).toString('hex')}.part`;
   await writeFile(part, JSON.stringify(state), { mode: 0o600 });
-  await rename(part, path);
+  await flush(part);
+  await moveIntoPlace(part, path);
 }
 
-/** Null when there is none, or it cannot be read: a recording without a state is never kept. */
+/**
+ * Null when there is none, or it is not JSON: a recording without a state is never kept. Any other failure to read it
+ * (EIO, EACCES, EMFILE) rejects: taken for none, it would discard a recording whose announcement played, while its
+ * files can wait for the next pass.
+ */
 export async function readState(dir: string, callId: string): Promise<RecordingState | null> {
   try {
     const raw = JSON.parse(await readFile(tmpFiles(dir, callId).state, 'utf8'));
     return { announced: raw?.announced === true, stopped: raw?.stopped === true };
-  } catch {
-    return null;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT' || e instanceof SyntaxError) return null;
+    throw e;
   }
 }
 

@@ -1,7 +1,8 @@
 // A recording's files in tmpDir: its state written whole (aside, then renamed) and read back; which calls left files
 // there, and when last; every file of a call deleted, and nothing else.
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { open, type FileHandle } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { leftovers, readState, removeFiles, tmpFiles, writeState } from './recording-tmp';
@@ -14,7 +15,10 @@ describe('recording-tmp', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'recording-tmp-'));
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    vi.restoreAllMocks();
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it("names a call's files by its id", () => {
     expect(tmpFiles(dir, A)).toEqual({ recording: join(dir, `${A}.webm`), state: join(dir, `${A}.json`), final: join(dir, `${A}.final.webm`) });
@@ -28,6 +32,29 @@ describe('recording-tmp', () => {
     expect(readdirSync(dir)).toEqual([`${A}.json`]); // no .part left behind
     writeFileSync(tmpFiles(dir, B).state, '{"announced": tr');
     expect(await readState(dir, B)).toBeNull();
+  });
+
+  // The state alone decides whether a recording is kept: an empty one after a power cut would discard a recording whose
+  // announcement played.
+  it('flushes the state to the disk: the file, then its directory (which Windows cannot open)', async () => {
+    const handle = await open(dir, 'r');
+    const proto = Object.getPrototypeOf(handle);
+    await handle.close();
+    const sync = proto.sync;
+    const flushed: string[] = [];
+    vi.spyOn(proto, 'sync').mockImplementation(async function (this: FileHandle) {
+      flushed.push((await this.stat()).isDirectory() ? 'directory' : 'file');
+      return sync.call(this);
+    });
+    await writeState(dir, A, { announced: true, stopped: false });
+    expect(flushed).toEqual(process.platform === 'win32' ? ['file'] : ['file', 'directory']);
+  });
+
+  // Taken for none, a state that could not be read (EIO, EACCES, EMFILE) would discard a recording whose announcement
+  // played: it rejects, and the files wait for the next pass.
+  it('a state that cannot be read for any other reason rejects (here a directory)', async () => {
+    mkdirSync(tmpFiles(dir, A).state);
+    await expect(readState(dir, A)).rejects.toMatchObject({ code: 'EISDIR' });
   });
 
   it('lists each call with files here, with its newest file time; names of other shapes are not its own', async () => {

@@ -161,7 +161,7 @@ export class UnsetRecordingStore implements RecordingStore {
  * the recording's row is written, and a power cut while the bytes were still only in memory would leave an empty
  * recording behind that row. A directory is opened read-only: it cannot be opened for writing.
  */
-async function flush(path: string, flags = 'r+'): Promise<void> {
+export async function flush(path: string, flags = 'r+'): Promise<void> {
   const file = await open(path, flags);
   try {
     await file.sync();
@@ -180,7 +180,7 @@ const DIRECTORY_FLUSH_REFUSED = new Set(['EINVAL', 'EBADF', 'ENOTSUP']);
  * Windows cannot open a directory, so there it is not flushed; and some filesystems (network and FUSE ones among them)
  * refuse to flush one (EINVAL, EBADF, ENOTSUP), which, as PostgreSQL does, is taken as nothing more to do.
  */
-async function moveIntoPlace(part: string, target: string): Promise<void> {
+export async function moveIntoPlace(part: string, target: string): Promise<void> {
   await rename(part, target);
   if (process.platform === 'win32') return;
   await flush(dirname(target), 'r').catch((e) => {
