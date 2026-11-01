@@ -124,6 +124,20 @@ describe('LocalRecordingStore', () => {
   });
 });
 
+describe('LocalRecordingStore.putFile', () => {
+  it('stores a file under its key: copied aside, then renamed into place; the file itself stays', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'rec-putfile-'));
+    const src = join(mkdtempSync(join(tmpdir(), 'rec-putfile-src-')), 'a.webm');
+    writeFileSync(src, 'a recording');
+    const store = new LocalRecordingStore(root, '/x');
+    await store.putFile('o/p/2026/10/c.webm', src, 'audio/webm');
+    expect(readFileSync(join(root, 'o/p/2026/10/c.webm'), 'utf8')).toBe('a recording');
+    expect(readdirSync(join(root, 'o/p/2026/10'))).toEqual(['c.webm']); // no .part left behind
+    expect(readFileSync(src, 'utf8')).toBe('a recording');
+    expect(store.tmpDir).toBe('/x');
+  });
+});
+
 describe('createRecordingStore: local', () => {
   const dirs: string[] = [];
   const dir = () => {
@@ -181,6 +195,28 @@ describe('createRecordingStore: local', () => {
     expect(createRecordingStore({ STORAGE_PATH: join(d, 'media'), CALL_RECORDINGS_PATH: pathOf(d) }).problem).toMatch(
       /a directory of its own, not inside or around SESSIONS_DIR/,
     );
+  });
+
+  it('a directory for recordings in progress: CALL_RECORDINGS_TMP, created when missing; unset, the system temp directory', () => {
+    const tmp = join(dir(), 'in-progress');
+    expect(createRecordingStore({ CALL_RECORDINGS_PATH: join(dir(), 'recordings'), CALL_RECORDINGS_TMP: tmp }).tmpDir).toBe(tmp);
+    expect(existsSync(tmp)).toBe(true);
+    expect(createRecordingStore({ CALL_RECORDINGS_PATH: join(dir(), 'recordings') }).tmpDir).toBe(join(tmpdir(), 'multiwa-call-recordings'));
+  });
+
+  // Recordings in progress are recordings: under the media they would be served without a login, under the sessions
+  // they would be in every sessions backup, and inside the recordings directory the nightly sweep would walk them.
+  it.each([
+    ['STORAGE_PATH', (d: string) => ({ STORAGE_PATH: join(d, 'media'), CALL_RECORDINGS_TMP: join(d, 'media', 'tmp') })],
+    ['SESSIONS_DIR', (d: string) => ({ SESSIONS_DIR: join(d, 'sessions'), CALL_RECORDINGS_TMP: join(d, 'sessions', 'call-recordings-tmp') })],
+    ['CALL_RECORDINGS_PATH', (d: string) => ({ CALL_RECORDINGS_TMP: join(d, 'recordings', 'tmp') })],
+    ['CALL_RECORDINGS_PATH', (d: string) => ({ CALL_RECORDINGS_TMP: d })],
+  ])('refuses a directory for recordings in progress inside or around %s', (name, env) => {
+    const d = dir();
+    const store = createRecordingStore({ CALL_RECORDINGS_PATH: join(d, 'recordings'), ...env(d) });
+    expect(store).toBeInstanceOf(UnsetRecordingStore);
+    expect(store.problem).toBe(`CALL_RECORDINGS_TMP must be a directory of its own, not inside or around ${name}`);
+    expect(store.tmpDir).toBe('');
   });
 });
 
