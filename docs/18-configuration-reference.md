@@ -431,6 +431,7 @@ Where recordings go. Media can stay local while recordings go to a bucket, or th
 A directory of their own, on a persistent volume.
 
 - It must not be inside or around `STORAGE_PATH` (served without a login) or `SESSIONS_DIR` (its backups would carry every recording), nor around the API's working directory (the nightly sweep would walk the whole application).
+- It must belong to the API's user alone. It is made 0700; one of another user, a shared (sticky) directory such as `/tmp`, or a symlink is refused. The API image runs as root, so a named Docker volume is made 0700; a bind mount must belong to the container's user.
 - Unset or refused, recording cannot be turned on. `GET /calls/media/status` says why, in `server.recordings.problem`.
 
 ### `CALL_RECORDINGS_BUCKET`

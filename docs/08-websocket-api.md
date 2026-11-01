@@ -121,7 +121,7 @@ When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), 
 | client → server | `call:answer` | `{ callId }` → `{ ok: true, callId, callerProducerId, iceServers }`, or a reason: `not_allowed`, `not_ringing`, `already_claimed`, `busy`, `media_unavailable`, `media_failed` |
 | client → server | `call:media` | `{ callId, op, … }`, mediasoup signalling (`rtpCapabilities`, `createTransport`, `connectTransport`, `produce`, `consume`, `resumeConsumer`, `closeConsumer`) → `{ ok: true, result }`, or a reason: `not_allowed`, `not_in_call`, `media_error` (with `message`) |
 | client → server | `call:rejoin` | `{ callId }` after a page reload → `{ ok: true, callId, callerProducerId, iceServers }`, or a reason: `not_allowed`, `not_in_call`, `media_failed` |
-| client → server | `call:hangup` | `{ callId }` → `{ ok: true }`, or a reason: `not_allowed`, `not_in_call` |
+| client → server | `call:hangup` | `{ callId }` → `{ ok: true }`, or a reason: `not_allowed`, `not_in_call`. On a recorded call the reply can take up to about 30 s: the recorder is stopped before the media closes |
 | client → server | `call:availability` | `{ available? }` → `{ ok: true, available }`; without `available` it only reads the state (for a new tab). Or `not_allowed`, or `invalid` when `available` is given and is not a boolean |
 
 The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`).

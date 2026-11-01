@@ -548,7 +548,8 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
         // of 6 s or more 3 s into a request, and only if no answer has come by then. So it bounds a storage slow to
         // answer, not the body of an answer that came within those 3 s, which a client reading slowly may pause (that
         // of a later one fails after 17 s paused). Each of the SDK's three attempts waits for it: about a minute for one
-        // call to a silent storage. Not requestTimeout: this SDK only warns past it.
+        // call to a silent storage, though putFile's streamed body is sent once, as the SDK retries no stream (the
+        // recorder's own four tries are its retries). Not requestTimeout: this SDK only warns past it.
         requestHandler: { connectionTimeout: 5_000, socketTimeout: 20_000 },
         // Since 3.729 the SDK sends a streamed body with a trailing checksum (aws-chunked), which several
         // S3-compatible stores refuse: checksums only where an operation requires one.

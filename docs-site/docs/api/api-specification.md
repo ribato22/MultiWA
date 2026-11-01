@@ -232,7 +232,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Calls (`/calls`)
 
-Incoming WhatsApp calls, stored per profile and published as the `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated` [webhook events](<webhook-events.md>); deleting a call's recording sends `call.recording.deleted`.
+Incoming WhatsApp calls, stored per profile and published as the `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated` [webhook events](<webhook-events.md>); a call's recording sends `call.recording.ready` when it is stored and `call.recording.deleted` when it is deleted.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
