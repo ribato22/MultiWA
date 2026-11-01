@@ -1,0 +1,213 @@
+// MultiWA Gateway - the length a browser's recording lacks, written into it
+// apps/api/src/modules/calls/recordings/webm-duration.ts
+//
+// MediaRecorder writes a live WebM: a Segment and Clusters of unknown size, an Info with no Duration, no SeekHead and
+// no Cues. A player then shows no length and cannot seek. finalizeWebm writes a copy with the Duration, counted from
+// the file's own last block (a recording cut short by a crash has no other end), and without a block cut off at the
+// end. Clusters carry their own time and nothing points at a byte offset, so the 11 bytes added to Info shift nothing
+// that matters. Any other layout (a SeekHead or Cues, which point at offsets; a Segment of known size, which would have
+// to grow; blocks in BlockGroups, which MediaRecorder does not write) is copied as it is. The file is read through a
+// window, never whole: two hours of a call are about 60 MB.
+import { createReadStream, createWriteStream } from 'fs';
+import { copyFile, open, stat, type FileHandle } from 'fs/promises';
+import { pipeline } from 'stream/promises';
+
+const EBML = 0x1a45dfa3;
+const SEGMENT = 0x18538067;
+const SEEK_HEAD = 0x114d9b74;
+const INFO = 0x1549a966;
+const CUES = 0x1c53bb6b;
+const CLUSTER = 0x1f43b675;
+const TIMECODE = 0xe7;
+const SIMPLE_BLOCK = 0xa3;
+const BLOCK_GROUP = 0xa0;
+const TIMECODE_SCALE = 0x2ad7b1;
+const DURATION = 0x4489;
+const WINDOW = 64 * 1024;
+// The time of a recording's only block, when it has one (TimecodeScale counts nanoseconds): one Opus frame.
+const ONE_FRAME_NS = 20_000_000;
+
+export interface FinalizedWebm {
+  /** Up to the end of the last whole block, in ms; 0 for a layout copied as it is. */
+  durationMs: number;
+  /** The copy's size. */
+  bytes: number;
+  /** False: copied as it is. */
+  rewritten: boolean;
+}
+
+interface Header {
+  id: number;
+  /** Where its data starts (in the buffer's or the file's offsets, whichever was asked for). */
+  data: number;
+  /** Null: unknown (all ones), as MediaRecorder writes its Segment and Clusters. */
+  size: number | null;
+}
+
+/** The length of an EBML variable-size number from its first byte, at most `max`; 0 for an invalid one. */
+function lengthOf(first: number, max: number): number {
+  for (let n = 1; n <= max; n++) if (first & (0x80 >> (n - 1))) return n;
+  return 0;
+}
+
+/** The element header at `at` in `b` (`base`: the file offset of b[0]); null when `b` ends inside it. */
+function headerIn(b: Buffer, at: number, base: number): Header | null {
+  const idLen = at < b.length ? lengthOf(b[at], 4) : 0;
+  if (!idLen || at + idLen >= b.length) return null;
+  const sizeLen = lengthOf(b[at + idLen], 8);
+  if (!sizeLen || at + idLen + sizeLen > b.length) return null;
+  let id = 0;
+  for (let i = 0; i < idLen; i++) id = id * 256 + b[at + i];
+  const mask = 0xff >> sizeLen;
+  let size = b[at + idLen] & mask;
+  let unknown = size === mask;
+  for (let i = 1; i < sizeLen; i++) {
+    size = size * 256 + b[at + idLen + i];
+    if (b[at + idLen + i] !== 0xff) unknown = false;
+  }
+  return { id, data: base + at + idLen + sizeLen, size: unknown ? null : size };
+}
+
+const uint = (b: Buffer) => b.reduce((v, x) => v * 256 + x, 0);
+
+/** The elements in `b` (Info's children), each whole. */
+function elementsIn(b: Buffer): Array<{ id: number; whole: Buffer; data: Buffer }> {
+  const out: Array<{ id: number; whole: Buffer; data: Buffer }> = [];
+  for (let at = 0; at < b.length; ) {
+    const h = headerIn(b, at, 0);
+    if (!h || h.size === null || h.data + h.size > b.length) break;
+    out.push({ id: h.id, whole: b.subarray(at, h.data + h.size), data: b.subarray(h.data, h.data + h.size) });
+    at = h.data + h.size;
+  }
+  return out;
+}
+
+/** An EBML size of the fewest bytes: 7 bits of value a byte, and all ones kept for "unknown". */
+function sizeField(n: number): Buffer {
+  for (let len = 1; len <= 8; len++) {
+    if (n < 2 ** (7 * len) - 1) {
+      const b = Buffer.alloc(len);
+      let v = n;
+      for (let i = len - 1; i >= 0; i--) {
+        b[i] = v % 256;
+        v = Math.floor(v / 256);
+      }
+      b[0] |= 0x80 >> (len - 1);
+      return b;
+    }
+  }
+  throw new RangeError(`An EBML size of ${n} is too large`);
+}
+
+/** A file read through one window, moved as the walk goes. */
+class Reader {
+  private buf = Buffer.alloc(0);
+  private start = 0;
+
+  constructor(
+    private readonly fd: FileHandle,
+    readonly size: number,
+    private readonly windowBytes: number,
+  ) {}
+
+  /** The bytes [pos, pos + len), fewer at the end of the file. */
+  async at(pos: number, len: number): Promise<Buffer> {
+    if (pos < this.start || pos + len > this.start + this.buf.length) {
+      const b = Buffer.alloc(Math.max(0, Math.min(Math.max(len, this.windowBytes), this.size - pos)));
+      const { bytesRead } = await this.fd.read(b, 0, b.length, pos);
+      this.buf = b.subarray(0, bytesRead);
+      this.start = pos;
+    }
+    return this.buf.subarray(pos - this.start, Math.min(pos - this.start + len, this.buf.length));
+  }
+
+  async header(pos: number): Promise<Header | null> {
+    return headerIn(await this.at(pos, 12), 0, pos);
+  }
+}
+
+interface Layout {
+  info: { start: number; end: number; children: Buffer };
+  /** TimecodeScale, in ns. */
+  scale: number;
+  /** The end of the last whole element: what the copy keeps. */
+  end: number;
+  /** In TimecodeScale units: the last block's time, and how long after the block before it it came. */
+  last: number;
+  step: number | null;
+}
+
+/** The layout MediaRecorder writes, walked to its last whole element; null for any other. */
+async function walk(r: Reader): Promise<Layout | null> {
+  const ebml = await r.header(0);
+  if (!ebml || ebml.id !== EBML || ebml.size === null) return null;
+  const segment = await r.header(ebml.data + ebml.size);
+  if (!segment || segment.id !== SEGMENT || segment.size !== null) return null;
+  let info: Layout['info'] | null = null;
+  let scale = 1_000_000;
+  let cluster = 0;
+  let last: number | null = null;
+  let step: number | null = null;
+  let end = segment.data;
+  for (let pos = segment.data; pos < r.size; ) {
+    const e = await r.header(pos);
+    if (!e) break; // the file ends inside a header: what came before it is the recording
+    if (e.id === CLUSTER) {
+      pos = e.data; // its children follow; one of unknown size ends where the next Cluster starts
+      continue;
+    }
+    if (e.size === null || e.id === SEEK_HEAD || e.id === CUES || e.id === BLOCK_GROUP) return null;
+    const next = e.data + e.size;
+    if (next > r.size) break; // the file ends inside this element: the copy leaves it out
+    if (e.id === INFO) {
+      const children = Buffer.from(await r.at(e.data, e.size));
+      info = { start: pos, end: next, children };
+      const timecodeScale = elementsIn(children).find((c) => c.id === TIMECODE_SCALE);
+      if (timecodeScale) scale = uint(timecodeScale.data);
+    } else if (e.id === TIMECODE) {
+      cluster = uint(await r.at(e.data, e.size));
+    } else if (e.id === SIMPLE_BLOCK) {
+      const head = await r.at(e.data, 12);
+      const at = cluster + head.readInt16BE(lengthOf(head[0], 8));
+      if (last !== null) step = at - last;
+      last = at;
+    }
+    end = next;
+    pos = next;
+  }
+  return info && last !== null ? { info, scale, end, last, step } : null;
+}
+
+/** Writes `src` to `dst` with its Duration (see the top of this file). */
+export async function finalizeWebm(src: string, dst: string, { windowBytes = WINDOW }: { windowBytes?: number } = {}): Promise<FinalizedWebm> {
+  const fd = await open(src, 'r');
+  let layout: Layout | null;
+  let before = Buffer.alloc(0);
+  try {
+    const r = new Reader(fd, (await fd.stat()).size, windowBytes);
+    layout = await walk(r);
+    if (layout) before = Buffer.from(await r.at(0, layout.info.start));
+  } finally {
+    await fd.close();
+  }
+  if (!layout) {
+    await copyFile(src, dst);
+    return { durationMs: 0, bytes: (await stat(dst)).size, rewritten: false };
+  }
+  const { info, scale, end, last, step } = layout;
+  const ticks = last + (step ?? ONE_FRAME_NS / scale);
+  const duration = Buffer.alloc(11);
+  duration.writeUInt16BE(DURATION, 0);
+  duration[2] = 0x88; // a size of 8, in one byte
+  duration.writeDoubleBE(ticks, 3);
+  const body = Buffer.concat([...elementsIn(info.children).filter((c) => c.id !== DURATION).map((c) => c.whole), duration]);
+  const head = Buffer.concat([before, Buffer.from([0x15, 0x49, 0xa9, 0x66]), sizeField(body.length), body]);
+  await pipeline(
+    async function* () {
+      yield head;
+      if (end > info.end) yield* createReadStream(src, { start: info.end, end: end - 1 });
+    },
+    createWriteStream(dst),
+  );
+  return { durationMs: Math.round((ticks * scale) / 1e6), bytes: head.length + (end - info.end), rewritten: true };
+}
