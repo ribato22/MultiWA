@@ -1,7 +1,8 @@
 // The call coordinator end to end: a REAL mediasoup worker; a real Socket.IO server with EventsGateway and
 // CallsGateway on /ws, wired by hand the way Nest's adapter wires them; socket.io-client agents on JWTs; and two
 // headless Chrome pages: the engine's WhatsApp Web page (fake WhatsApp Web + the engine's hooks, driven through the
-// real WebJsCallMedia) and an agent's browser (mediasoup-client), whose signalling goes through the agent's socket.
+// real WebJsCallMedia) and an agent's browser (the admin console's own agent media module), whose signalling goes
+// through the agent's socket.
 // The calls table, the users and their login sessions are in-memory stand-ins that keep the store's compare-and-set rules.
 // Recorded calls go through the real CallRecorderService, on a store and a recordings table in memory.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -16,7 +17,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { Logger } from '@nestjs/common';
 import { AppEvents } from '@multiwa/core';
-import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, mediasoupClientBundle } from '@multiwa/engines';
+import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia } from '@multiwa/engines';
 import { InternalEvents } from '../../../metrics/internal-events';
 import { MemoryRecordingStore } from '../../../testing/memory-recording-store';
 import { EventsGateway } from '../../events/events.gateway';
@@ -25,7 +26,8 @@ import { CallMediaService } from '../media/call-media.service';
 import { CallRecorderService } from '../recordings/call-recorder.service';
 import { CallSessionService } from './call-session.service';
 import {
-  WWEBJS_USER_AGENT, agentHearsInPage, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sineWav, sleep, startAgentPeerInPage, until,
+  WWEBJS_USER_AGENT, agentHearsInPage, consoleAgentBundle, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sineWav, sleep,
+  startConsoleAgentInPage, until,
 } from '../../../testing/call-media-browser';
 
 // sessions: by tokenHash, as the sessions table keys them
@@ -241,7 +243,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     };
   };
 
-  /** An agent's browser: mediasoup-client, its signalling through the agent's socket (call:media). */
+  /** An agent's browser: the console's agent media module, its signalling through the agent's socket (call:media). */
   const agentPage = async (socket: ClientSocket, callId: string) => {
     const page = await launched.browser.newPage();
     await page.exposeFunction('__agentSignal', async (op: string, json: string) => {
@@ -250,7 +252,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
       return JSON.stringify(ack.result ?? null);
     });
     await page.goto(launched.url);
-    await page.evaluate(mediasoupClientBundle());
+    await page.evaluate(consoleAgentBundle());
     return page;
   };
 
@@ -275,7 +277,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     const page = await agentPage(who.socket, callId);
     const ack: any = await who.socket.emitWithAck('call:answer', { callId });
     expect(ack).toMatchObject({ ok: true, callId });
-    await page.evaluate(startAgentPeerInPage, ack.callerProducerId, hz);
+    await page.evaluate(startConsoleAgentInPage, ack.callerProducerId, hz);
     expect(await until(() => who.sent('call:active', callId).length > 0, 8000)).toBe(true);
     return { page, ack };
   };
@@ -303,7 +305,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     expect((a.ok ? b : a).reason).toBe('already_claimed');
     expect(await until(() => loser.sent('call:claimed', callId).length > 0, 3000)).toBe(true);
     expect(loser.sent('call:claimed', callId)[0]).toMatchObject({ byUserName: winner === ana ? 'Ana' : 'Budi' });
-    await page.evaluate(startAgentPeerInPage, ack.callerProducerId, 660);
+    await page.evaluate(startConsoleAgentInPage, ack.callerProducerId, 660);
     expect(await until(() => winner.sent('call:active', callId).length > 0, 8000)).toBe(true);
     expect(db.calls.get(callId)).toMatchObject({ outcome: 'answered', followUp: 'done' });
     expect(published.some(([e, p]) => e === 'call.answered' && p.callId === callId)).toBe(true);
@@ -364,7 +366,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     const again: any = await ana.socket.emitWithAck('call:rejoin', { callId });
     expect(again).toMatchObject({ ok: true, callerProducerId: ack.callerProducerId });
     const page2 = await agentPage(ana.socket, callId);
-    await page2.evaluate(startAgentPeerInPage, again.callerProducerId, 770);
+    await page2.evaluate(startConsoleAgentInPage, again.callerProducerId, 770);
     expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 770)) > PRESENT, 10_000)).toBe(true);
     expect(await until(async () => (await page2.evaluate(agentHearsInPage, 440)) > PRESENT, 10_000)).toBe(true);
     expect(await ana.socket.emitWithAck('call:hangup', { callId })).toEqual({ ok: true });
@@ -467,7 +469,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
       const page = await agentPage(ana.socket, callId);
       const ack: any = await ana.socket.emitWithAck('call:answer', { callId });
       expect(ack).toMatchObject({ ok: true });
-      await page.evaluate(startAgentPeerInPage, ack.callerProducerId, 660);
+      await page.evaluate(startConsoleAgentInPage, ack.callerProducerId, 660);
       expect(await until(() => ana.sent('call:announcing', callId).length > 0, 8000)).toBe(true);
       // On the phone: WhatsApp Web lets the call go, and the engine reports it ended.
       await waPage.evaluate(async () => {

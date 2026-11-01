@@ -1,16 +1,16 @@
 // The media path end to end, in real Chrome with a REAL mediasoup worker. One page is the engine's WhatsApp Web
 // page (fake WhatsApp Web + the engine's hooks, driven through the real WebJsCallMedia). The other is an agent's
-// browser (mediasoup-client). Each side plays a tone and the test listens on the other: the caller at 440 Hz,
-// the agent at 660 Hz.
+// browser (the admin console's own agent media module). Each side plays a tone and the test listens on the other:
+// the caller at 440 Hz, the agent at 660 Hz.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Logger } from '@nestjs/common';
-import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
+import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, runCallMediaSignal } from '@multiwa/engines';
 import { CallMediaService } from './call-media.service';
 import type { CallMediaRoom } from './call-media-room';
 import {
-  WWEBJS_USER_AGENT, agentHearsInPage, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sleep, startAgentPeerInPage,
-  until,
+  WWEBJS_USER_AGENT, agentHearsInPage, consoleAgentBundle, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sleep,
+  startConsoleAgentInPage, until,
 } from '../../../testing/call-media-browser';
 
 const PRESENT = 0.05;
@@ -44,14 +44,14 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
    */
   const openWaPage = () => openFakeWhatsAppPage(launched.browser, launched.url, CALL_MEDIA_INIT_SCRIPT, (p) => p.setUserAgent(WWEBJS_USER_AGENT));
 
-  /** The agent's page: mediasoup-client in, signalling to the current room's agent peer. */
+  /** The agent's page: the console's agent media module in, signalling to the current room's agent peer. */
   const openAgentPage = async () => {
     const p = await launched.browser.newPage();
     await p.exposeFunction('__agentSignal', async (op: string, json: string) =>
       JSON.stringify((await runCallMediaSignal(room!.signalingFor('agent'), op, JSON.parse(json))) ?? null),
     );
     await p.goto(launched.url);
-    await p.evaluate(mediasoupClientBundle());
+    await p.evaluate(consoleAgentBundle());
     return p;
   };
 
@@ -65,7 +65,7 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
       const handle = await media.startCallMedia('CALL1', room.signalingFor('page'));
       expect(await waPage.evaluate(() => (window as any).__mwBridge.device.handlerName)).toBe('Chrome111');
       // 2. the agent consumes the caller and produces its voice
-      const { agentProducerId } = await agentPage.evaluate(startAgentPeerInPage, handle.callerProducerId, 660);
+      const { agentProducerId } = await agentPage.evaluate(startConsoleAgentInPage, handle.callerProducerId, 660);
       // 3. answer: the fake connects after 300 ms and plays the caller at 440 Hz, which the agent does not hear until
       // the caller is attached
       await media.answer('CALL1');
