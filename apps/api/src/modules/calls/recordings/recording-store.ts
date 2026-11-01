@@ -15,7 +15,7 @@
 // A recording in progress is not here: the recorder writes it in `tmpDir` (CALL_RECORDINGS_TMP), and stores it with
 // putFile once its call ended.
 import { randomBytes, randomUUID } from 'crypto';
-import { createReadStream, mkdirSync } from 'fs';
+import { mkdirSync } from 'fs';
 import { copyFile, mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
@@ -235,7 +235,7 @@ export class LocalRecordingStore implements RecordingStore {
 
 /** The part of the S3 client used here (a stand-in in the specs). */
 export interface S3Like {
-  send(command: unknown): Promise<unknown>;
+  send(command: unknown, options?: { abortSignal?: AbortSignal }): Promise<unknown>;
 }
 
 export interface S3RecordingStoreConfig {
@@ -284,15 +284,24 @@ export class S3RecordingStore implements RecordingStore {
   }
 
   async putFile(key: string, path: string, mimeType: string): Promise<void> {
-    const { size } = await stat(path);
-    // One PUT, streamed with its length: a multipart upload's object is dated by the START of its upload, and the
-    // nightly sweep would take a long call's recording, stored just before it ran, for an hour-old orphan.
-    await this.s3.send(
-      new PutObjectCommand({
-        ...this.object(key), Body: createReadStream(path), ContentLength: size, ContentType: mimeType,
-        ...(this.config.sse ? { ServerSideEncryption: this.config.sse } : {}),
-      }),
-    );
+    const file = await open(path, 'r');
+    const body = file.createReadStream();
+    const failed = new AbortController();
+    body.once('error', (e) => failed.abort(e)); // a read error fails the PUT now, and never goes uncaught
+    try {
+      const { size } = await file.stat();
+      // One PUT, streamed with its length: a multipart upload's object is dated by the START of its upload, and the
+      // nightly sweep would take a long call's recording, stored just before it ran, for an hour-old orphan.
+      await this.s3.send(
+        new PutObjectCommand({
+          ...this.object(key), Body: body, ContentLength: size, ContentType: mimeType,
+          ...(this.config.sse ? { ServerSideEncryption: this.config.sse } : {}),
+        }),
+        { abortSignal: failed.signal },
+      );
+    } finally {
+      body.destroy(); // the file closes however the PUT ended (a store refusing before the body never reads it)
+    }
   }
 
   async size(key: string): Promise<number | null> {
