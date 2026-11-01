@@ -276,7 +276,7 @@ model CallRecording {
   durationSec        Int
   channels           Int       @default(2)           // the caller and the agent
   announcementPlayed Boolean
-  partial            Boolean   @default(false)       // cut short by a restart: what was recorded until then
+  partial            Boolean   @default(false)       // it may end before its call did: a restart, a recorder that did not stop cleanly, or a write that failed
   createdAt          DateTime  @default(now())
   deletedAt          DateTime?
   deletedByUserId    String?                         // a plain id, not a relation: the evidence outlives the user

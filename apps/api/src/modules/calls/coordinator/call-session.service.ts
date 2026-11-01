@@ -382,7 +382,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         caller: { name: found.callerName, number: callerNumber(call.fromJid) },
         startedAt: call.startedAt.toISOString(),
         answerable: !unavailableReason,
-        // Recorded after an announcement the caller hears first: the agent's banner says so.
+        // Recorded from before an announcement the caller hears first: the agent's banner says so.
         recorded: !!this.recorder.plan(profile.id, profile.settings),
         ...(unavailableReason ? { unavailableReason } : {}),
       });
