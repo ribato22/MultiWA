@@ -197,6 +197,8 @@ describe('call recordings (e2e, real Postgres)', () => {
       events.on(AppEvents.CALL.RECORDING_READY, (p) => ready.push(p));
     });
     afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+    /** The files in tmp of these calls: a scenario looks at its own calls' only, whatever an earlier one left. */
+    const tmpFilesOf = (...callIds: string[]) => readdirSync(tmp).filter((n) => callIds.some((id) => n.startsWith(id)));
 
     /** A call answered `ageDays` ago that a crash cut short: its recording in tmp (the fixture), its state as given. */
     const leftover = async (profileId: string, state: RecordingState | null, ageDays = 0) => {
@@ -226,30 +228,33 @@ describe('call recordings (e2e, real Postgres)', () => {
       expect(readFileSync(fileOf(row!.storageKey)).length).toBe(FIXTURE.length + 11);
       expect(ready).toContainEqual({ profileId, callId: cut.id, recordingId: row!.id, durationSec: 3, bytes: FIXTURE.length + 11, partial: true });
       expect(await prisma.callRecording.findMany({ where: { callId: { in: [unannounced.id, expired.id] } } })).toEqual([]);
-      expect(readdirSync(tmp)).toEqual([]);
+      expect(tmpFilesOf(cut.id, unannounced.id, expired.id)).toEqual([]);
     });
 
     it("discards one whose call went with its profile", async () => {
       const profileId = await makeProfile();
-      await leftover(profileId, { announced: true, stopped: true });
+      const call = await leftover(profileId, { announced: true, stopped: true });
       await prisma.profile.delete({ where: { id: profileId } }); // its calls go with it
       expect(await recorder.finishLeftovers()).toEqual({ stored: 0, kept: 0, discarded: 1 });
-      expect(readdirSync(tmp)).toEqual([]);
+      expect(tmpFilesOf(call.id)).toEqual([]);
     });
 
-    it('one stored before, whose files a crash left: its files go, and its row stays as it was', async () => {
+    it('one stored before and deleted by an admin since, whose files a crash left: its files go, its audio is not put back, and its row stays as it was', async () => {
       const profileId = await makeProfile();
       const call = await leftover(profileId, { announced: true, stopped: true });
+      // Its file is gone from the store, and its row kept as the evidence of the delete.
       const before = await prisma.callRecording.create({
         data: {
           callId: call.id, profileId, storageType: 'local', storageLocation: store.location,
           storageKey: recordingKey(organizationId, profileId, call.id, call.startedAt), bytes: 1, durationSec: 1, announcementPlayed: true,
+          deletedAt: new Date(), deleteReason: 'admin', deletedByUserId: null,
         },
       });
       await recordings.checkStorage();
       expect(await recorder.finishLeftovers()).toEqual({ stored: 1, kept: 0, discarded: 0 });
+      expect(existsSync(fileOf(before.storageKey))).toBe(false);
       expect(await prisma.callRecording.findUnique({ where: { callId: call.id } })).toEqual(before);
-      expect(readdirSync(tmp)).toEqual([]);
+      expect(tmpFilesOf(call.id)).toEqual([]);
     });
   });
 });

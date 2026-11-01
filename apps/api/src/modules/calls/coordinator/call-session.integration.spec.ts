@@ -109,7 +109,7 @@ const recordedSettings = (durationSec: number) => ({
 
 /**
  * Page function: a stored recording, decoded. Its tones in the first second (after its start) and its last, per
- * channel, and the length an <audio> element reads (Infinity, sent as null, without a Duration).
+ * channel; the length an <audio> element reads (Infinity, sent as null, without a Duration), and the decoded audio's.
  */
 async function recordingInPage(b64: string) {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
@@ -131,9 +131,11 @@ async function recordingInPage(b64: string) {
   };
   const span = (from: number, to: number) => {
     const [L, R] = [0, 1].map((c) => buf.getChannelData(c).subarray(Math.floor(from * buf.sampleRate), Math.floor(to * buf.sampleRate)));
-    return { l440: tone(L, 440), r550: tone(R, 550), r660: tone(R, 660) };
+    return { l440: tone(L, 440), l550: tone(L, 550), l660: tone(L, 660), r440: tone(R, 440), r550: tone(R, 550), r660: tone(R, 660) };
   };
-  return { channels: buf.numberOfChannels, duration: audio.duration, early: span(0.3, 1.2), late: span(buf.duration - 1, buf.duration) };
+  return {
+    channels: buf.numberOfChannels, duration: audio.duration, decoded: buf.duration, early: span(0.3, 1.2), late: span(buf.duration - 1, buf.duration),
+  };
 }
 
 describe('call coordinator end to end (real mediasoup worker, Socket.IO, two headless Chromes)', () => {
@@ -278,6 +280,16 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     return { page, ack };
   };
 
+  /** `callId`'s files in the store's tmpDir: a scenario looks at its own call's only, whatever an earlier one left. */
+  const tmpFilesOf = (callId: string) => readdirSync(store.tmpDir).filter((n) => n.startsWith(callId));
+  /**
+   * Hangs `callId` up through `who`'s socket while it is still up, whatever the reply: a scenario that stopped early
+   * leaves no call up and no agent busy for the next one.
+   */
+  const hangUpIfUp = async (who: Awaited<ReturnType<typeof agent>>, callId: string) => {
+    if (!db.calls.get(callId)?.endedAt) await who.socket.timeout(5000).emitWithAck('call:hangup', { callId }).catch(() => undefined);
+  };
+
   it('two agents answer at once: one gets the call, the other is told who; they hear each other; Hang up ends it everywhere', async () => {
     const ana = await agent('u1');
     const budi = await agent('u2');
@@ -372,86 +384,110 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     await page.close();
   }, 30_000);
 
-  it('a recorded call: the caller hears the announcement first, then the agent; the stored recording keeps both, with its length', async () => {
+  it('a recorded call: the caller hears the announcement first, then the agent; the stored recording keeps them apart, with its length', async () => {
     db.settings.set(RECORDED, recordedSettings(1.5));
     store.file(ANNOUNCEMENT_KEY, sineWav(550, 1.5));
+    recorderAlerts.recordingFailed.mockClear();
     const ana = await agent('u1');
     const { callId } = await ring(RECORDED);
-    expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
-    expect(ana.sent('call:ringing', callId)[0]).toMatchObject({ recorded: true, answerable: true });
-    // The agent is connected only once the announcement has played. The page mutes the agent input while one plays, so
-    // neither the line nor the recording would show an agent connected sooner: the page's bridge does.
-    const agentDuringAnnouncement = until(() => ana.sent('call:announcing', callId).length > 0, 8000).then(
-      (announced) => announced && waPage.evaluate(() => !!(window as any).__mwBridge?.agent),
-    );
-    const { page } = await talk(ana, callId, 660);
-    expect(await agentDuringAnnouncement).toBe(false);
-    expect(ana.sent('call:announcing', callId)).toEqual([{ callId, durationSec: 1.5 }]);
-    expect(ana.names(callId).indexOf('call:announcing')).toBeLessThan(ana.names(callId).indexOf('call:active'));
-    expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
-    await sleep(1500); // the agent's voice, long enough for the recording's last second
-    expect(await ana.socket.emitWithAck('call:hangup', { callId })).toEqual({ ok: true });
-    expect(await until(() => db.recordings.has(callId), 15_000)).toBe(true);
-    const rec = db.recordings.get(callId);
-    expect(rec).toMatchObject({ profileId: RECORDED, announcementPlayed: true, partial: false, channels: 2, storageType: 'local', storageLocation: 'memory:test' });
-    const heard = await page.evaluate(recordingInPage, store.files.get(rec.storageKey)!.body.toString('base64'));
-    expect(heard.channels).toBe(2);
-    expect(Number.isFinite(heard.duration)).toBe(true); // the Duration is written in
-    expect(rec.durationSec).toBe(Math.round(heard.duration));
-    expect(heard.early.l440).toBeGreaterThan(0.01); // left: the caller, from the start
-    expect(heard.early.r550).toBeGreaterThan(heard.early.r660 * 3); // right: the announcement first...
-    expect(heard.late.r660).toBeGreaterThan(heard.late.r550 * 3); // ...then the agent
-    expect(published.some(([e, p]) => e === AppEvents.CALL.RECORDING_READY && p.callId === callId && p.recordingId === rec.id)).toBe(true);
-    expect(await until(() => readdirSync(store.tmpDir).length === 0, 5000)).toBe(true); // its files go just after its row
-    await page.close();
+    try {
+      expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
+      expect(ana.sent('call:ringing', callId)[0]).toMatchObject({ recorded: true, answerable: true });
+      // The agent is connected only once the announcement has played. The page mutes the agent input while one plays, so
+      // neither the line nor the recording would show an agent connected sooner: the page's bridge does. A failure says
+      // which it was: no announcement came, there was no bridge to look at, or the agent was on it.
+      const agentDuringAnnouncement = until(() => ana.sent('call:announcing', callId).length > 0, 8000).then((announced) =>
+        announced ? waPage.evaluate(() => { const b = (window as any).__mwBridge; return b ? !!b.agent : 'no bridge'; }) : 'not announced',
+      );
+      const { page } = await talk(ana, callId, 660);
+      expect(await agentDuringAnnouncement).toBe(false);
+      expect(ana.sent('call:announcing', callId)).toEqual([{ callId, durationSec: 1.5 }]);
+      expect(ana.names(callId).indexOf('call:announcing')).toBeLessThan(ana.names(callId).indexOf('call:active'));
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
+      await sleep(1500); // the agent's voice, long enough for the recording's last second
+      expect(await ana.socket.emitWithAck('call:hangup', { callId })).toEqual({ ok: true });
+      expect(await until(() => db.recordings.has(callId), 15_000)).toBe(true);
+      const rec = db.recordings.get(callId);
+      expect(rec).toMatchObject({ profileId: RECORDED, announcementPlayed: true, partial: false, channels: 2, storageType: 'local', storageLocation: 'memory:test' });
+      const heard = await page.evaluate(recordingInPage, store.files.get(rec.storageKey)!.body.toString('base64'));
+      expect(heard.channels).toBe(2);
+      expect(Number.isFinite(heard.duration)).toBe(true); // the Duration is written in...
+      expect(Math.abs(heard.duration - heard.decoded)).toBeLessThan(0.1); // ...and it is the audio's own length
+      expect(rec.durationSec).toBe(Math.round(heard.duration));
+      expect(heard.early.l440).toBeGreaterThan(0.01); // left: the caller, from the start
+      expect(heard.early.r550).toBeGreaterThan(heard.early.r660 * 3); // right: the announcement first...
+      expect(heard.late.r660).toBeGreaterThan(heard.late.r550 * 3); // ...then the agent
+      // Each on its own channel: a recording that mixed them would still carry every tone above.
+      expect(heard.early.r440).toBeLessThan(heard.early.l440 / 10);
+      expect(heard.early.l550).toBeLessThan(heard.early.r550 / 10);
+      expect(heard.late.l660).toBeLessThan(heard.late.r660 / 10);
+      expect(published.some(([e, p]) => e === AppEvents.CALL.RECORDING_READY && p.callId === callId && p.recordingId === rec.id)).toBe(true);
+      expect(await until(() => !tmpFilesOf(callId).length, 5000)).toBe(true); // its files go just after its row
+      expect(recorderAlerts.recordingFailed).not.toHaveBeenCalled(); // a call that went well alerts nobody
+      await page.close();
+    } finally {
+      await hangUpIfUp(ana, callId);
+    }
   }, 60_000);
 
-  it('an announcement that does not play: the agent is connected all the same, nothing is kept, the admins are told', async () => {
+  it('an announcement that does not play: the agent is connected all the same, nothing is kept, the admins are told once', async () => {
     db.settings.set(RECORDED, recordedSettings(1.5));
     store.file(ANNOUNCEMENT_KEY, Buffer.from('not audio'));
     recorderAlerts.recordingFailed.mockClear();
     const ana = await agent('u1');
     const { callId } = await ring(RECORDED);
-    expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
-    const { page } = await talk(ana, callId, 660);
-    // The alert follows the failed recording's cleanup, which goes on beside the agent's connect.
-    expect(await until(() => recorderAlerts.recordingFailed.mock.calls.length > 0, 5000)).toBe(true);
-    expect(recorderAlerts.recordingFailed).toHaveBeenCalledWith('announcement_failed', RECORDED);
-    expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
-    expect(await ana.socket.emitWithAck('call:hangup', { callId })).toEqual({ ok: true });
-    await sleep(1000);
-    expect(db.recordings.has(callId)).toBe(false);
-    expect(readdirSync(store.tmpDir)).toEqual([]);
-    await page.close();
+    try {
+      expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
+      const { page } = await talk(ana, callId, 660);
+      // The alert follows the failed recording's cleanup, which goes on beside the agent's connect.
+      expect(await until(() => recorderAlerts.recordingFailed.mock.calls.length > 0, 5000)).toBe(true);
+      expect(recorderAlerts.recordingFailed).toHaveBeenCalledWith('announcement_failed', RECORDED);
+      expect(recorderAlerts.recordingFailed).toHaveBeenCalledTimes(1);
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
+      expect(await ana.socket.emitWithAck('call:hangup', { callId })).toEqual({ ok: true });
+      await sleep(1000);
+      expect(db.recordings.has(callId)).toBe(false);
+      expect(tmpFilesOf(callId)).toEqual([]);
+      await page.close();
+    } finally {
+      await hangUpIfUp(ana, callId);
+    }
   }, 60_000);
 
   it('the caller hangs up during the announcement: nothing is kept, nobody is told, and the line is free for the next call', async () => {
-    db.settings.set(RECORDED, recordedSettings(4));
-    store.file(ANNOUNCEMENT_KEY, sineWav(550, 4));
+    // Far longer than the 3 s the check below gives it to stop: only a page that cuts it off at the call's end passes,
+    // never one that lets it play on to its end.
+    db.settings.set(RECORDED, recordedSettings(12));
+    store.file(ANNOUNCEMENT_KEY, sineWav(550, 12));
     recorderAlerts.recordingFailed.mockClear();
     const ana = await agent('u1');
     const { callId, waCallId } = await ring(RECORDED);
-    expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
-    const page = await agentPage(ana.socket, callId);
-    const ack: any = await ana.socket.emitWithAck('call:answer', { callId });
-    expect(ack).toMatchObject({ ok: true });
-    await page.evaluate(startAgentPeerInPage, ack.callerProducerId, 660);
-    expect(await until(() => ana.sent('call:announcing', callId).length > 0, 8000)).toBe(true);
-    // On the phone: WhatsApp Web lets the call go, and the engine reports it ended.
-    await waPage.evaluate(async () => {
-      const w = window as any;
-      w.require('WAWebCallCollection').activeCall = null;
-      await w.__fakeWa.stopPlaybacks();
-    });
-    bus.emit(InternalEvents.CALL_ENGINE_SIGNAL, { profileId: RECORDED, waCallId, state: 'ended' });
-    expect(await until(() => ana.sent('call:ended', callId).length > 0, 5000)).toBe(true);
-    // the announcement ended with its call: the line is free, and the agent input has its gain back
-    expect(await until(() => waPage.evaluate(() => { const c = (window as any).__mwCall; return c.announcing === false && c.inputs.agent.gain.value === 1; }), 3000)).toBe(true);
-    await sleep(1000);
-    expect(db.recordings.has(callId)).toBe(false);
-    expect(recorderAlerts.recordingFailed).not.toHaveBeenCalled();
-    expect(readdirSync(store.tmpDir)).toEqual([]);
-    expect(ana.sent('call:active', callId)).toEqual([]);
-    await page.close();
+    try {
+      expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
+      const page = await agentPage(ana.socket, callId);
+      const ack: any = await ana.socket.emitWithAck('call:answer', { callId });
+      expect(ack).toMatchObject({ ok: true });
+      await page.evaluate(startAgentPeerInPage, ack.callerProducerId, 660);
+      expect(await until(() => ana.sent('call:announcing', callId).length > 0, 8000)).toBe(true);
+      // On the phone: WhatsApp Web lets the call go, and the engine reports it ended.
+      await waPage.evaluate(async () => {
+        const w = window as any;
+        w.require('WAWebCallCollection').activeCall = null;
+        await w.__fakeWa.stopPlaybacks();
+      });
+      bus.emit(InternalEvents.CALL_ENGINE_SIGNAL, { profileId: RECORDED, waCallId, state: 'ended' });
+      expect(await until(() => ana.sent('call:ended', callId).length > 0, 5000)).toBe(true);
+      // the announcement ended with its call: the line is free, and the agent input has its gain back
+      expect(await until(() => waPage.evaluate(() => { const c = (window as any).__mwCall; return c.announcing === false && c.inputs.agent.gain.value === 1; }), 3000)).toBe(true);
+      // What is checked below is settled once the recording's drop deleted its files, after its recorder stopped.
+      await until(() => !tmpFilesOf(callId).length, 5000);
+      expect(db.recordings.has(callId)).toBe(false);
+      expect(recorderAlerts.recordingFailed).not.toHaveBeenCalled();
+      expect(tmpFilesOf(callId)).toEqual([]);
+      expect(ana.sent('call:active', callId)).toEqual([]);
+      await page.close();
+    } finally {
+      await hangUpIfUp(ana, callId);
+    }
   }, 60_000);
 });
