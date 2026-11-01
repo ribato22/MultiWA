@@ -19,7 +19,7 @@ import {
 } from '@multiwa/engines';
 import type { CallMediaSignaling, EngineConfig } from '@multiwa/engines';
 
-const { prepareCallMediaPage, answerActiveCall, hangUpActiveCall, playAnnouncementInPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
+const { prepareCallMediaPage, probeCallMedia, answerActiveCall, hangUpActiveCall, playAnnouncementInPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 const { startBridgeInPage, attachCallerInPage, connectAgentInPage, closeBridgeInPage } = callMediaBridge;
 
 /** The launch args of the adapter before call media existed. */
@@ -35,6 +35,7 @@ const DEFAULT_ARGS = [
 /** What the page functions answer, looked up by function identity: puppeteer would run them inside the page. */
 const pageResults = new Map<unknown, unknown>([
   [prepareCallMediaPage, { hooks: true, micPermission: 'granted' }],
+  [probeCallMedia, { reasons: [], waVersion: '2.3000.1' }],
   [answerActiveCall, { connectedAfterMs: 120 }],
   [playAnnouncementInPage, { durationMs: 900 }],
   [startRecordingInPage, { callerVia: 'destination', freshCandidates: 1, fallback: false }],
@@ -237,6 +238,62 @@ describe('WebJsCallMedia without a browser', () => {
     expect(await new WebJsCallMedia(() => null, () => true, 'p1').getSupport()).toEqual({ supported: false, reasons: ['not_ready'] });
     expect(await new WebJsCallMedia(() => page, () => false, 'p1').getSupport()).toEqual({ supported: false, reasons: ['not_ready'] });
     expect(page.evaluate).not.toHaveBeenCalled();
+  });
+
+  describe('getSupport shares a probe in flight', () => {
+    it('asks a page once while its probe runs, and again once that one settled', async () => {
+      const page = fakePage();
+      let settle!: (answer: unknown) => void;
+      page.evaluate.mockReturnValueOnce(new Promise((resolve) => (settle = resolve)));
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      const first = media.getSupport();
+      const second = media.getSupport();
+      expect(page.evaluate).toHaveBeenCalledTimes(1);
+      settle({ reasons: [], waVersion: '2.3000.1' });
+      expect(await first).toEqual({ supported: true, reasons: [], waVersion: '2.3000.1' });
+      expect(await second).toEqual(await first);
+      await media.getSupport();
+      expect(page.evaluate).toHaveBeenCalledTimes(2);
+    });
+
+    it('asks a new page while the old one still hangs', async () => {
+      const hung = fakePage();
+      hung.evaluate.mockReturnValue(new Promise(() => undefined));
+      const fresh = fakePage();
+      let current: object = hung;
+      const media = new WebJsCallMedia(() => current, () => true, 'p1');
+      void media.getSupport();
+      current = fresh; // the engine relaunched its browser
+      expect(await media.getSupport()).toMatchObject({ supported: true });
+      expect(hung.evaluate).toHaveBeenCalledTimes(1);
+      expect(fresh.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it("the old page's probe settling late leaves the new page's probe shared", async () => {
+      const old = fakePage();
+      let settleOld!: (answer: unknown) => void;
+      old.evaluate.mockReturnValueOnce(new Promise((resolve) => (settleOld = resolve)));
+      const fresh = fakePage();
+      fresh.evaluate.mockReturnValue(new Promise(() => undefined)); // still probing
+      let current: object = old;
+      const media = new WebJsCallMedia(() => current, () => true, 'p1');
+      const oldProbe = media.getSupport();
+      current = fresh; // the engine relaunched its browser
+      void media.getSupport();
+      settleOld({ reasons: [], waVersion: '2.3000.1' });
+      await oldProbe;
+      void media.getSupport();
+      expect(fresh.evaluate).toHaveBeenCalledTimes(1); // the old probe cleared only its own entry
+    });
+
+    it('a probe that throws is not kept: the next request asks again', async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const page = fakePage();
+      page.evaluate.mockRejectedValueOnce(new Error('Execution context was destroyed'));
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      expect(await media.getSupport()).toEqual({ supported: false, reasons: ['page_error'] });
+      expect(await media.getSupport()).toMatchObject({ supported: true });
+    });
   });
 
   it('hands the page the call id and the deadline, and returns what the page answers', async () => {

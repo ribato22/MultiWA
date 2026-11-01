@@ -214,11 +214,12 @@ describe('CallSessionService: who is rung', () => {
     ]);
   });
 
-  it('a LID caller has no number to show', async () => {
+  it('a LID caller has no number to show, and a call without a chat no chat to link', async () => {
     const h = harness();
-    S.findCallForAnswer.mockResolvedValueOnce(ringing({ fromJid: '123456789012345@lid' }));
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ fromJid: '123456789012345@lid', conversationId: null }));
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing')[0].payload.caller).toEqual({ name: 'Pak Joko', number: null });
+    expect(h.sent('call:ringing')[0].payload.conversationId).toBeNull();
   });
 });
 

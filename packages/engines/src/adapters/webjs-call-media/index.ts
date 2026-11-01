@@ -134,6 +134,8 @@ export class WebJsCallMedia implements CallMediaEngine {
   /**
    * The probe in flight, per page object: requests while it runs share it, so a page that hangs is asked once and not
    * once per request (a caller's timeout does not cancel the page's evaluate).
+   * It ends within the in-page probe's own 5 s deadline, or on a frozen page at puppeteer's protocolTimeout (240 s),
+   * when the evaluate rejects and the entry clears.
    */
   private probing: { page: object; result: Promise<CallMediaSupport> } | null = null;
   /** The setup problem warned about last: ready repeats 5-12 times per sync, so a problem that stays warns once. */
@@ -167,9 +169,9 @@ export class WebJsCallMedia implements CallMediaEngine {
     this.setupWarning = msg;
   }
 
-  getSupport(): Promise<CallMediaSupport> {
+  async getSupport(): Promise<CallMediaSupport> {
     const page = this.page();
-    if (!page || !this.isReady()) return Promise.resolve({ supported: false, reasons: ['not_ready'] });
+    if (!page || !this.isReady()) return { supported: false, reasons: ['not_ready'] };
     if (this.probing?.page !== page) {
       const result: Promise<CallMediaSupport> = this.probe(page).finally(() => {
         if (this.probing?.result === result) this.probing = null;
