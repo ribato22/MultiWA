@@ -14,7 +14,7 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['github']] : 'list',
   timeout: process.env.CI ? 30_000 : 90_000, // `next dev` compiles each page on its first visit
   use: {
-    baseURL: 'http://localhost:3001',
+    baseURL: 'http://localhost:3901',
     channel: 'chrome', // the installed Google Chrome: no browser download
     viewport: { width: 1280, height: 800 },
     permissions: ['microphone'],
@@ -23,10 +23,11 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    // CI serves the build its earlier step made. Locally Playwright starts `next dev` and stops it after the run; only
-    // a server the developer started on 3001 is reused, and it keeps its own NEXT_PUBLIC_API_URL.
-    command: process.env.CI ? 'pnpm exec next start --port 3001' : 'pnpm exec next dev --port 3001',
-    url: 'http://localhost:3001/auth/login',
+    // Port 3901, not the 3001 of `pnpm dev`, whose server talks to a real API. CI serves the build its earlier step
+    // made. Locally Playwright starts `next dev` and stops it after the run; only a server started on 3901 for these
+    // tests is reused, and it keeps its own NEXT_PUBLIC_API_URL.
+    command: process.env.CI ? 'pnpm exec next start --port 3901' : 'pnpm exec next dev --port 3901',
+    url: 'http://localhost:3901/auth/login',
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
     env: { NEXT_PUBLIC_API_URL: `http://localhost:${apiPort}` },

@@ -251,10 +251,10 @@ class ApiClient {
 
     this.isRefreshing = true;
     this.refreshPromise = (async () => {
-      const refreshToken = this.getRefreshToken();
-      if (!refreshToken) return false;
-
       try {
+        const refreshToken = this.getRefreshToken();
+        if (!refreshToken) return false;
+
         const res = await fetch(`${this.baseUrl}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -686,11 +686,12 @@ class ApiClient {
     });
     if (res.status !== 413 || res.body) return res;
     // A proxy's own size refusal (nginx answers 413 in HTML): only a file past the API's limit is too large; a smaller
-    // one met a proxy whose limit is lower.
+    // one met a proxy whose limit is lower. A proxy counts the whole multipart request, so one set to exactly 2 MB still
+    // refuses a file a little under 2 MB: 3 MB leaves room.
     const limit = `${ANNOUNCEMENT_MAX_BYTES / (1024 * 1024)} MB`;
     const error = file.size > ANNOUNCEMENT_MAX_BYTES
       ? `The file must be at most ${limit}`
-      : `The server refused a file of this size: ask your administrator to allow uploads up to ${limit}`;
+      : 'The server refused a file of this size: ask your administrator to allow uploads of at least 3 MB';
     return { ...res, error };
   }
 

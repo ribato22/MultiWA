@@ -55,8 +55,8 @@ test('a recording comes back as bytes, its download asks for an attachment, and 
   expect(await api.fetchCallRecording('c-1')).toEqual({ status: 404, error: 'This call has no recording' });
 });
 
-test('a byte route that answers 401 refreshes the token once, and its retry carries the new token', async () => {
-  const { store } = signedIn();
+/** An API that refreshes any refresh token, and answers the recording only to the refreshed token; the requests it got. */
+function refreshingApi() {
   const sent: Array<{ url: string; authorization?: string; body?: unknown }> = [];
   stub('fetch', async (url: string, init: RequestInit = {}) => {
     const headers = (init.headers ?? {}) as Record<string, string>;
@@ -66,15 +66,37 @@ test('a byte route that answers 401 refreshes the token once, and its retry carr
       ? new Response('RIFF-bytes', { headers: { 'content-type': 'audio/webm' } })
       : Response.json({ message: 'Unauthorized' }, { status: 401 });
   });
+  return sent;
+}
+const refreshed = [
+  { url: '/api/v1/calls/c-1/recording', authorization: 'Bearer old-token', body: undefined },
+  { url: '/api/v1/auth/refresh', authorization: undefined, body: { refreshToken: 'old-refresh' } },
+  { url: '/api/v1/calls/c-1/recording', authorization: 'Bearer new-token', body: undefined },
+];
+
+test('a byte route that answers 401 refreshes the token once, and its retry carries the new token', async () => {
+  const { store } = signedIn();
+  const sent = refreshingApi();
   const res = await api.fetchCallRecording('c-1');
-  expect(sent).toEqual([
-    { url: '/api/v1/calls/c-1/recording', authorization: 'Bearer old-token', body: undefined },
-    { url: '/api/v1/auth/refresh', authorization: undefined, body: { refreshToken: 'old-refresh' } },
-    { url: '/api/v1/calls/c-1/recording', authorization: 'Bearer new-token', body: undefined },
-  ]);
+  expect(sent).toEqual(refreshed);
   expect(res.status).toBe(200);
   expect(await res.blob!.text()).toBe('RIFF-bytes');
   expect(Object.fromEntries(store)).toEqual({ accessToken: 'new-token', refreshToken: 'new-refresh' });
+});
+
+test('a 401 without a refresh token gives up, and the next 401 uses the refresh token stored since', async () => {
+  const { store } = signedIn();
+  store.delete('refreshToken');
+  const sent = refreshingApi();
+  expect(await api.fetchCallRecording('c-1')).toEqual({ status: 401, error: 'Unauthorized' });
+  expect(sent.map((s) => s.url)).toEqual(['/api/v1/calls/c-1/recording']);
+  // The agent signs in again on the same page.
+  store.set('accessToken', 'old-token');
+  store.set('refreshToken', 'old-refresh');
+  sent.length = 0;
+  const res = await api.fetchCallRecording('c-1');
+  expect(sent).toEqual(refreshed);
+  expect(res.status).toBe(200);
 });
 
 test('a failed refresh signs out: both tokens cleared, and the page sent to the login', async () => {
@@ -90,7 +112,7 @@ const MAX = 2 * 1024 * 1024; // the API's limit
 
 test('a proxy’s size refusal (an HTML 413) blames the file only when it is past the API’s limit', async () => {
   answerWith(413, '<html><body>413 Request Entity Too Large</body></html>', 'text/html');
-  const proxyLimit = { status: 413, error: 'The server refused a file of this size: ask your administrator to allow uploads up to 2 MB' };
+  const proxyLimit = { status: 413, error: 'The server refused a file of this size: ask your administrator to allow uploads of at least 3 MB' };
   expect(await api.uploadCallsAnnouncement('p-1', announcement(10))).toMatchObject(proxyLimit);
   expect(await api.uploadCallsAnnouncement('p-1', announcement(MAX))).toMatchObject(proxyLimit); // the API takes exactly 2 MB
   expect(await api.uploadCallsAnnouncement('p-1', announcement(MAX + 1))).toMatchObject({ status: 413, error: 'The file must be at most 2 MB' });

@@ -223,7 +223,11 @@ export const test = base.extend<{ backend: FakeBackend; user: typeof ME }, { fak
       backend.route(get('/auth/me', user));
       current = backend;
       const errors: string[] = [];
-      context.on('page', (p: Page) => p.on('pageerror', (e) => errors.push(e.message)));
+      const watch = (p: Page) => p.on('pageerror', (e) => errors.push(e.message));
+      // A reused context (PW_TEST_REUSE_CONTEXT, the VS Code extension's "Show browser") already has its page, with no
+      // `page` event for it.
+      context.pages().forEach(watch);
+      context.on('page', watch);
       await context.addInitScript(installBrowserFakes);
       await context.addInitScript((u) => {
         if (window.origin === 'null') return; // the blank page a new tab opens on: it has no storage

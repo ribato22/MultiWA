@@ -79,10 +79,11 @@ jobs:
       # The admin's end-to-end tests: the pages of the build above, in the runner's Chrome, against a fake backend
       # (REST answered in the browser, realtime from a socket.io server on the build's NEXT_PUBLIC_API_URL port).
       - name: Admin e2e (fake backend)
+        id: admin-e2e
         run: pnpm --filter admin test:e2e
 
       - name: Upload the admin e2e traces
-        if: failure()
+        if: failure() && steps.admin-e2e.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
           name: admin-e2e-traces
