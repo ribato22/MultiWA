@@ -85,8 +85,10 @@ interface Run {
   broken: boolean;
   /** The end began. */
   ending: boolean;
-  /** The file is closed: a chunk after that belongs to no recording here. */
-  closed: boolean;
+  /** Not kept: set as its drop starts, so that an end while the drop runs keeps nothing. */
+  dropped: boolean;
+  /** The file's one end, which every closer waits for: a chunk after it began belongs to no recording here. */
+  closing?: Promise<void>;
 }
 
 export type KeepResult = 'stored' | 'kept' | 'discarded';
@@ -120,12 +122,12 @@ export class CallRecorderService implements OnApplicationBootstrap {
 
   /**
    * Records the call, then plays its announcement. Resolves when the agent may be connected: after the announcement,
-   * or as soon as either failed (the call then goes on unrecorded). Never throws.
+   * or as soon as either failed (the call then goes on unrecorded, its cleanup in the background). Never throws.
    */
   async begin(call: RecordedCall): Promise<void> {
     const run: Run = {
       call, begun: Promise.resolve(), saving: Promise.resolve(), out: null,
-      recording: false, announced: false, stopped: false, broken: false, ending: false, closed: false,
+      recording: false, announced: false, stopped: false, broken: false, ending: false, dropped: false,
     };
     this.runs.set(call.callId, run);
     run.begun = this.record(run);
@@ -193,17 +195,22 @@ export class CallRecorderService implements OnApplicationBootstrap {
         ANNOUNCE_MS,
         'the announcement did not finish in time',
       );
+      // An end meanwhile stopped the recorder while the page played on (WhatsApp's call still up: a hang-up that timed
+      // out, a server_restart end): the recording lacks the rest of its announcement.
+      if (!call.live()) return await this.drop(run, null);
       run.announced = true;
       await this.save(run);
     } catch (e) {
-      // A call that ended meanwhile failed nothing: it is simply not recorded.
-      await this.drop(run, call.live() ? { failure, error: e } : null);
+      // The caller is on the line, waiting for the agent: the cleanup (the engine's stop alone may take 10 s) goes on
+      // without them. A call that ended meanwhile failed nothing: it is simply not recorded.
+      if (call.live()) void this.drop(run, { failure, error: e });
+      else await this.drop(run, null);
     }
   }
 
   /** The engine's rule: onChunk never throws. A chunk after the file closed belongs to no recording here. */
   private chunk(run: Run, chunk: Buffer): void {
-    if (run.closed || !run.out) return;
+    if (run.closing || !run.out) return;
     run.out.write(chunk);
   }
 
@@ -240,15 +247,19 @@ export class CallRecorderService implements OnApplicationBootstrap {
     }
   }
 
-  private async close(run: Run): Promise<void> {
-    run.closed = true;
-    if (!run.out) return;
-    run.out.end();
-    await finished(run.out).catch(() => undefined); // its error was logged
+  /** Ends the file once: a drop and an end may both close it, and the second waits for the same end. */
+  private close(run: Run): Promise<void> {
+    run.closing ??= (async () => {
+      if (!run.out) return;
+      run.out.end();
+      await finished(run.out).catch(() => undefined); // its error was logged
+    })();
+    return run.closing;
   }
 
   /** The recording is not kept: its recorder stopped, its files deleted. `failed`: why, when the call goes on. */
   private async drop(run: Run, failed: { failure: RecordingFailure; error: unknown } | null): Promise<void> {
+    run.dropped = true;
     const { call } = run;
     await this.stopEngine(run, true);
     await this.close(run);
@@ -266,7 +277,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
   private async finish(run: Run): Promise<KeepResult> {
     const { call } = run;
     await run.begun;
-    if (this.runs.get(call.callId) !== run) return 'discarded'; // dropped: nothing to keep
+    if (run.dropped) return 'discarded'; // its drop, perhaps still running, deletes its files
     await this.save(run);
     await this.close(run);
     this.runs.delete(call.callId);
@@ -306,15 +317,19 @@ export class CallRecorderService implements OnApplicationBootstrap {
   private async keep(callId: string, call: CallFacts, partial: boolean, waits: number[]): Promise<KeepResult> {
     const dir = this.store.tmpDir;
     const files = tmpFiles(dir, callId);
-    if (this.recordings.storageStatus().lastCheck?.reason === 'storage_not_private') {
+    // No upload, counter or alert of its own: the storage's alert covers it.
+    const keptHere = (): KeepResult => {
       this.logger.warn(`The recording of call ${clean(callId)} is kept on this server: the recordings storage was last found readable without a login`);
       return 'kept';
-    }
+    };
+    if (this.storagePublic()) return keptHere(); // before the copy too: none is made in vain
     const key = recordingKey(call.organizationId, call.profileId, callId, call.startedAt);
     try {
       const webm = await finalizeWebm(files.recording, files.final);
       if (!webm.rewritten) this.logger.warn(`The recording of call ${clean(callId)} is stored without its length: it is not laid out as a browser records`);
-      if (!(await this.put(key, files.final, waits))) {
+      const put = await this.put(key, files.final, waits);
+      if (put === 'public') return keptHere();
+      if (put === 'failed') {
         this.counter({ kind: 'upload', result: 'failed' });
         void this.alerts.recordingFailed('upload_failed', call.profileId).catch((e) => this.logger.warn(`The recording alert for ${clean(call.profileId)} failed: ${message(e)}`));
         return 'kept';
@@ -351,17 +366,25 @@ export class CallRecorderService implements OnApplicationBootstrap {
     }
   }
 
-  private async put(key: string, path: string, waits: number[]): Promise<boolean> {
+  /** 'public': a privacy check found the storage readable without a login before a try, so it was not made. */
+  private async put(key: string, path: string, waits: number[]): Promise<'stored' | 'failed' | 'public'> {
     for (let i = 0; ; i++) {
+      // The tries span about 40 s, and a check may finish meanwhile (recording turned on for any profile, the nightly job).
+      if (this.storagePublic()) return 'public';
       try {
         await this.store.putFile(key, path, 'audio/webm');
-        return true;
+        return 'stored';
       } catch (e) {
         this.logger.warn(`A call recording was not stored (try ${i + 1} of ${waits.length + 1}): ${message(e)}`);
-        if (i >= waits.length) return false;
+        if (i >= waits.length) return 'failed';
         await new Promise((resolve) => setTimeout(resolve, waits[i]));
       }
     }
+  }
+
+  /** Nothing goes to a storage last found readable without a login. */
+  private storagePublic(): boolean {
+    return this.recordings.storageStatus().lastCheck?.reason === 'storage_not_private';
   }
 
   /** call.recording.ready (the ids and facts, never a key or an address), and the call's call:update. */

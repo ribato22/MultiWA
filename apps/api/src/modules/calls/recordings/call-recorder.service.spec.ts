@@ -147,10 +147,11 @@ describe('CallRecorderService.begin', () => {
     const h = harness();
     arrange(h);
     await h.recorder.begin(h.call);
+    // the cleanup goes on after the agent is let in; the alert is its last step
+    await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalledWith(failure, PROFILE));
     // the engine's rule after a failed start, and the end of a recording without its announcement
     expect(h.media.stopRecording).toHaveBeenCalledWith('W1');
     expect(h.files()).toEqual([]);
-    expect(h.alerts.recordingFailed).toHaveBeenCalledWith(failure, PROFILE);
     expect(h.counted()).toEqual([{ kind: 'failed', stage }]);
     await h.recorder.end(CALL); // the call's end, later: nothing is left to keep
     await h.idle();
@@ -166,7 +167,25 @@ describe('CallRecorderService.begin', () => {
     await vi.waitFor(() => expect(h.media.startRecording).toHaveBeenCalled());
     await vi.advanceTimersByTimeAsync(8_000);
     await begun;
+    await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalledWith('recorder_failed', PROFILE));
+  });
+
+  it('a failed recording does not keep the agent waiting for its cleanup; an end meanwhile keeps nothing', async () => {
+    const h = harness();
+    h.media.startRecording.mockRejectedValue(new Error('No caller audio to record'));
+    let release!: () => void;
+    h.media.stopRecording.mockImplementation(() => new Promise((resolve) => (release = () => resolve({ durationMs: 0 }))));
+    await h.recorder.begin(h.call); // resolves while the engine's stop is still held
+    expect(h.media.stopRecording).toHaveBeenCalledWith('W1');
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['discarded']);
+    release();
+    await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalled()); // the cleanup's last step
+    expect(h.alerts.recordingFailed).toHaveBeenCalledTimes(1);
     expect(h.alerts.recordingFailed).toHaveBeenCalledWith('recorder_failed', PROFILE);
+    expect(h.files()).toEqual([]);
+    expect(h.media.stopRecording).toHaveBeenCalledTimes(1);
+    expect(db.callRecording.create).not.toHaveBeenCalled();
   });
 
   it('a call that ends during the announcement fails nothing: no recording is kept, nobody is alerted', async () => {
@@ -182,6 +201,22 @@ describe('CallRecorderService.begin', () => {
     expect(h.counted()).toEqual([]);
     expect(h.files()).toEqual([]);
     expect(db.callRecording.create).not.toHaveBeenCalled();
+  });
+
+  it('a call that ends while its announcement plays keeps nothing, though the announcement then finishes', async () => {
+    const h = harness();
+    h.media.playAnnouncement.mockImplementation(async () => {
+      // WhatsApp's call is still up (a hang-up that timed out, a server_restart end): the page plays on
+      h.over();
+      await h.recorder.end(CALL);
+      return { durationMs: 1500 };
+    });
+    await h.recorder.begin(h.call);
+    await h.idle();
+    expect(db.callRecording.create).not.toHaveBeenCalled();
+    expect(h.alerts.recordingFailed).not.toHaveBeenCalled();
+    expect(h.counted()).toEqual([]);
+    expect(h.files()).toEqual([]);
   });
 
   it('a call that ended before its recorder started is not recorded', async () => {
@@ -270,6 +305,22 @@ describe('CallRecorderService.end', () => {
     await h.idle();
     expect(put).not.toHaveBeenCalled();
     expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]);
+  });
+
+  it('a storage found readable without a login during the tries gets no further try; the files stay, and its own alert covers it', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    const put = vi.spyOn(h.store, 'putFile').mockImplementationOnce(async () => {
+      // a privacy check finishes meanwhile (recording turned on for some profile, or the nightly job)
+      h.recordings.storageStatus.mockReturnValue({ lastCheck: { reason: 'storage_not_private' } });
+      throw new Error('503 Slow Down');
+    });
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['kept']);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]);
+    expect(h.alerts.recordingFailed).not.toHaveBeenCalled();
+    expect(h.counted()).toEqual([]);
   });
 
   it('its call gone when its row is written (its profile deleted meanwhile): the stored file and the files go', async () => {
