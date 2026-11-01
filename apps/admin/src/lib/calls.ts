@@ -64,11 +64,12 @@ export interface CallUpdatePayload {
   endedAt: string | null;
   followUp: CallFollowUp;
   assignedUserId: string | null;
-  answeredByUserId: string | null;
-  answeredAt: string | null;
-  endedBy: CallRecord['endedBy'];
-  endReason: CallRecord['endReason'];
-  talkSeconds: number | null;
+  // Absent from a server older than these fields.
+  answeredByUserId?: string | null;
+  answeredAt?: string | null;
+  endedBy?: CallRecord['endedBy'];
+  endReason?: CallRecord['endReason'];
+  talkSeconds?: number | null;
   /** Sent once, when the call's recording is stored: read the call again for its facts. */
   hasRecording?: true;
 }

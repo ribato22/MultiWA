@@ -4,6 +4,9 @@
 // Use relative path - Next.js rewrite will proxy /api/* to backend API
 const API_BASE = '/api/v1';
 
+// The API's own limit on an announcement upload (its multipart `fileSize`), in bytes.
+const ANNOUNCEMENT_MAX_BYTES = 2 * 1024 * 1024;
+
 // Types
 export interface ApiResponse<T> {
   data?: T;
@@ -150,7 +153,7 @@ export interface CallRecording {
   announcementPlayed: boolean;
   createdAt: string;
   deletedAt: string | null;
-  deleteReason: 'retention' | 'admin' | 'profile_deleted' | null;
+  deleteReason: 'admin' | 'retention' | null;
 }
 
 export interface CallRecord {
@@ -279,13 +282,10 @@ class ApiClient {
     return this.refreshPromise;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {},
-    _isRetry = false
-  ): Promise<ApiResponse<T>> {
+  /** fetch() with the Bearer header, for JSON and bytes alike: a 401 refreshes the token once, and a failed refresh signs out. */
+  private async send(endpoint: string, options: RequestInit = {}, _isRetry = false): Promise<Response> {
     const token = this.getToken();
-    
+
     const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const headers: HeadersInit = {
       // Only set Content-Type for JSON bodies, not FormData (browser auto-sets multipart boundary)
@@ -294,29 +294,35 @@ class ApiClient {
       ...options.headers,
     };
 
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    // Auto-refresh on 401 (skip for auth endpoints and retries)
+    if (response.status === 401 && !_isRetry && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh')) {
+      const refreshed = await this.tryRefreshToken();
+      if (refreshed) {
+        return this.send(endpoint, options, true);
+      }
+      // Refresh failed — redirect to login
+      if (typeof window !== 'undefined' && !endpoint.startsWith('/auth/')) {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        window.location.href = '/auth/login';
+      }
+    }
+
+    return response;
+  }
+
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        ...options,
-        headers,
-      });
+      const response = await this.send(endpoint, options);
 
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        // Auto-refresh on 401 (skip for auth endpoints and retries)
-        if (response.status === 401 && !_isRetry && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh')) {
-          const refreshed = await this.tryRefreshToken();
-          if (refreshed) {
-            return this.request<T>(endpoint, options, true);
-          }
-          // Refresh failed — redirect to login
-          if (typeof window !== 'undefined' && !endpoint.startsWith('/auth/')) {
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
-            window.location.href = '/auth/login';
-          }
-        }
-
         return {
           error: data?.message || data?.error || `Request failed with status ${response.status}`,
           status: response.status,
@@ -336,15 +342,13 @@ class ApiClient {
     }
   }
 
-  /** A route that answers bytes (a recording, an announcement), with the Bearer header and the 401 refresh of request(). */
-  async fetchBlob(endpoint: string, _isRetry = false): Promise<{ blob?: Blob; error?: string; status: number }> {
-    const token = this.getToken();
+  /** A route that answers bytes (a recording, an announcement), on the same auth path as request(). */
+  async fetchBlob(endpoint: string): Promise<{ blob?: Blob; error?: string; status: number }> {
     try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (response.status === 401 && !_isRetry && (await this.tryRefreshToken())) return this.fetchBlob(endpoint, true);
+      const response = await this.send(endpoint);
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        return { error: data?.message || `Request failed with status ${response.status}`, status: response.status };
+        return { error: data?.message || data?.error || `Request failed with status ${response.status}`, status: response.status };
       }
       return { blob: await response.blob(), status: response.status };
     } catch (error) {
@@ -680,8 +684,14 @@ class ApiClient {
       method: 'POST',
       body: form,
     });
-    // A proxy's own size refusal (nginx answers 413 in HTML) says what the API would have said.
-    return res.status === 413 && !res.body ? { ...res, error: 'The file must be at most 2 MB' } : res;
+    if (res.status !== 413 || res.body) return res;
+    // A proxy's own size refusal (nginx answers 413 in HTML): only a file past the API's limit is too large; a smaller
+    // one met a proxy whose limit is lower.
+    const limit = `${ANNOUNCEMENT_MAX_BYTES / (1024 * 1024)} MB`;
+    const error = file.size > ANNOUNCEMENT_MAX_BYTES
+      ? `The file must be at most ${limit}`
+      : `The server refused a file of this size: ask your administrator to allow uploads up to ${limit}`;
+    return { ...res, error };
   }
 
   fetchCallsAnnouncement(profileId: string) {
