@@ -43,14 +43,18 @@ test('two tabs of this agent answer at once: the tab that lost shows the call as
   }
 });
 
-test('this tab’s own claim failing before its end comes fades as a failed answer, and the call then rings again', () => {
+test('this tab’s own claim failing before its end comes fades as a failed answer, and the call then rings again, saying why', () => {
   // The server's order when the call stopped connecting while the answer was under way: the claim, the reply, the end,
   // then the new ring.
   const claimedHere: ConsoleEvent[] = [{ type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' }, claimed('u1', 'Ada')];
   const failed: ConsoleEvent = { type: 'answerFailed', callId: 'c1', message: 'Could not connect audio', reason: 'media_failed' };
   expect(run(...claimedHere, failed)).toMatchObject({ banners: [{ call: call(), status: 'failed', message: 'Could not connect audio' }], active: null });
-  expect(run(...claimedHere, failed, { type: 'ended', callId: 'c1', text: 'Could not connect audio' }, { type: 'ringing', call: call() })).toMatchObject({
-    banners: [{ call: call(), status: 'ringing' }],
+  // the end leaves the failed answer to fade, unless the call rings again first
+  const ended = run(...claimedHere, failed, { type: 'ended', callId: 'c1', text: 'Could not connect audio' });
+  expect(ended.banners).toEqual([{ call: call(), status: 'failed', message: 'Could not connect audio' }]);
+  expect(reduce(ended, { type: 'drop', callId: 'c1' }).banners).toEqual([]);
+  expect(reduce(ended, { type: 'ringing', call: call() })).toMatchObject({
+    banners: [{ call: call(), status: 'ringing', notice: 'Could not connect audio' }],
     active: null,
   });
   // a reply without a reason cannot be another tab's

@@ -84,9 +84,11 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
   switch (e.type) {
     case 'ringing': {
       // A call rings again after an answer failed, for the agent who tried too; one dismissed here stays dismissed. The
-      // ended call of a failed answer, still fading on the bar, gives way to the banner, which keeps why it ended.
+      // failed answer's banner, or the ended call of a failed answer still fading on the bar, gives way to the ringing
+      // banner, which keeps why it failed (the failed banner's message first).
       if (s.dismissed.includes(e.call.callId) || live(e.call.callId)) return s;
-      const notice = isActive(e.call.callId) ? a!.endedText : undefined;
+      const b = banner(e.call.callId);
+      const notice = b?.status === 'failed' ? b.message : isActive(e.call.callId) ? a!.endedText : undefined;
       const ring: Banner = notice ? { call: e.call, status: 'ringing', notice } : { call: e.call, status: 'ringing' };
       return { ...s, banners: [...without(e.call.callId), ring], active: isActive(e.call.callId) ? null : a };
     }
@@ -133,9 +135,12 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       // A hang-up under way stays one, but a failed one then goes back to the call it hung up.
       if (a!.phase === 'hanging_up') return { ...s, active: { ...a!, answeredAt: e.answeredAt, announcing: undefined } };
       return { ...s, active: { ...a!, phase: 'active', answeredAt: e.answeredAt, announcing: undefined, problem: undefined } };
-    case 'ended':
-      if (!live(e.callId)) return { ...s, banners: without(e.callId) };
-      return { ...s, banners: without(e.callId), active: { ...a!, phase: 'ended', endedText: e.text ?? 'Call ended', problem: undefined } };
+    case 'ended': {
+      // A failed answer's banner stays to fade: if the call rings again, the new banner says why.
+      const banners = s.banners.filter((b) => b.call.callId !== e.callId || b.status === 'failed');
+      if (!live(e.callId)) return { ...s, banners };
+      return { ...s, banners, active: { ...a!, phase: 'ended', endedText: e.text ?? 'Call ended', problem: undefined } };
+    }
     // A hang-up's result or a problem can come late, once the bar shows another call: each counts for its own call only.
     case 'hangingUp':
       return live(e.callId) ? { ...s, active: { ...a!, phase: 'hanging_up', problem: undefined } } : s;
