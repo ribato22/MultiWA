@@ -294,6 +294,14 @@ describe('WebJsCallMedia without a browser', () => {
       expect(await media.getSupport()).toEqual({ supported: false, reasons: ['page_error'] });
       expect(await media.getSupport()).toMatchObject({ supported: true });
     });
+
+    it('a throw while reading the page reaches the caller as a rejection, never as a synchronous throw', async () => {
+      const media = new WebJsCallMedia(() => { throw new Error('page gone'); }, () => true, 'p1');
+      let support!: Promise<unknown>;
+      // checkReadiness passes the promise into withTimeout(...).catch(): a synchronous throw would escape that catch
+      expect(() => (support = media.getSupport())).not.toThrow();
+      await expect(support).rejects.toThrow('page gone');
+    });
   });
 
   it('hands the page the call id and the deadline, and returns what the page answers', async () => {
