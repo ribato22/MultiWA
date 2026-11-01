@@ -49,38 +49,41 @@ export function callerLabel(call: Pick<CallRecord, 'fromJid' | 'conversation'>):
   return /^\d+$/.test(local) && (domain === 's.whatsapp.net' || domain === 'c.us') ? `+${local}` : local;
 }
 
-/** A call's length: m:ss, and h:mm:ss past an hour. */
+/** A call's length: m:ss, and h:mm:ss past an hour; a negative or non-finite length reads 0:00. */
 export function formatDuration(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
+  const s = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   return `${h ? `${h}:${String(m).padStart(2, '0')}` : m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-/** The banner's caller: the chat name when it is a name, else the number; a caller WhatsApp hides (a LID) has none. */
+/**
+ * The banner's caller: the chat name when it is a name, else the number; a caller WhatsApp hides (a LID) has none.
+ * A chat named after its number or its JID (how the backend names a new chat) has no name.
+ */
 export function ringingCallerLabel(caller: { name: string | null; number: string | null }): string {
-  if (caller.name && !/^\+?\d+$/.test(caller.name)) return caller.name;
+  if (caller.name && !/^\+?\d+(@[\w.]+)?$/.test(caller.name)) return caller.name;
   return caller.number ? `+${caller.number}` : 'Unknown number';
 }
 
-const WA_CHANGED = 'WhatsApp Web changed or is still loading: answer on the phone';
-/** Why a profile cannot take calls in the dashboard, or why a banner says "answer on the phone". */
+const WA_CHANGED = 'WhatsApp Web changed, or is still loading';
+/** Why a profile cannot take calls in the dashboard (the settings checklist), or why a banner says "answer on the phone": the cause only. */
 export const READINESS_TEXT: Record<string, string> = {
-  engine_host_worker: 'The engines run in the worker: ask your administrator',
+  engine_host_worker: 'This server is not set up for calls in the dashboard: ask your administrator',
   media_disabled: 'Calls in the dashboard are turned off on the server: ask your administrator',
   media_server_down: 'The call media server is down: ask your administrator',
-  auto_reject_on: 'Turn off auto-reject for this profile',
-  profile_not_connected: 'Connect the profile',
-  engine_not_supported: 'Switch the profile to whatsapp-web.js',
-  not_ready: 'WhatsApp Web is still loading: try again in a moment',
+  auto_reject_on: 'Auto-reject is on for this profile: turn it off',
+  profile_not_connected: 'The profile is not connected',
+  engine_not_supported: 'The profile’s engine cannot take calls: switch it to whatsapp-web.js',
+  not_ready: 'WhatsApp Web is still loading',
   web_calling_disabled: 'WhatsApp has not enabled calling on WhatsApp Web for this number',
   voip_stack_unavailable: WA_CHANGED,
   module_missing: WA_CHANGED,
   hooks_missing: WA_CHANGED,
   not_prepared: WA_CHANGED,
   page_error: WA_CHANGED,
-  video_call: 'Video calls are answered on the phone',
-  group_call: 'Group calls are answered on the phone',
+  video_call: 'Video calls can’t be answered in the dashboard',
+  group_call: 'Group calls can’t be answered in the dashboard',
 };
 
 /** The reasons a calls setting or the announcement was refused (a 409's `reasons`). */
@@ -96,6 +99,8 @@ export const SETTINGS_REASON_TEXT: Record<string, string> = {
 /** A refusal's reasons as texts, each once (several reasons share a text); an unknown reason shows as it came. */
 export const reasonTexts = (reasons: string[], texts: Record<string, string> = SETTINGS_REASON_TEXT) => [...new Set(reasons.map((r) => texts[r] ?? r))];
 
+const NO_AUDIO = 'Could not connect audio';
+
 /** Why an answer did not go through (the `call:answer` reply's reason, or no reply). */
 export const ANSWER_FAILURE_TEXT: Record<string, string> = {
   not_allowed: 'You cannot answer this call',
@@ -103,15 +108,16 @@ export const ANSWER_FAILURE_TEXT: Record<string, string> = {
   already_claimed: 'Someone else answered',
   busy: 'You are already on a call',
   media_unavailable: 'This call cannot be answered here: answer it on the phone',
-  media_failed: 'Could not connect audio',
+  media_failed: NO_AUDIO,
   timeout: 'The server did not answer: try again',
   error: 'Something went wrong: try again',
 };
 
-export const END_REASON_TEXT: Record<CallEndReason, string> = {
+// Addressed to the agent who took the call ("You hung up"): only endedText shows these.
+const END_REASON_TEXT: Record<CallEndReason, string> = {
   hangup: 'You hung up',
   caller_hangup: 'The caller hung up',
-  agent_lost: 'The call dropped: this browser lost its connection',
+  agent_lost: 'The call dropped: the connection was lost',
   media_failed: 'The call’s audio failed',
   time_limit: 'The call reached its time limit',
   server_restart: 'The server restarted',
@@ -123,7 +129,7 @@ export const END_REASON_TEXT: Record<CallEndReason, string> = {
  */
 export function endedText(p: { callId: string; outcome?: string; endedBy?: string; endReason?: string; talkSeconds?: number | null }): string | null {
   if (!p.endReason) return null;
-  if (!p.endedBy) return p.endReason === 'media_failed' ? 'Could not connect audio' : 'The call ended before it connected';
+  if (!p.endedBy) return p.endReason === 'media_failed' ? NO_AUDIO : 'The call was not connected';
   const reason = END_REASON_TEXT[p.endReason as CallEndReason] ?? 'Call ended';
   return p.talkSeconds != null && p.talkSeconds > 0 ? `${reason} · ${formatDuration(p.talkSeconds)}` : reason;
 }
@@ -137,7 +143,7 @@ export function answeredFacts(call: Pick<CallRecord, 'answeredBy' | 'answeredAt'
 }
 
 export const RECORDING_DELETED_TEXT = {
-  retention: 'Recording deleted (retention)',
+  retention: 'Recording deleted after its retention period',
   admin: 'Recording deleted by an admin',
 } as const;
 

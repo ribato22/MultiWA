@@ -1,11 +1,11 @@
 // A call in the chat timeline ("Voice call · Missed · 10.32").
-import { Phone, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOff } from 'lucide-react';
 import type { CallRecord } from '@/lib/api';
 import { OUTCOME_LABEL } from '@/lib/calls';
 import { formatFull, formatTime } from '@/lib/datetime';
+import { OUTCOME_ICON } from '@/components/calls/outcome-icon';
 
 export function CallTimelineRow({ call }: { call: CallRecord }) {
-  const Icon = call.outcome === 'answered' ? PhoneCall : call.outcome === 'ringing' ? PhoneIncoming : call.outcome === 'rejected' ? PhoneOff : call.outcome === 'answered_elsewhere' ? Phone : PhoneMissed;
+  const Icon = OUTCOME_ICON[call.outcome];
   return (
     <div className="flex justify-center my-2">
       <span

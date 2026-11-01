@@ -6,10 +6,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { io } from 'socket.io-client';
 import {
-  CheckCircle2, Link2, Loader2, MessageSquareText, MessagesSquare, Phone, PhoneCall, PhoneIncoming,
-  PhoneMissed, PhoneOff, RotateCcw, UserPlus, Video,
+  CheckCircle2, Link2, Loader2, MessageSquareText, MessagesSquare, PhoneIncoming, PhoneOff, RotateCcw, UserPlus, Video,
 } from 'lucide-react';
-import { api, type CallFollowUp, type CallRecord, type Profile } from '@/lib/api';
+import { api, type CallFollowUp, type CallOutcome, type CallRecord, type Profile } from '@/lib/api';
 import { getSocketUrl } from '@/lib/socket';
 import { formatFull, formatRelative } from '@/lib/datetime';
 import {
@@ -25,6 +24,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { OUTCOME_ICON } from '@/components/calls/outcome-icon';
 import { useToast } from '@/hooks/use-toast';
 
 type Member = { id: string; name: string; email: string; isActive: boolean };
@@ -39,12 +39,18 @@ const GATE_REASON: Record<string, string> = {
   COLD_CIRCUIT_OPEN: 'Sending to new conversations is paused for this profile.',
 };
 
+const OUTCOME_COLOUR: Record<CallOutcome, string> = {
+  answered: 'text-emerald-400',
+  ringing: 'text-primary',
+  rejected: 'text-amber-400',
+  answered_elsewhere: 'text-emerald-400',
+  missed: 'text-red-400',
+  unknown: 'text-muted-foreground',
+};
+
 function OutcomeIcon({ call }: { call: CallRecord }) {
-  if (call.outcome === 'answered') return <PhoneCall className="w-4 h-4 text-emerald-400" aria-hidden="true" />;
-  if (call.outcome === 'ringing') return <PhoneIncoming className="w-4 h-4 text-primary animate-pulse" aria-hidden="true" />;
-  if (call.outcome === 'rejected') return <PhoneOff className="w-4 h-4 text-amber-400" aria-hidden="true" />;
-  if (call.outcome === 'answered_elsewhere') return <Phone className="w-4 h-4 text-emerald-400" aria-hidden="true" />;
-  return <PhoneMissed className={`w-4 h-4 ${call.outcome === 'unknown' ? 'text-muted-foreground' : 'text-red-400'}`} aria-hidden="true" />;
+  const Icon = OUTCOME_ICON[call.outcome];
+  return <Icon className={`w-4 h-4 ${OUTCOME_COLOUR[call.outcome]}${call.outcome === 'ringing' ? ' animate-pulse' : ''}`} aria-hidden="true" />;
 }
 
 export default function CallsPage() {
