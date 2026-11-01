@@ -128,4 +128,10 @@ describe('SendGateService repeat suppression', () => {
     // The customer never got it, so the retry must go out.
     await expect(send(gate, FALLBACK)).resolves.toBeTruthy();
   });
+
+  it('does NOT arm the window when the engine reports the send failed', async () => {
+    // Engine sends report most failures by returning { success: false }, not by throwing.
+    await gate.executeWithGate(PROFILE, async () => ({ success: false, error: 'Client not ready' }), TO, false, FALLBACK);
+    await expect(send(gate, FALLBACK)).resolves.toBeTruthy();
+  });
 });

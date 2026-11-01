@@ -26,6 +26,7 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `ENGINE_HOST` | ❌ | `api` | Where the engine runs: `api` or `worker` |
 | `DURABLE_SEND` | ❌ | `false` | Enqueue outbound sends in Redis (BullMQ) with retry |
 | `OUTBOUND_SEND_CONCURRENCY` | ❌ | `10` | Max concurrent durable send deliveries |
+| `SEND_TIMEOUT_MS` | ❌ | `60000` | The longest one WhatsApp send may take before it fails with `504 SEND_TIMEOUT` |
 | `WEBHOOK_TIMEOUT_MS` | ❌ | `30000` | Webhook delivery timeout |
 | `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
 | `QUIET_ALARM_ACTIVE_HOURS` | ❌ | `07:00-22:00` | Daily window in which a connected profile's silence counts toward its quiet-profile alarm |
@@ -215,6 +216,24 @@ worker give both services the one in `.env`.
 
 ```env
 ENGINE_HOST=api
+```
+
+---
+
+## Send Timeout
+
+### `SEND_TIMEOUT_MS`
+**Optional** | Number (ms) | Default: `60000`
+
+The longest one WhatsApp send may take. A profile's sends go out one after another,
+so a send that hangs would hold every later send of that profile.
+Past this bound the send fails with `504 SEND_TIMEOUT` and the next one goes. The
+message is stored as `failed`, but WhatsApp may still deliver it, so the gateway
+never retries a timed-out send. A normal send takes seconds; raise this for large
+media over a slow link.
+
+```env
+SEND_TIMEOUT_MS=60000
 ```
 
 ---

@@ -122,6 +122,19 @@ When a profile reaches its `dailyMessageLimit`, further sends are rejected with
 
 Counters reset daily at **midnight WIB (Asia/Jakarta, UTC+7)**.
 
+A send the WhatsApp engine has not finished after **`SEND_TIMEOUT_MS`** (60 s by
+default) fails with **HTTP 504**, so the profile's next sends are not held behind it:
+
+```json
+{ "error": "SEND_TIMEOUT", "message": "The WhatsApp engine did not finish this send within 60000 ms. It may still be delivered, so a retry can send it twice.", "timeoutMs": 60000 }
+```
+
+The message is stored as `failed` and `message.failed` is emitted, but the engine
+cannot take the send back: WhatsApp may still deliver it, so a retry can send it
+twice. The gateway never retries one itself: with `DURABLE_SEND=true` it ends
+`failed` without another attempt, and a broadcast counts it failed even when
+`retryFailed` is on. It counts toward the daily limit only if it does go out later.
+
 ## Durable Sending (optional)
 
 By default, `POST /messages/...` sends synchronously and returns the result

@@ -1,6 +1,7 @@
 // Durable outbound send — MessagesService.deliverQueued unit tests.
 // Covers: success, retry vs final-failure on a disconnected profile, permanent
-// daily-limit failure (no retry), and transient-error retry vs last-attempt fail.
+// daily-limit failure (no retry), a send timeout (no retry), an engine soft failure
+// (failed, not sent), and transient-error retry vs last-attempt fail.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { HttpException, HttpStatus } from '@nestjs/common';
@@ -81,6 +82,27 @@ describe('MessagesService.deliverQueued', () => {
     await expect(svc.deliverQueued(JOB, false)).resolves.toBeUndefined(); // not last attempt, but still no retry
     expect(prisma.message.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'failed' } }));
     expect(eventEmitter.emit).toHaveBeenCalledWith(AppEvents.MESSAGE.FAILED, expect.objectContaining({ error: 'DAILY_LIMIT_REACHED' }));
+  });
+
+  it('marks failed without retry on a SEND_TIMEOUT 504, as the engine may still deliver it', async () => {
+    const gate = {
+      executeWithGate: vi.fn().mockRejectedValue(
+        new HttpException({ error: 'SEND_TIMEOUT' }, HttpStatus.GATEWAY_TIMEOUT),
+      ),
+    };
+    const { svc, eventEmitter } = makeService({ gate });
+    await expect(svc.deliverQueued(JOB, false)).resolves.toBeUndefined(); // a retry could send it twice
+    expect(prisma.message.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'failed' } }));
+    expect(eventEmitter.emit).toHaveBeenCalledWith(AppEvents.MESSAGE.FAILED, expect.objectContaining({ error: 'SEND_TIMEOUT' }));
+  });
+
+  it('marks failed, not sent, when the engine answers { success: false }', async () => {
+    const engine = { sendText: vi.fn().mockResolvedValue({ success: false, error: 'Client not ready' }) };
+    const { svc, eventEmitter } = makeService({ engine });
+    await expect(svc.deliverQueued(JOB, false)).resolves.toBeUndefined(); // no retry: the error may be ambiguous
+    expect(prisma.message.update).toHaveBeenCalledWith(expect.objectContaining({ data: { status: 'failed' } }));
+    expect(eventEmitter.emit).toHaveBeenCalledWith(AppEvents.MESSAGE.FAILED, expect.objectContaining({ error: 'Client not ready' }));
+    expect(eventEmitter.emit).not.toHaveBeenCalledWith(AppEvents.MESSAGE.SENT, expect.anything());
   });
 
   it('rethrows a transient error when not the last attempt (BullMQ retries)', async () => {

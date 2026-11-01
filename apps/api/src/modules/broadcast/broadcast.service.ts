@@ -1,7 +1,7 @@
 // MultiWA Gateway - Broadcast Service
 // apps/api/src/modules/broadcast/broadcast.service.ts
 
-import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Inject, forwardRef, Logger, OnModuleInit, HttpException, HttpStatus } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { CreateBroadcastDto, UpdateBroadcastDto, ScheduleBroadcastDto } from './dto';
 import { MessagesService } from '../messages/messages.service';
@@ -522,12 +522,15 @@ export class BroadcastService implements OnModuleInit {
           this.logger.debug(`Broadcast ${broadcastId}: Sent ${sentCount}/${phones.length} to ${phone}`);
         } catch (error: any) {
           this.logger.warn(`Broadcast ${broadcastId}: Failed to send to ${phone} (attempt ${attempts}): ${error.message}`);
-          if (attempts >= (retryFailed ? retryAttempts : 1)) {
+          // A send that timed out may still be delivered, so another attempt could send
+          // it twice: it fails at once (at most once, like the cursor above).
+          const timedOut = error instanceof HttpException && error.getStatus() === HttpStatus.GATEWAY_TIMEOUT;
+          if (timedOut || attempts >= (retryFailed ? retryAttempts : 1)) {
             failedCount++;
-          } else {
-            // Wait before retry
-            await this.delay(1000);
+            break;
           }
+          // Wait before retry
+          await this.delay(1000);
         }
       }
 

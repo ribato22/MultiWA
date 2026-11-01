@@ -130,7 +130,7 @@ export class WorkerMessagesService {
       // error column and `metadata` stays null, so without a log line the
       // failure is invisible. Send-gate rejections arrive here as HttpException
       // and their body carries the reason (DAILY_LIMIT_REACHED,
-      // COLD_DAILY_LIMIT_REACHED, COLD_CIRCUIT_OPEN, REPEAT_SUPPRESSED).
+      // COLD_DAILY_LIMIT_REACHED, COLD_CIRCUIT_OPEN, REPEAT_SUPPRESSED, SEND_TIMEOUT).
       // message.id is a generated uuid, so there is no untrusted text to sanitise.
       const reason = typeof error?.getResponse === 'function' ? JSON.stringify(error.getResponse()) : error?.message;
       this.logger.warn(`Send failed for message ${message.id}: ${reason}`);
@@ -160,6 +160,12 @@ export class WorkerMessagesService {
         laneRow?.lane === 'cold',
         repeatDedupeText(type, content),
       );
+      // The engine reports most failures by returning { success: false }. Fail it
+      // without retry, as the api copy does: the error may be ambiguous.
+      if (result?.success === false) {
+        await this.markFailed(messageDbId, profileId, to, type, result.error);
+        return;
+      }
       await prisma.message.update({
         where: { id: messageDbId },
         data: { ...(result?.messageId ? { messageId: result.messageId } : {}), status: 'sent' },
@@ -168,6 +174,12 @@ export class WorkerMessagesService {
     } catch (error: any) {
       if (error instanceof HttpException && error.getStatus?.() === HttpStatus.TOO_MANY_REQUESTS) {
         await this.markFailed(messageDbId, profileId, to, type, 'DAILY_LIMIT_REACHED');
+        return;
+      }
+      // A timed-out send may still be delivered by the engine, so a retry could send it
+      // twice: fail it without retry (at most once). Same rule as the api copy.
+      if (error instanceof HttpException && error.getStatus?.() === HttpStatus.GATEWAY_TIMEOUT) {
+        await this.markFailed(messageDbId, profileId, to, type, 'SEND_TIMEOUT');
         return;
       }
       if (isLastAttempt) {

@@ -172,6 +172,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 >
 > The message is stored with `status: "failed"` and a `message.failed` event is emitted. Nothing is retried automatically, so reconnect the profile and send again. `POST /messages/otp` does not return the 409: it fails over to its secondary channel, or answers `502 OTP_DELIVERY_FAILED` when no channel delivers. Bulk batches, broadcasts and scheduled messages record the message as `failed` instead of returning an error. With `DURABLE_SEND=true` a send is enqueued instead and retried a bounded number of times before it ends `failed` (see [Durable Sending](<../features/messaging.md#durable-sending-optional>)).
 
+> **Send timeout.** The same endpoints answer **`504 Gateway Timeout`** with `"error": "SEND_TIMEOUT"` when the WhatsApp engine has not finished the send after `SEND_TIMEOUT_MS` (60 s by default). The message is stored as `failed` and `message.failed` is emitted, but WhatsApp may still deliver it, so a retry can send it twice. See [Send Gate](<../features/messaging.md#send-gate-pacing--daily-limit>).
+
 ### Bulk Messaging (`/bulk`)
 
 | Method | Endpoint | Description |
