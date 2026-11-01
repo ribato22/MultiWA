@@ -77,6 +77,8 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://localhost:3333}
+      # The API port is published, so no proxy is trusted unless set (behind nginx: 172.16.0.0/12).
+      TRUST_PROXY: ${TRUST_PROXY:-}
       # Where the WhatsApp engines run. The api and the worker must agree: with 'worker' the api hands its engine work
       # to the worker, and must not open the sessions itself (each profile would run twice, on the same sessions volume).
       ENGINE_HOST: ${ENGINE_HOST:-api}

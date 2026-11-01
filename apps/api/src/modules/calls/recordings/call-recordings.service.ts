@@ -356,7 +356,7 @@ export class CallRecordingsService {
   // Every read is audited, as a player reads in ranges as it seeks: auditing only the reads from byte 0 would let
   // `bytes=1-` and the known first byte rebuild the file unaudited. But once per user, address, user agent, recording
   // and action in AUDIT_WINDOW_MS, so one listen is one entry, and a second device (or a stolen token) leaves its own,
-  // with its IP and user agent. The user agent too, as behind a reverse proxy (Fastify runs without trustProxy) every
+  // with its IP and user agent. The user agent too, as behind a reverse proxy (unless TRUST_PROXY names it) every
   // device has the proxy's address; its first 512 characters only, as a header may be 16 KB, and AUDIT_WINDOW_MAX keys
   // of that would hold 160 MB. A read is remembered only once its audit is written (the retry of a refused one is
   // audited again), and the window runs from the audited read: the reads within it never move it. Date.now() is the

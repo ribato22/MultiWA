@@ -6,7 +6,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import * as crypto from 'crypto';
 import { AppModule } from './app.module';
-import { configureApp } from './app.factory';
+import { configureApp, trustProxySetting } from './app.factory';
 import { installBrowserRejectionGuard } from '@multiwa/engine-runtime';
 
 // One profile's headless browser going away (e.g. a remote logout navigating the
@@ -55,7 +55,8 @@ async function bootstrap() {
     console.log('🔧 [1/7] Creating NestJS application...');
     const app = await NestFactory.create<NestFastifyApplication>(
       AppModule,
-      new FastifyAdapter({ logger: true }),
+      // trustProxy: req.ip is the client behind the reverse proxy (TRUST_PROXY).
+      new FastifyAdapter({ logger: true, trustProxy: trustProxySetting() }),
     );
     console.log('✅ [1/7] NestJS application created');
 
