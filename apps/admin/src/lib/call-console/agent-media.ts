@@ -13,6 +13,8 @@ export interface AgentMediaOptions {
   iceServers: RTCIceServer[];
   /** The agent's microphone, already open: it becomes the agent's voice. */
   mic: MediaStreamTrack;
+  /** Start muted: a call rebuilt after a reload or a failure stays muted if the agent was. */
+  muted?: boolean;
 }
 
 export interface AgentMedia {
@@ -20,16 +22,29 @@ export interface AgentMedia {
   readonly remote: MediaStream;
   /** The server's id of the agent's voice. */
   readonly producerId: string;
-  /** Mute is the microphone track's `enabled`: the agent stays connected, and the caller hears silence. */
+  /** Mute pauses the agent's voice in this browser: the agent stays connected, and the caller hears silence. */
   setMuted(muted: boolean): void;
   /** Another microphone mid-call, muted if the call is; the previous track is stopped. */
   replaceMic(track: MediaStreamTrack): Promise<void>;
   /** The link's round trip, jitter and loss, for the in-call bar. */
   sample(): Promise<LinkSample>;
-  /** `cb` runs once if a transport fails (the network, or the server closed this peer): the call's audio is gone. */
+  /**
+   * `cb` runs once if a transport fails (the network, or the server closed this peer): the call's audio is gone. A
+   * failure before `cb` was given still reaches it.
+   */
   onFailed(cb: () => void): void;
+  /** `cb` runs when the microphone's track ends (unplugged, or taken away by the system), also if it already had. */
+  onMicEnded(cb: () => void): void;
   /** Stops the microphone and closes the transports; safe to call twice. */
   close(): void;
+}
+
+/** Whether mediasoup-client can drive this browser: a browser it cannot is told before it claims a call. */
+export async function mediaSupported(): Promise<boolean> {
+  return Device.factory().then(
+    () => true,
+    () => false,
+  );
 }
 
 /**
@@ -37,19 +52,23 @@ export interface AgentMedia {
  * voice is produced, and the agent counts as connected once both are done. A failure closes what was opened and stops
  * the microphone.
  */
-export async function startAgentMedia({ signal, callerProducerId, iceServers, mic }: AgentMediaOptions): Promise<AgentMedia> {
+export async function startAgentMedia({ signal, callerProducerId, iceServers, mic, muted = false }: AgentMediaOptions): Promise<AgentMedia> {
   const transports: types.Transport[] = [];
   let track = mic;
-  let muted = false;
   let closed = false;
-  let failed: (() => void) | null = null;
-  let failedOnce = false;
+  let failed = false;
+  let onFail: (() => void) | null = null;
   const close = () => {
     if (closed) return;
     closed = true;
     for (const t of transports) t.close();
     track.stop();
   };
+  // A callback given after what it waits for happened: it runs all the same, unless the media closed meanwhile.
+  const later = (cb: () => void) =>
+    queueMicrotask(() => {
+      if (!closed) cb();
+    });
   try {
     const device = await Device.factory();
     await device.load({ routerRtpCapabilities: await signal('rtpCapabilities') });
@@ -61,9 +80,9 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
         signal('connectTransport', { transportId: t.id, dtlsParameters }).then(() => ok(), fail);
       });
       t.on('connectionstatechange', (state) => {
-        if (state !== 'failed' || closed || failedOnce) return;
-        failedOnce = true;
-        failed?.();
+        if (state !== 'failed' || closed || failed) return;
+        failed = true;
+        onFail?.();
       });
       return t;
     };
@@ -74,6 +93,9 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
     send.on('produce', ({ kind, rtpParameters }, ok, fail) => {
       signal('produce', { transportId: send.id, kind, rtpParameters }).then(ok, fail);
     });
+    // The producer starts paused when its track is disabled: mute is the producer's from here on, and replaceTrack
+    // gives a new microphone the producer's state.
+    mic.enabled = !muted;
     const producer = await send.produce({ track });
 
     let last = { lost: 0, received: 0 };
@@ -98,6 +120,8 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
         const lost = Math.max(0, (s.packetsLost ?? 0) - last.lost);
         const received = Math.max(0, (s.packetsReceived ?? 0) - last.received);
         if (lost + received > 0) worst('lossPct', (100 * lost) / (lost + received));
+        // The caller's stream never pauses: once it flowed, nothing new since the last sample is a dead link.
+        else if (last.lost + last.received > 0) worst('lossPct', 100);
         last = { lost: s.packetsLost ?? 0, received: s.packetsReceived ?? 0 };
       });
       return out;
@@ -107,17 +131,23 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
       remote: new MediaStream([consumer.track]),
       producerId: producer.id,
       setMuted(on) {
-        muted = on;
-        track.enabled = !on;
+        // Local only (the track's `enabled`), nothing is signalled.
+        if (on) producer.pause();
+        else producer.resume();
       },
       async replaceMic(next) {
-        next.enabled = !muted;
         await producer.replaceTrack({ track: next });
         track = next;
       },
       sample,
       onFailed(cb) {
-        failed = cb;
+        onFail = cb;
+        if (failed) later(cb);
+      },
+      onMicEnded(cb) {
+        producer.on('trackended', cb);
+        // A track that ended while it was being produced never fires `ended` again.
+        if (track.readyState === 'ended') later(cb);
       },
       close,
     };
