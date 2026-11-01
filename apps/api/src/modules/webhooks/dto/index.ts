@@ -89,6 +89,7 @@ export const WebhookEvents = {
   [AppEvents.CALL.REJECTED]: 'Incoming call rejected (automatically, by an agent, or on the phone)',
   [AppEvents.CALL.ENDED]: 'Incoming call stopped ringing without being rejected (missed, or answered on another device), or a call answered in the dashboard ended',
   [AppEvents.CALL.UPDATED]: 'Call changed after it stopped ringing (late outcome, follow-up or assignee)',
+  [AppEvents.CALL.RECORDING_READY]: "A call's recording is stored: its ids, length and size, and whether a restart cut it short (never its audio or an address)",
   [AppEvents.CALL.RECORDING_DELETED]: "A call's recording was deleted: by an admin, or at the end of its profile's retention period",
 
   // Other

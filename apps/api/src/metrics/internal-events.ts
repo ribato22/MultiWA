@@ -54,6 +54,9 @@ export const InternalEvents = {
 
   /** The privacy check of the call recordings storage ran (CallRecordingsService.checkStorage), with its result. */
   CALL_RECORDINGS_PRIVACY: 'internal.calls.recordings_privacy',
+
+  /** The call recorder, for the counters: a recording stored or not, a call left unrecorded and why. */
+  CALL_RECORDER: 'internal.calls.recorder',
 } as const;
 
 export interface EngineGroupFetchPayload {
@@ -105,3 +108,8 @@ export type CallsSessionPayload =
 export interface CallRecordingsPrivacyPayload {
   result: 'ok' | 'not_private' | 'check_failed';
 }
+
+/** `upload`: a recording's storing ended (after its tries, or a leftover's one). `failed`: a call left unrecorded. */
+export type CallRecorderPayload =
+  | { kind: 'upload'; result: 'ok' | 'failed' }
+  | { kind: 'failed'; stage: 'start' | 'announcement' };

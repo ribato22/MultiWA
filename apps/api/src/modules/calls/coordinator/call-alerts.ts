@@ -7,6 +7,8 @@
 // another connected profile.
 // And the recordings storage failing its privacy check: the same channel, per organization, the bell for its owner and
 // admins only.
+// And a call whose recording failed (the recorder did not start, the announcement did not play, or it could not be
+// stored): per profile, the bell for its organization's owners and admins only.
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { NotificationsService, NotificationType } from '../../notifications/notifications.service';
@@ -18,6 +20,11 @@ const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 // A worker in a crash loop is restarted within 30 s of each death (the backoff's cap): an organization whose calls a
 // death did not cut gets its bell at most this often.
 const NO_CUT_BELL_MS = 10 * 60 * 1000;
+// A recorder that is broken fails every call of its profile: one alert an hour (per kind) says it.
+const RECORDING_ALERT_EVERY_MS = 60 * 60 * 1000;
+
+/** Why a call's recording failed. */
+export type RecordingFailure = 'recorder_failed' | 'announcement_failed' | 'upload_failed';
 
 @Injectable()
 export class CallAlerts {
@@ -27,6 +34,8 @@ export class CallAlerts {
   // Each organization's last bell that was sent, on the deaths' own clock (`at`): a bell lost to a database outage
   // starts no quiet window.
   private readonly lastBellAt = new Map<string, number>();
+  // Each profile's and kind's last recording bell that was sent: a bell lost to a database outage starts no hour.
+  private readonly lastRecordingAlertAt = new Map<string, number>();
 
   constructor(
     private readonly notifications: NotificationsService,
@@ -139,5 +148,50 @@ export class CallAlerts {
       }
     }
     return told;
+  }
+
+  /**
+   * A call on `profileId` was not recorded (the recorder did not start, or the announcement did not play; the call was
+   * connected all the same), or its recording could not be stored after its tries (it is kept on the server and tried
+   * again each night). The bell for the organization's owners and admins (recording is theirs), and WhatsApp to the
+   * profile's alarm numbers, through another connected profile. At most once an hour per profile and kind.
+   */
+  async recordingFailed(kind: RecordingFailure, profileId: string, at = new Date()): Promise<void> {
+    const key = `${profileId}:${kind}`;
+    if (at.getTime() - (this.lastRecordingAlertAt.get(key) ?? -Infinity) < RECORDING_ALERT_EVERY_MS) return;
+    const [p] = await prisma.profile.findMany({
+      where: { id: { in: [profileId] } },
+      select: { id: true, displayName: true, phoneNumber: true, settings: true, workspace: { select: { organizationId: true } } },
+    });
+    const orgId = p?.workspace?.organizationId;
+    if (!p || !orgId) {
+      this.logger.warn(`Call recording alert for ${clean(profileId)} skipped: the profile has no organization`);
+      return;
+    }
+    const name = p.displayName || p.id;
+    const title = kind === 'upload_failed' ? `Call recording not stored: ${name}` : `Call not recorded: ${name}`;
+    const text =
+      kind === 'upload_failed'
+        ? `A call recording of ${name} could not be stored: the recordings storage did not take it after 4 tries. It is kept on this server and tried again tonight.`
+        : `A call on ${name} was answered in the dashboard but not recorded: ` +
+          (kind === 'recorder_failed' ? 'the recorder did not start. The call was connected.' : 'the announcement did not play to the caller. The call was connected without it.');
+    try {
+      await this.notifications.createForOrg(orgId, NotificationType.SYSTEM, title, text, { kind: 'call_recording_failed', status: kind }, ['owner', 'admin']);
+      this.lastRecordingAlertAt.set(key, at.getTime());
+    } catch (e) {
+      this.logger.warn(`Call recording bell for ${clean(profileId)} failed: ${clean((e as Error)?.message ?? e)}`);
+    }
+    try {
+      await sendOpsAlert(this.messages, this.logger, {
+        what: `Call recording alert for ${p.id}`,
+        organizationId: orgId,
+        excludeProfileId: p.id,
+        ownPhone: p.phoneNumber,
+        recipients: (p.settings as Record<string, unknown> | null)?.quietAlarmNotify,
+        text: `⚠️ ${title}. ${text}`,
+      });
+    } catch (e) {
+      this.logger.warn(`Call recording alert for ${clean(profileId)} failed: ${clean((e as Error)?.message ?? e)}`);
+    }
   }
 }
