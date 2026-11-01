@@ -228,7 +228,9 @@ restarted from its stored session automatically, without a QR, and the other pro
 The memory a profile's Chromium (the browser and its pages) may hold before that profile's engine is restarted
 from its session, checked every minute while the profile is online. A WhatsApp Web page grows over days; on a
 small host one page can take enough memory for the kernel to kill processes. `0` turns the check off. It is
-measured on Linux only. The restart briefly takes that profile offline (up to a few minutes).
+measured on Linux only. The restart briefly takes that profile offline (up to a few minutes). A profile
+restarted for memory is not restarted for memory again within 30 minutes, so a limit below its normal size
+cannot keep it offline; raise the limit if the log says so. A crash is still recovered in that time.
 
 ```env
 WWEBJS_MEMORY_LIMIT_MB=2500

@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { WhatsAppWebJsAdapter, BROWSER_LOSS_REASONS, memoryLimitMb } from '@multiwa/engines';
 import { isSessionInvalidReason } from '@multiwa/engine-runtime';
 
-const wire = () => {
+const wire = (profileId = 'p1') => {
   const adapter = new WhatsAppWebJsAdapter() as any;
   const client: any = new EventEmitter();
   client.pupPage = new EventEmitter();
@@ -16,7 +16,7 @@ const wire = () => {
   client.destroy = vi.fn(async () => {
     client.pupBrowser.emit('disconnected'); // a real close says so too
   });
-  const config = { profileId: 'p1', onDisconnected: vi.fn() };
+  const config = { profileId, onDisconnected: vi.fn() };
   adapter.client = client;
   adapter.config = config;
   adapter.setupEventHandlers();
@@ -30,6 +30,7 @@ describe('WhatsAppWebJsAdapter browser loss', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -81,7 +82,7 @@ describe('WhatsAppWebJsAdapter browser loss', () => {
   it('recycles a Chromium above WWEBJS_MEMORY_LIMIT_MB, once', async () => {
     vi.useFakeTimers();
     vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
-    const { adapter, config } = wire();
+    const { adapter, config } = wire('p-over');
     ready(adapter);
     adapter.readBrowserMemoryMb = vi.fn(() => 2600);
     await adapter.connect();
@@ -94,7 +95,7 @@ describe('WhatsAppWebJsAdapter browser loss', () => {
   it('leaves a Chromium at or below the limit alone', async () => {
     vi.useFakeTimers();
     vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
-    const { adapter, config } = wire();
+    const { adapter, config } = wire('p-at');
     ready(adapter);
     adapter.readBrowserMemoryMb = vi.fn(() => 2500);
     await adapter.connect();
@@ -118,6 +119,96 @@ describe('WhatsAppWebJsAdapter browser loss', () => {
     const { adapter } = wire();
     await adapter.connect();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not restart the same profile for memory again within 30 minutes', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
+    const first = wire('p-cooldown');
+    ready(first.adapter);
+    first.adapter.readBrowserMemoryMb = vi.fn(() => 2600);
+    await first.adapter.connect();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(first.config.onDisconnected.mock.calls).toEqual([['MEMORY_LIMIT']]);
+    // The engine-manager recycles it: a new adapter for the same profile, still above the limit.
+    const second = wire('p-cooldown');
+    ready(second.adapter);
+    second.adapter.readBrowserMemoryMb = vi.fn(() => 2600);
+    await second.adapter.connect();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(second.config.onDisconnected).not.toHaveBeenCalled(); // no restart loop
+    await vi.advanceTimersByTimeAsync(21 * 60_000); // past 30 minutes since the first restart
+    expect(second.config.onDisconnected.mock.calls).toEqual([['MEMORY_LIMIT']]);
+  });
+
+  it('fails a send that was in flight when it was destroyed, instead of reporting it sent', async () => {
+    const { adapter, client } = wire();
+    ready(adapter);
+    await adapter.connect();
+    let rejectLookup!: (e: Error) => void;
+    client.getNumberId = vi.fn(() => new Promise((_, reject) => (rejectLookup = reject)));
+    client.sendMessage = vi.fn(async () => {
+      throw new Error('Protocol error: Target closed');
+    });
+    let finishClose!: () => void;
+    client.destroy = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = () => {
+            client.pupBrowser.emit('disconnected');
+            resolve();
+          };
+        }),
+    );
+    const sending = adapter.sendText('628123456789', 'hi');
+    const destroying = adapter.destroy();
+    rejectLookup(new Error('Protocol error: Target closed')); // the lookup dies with the browser
+    const result = await sending;
+    finishClose();
+    await destroying;
+    expect(result.success).toBe(false);
+  });
+
+  it('does not report its own logout (disconnect) closing the browser', async () => {
+    vi.useFakeTimers();
+    const { adapter, client, config } = wire();
+    ready(adapter);
+    await adapter.connect();
+    client.logout = vi.fn(async () => {
+      client.pupBrowser.emit('disconnected'); // whatsapp-web.js logout() closes the browser
+    });
+    await adapter.disconnect();
+    expect(client.logout).toHaveBeenCalled();
+    expect(config.onDisconnected).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('reports a crash once even if WhatsApp then reports a disconnect for the same client', async () => {
+    const { adapter, client, config } = wire();
+    await adapter.connect();
+    client.pupPage.emit('error', new Error('Page crashed!'));
+    client.emit('disconnected', 'NAVIGATION');
+    expect(config.onDisconnected.mock.calls).toEqual([['PAGE_CRASHED']]);
+  });
+
+  it('still reports a disconnect from WhatsApp itself', async () => {
+    const { adapter, client, config } = wire();
+    await adapter.connect();
+    client.emit('disconnected', 'LOGOUT');
+    expect(config.onDisconnected.mock.calls).toEqual([['LOGOUT']]);
+  });
+
+  it('starts nothing for a client destroyed before connect() resolved', async () => {
+    vi.useFakeTimers();
+    const { adapter, client } = wire();
+    let finishInit!: () => void;
+    client.initialize = vi.fn(() => new Promise<void>((resolve) => (finishInit = resolve)));
+    const connecting = adapter.connect();
+    await adapter.destroy();
+    finishInit();
+    await connecting;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.pupPage.listenerCount('error')).toBe(0);
   });
 
   it('stops measuring once it is destroyed', async () => {

@@ -53,6 +53,11 @@ export const BROWSER_LOSS_REASONS = {
 
 /** How often a ready profile's Chromium memory is measured. */
 const MEMORY_CHECK_MS = 60_000;
+// A profile restarted for memory is not restarted for memory again this soon: if its normal size is above the
+// limit, a restart every few minutes would only take it offline. A crash is still recovered meanwhile.
+const MEMORY_RECYCLE_COOLDOWN_MS = 30 * 60_000;
+/** profileId -> when it was last restarted for memory (module-wide: each restart makes a new adapter). */
+const memoryRecycledAt = new Map<string, number>();
 
 /**
  * WWEBJS_MEMORY_LIMIT_MB: the anonymous resident memory, in MB, of a profile's Chromium (browser and renderers)
@@ -91,7 +96,10 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   callMedia?: WebJsCallMedia;
   // Clients whose page or browser loss was already reported: a crash followed by the browser closing is one loss.
   private lostClients = new WeakSet<object>();
+  // Clients the adapter let go of itself (destroy, logout): their browser closing is not a loss.
+  private releasedClients = new WeakSet<object>();
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private warnedMemoryCooldown = false;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -225,7 +233,10 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     });
 
     // Disconnected
+    const client = this.client;
     this.client.on('disconnected', (reason: string) => {
+      // A browser loss already reported for this client is the same disconnect: report it once.
+      if (this.lostClients.has(client)) return;
       console.log(`[WhatsApp-WebJS] Disconnected for profile ${this.config?.profileId}: ${reason}`);
       this.status = {
         isConnected: false,
@@ -419,6 +430,9 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
   async disconnect(): Promise<void> {
     if (this.client) {
+      // whatsapp-web.js logout() closes the browser: that close is ours, not a loss.
+      this.releasedClients.add(this.client);
+      this.stopMemoryWatch();
       try {
         await this.client.logout();
       } catch (e) {
@@ -431,14 +445,17 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   async destroy(): Promise<void> {
     const client = this.client;
     if (!client) return;
-    // Let go first: closing the browser below fires its 'disconnected', which is not a loss.
-    this.client = null;
+    // Closing the browser below fires its 'disconnected', which is not a loss. The client stays set until it is
+    // closed, so a send still in flight fails against the closing browser instead of finding no client and
+    // reading as sent.
+    this.releasedClients.add(client);
     this.stopMemoryWatch();
     try {
       await client.destroy();
     } catch (e) {
       // Ignore destroy errors
     }
+    this.client = null;
     this.status = { isConnected: false, isAuthenticated: false };
   }
 
@@ -449,6 +466,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
    * same for a Chromium whose memory passes WWEBJS_MEMORY_LIMIT_MB, before the host runs out.
    */
   private watchBrowser(client: Client): void {
+    if (client !== this.client || this.releasedClients.has(client)) return; // destroyed while connecting
     (client as any).pupPage?.on?.('error', () => this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.pageCrashed));
     (client as any).pupBrowser?.on?.('disconnected', () =>
       this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.browserClosed),
@@ -467,7 +485,19 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     const pid = (client as any).pupBrowser?.process?.()?.pid;
     const mb = typeof pid === 'number' ? this.readBrowserMemoryMb(pid) : null;
     if (mb === null || mb <= limitMb) return;
-    console.warn(`[WhatsApp-WebJS] Chromium of profile ${this.config?.profileId} holds ${mb} MB (limit ${limitMb} MB)`);
+    const profileId = this.config?.profileId ?? '';
+    const last = memoryRecycledAt.get(profileId);
+    if (last !== undefined && Date.now() - last < MEMORY_RECYCLE_COOLDOWN_MS) {
+      if (!this.warnedMemoryCooldown) {
+        this.warnedMemoryCooldown = true;
+        console.warn(
+          `[WhatsApp-WebJS] Chromium of profile ${profileId} holds ${mb} MB (limit ${limitMb} MB) within 30 minutes of its last memory restart; not restarting it again yet. Raise WWEBJS_MEMORY_LIMIT_MB if this is its normal size.`,
+        );
+      }
+      return;
+    }
+    memoryRecycledAt.set(profileId, Date.now());
+    console.warn(`[WhatsApp-WebJS] Chromium of profile ${profileId} holds ${mb} MB (limit ${limitMb} MB)`);
     this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.memoryLimit);
   }
 
@@ -483,7 +513,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
 
   /** Once per client, and only for the client this adapter still holds: its own destroy() is not a loss. */
   private reportBrowserLoss(client: Client, reason: string): void {
-    if (client !== this.client || this.lostClients.has(client)) return;
+    if (client !== this.client || this.releasedClients.has(client) || this.lostClients.has(client)) return;
     this.lostClients.add(client);
     this.stopMemoryWatch();
     console.warn(
