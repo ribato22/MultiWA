@@ -1,5 +1,7 @@
 'use client';
 // The header's "Available for calls": off, this agent is not rung. During a call the switch gives way to the state.
+// A phone screen shows a phone icon for the label, which still names the switch.
+import { Phone } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useCalls } from './calls-provider';
@@ -18,13 +20,14 @@ export function AvailabilityToggle() {
         </span>
       ) : (
         <>
+          <Phone className="h-4 w-4 text-muted-foreground sm:hidden" aria-hidden="true" />
           <Switch
             id="calls-available"
             checked={availability === 'available'}
             disabled={availability === 'offline'}
             onCheckedChange={(on) => calls.setAvailable(on)}
           />
-          <Label htmlFor="calls-available" className="cursor-pointer text-xs text-muted-foreground">
+          <Label htmlFor="calls-available" className="sr-only cursor-pointer text-xs text-muted-foreground sm:not-sr-only">
             Available for calls
           </Label>
           {availability === 'offline' && <span className="text-xs text-amber-300">Calls offline</span>}

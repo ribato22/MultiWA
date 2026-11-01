@@ -1,8 +1,10 @@
-import { test, expect, get, ME, PROFILE } from './support/fixtures';
+import { test, expect, get, on, ringing, ME, PROFILE } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
 const toggle = (page: Page) => page.getByRole('switch', { name: 'Available for calls' });
+/** Two animation frames: React has rendered the updates already queued. */
+const nextFrames = (page: Page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
 test('an agent is online and available on every page once the console connects, and can step away', async ({ page, backend }) => {
   await page.goto('/dashboard/calls');
@@ -48,11 +50,77 @@ test('after a token refresh, a socket the server closed connects again', async (
   await expect(toggle(page)).toBeEnabled();
 });
 
-test('without a profile that answers in the dashboard, the header has no call controls', async ({ page, backend }) => {
-  backend.route(get('/profiles', [{ ...PROFILE, settings: {} }]));
+test("another tab's newer choice wins at a reload", async ({ page, backend }) => {
   await page.goto('/dashboard/calls');
+  await toggle(page).click();
+  await expect(toggle(page)).toHaveAttribute('aria-checked', 'false');
+  backend.available = true; // another tab turned it back on
+  backend.emit('call:availability', { available: true });
+  await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+  const sent = backend.commands('call:availability').length;
+  await page.reload();
+  await expect.poll(() => backend.commands('call:availability').length).toBeGreaterThan(sent);
+  expect(backend.commands('call:availability')[sent]).toEqual({}); // a read, not this tab's old "off"
+  await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+});
+
+test('a refused toggle changes nothing, and says so', async ({ page, backend }) => {
+  backend.reply('call:availability', (a) => (a?.available === false ? { ok: false, reason: 'error' } : backend.defaults['call:availability'](a)));
+  await page.goto('/dashboard/calls');
+  await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+  await toggle(page).click();
+  await expect(page.getByRole('region', { name: /^Notifications/ }).getByText('Your availability did not change')).toBeVisible();
+  await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+  const sent = backend.commands('call:availability').length;
+  await page.reload();
+  await expect.poll(() => backend.commands('call:availability').length).toBeGreaterThan(sent);
+  expect(backend.commands('call:availability')[sent]).toEqual({}); // the refused "off" was not kept for the next connect
+  await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+});
+
+test('a failed read at connect is tried once more', async ({ page, backend }) => {
+  let failed = false;
+  backend.reply('call:availability', (a) => {
+    if (failed) return backend.defaults['call:availability'](a);
+    failed = true;
+    return { ok: false, reason: 'error' };
+  });
+  await page.goto('/dashboard/calls');
+  await expect(toggle(page)).toBeEnabled();
+  expect(backend.commands('call:availability')).toEqual([{}, {}]);
+});
+
+test('a socket the server closed for an expired token connects again once a request refreshed it', async ({ page, backend }) => {
+  await page.goto('/dashboard/calls');
+  await expect(toggle(page)).toBeEnabled();
+  // The access token expired: the next request gets a 401, and the refresh a new token.
+  let expired = true;
+  backend.route((req) => {
+    if (!expired || req.method !== 'GET' || req.path !== '/auth/me') return undefined;
+    expired = false;
+    return { status: 401, json: { message: 'Unauthorized' } };
+  });
+  backend.route(on('POST', '/auth/refresh', { json: { accessToken: 'refreshed-token', refreshToken: 'r2' } }));
+  const reads = backend.commands('call:availability').length;
+  backend.dropSockets();
+  await expect.poll(() => backend.commands('call:availability').length).toBeGreaterThan(reads);
+  await expect(toggle(page)).toBeEnabled();
+});
+
+test('without a profile that answers in the dashboard, the header has no call controls until a call rings', async ({ page, backend }) => {
+  backend.route(get('/profiles', [{ ...PROFILE, settings: {} }]));
+  const profiles = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/v1/profiles');
+  await page.goto('/dashboard/calls');
+  await profiles;
+  await nextFrames(page);
   await expect.poll(() => backend.commands('call:availability').length).toBeGreaterThan(0); // still online: a ring would show
   await expect(toggle(page)).toHaveCount(0);
+  // A ring proves a profile answers here: the controls come, and stay once the call is gone.
+  backend.emit('call:ringing', ringing());
+  await expect(toggle(page)).toBeVisible();
+  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' });
+  await expect(page.getByRole('region', { name: 'Incoming calls' })).toHaveCount(0);
+  await expect(toggle(page)).toBeVisible();
 });
 
 test.describe('a viewer', () => {
