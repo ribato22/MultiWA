@@ -1,9 +1,10 @@
 // Call recordings on a real Postgres (the unit specs only see what is sent): the settings writes keep the keys another
 // write changed meanwhile, and the recording rule holds under a race; a call has one recording; retention deletes per
 // profile period, keeps the rows as evidence and publishes each delete once; the orphan sweep deletes only the store's
-// own, older, unreferenced files; a profile's purge takes its files. A local store in a temp dir stands in for the
+// own, older, unreferenced files; a profile's purge takes its files; the recorder stores or discards what a crash left
+// in its tmpDir. A local store in a temp dir stands in for the
 // storage. Runs in the e2e suite (CI pushes the schema first); it needs no app.
-import { existsSync, mkdtempSync, rmSync, utimesSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
@@ -12,8 +13,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { prisma } from '@multiwa/database';
 import { AppEvents } from '@multiwa/core';
 import { AuditService } from '../src/modules/audit/audit.service';
+import { CallRecorderService } from '../src/modules/calls/recordings/call-recorder.service';
 import { CallRecordingsService } from '../src/modules/calls/recordings/call-recordings.service';
 import { LocalRecordingStore, announcementKey, recordingKey } from '../src/modules/calls/recordings/recording-store';
+import { writeState, type RecordingState } from '../src/modules/calls/recordings/recording-tmp';
 import {
   mergeProfileSettings, mergeProfileSettingsIfAnnounced, removeAnnouncementUnlessRecording, turnRecordingOffEverywhere,
 } from '../src/modules/profiles/profile-settings';
@@ -181,5 +184,77 @@ describe('call recordings (e2e, real Postgres)', () => {
     for (const key of [...mine.map((r) => r.storageKey), announcement]) expect(existsSync(fileOf(key)), key).toBe(false);
     expect(existsSync(fileOf(theirs.storageKey))).toBe(true);
     expect(await prisma.callRecording.count({ where: { profileId: id } })).toBe(0);
+  });
+
+  describe('the recorder: what a crash left', () => {
+    const FIXTURE = readFileSync(join(__dirname, '..', 'src', 'modules', 'calls', 'recordings', 'fixtures', 'recorded.webm'));
+    const tmp = mkdtempSync(join(tmpdir(), 'multiwa-recordings-tmp-'));
+    const recorder = new CallRecorderService(
+      new LocalRecordingStore(root, { dir: tmp }), recordings, { recordingFailed: async () => undefined } as any, events, { emitCallUpdate: () => undefined } as any,
+    );
+    const ready: any[] = [];
+    beforeAll(() => {
+      events.on(AppEvents.CALL.RECORDING_READY, (p) => ready.push(p));
+    });
+    afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+    /** The files in tmp of these calls: a scenario looks at its own calls' only, whatever an earlier one left. */
+    const tmpFilesOf = (...callIds: string[]) => readdirSync(tmp).filter((n) => callIds.some((id) => n.startsWith(id)));
+
+    /** A call answered `ageDays` ago that a crash cut short: its recording in tmp (the fixture), its state as given. */
+    const leftover = async (profileId: string, state: RecordingState | null, ageDays = 0) => {
+      const at = new Date(Date.now() - ageDays * DAY);
+      const call = await prisma.call.create({
+        data: { profileId, waCallId: `${tag}-${++seq}`, fromJid: '628111000111@s.whatsapp.net', outcome: 'answered', startedAt: at },
+      });
+      if (state) await writeState(tmp, call.id, state);
+      writeFileSync(join(tmp, `${call.id}.webm`), FIXTURE);
+      for (const name of readdirSync(tmp).filter((n) => n.startsWith(call.id))) utimesSync(join(tmp, name), at, at);
+      return call;
+    };
+
+    it('stores one a restart cut short, as partial, under its key with its length; discards one never announced, and one past retention', async () => {
+      const profileId = await makeProfile({ callsRecordingRetentionDays: 30 });
+      const cut = await leftover(profileId, { announced: true, stopped: false });
+      const unannounced = await leftover(profileId, { announced: false, stopped: false });
+      const expired = await leftover(profileId, { announced: true, stopped: true }, 31);
+      // A leftover is uploaded only after a check found the storage private, as the boot and the nightly job run first.
+      expect(await recordings.checkStorage()).toEqual({ ok: true });
+      expect(await recorder.finishLeftovers()).toEqual({ stored: 1, kept: 0, discarded: 2 });
+      const row = await prisma.callRecording.findUnique({ where: { callId: cut.id } });
+      expect(row).toMatchObject({
+        profileId, partial: true, announcementPlayed: true, storageType: 'local', storageLocation: store.location,
+        storageKey: recordingKey(organizationId, profileId, cut.id, cut.startedAt), bytes: FIXTURE.length + 11, durationSec: 3, channels: 2,
+      });
+      expect(readFileSync(fileOf(row!.storageKey)).length).toBe(FIXTURE.length + 11);
+      expect(ready).toContainEqual({ profileId, callId: cut.id, recordingId: row!.id, durationSec: 3, bytes: FIXTURE.length + 11, partial: true });
+      expect(await prisma.callRecording.findMany({ where: { callId: { in: [unannounced.id, expired.id] } } })).toEqual([]);
+      expect(tmpFilesOf(cut.id, unannounced.id, expired.id)).toEqual([]);
+    });
+
+    it("discards one whose call went with its profile", async () => {
+      const profileId = await makeProfile();
+      const call = await leftover(profileId, { announced: true, stopped: true });
+      await prisma.profile.delete({ where: { id: profileId } }); // its calls go with it
+      expect(await recorder.finishLeftovers()).toEqual({ stored: 0, kept: 0, discarded: 1 });
+      expect(tmpFilesOf(call.id)).toEqual([]);
+    });
+
+    it('one stored before and deleted by an admin since, whose files a crash left: its files go, its audio is not put back, and its row stays as it was', async () => {
+      const profileId = await makeProfile();
+      const call = await leftover(profileId, { announced: true, stopped: true });
+      // Its file is gone from the store, and its row kept as the evidence of the delete.
+      const before = await prisma.callRecording.create({
+        data: {
+          callId: call.id, profileId, storageType: 'local', storageLocation: store.location,
+          storageKey: recordingKey(organizationId, profileId, call.id, call.startedAt), bytes: 1, durationSec: 1, announcementPlayed: true,
+          deletedAt: new Date(), deleteReason: 'admin', deletedByUserId: null,
+        },
+      });
+      await recordings.checkStorage();
+      expect(await recorder.finishLeftovers()).toEqual({ stored: 1, kept: 0, discarded: 0 });
+      expect(existsSync(fileOf(before.storageKey))).toBe(false);
+      expect(await prisma.callRecording.findUnique({ where: { callId: call.id } })).toEqual(before);
+      expect(tmpFilesOf(call.id)).toEqual([]);
+    });
   });
 });

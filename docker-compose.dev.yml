@@ -118,11 +118,15 @@ services:
       CALL_RECORDINGS_BUCKET: ${CALL_RECORDINGS_BUCKET:-}
       CALL_RECORDINGS_PREFIX: ${CALL_RECORDINGS_PREFIX:-}
       CALL_RECORDINGS_SSE: ${CALL_RECORDINGS_SSE:-}
+      # Recordings in progress, on a volume of their own too: a restart in the middle of a call leaves its recording
+      # to be stored (partial) at the next start.
+      CALL_RECORDINGS_TMP: ${CALL_RECORDINGS_TMP:-/data/call-recordings-tmp}
     ports:
       - "3333:3333"
     volumes:
       - sessions_data:/data/sessions
       - call_recordings:/data/call-recordings
+      - call_recordings_tmp:/data/call-recordings-tmp
     networks:
       - multiwa-network
     depends_on:
@@ -172,3 +176,4 @@ volumes:
   minio_data:
   sessions_data:
   call_recordings:
+  call_recordings_tmp:

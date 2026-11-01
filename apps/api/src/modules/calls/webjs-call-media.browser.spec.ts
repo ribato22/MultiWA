@@ -198,6 +198,93 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     }
   });
 
+  // The upload reads the length from the file's headers, which a crafted file can make lie: the page checks what it
+  // decoded, before any of it plays.
+  it('refuses an announcement that decodes longer than the limit, before any of it plays', async () => {
+    const refused = page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 1.5).toString('base64'), 1000).catch((e: Error) => e.message);
+    expect(await refused).toBe('Announcement too long: 1.5 s');
+    expect(await page.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value)).toBe(1); // the agent is not left held
+    expect(await page.evaluate(() => (window as any).__mwCall.announcing)).toBe(false);
+    expect((await page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 0.3).toString('base64'), 1000)).durationMs).toBe(300);
+  });
+
+  // Played on, it would reach the next call on this page: into the microphone they share, its agent held silent, and
+  // that call's own announcement refused while this one "plays".
+  it('an announcement ends with its call: cut off 250-500 ms after the end, the agent given back, the line free', async () => {
+    const p = await openRecordingPage();
+    try {
+      await p.evaluate(answerActiveCall, 'CALL1', 5000);
+      await p.evaluate(trackIntervals);
+      const gain = () => p.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value);
+      const started = Date.now();
+      const playing = p.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 4).toString('base64')).catch((e: Error) => e.message);
+      await sleep(600);
+      expect(await gain()).toBe(0); // it plays
+      await p.evaluate(() => (window as any).__fakeWa.ring('CALL2')); // CALL1 is over: the next call rings
+      expect(await playing).toBe('The call ended');
+      expect(Date.now() - started).toBeLessThan(2000); // not the 4 s of the file
+      expect(await gain()).toBe(1);
+      expect(await liveIntervals(p)).toBe(0); // its poll is cleared
+      expect((await p.evaluate(playAnnouncementInPage, 'CALL2', sineWav(880, 0.3).toString('base64'))).durationMs).toBe(300);
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
+  // One read of WhatsApp Web's active call can see a flicker: an announcement cut off on it fails a call that goes on,
+  // which is then left unrecorded.
+  it('one poll that finds the call gone does not cut an announcement off: it plays through', async () => {
+    const p = await openRecordingPage();
+    try {
+      await p.evaluate(answerActiveCall, 'CALL1', 5000);
+      const playing = p.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 1.5).toString('base64')).catch((e: Error) => e.message);
+      await sleep(400);
+      // WhatsApp's active call reads empty ONCE, for exactly one poll: the getter puts the call back on its first read
+      await p.evaluate(() => {
+        const CC = (window as any).require('WAWebCallCollection');
+        const call = CC.activeCall;
+        Object.defineProperty(CC, 'activeCall', {
+          configurable: true,
+          get() { Object.defineProperty(CC, 'activeCall', { value: call, writable: true, configurable: true, enumerable: true }); return null; },
+        });
+      });
+      expect(await playing).toEqual({ durationMs: 1500 });
+      expect(await p.evaluate(() => 'value' in Object.getOwnPropertyDescriptor((window as any).require('WAWebCallCollection'), 'activeCall')!)).toBe(true); // a poll did read the empty call
+      expect(await p.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value)).toBe(1);
+      expect(await p.evaluate(() => (window as any).__mwCall.announcing)).toBe(false);
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
+  // Nor does one right after the decode: a call that really ended meanwhile is cut off by the poll, 500 ms in.
+  it('one read that finds the call gone right after the decode does not refuse an announcement', async () => {
+    const p = await openRecordingPage();
+    try {
+      await p.evaluate(answerActiveCall, 'CALL1', 5000);
+      // WhatsApp's active call reads empty ONCE, on the first read once the decode has started
+      await p.evaluate(() => {
+        const w = window as any;
+        const ctx = w.__mwCall.ctx;
+        ctx.decodeAudioData = (b: ArrayBuffer) => {
+          delete ctx.decodeAudioData; // the prototype's again
+          const CC = w.require('WAWebCallCollection');
+          const call = CC.activeCall;
+          Object.defineProperty(CC, 'activeCall', {
+            configurable: true,
+            get() { w.__readEmpty = true; Object.defineProperty(CC, 'activeCall', { value: call, writable: true, configurable: true, enumerable: true }); return null; },
+          });
+          return ctx.decodeAudioData(b);
+        };
+      });
+      const played = await p.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 1).toString('base64')).catch((e: Error) => e.message);
+      expect(played).toEqual({ durationMs: 1000 });
+      expect(await p.evaluate(() => (window as any).__readEmpty)).toBe(true); // a read did find the call gone
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
   it('records stereo: the caller on the left, what the caller hears on the right', async () => {
     const from = chunks.length;
     expect(await page.evaluate(startRecordingInPage, 'CALL1', 1000)).toEqual(normalPick('destination'));

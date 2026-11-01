@@ -45,6 +45,8 @@ export class MetricsService {
   readonly callsDashboardEndedTotal: Counter<'reason'>;
   // The recordings storage's privacy check, by result: any not_private means anyone can read the recordings.
   readonly callsRecordingsPrivacyChecksTotal: Counter<'result'>;
+  readonly callsRecordingUploadsTotal: Counter<'result'>;
+  readonly callsRecorderFailuresTotal: Counter<'stage'>;
 
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
@@ -191,6 +193,29 @@ export class MetricsService {
     // Every result from 0: a nightly check would otherwise create not_private already at 1, and an increase(...) > 0
     // alert never fires on that first, most important, one.
     for (const result of ['ok', 'not_private', 'check_failed'] as const) this.callsRecordingsPrivacyChecksTotal.inc({ result }, 0);
+    this.callsRecordingUploadsTotal = this.getOrCreate(
+      'multiwa_calls_recording_uploads_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_recording_uploads_total',
+          help: 'Call recordings stored (ok), and not stored after their tries (failed: kept on the server for the next try).',
+          labelNames: ['result'] as const,
+          registers: [this.registry],
+        }),
+    );
+    this.callsRecorderFailuresTotal = this.getOrCreate(
+      'multiwa_calls_recorder_failures_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_recorder_failures_total',
+          help: 'Calls with recording on that went on unrecorded, by why: the recorder did not start, or the announcement did not play.',
+          labelNames: ['stage'] as const,
+          registers: [this.registry],
+        }),
+    );
+    // From 0, like the privacy checks: an increase(...) > 0 alert never fires on a series' first count.
+    for (const result of ['ok', 'failed'] as const) this.callsRecordingUploadsTotal.inc({ result }, 0);
+    for (const stage of ['start', 'announcement'] as const) this.callsRecorderFailuresTotal.inc({ stage }, 0);
   }
 
   metrics(): Promise<string> {

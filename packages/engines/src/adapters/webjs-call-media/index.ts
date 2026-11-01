@@ -189,8 +189,8 @@ export class WebJsCallMedia implements CallMediaEngine {
     await this.requirePage().evaluate(hangUpActiveCall, callId, HANG_UP_TIMEOUT_MS);
   }
 
-  async playAnnouncement(callId: string, audio: Buffer): Promise<{ durationMs: number }> {
-    return this.requirePage().evaluate(playAnnouncementInPage, callId, audio.toString('base64'));
+  async playAnnouncement(callId: string, audio: Buffer, opts: { maxDurationMs?: number } = {}): Promise<{ durationMs: number }> {
+    return this.requirePage().evaluate(playAnnouncementInPage, callId, audio.toString('base64'), opts.maxDurationMs ?? null);
   }
 
   /**

@@ -280,10 +280,13 @@ export interface CallMediaEngine {
   /**
    * Play audio to the caller through the call's microphone; the agent input is held silent meanwhile. One
    * announcement at a time: a second one rejects ("Announcement already playing") and leaves the first alone. One that
-   * has not ended 5 s after its own length (a suspended or torn-down audio context never reaches the end) rejects
-   * ("Announcement did not finish"), is cut off, and gives the agent input back. The line is free again either way.
+   * decodes longer than `opts.maxDurationMs` is refused before any of it plays ("Announcement too long: …"). It ends
+   * with its call, as a recording does: 250-500 ms after the call is over (500 ms into playing for one that ended
+   * during the decode) it is cut off and rejects ("The call ended"). One that has not ended 5 s after its own length
+   * (a suspended or torn-down audio context never reaches the end) rejects ("Announcement did not finish") and is cut
+   * off. Each way, the agent input gets its gain back and the line is free again.
    */
-  playAnnouncement(callId: string, audio: Buffer): Promise<{ durationMs: number }>;
+  playAnnouncement(callId: string, audio: Buffer, opts?: { maxDurationMs?: number }): Promise<{ durationMs: number }>;
   /**
    * Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in
    * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.

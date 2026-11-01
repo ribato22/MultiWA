@@ -117,9 +117,9 @@ export class UpdateCallSettingsDto {
 
   @ApiPropertyOptional({
     description:
-      'Record the calls answered in the dashboard, after the announcement the caller hears first. No call is recorded ' +
-      'yet: the recorder comes in a later release. Turning it on needs an announcement and a recordings storage that ' +
-      'refuses reads without credentials (409 with the reasons otherwise).',
+      'Record the calls answered in the dashboard, from before the announcement the caller hears first. Turning it on ' +
+      'needs an announcement and a recordings storage that refuses reads without credentials (409 with the reasons ' +
+      'otherwise).',
   })
   @ValidateIf((o) => o.recording !== undefined)
   @Transform(({ obj, key }) => obj[key])

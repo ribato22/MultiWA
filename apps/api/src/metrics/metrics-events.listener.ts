@@ -12,6 +12,7 @@ import { AppEvents } from '@multiwa/core';
 import { MetricsService } from './metrics.service';
 import {
   InternalEvents,
+  type CallRecorderPayload,
   type CallRecordingsPrivacyPayload,
   type CallsMediaWorkerDiedPayload,
   type CallsSessionPayload,
@@ -129,6 +130,16 @@ export class MetricsEventsListener implements OnModuleInit {
       this.metrics.callsRecordingsPrivacyChecksTotal.inc({ result: payload.result });
     } catch (err) {
       this.logger.debug(`callRecordingsPrivacy metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.CALL_RECORDER)
+  onCallRecorder(payload: CallRecorderPayload): void {
+    try {
+      if (payload.kind === 'upload') this.metrics.callsRecordingUploadsTotal.inc({ result: payload.result });
+      else this.metrics.callsRecorderFailuresTotal.inc({ stage: payload.stage });
+    } catch (err) {
+      this.logger.debug(`callRecorder metric failed: ${(err as Error).message}`);
     }
   }
 }

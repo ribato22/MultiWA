@@ -51,7 +51,7 @@ A joined socket receives every event of that profile; there is no per-event filt
 | `message` | An incoming message was stored | `{ type: "message:received", message, conversation }` |
 | `message:ack` | WhatsApp reports a new status for an outgoing message | `{ profileId, messageId, status }` |
 | `call:update` | An incoming call rings, is rejected or ends, or its outcome, follow-up or assignee changes | The call, plus `profileId` |
-| `call:ringing`, `call:claimed`, `call:active`, `call:ended`, `call:availability` | Calls answered in the dashboard (below) | See below |
+| `call:ringing`, `call:claimed`, `call:announcing`, `call:active`, `call:ended`, `call:availability` | Calls answered in the dashboard (below) | See below |
 
 ### qr:update
 
@@ -109,7 +109,7 @@ Incoming messages only; what you send is not echoed. `message` is the stored mes
 
 ### call:update
 
-The call with the same fields as the `data` of the [`call.*` webhooks](<webhook-events.md#call-events>) (`callId`, `from`, `outcome`, `followUp`, …), plus `profileId`. It is sent on every change, so keep the newest one per `callId`.
+The call with the same fields as the `data` of the [`call.*` webhooks](<webhook-events.md#call-events>) (`callId`, `from`, `outcome`, `followUp`, …), plus `profileId`. It is sent on every change, so keep the newest one per `callId`. The update sent when a call's recording is stored also carries `hasRecording: true`.
 
 ### Calls answered in the dashboard
 
@@ -117,15 +117,16 @@ When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), 
 
 | Direction | Event | Payload / ack |
 |---|---|---|
-| server → agent | `call:ringing` | `{ callId, profileId, profileName, caller: { name, number }, startedAt, answerable, unavailableReason? }`. `answerable: false`: answer on the phone; `unavailableReason` says why |
+| server → agent | `call:ringing` | `{ callId, profileId, profileName, caller: { name, number }, startedAt, answerable, unavailableReason?, recorded }`. `answerable: false`: answer on the phone; `unavailableReason` says why. `recorded: true`: the call is recorded, from before an announcement the caller hears first |
 | server → agent | `call:claimed` | `{ callId, byUserId, byUserName }`: an agent took the call. Sent to every agent it rang, that one included (their other tabs stop ringing too): compare `byUserId` with your own |
+| server → agent | `call:announcing` | `{ callId, durationSec }`: on a recorded call, the caller hears the profile's announcement first. You hear the caller meanwhile; `call:active` follows when it has played |
 | server → agent | `call:ended` | `{ callId, outcome }` when the call stopped ringing; for the agent's own call `{ callId, endedBy, endReason, talkSeconds }`, or `{ callId, endReason }` (`media_failed` or `cancelled`) when it ended before its audio connected |
 | server → agent | `call:active` | `{ callId, answeredAt }`: the agent is on the call |
 | server → agent | `call:availability` | `{ available }`, to all of the agent's tabs when it changes |
 | client → server | `call:answer` | `{ callId }` → `{ ok: true, callId, callerProducerId, iceServers }`, or a reason: `not_allowed`, `not_ringing`, `already_claimed`, `busy`, `media_unavailable`, `media_failed` |
 | client → server | `call:media` | `{ callId, op, … }`, mediasoup signalling (`rtpCapabilities`, `createTransport`, `connectTransport`, `produce`, `consume`, `resumeConsumer`, `closeConsumer`) → `{ ok: true, result }`, or a reason: `not_allowed`, `not_in_call`, `media_error` (with `message`) |
 | client → server | `call:rejoin` | `{ callId }` after a page reload → `{ ok: true, callId, callerProducerId, iceServers }`, or a reason: `not_allowed`, `not_in_call`, `media_failed` |
-| client → server | `call:hangup` | `{ callId }` → `{ ok: true }`, or a reason: `not_allowed`, `not_in_call` |
+| client → server | `call:hangup` | `{ callId }` → `{ ok: true }`, or a reason: `not_allowed`, `not_in_call`. On a recorded call the reply can take up to about 30 s: the recorder is stopped before the media closes |
 | client → server | `call:availability` | `{ available? }` → `{ ok: true, available }`; without `available` it only reads the state (for a new tab). Or `not_allowed`, or `invalid` when `available` is given and is not a boolean |
 
 The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`).

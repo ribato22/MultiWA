@@ -105,6 +105,26 @@ describe('MetricsEventsListener: the dashboard call counters', () => {
     expect(text).toMatch(/multiwa_calls_recordings_privacy_checks_total\{result="not_private",app="multiwa-api"\} 1/);
   });
 
+  it('exposes every recording upload result and recorder failure at 0 before the first', async () => {
+    const text = await metrics.registry.metrics();
+    for (const result of ['ok', 'failed']) {
+      expect(text).toMatch(new RegExp(`^multiwa_calls_recording_uploads_total\\{result="${result}",app="multiwa-api"\\} 0$`, 'm'));
+    }
+    for (const stage of ['start', 'announcement']) {
+      expect(text).toMatch(new RegExp(`^multiwa_calls_recorder_failures_total\\{stage="${stage}",app="multiwa-api"\\} 0$`, 'm'));
+    }
+  });
+
+  it('counts the recordings stored and not, and the calls left unrecorded by why', async () => {
+    listener.onCallRecorder({ kind: 'upload', result: 'ok' });
+    listener.onCallRecorder({ kind: 'upload', result: 'failed' });
+    listener.onCallRecorder({ kind: 'failed', stage: 'announcement' });
+    const text = await metrics.registry.metrics();
+    expect(text).toMatch(/multiwa_calls_recording_uploads_total\{result="ok",app="multiwa-api"\} 1/);
+    expect(text).toMatch(/multiwa_calls_recording_uploads_total\{result="failed",app="multiwa-api"\} 1/);
+    expect(text).toMatch(/multiwa_calls_recorder_failures_total\{stage="announcement",app="multiwa-api"\} 1/);
+  });
+
   it('labels its series from closed sets: a reason outside them does not compile', () => {
     // @ts-expect-error: not a media failure reason
     listener.onCallsSession({ kind: 'media_failed', reason: 'timeout' });
@@ -112,5 +132,9 @@ describe('MetricsEventsListener: the dashboard call counters', () => {
     listener.onCallsSession({ kind: 'ended', endReason: 'bye' });
     // @ts-expect-error: not a privacy check result
     listener.onCallRecordingsPrivacy({ result: 'public' });
+    // @ts-expect-error: not an upload result
+    listener.onCallRecorder({ kind: 'upload', result: 'maybe' });
+    // @ts-expect-error: not a recorder stage
+    listener.onCallRecorder({ kind: 'failed', stage: 'upload' });
   });
 });

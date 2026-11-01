@@ -18,7 +18,7 @@ import { AppEvents } from '@multiwa/core';
 import { InternalEvents } from '../../../metrics/internal-events';
 import { MemoryRecordingStore } from '../../../testing/memory-recording-store';
 import { CallRecordingsService, ORPHAN_MIN_AGE_MS, SWEEP_BATCH } from './call-recordings.service';
-import { announcementKey, recordingKey } from './recording-store';
+import { announcementKey, recordingKey, type PrivacyCheck } from './recording-store';
 
 const db = prisma as any;
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -642,6 +642,50 @@ describe('CallRecordingsService: the storage status and its privacy check', () =
     expect(service.storageStatus().lastCheck).toEqual({ at: NOW.toISOString(), ok: false, reason: 'storage_check_failed' });
   });
 
+  // The nightly or boot check and an admin turning recording on may overlap. The recorder trusts the status before
+  // every upload, so the check that started last is the one it keeps.
+  it.each([
+    ['a minute later', MINUTE],
+    ['later, though the wall clock was stepped back an hour meanwhile', -60 * MINUTE],
+  ])('an older check that finishes last never overwrites a newer one, started %s, that found the storage public', async (_case, step) => {
+    const { service, store, events } = make();
+    let older!: (check: PrivacyCheck) => void;
+    vi.spyOn(store, 'checkPrivate')
+      .mockImplementationOnce(() => new Promise((resolve) => (older = resolve)))
+      .mockResolvedValueOnce({ ok: false, reason: 'storage_not_private', detail: 'x' });
+    const first = service.checkStorage(NOW);
+    const newer = new Date(NOW.getTime() + step);
+    await service.checkStorage(newer);
+    older({ ok: true });
+    await first;
+    expect(service.storageStatus().lastCheck).toEqual({ at: newer.toISOString(), ok: false, reason: 'storage_not_private' });
+    // each check still reports what it found
+    expect(events.emit.mock.calls).toEqual([
+      [InternalEvents.CALL_RECORDINGS_PRIVACY, { result: 'not_private' }],
+      [InternalEvents.CALL_RECORDINGS_PRIVACY, { result: 'ok' }],
+    ]);
+  });
+
+  // The other order: a storage found public stands whichever check found it, until a check started after it finds the
+  // storage private again (an eventually consistent store can answer a newer probe's anonymous read with a 404).
+  it('an older check that finds the storage public stands, though a newer one found it private first', async () => {
+    const { service, store } = make();
+    let older!: (check: PrivacyCheck) => void;
+    vi.spyOn(store, 'checkPrivate')
+      .mockImplementationOnce(() => new Promise((resolve) => (older = resolve)))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true });
+    const first = service.checkStorage(NOW);
+    await service.checkStorage(new Date(NOW.getTime() + MINUTE));
+    older({ ok: false, reason: 'storage_not_private', detail: 'x' });
+    await first;
+    expect(service.storageStatus().lastCheck).toEqual({ at: NOW.toISOString(), ok: false, reason: 'storage_not_private' });
+    // a check started after it, that finds the storage private, then counts again
+    const later = new Date(NOW.getTime() + 2 * MINUTE);
+    await service.checkStorage(later);
+    expect(service.storageStatus().lastCheck).toEqual({ at: later.toISOString(), ok: true });
+  });
+
   // No check at all: an install without recordings would warn every night.
   it('an unconfigured storage is neither counted as a check nor warned about', async () => {
     const { service, events, warn } = make(unconfigured());
@@ -668,6 +712,53 @@ describe('CallRecordingsService: the storage status and its privacy check', () =
     const { service } = make(unconfigured());
     expect(await service.recordingReasons(PROFILE, {})).toEqual(['recordings_storage_unset']);
     expect(await service.recordingReasons(PROFILE, { callsAnnouncement: announcement })).toEqual(['recordings_storage_unset']);
+  });
+
+  // CALL_RECORDINGS_TMP missing or refused: recordings cannot be made here, but what is stored stays reachable.
+  it('a store that cannot make recordings here: that is the only reason, and the status says why', async () => {
+    const store = new MemoryRecordingStore();
+    store.tmpProblem = 'CALL_RECORDINGS_TMP is not set';
+    const { service } = make(store);
+    const announcement = { storageKey: announcementKey(ORG, PROFILE, 'mp3'), mimeType: 'audio/mpeg', durationSec: 3 };
+    store.file(announcement.storageKey);
+    expect(await service.recordingReasons(PROFILE, { callsAnnouncement: announcement })).toEqual(['recordings_storage_unset']);
+    expect(service.storageStatus()).toEqual({ storage: 'local', configured: false, problem: 'CALL_RECORDINGS_TMP is not set', lastCheck: null });
+  });
+
+  // Only the recorder needs CALL_RECORDINGS_TMP: a guard of `problem ?? tmpProblem` anywhere else would lock away what
+  // is stored.
+  it('a store that cannot make recordings here still plays, deletes, purges, applies retention and sweeps what it holds', async () => {
+    const store = new MemoryRecordingStore();
+    store.tmpProblem = 'CALL_RECORDINGS_TMP is not set';
+    const { service } = make(store);
+
+    store.file(KEY, '0123456789', NOW);
+    db.callRecording.findUnique.mockResolvedValue(rec());
+    expect(await text((await service.play(CALL, ACTOR, undefined, false)).body)).toBe('0123456789');
+
+    db.callRecording.updateMany.mockResolvedValue({ count: 1 });
+    await expect(service.deleteByAdmin(CALL, ADMIN)).resolves.toMatchObject({ recordingId: 'r1' });
+    expect(store.files.has(KEY)).toBe(false);
+
+    store.file('a');
+    db.callRecording.findMany.mockResolvedValueOnce([{ storageKey: 'a', storageType: 'local', storageLocation: HERE }]);
+    db.profile.findUnique.mockResolvedValue({ settings: {} });
+    await service.purgeProfile(PROFILE);
+    expect(store.files.has('a')).toBe(false);
+
+    store.file('p1/0');
+    db.callRecording.groupBy.mockResolvedValue([{ profileId: 'p1' }]);
+    db.profile.findMany.mockResolvedValueOnce([{ id: 'p1', settings: {}, workspace: { organizationId: ORG } }]);
+    db.callRecording.findMany.mockResolvedValueOnce([rec({ id: 'p1-0', profileId: 'p1', storageKey: 'p1/0', createdAt: new Date(NOW.getTime() - 91 * DAY) })]);
+    expect(await service.applyRetention(NOW)).toBe(1);
+    expect(store.files.has('p1/0')).toBe(false);
+
+    const orphan = recordingKey(ORG, PROFILE, '44444444-4444-4444-8444-444444444444', NOW);
+    store.file(orphan, 'x', new Date(NOW.getTime() - ORPHAN_MIN_AGE_MS - 1000));
+    db.profile.findMany.mockResolvedValueOnce([]);
+    db.callRecording.findMany.mockResolvedValueOnce([]);
+    expect(await service.sweepOrphans(NOW)).toBe(1);
+    expect(store.files.size).toBe(0);
   });
 
   it('a storage that cannot say whether the announcement is there fails the check, and no probe is put', async () => {

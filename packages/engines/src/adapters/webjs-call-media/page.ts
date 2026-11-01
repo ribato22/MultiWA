@@ -328,35 +328,54 @@ export async function hangUpActiveCall(callId: string, timeoutMs: number): Promi
 /**
  * Play an encoded audio file (base64) into the call's microphone; the agent input is silent until it ends.
  * One at a time: a second announcement would hand the line back to the agent while the first still plays, so
- * it is refused. The guard is set before the first await and released in `finally`, whatever happens. A
- * playback that has not ended 5 s after its own length (a suspended or torn-down context never reaches the
- * end) rejects, and the same `finally` stops it and gives the agent input back the gain it had.
+ * it is refused. The guard is set before the first await and released in `finally`, whatever happens.
+ * `maxMs` (null: no limit) is checked on the DECODED length, before any of it plays: an upload's length is read from
+ * the file's headers, which a crafted file can make lie. It ends with its call, as a recording does
+ * (startRecordingInPage): when the call is over on two polls in a row (250-500 ms after its end; 500 ms into playing
+ * for one that ended during the decode) it is cut off and rejects; played on, it would reach the next call on this
+ * page and hold that call's agent silent. A playback that has not ended 5 s after its own length (a suspended or
+ * torn-down context never reaches the end) rejects too. The same `finally` stops it and gives the agent input back
+ * the gain it had.
  */
-export async function playAnnouncementInPage(callId: string, b64: string): Promise<{ durationMs: number }> {
+export async function playAnnouncementInPage(callId: string, b64: string, maxMs: number | null = null): Promise<{ durationMs: number }> {
   const w = window as any;
-  const c = w.require('WAWebCallCollection').activeCall;
-  if (!c || String(c.id) !== callId || (w._multiwaCallId && w._multiwaCallId !== callId)) throw new Error('Call is not the active call');
+  const ours = () => {
+    const c = w.require('WAWebCallCollection').activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  if (!ours()) throw new Error('Call is not the active call');
+  // As for a recording: a call the whatsapp-web.js patch tracked, and no longer does, is over too.
+  const tracked = w._multiwaCallId === callId;
+  const over = () => !ours() || (tracked && w._multiwaCallId !== callId);
   const call: MwCall = w.__mwCall.ensure();
   if (call.announcing) throw new Error('Announcement already playing');
   call.announcing = true;
   try {
     const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
     const buf = await call.ctx.decodeAudioData(bytes.buffer);
+    if (maxMs !== null && buf.duration * 1000 > maxMs) throw new Error(`Announcement too long: ${Math.round(buf.duration * 10) / 10} s`);
     const src = call.ctx.createBufferSource();
     src.buffer = buf;
     src.connect(call.inputs.announcement);
     const agentGain = call.inputs.agent.gain.value; // the agent may be held silent already: give back what it had
     call.inputs.agent.gain.value = 0;
     let watchdog: any;
+    let poll: any;
     try {
       await new Promise<void>((resolve, reject) => {
         src.onended = () => resolve();
         src.start();
         // a context that never reaches the end of the buffer (suspended, torn down) must not hold the line for good
         watchdog = setTimeout(() => reject(new Error('Announcement did not finish')), buf.duration * 1000 + 5000);
+        let gone = 0;
+        poll = setInterval(() => {
+          try { gone = over() ? gone + 1 : 0; } catch { gone++; } // a call state that cannot be read is not a live call
+          if (gone >= 2) reject(new Error('The call ended'));
+        }, 250);
       });
     } finally {
       clearTimeout(watchdog);
+      clearInterval(poll);
       try { src.stop(); } catch {} // after the watchdog: it would play on once the context runs again
       src.disconnect();
       call.inputs.agent.gain.value = agentGain;

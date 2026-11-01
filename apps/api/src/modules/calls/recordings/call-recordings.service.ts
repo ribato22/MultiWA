@@ -73,6 +73,9 @@ export interface RecordingReader {
 export class CallRecordingsService {
   private readonly logger = new Logger(CallRecordingsService.name);
   private lastCheck: { at: string; ok: boolean; reason?: PrivacyFailure } | null = null;
+  /** The privacy checks started, and which of them lastCheck is: two may overlap. */
+  private checksStarted = 0;
+  private lastCheckNo = 0;
   /**
    * `[userId, ip, userAgent, recordingId, action]` as JSON → when that read was audited. In insertion order: the first
    * is the oldest.
@@ -85,15 +88,29 @@ export class CallRecordingsService {
     private readonly events: EventEmitter2,
   ) {}
 
-  /** Where recordings go, whether that works, and the last privacy check (GET /calls/media/status). */
+  /**
+   * Where recordings go, whether that works, and the last privacy check (GET /calls/media/status). A store that cannot
+   * make recordings here (its tmpProblem) is not configured for recording, though what it holds stays reachable.
+   */
   storageStatus() {
-    return { storage: this.store.type, configured: this.store.problem === null, problem: this.store.problem, lastCheck: this.lastCheck };
+    const problem = this.store.problem ?? this.store.tmpProblem;
+    return { storage: this.store.type, configured: problem === null, problem, lastCheck: this.lastCheck };
   }
 
   /** The privacy check of the storage (turning recording on, and nightly): counted, and kept for the status. */
   async checkStorage(at = new Date()): Promise<PrivacyCheck> {
+    const no = ++this.checksStarted;
     const check = await this.store.checkPrivate();
-    this.lastCheck = check.ok ? { at: at.toISOString(), ok: true } : { at: at.toISOString(), ok: false, reason: check.reason };
+    // The status keeps the check that started last, whichever finishes last: a slow older one that found the storage
+    // private must not undo a newer one that found it public, as the recorder trusts the status before every upload.
+    // In the order they started, not by `at`: a wall clock stepped back would make every newer check lose. A storage
+    // found public stands, whichever check found it, until one started after that finds it private again: the
+    // reaction turns recording off on that finding, and an eventually consistent store can answer a newer probe's
+    // anonymous read with a 404.
+    if (no > this.lastCheckNo || (!check.ok && check.reason === 'storage_not_private')) {
+      this.lastCheckNo = Math.max(no, this.lastCheckNo);
+      this.lastCheck = check.ok ? { at: at.toISOString(), ok: true } : { at: at.toISOString(), ok: false, reason: check.reason };
+    }
     // An unconfigured storage is no check: neither counted nor warned about, or an install without recordings would
     // warn every night.
     if (check.ok || check.reason !== 'recordings_storage_unset') {
@@ -105,12 +122,13 @@ export class CallRecordingsService {
   }
 
   /**
-   * Why the profile cannot record now (its announcement, then the storage); empty when it can. An unconfigured storage
-   * is the one reason then, and a storage that cannot even say whether the announcement is there fails the check
-   * without a probe: the storage is the problem, not the announcement.
+   * Why the profile cannot record now (its announcement, then the storage); empty when it can. An unconfigured storage,
+   * or one that cannot make recordings here (its tmpProblem), is the one reason then, and a storage that cannot even
+   * say whether the announcement is there fails the check without a probe: the storage is the problem, not the
+   * announcement.
    */
   async recordingReasons(profileId: string, settings: Record<string, unknown>): Promise<RecordingReason[]> {
-    if (this.store.problem) return ['recordings_storage_unset'];
+    if (this.store.problem ?? this.store.tmpProblem) return ['recordings_storage_unset'];
     const reasons: RecordingReason[] = [];
     const key = announcementOf(settings)?.storageKey;
     // A key read back from the settings counts only when it is the profile's own announcement.

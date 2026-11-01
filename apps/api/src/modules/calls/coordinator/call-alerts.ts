@@ -5,8 +5,10 @@
 // alarm's channel: the bell for every user of each organization that answers calls in the dashboard, told only of its
 // own calls, and WhatsApp to the alarm numbers (quietAlarmNotify) of the profiles whose calls were cut, through
 // another connected profile.
-// And the recordings storage failing its privacy check: the same channel, per organization, the bell for its owner and
-// admins only.
+// And the recordings storage failing its privacy check, or not set up while profiles record: the same channel, per
+// organization, the bell for its owner and admins only.
+// And a call whose recording failed (the recorder did not start, the announcement did not play, or it could not be
+// stored): the same channel, per profile, the bell for its organization's owners and admins only.
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { NotificationsService, NotificationType } from '../../notifications/notifications.service';
@@ -18,6 +20,11 @@ const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 // A worker in a crash loop is restarted within 30 s of each death (the backoff's cap): an organization whose calls a
 // death did not cut gets its bell at most this often.
 const NO_CUT_BELL_MS = 10 * 60 * 1000;
+// A recorder that is broken fails every call of its profile: one alert an hour (per kind) says it.
+const RECORDING_ALERT_EVERY_MS = 60 * 60 * 1000;
+
+/** Why a call's recording failed. */
+export type RecordingFailure = 'recorder_failed' | 'announcement_failed' | 'upload_failed';
 
 @Injectable()
 export class CallAlerts {
@@ -27,6 +34,8 @@ export class CallAlerts {
   // Each organization's last bell that was sent, on the deaths' own clock (`at`): a bell lost to a database outage
   // starts no quiet window.
   private readonly lastBellAt = new Map<string, number>();
+  // Each profile's and kind's last recording bell sent, or being sent: a bell lost to a database outage starts no hour.
+  private readonly lastRecordingAlertAt = new Map<string, number>();
 
   constructor(
     private readonly notifications: NotificationsService,
@@ -74,17 +83,19 @@ export class CallAlerts {
   }
 
   /**
-   * A privacy check of the recordings storage failed. `not_private` (any check): anyone can read the recordings, and
-   * recording was turned off for `turnedOff`. `check_failed` (the nightly check): the check proved nothing, and recording
-   * stays on. One bell per organization concerned, for its owners and admins: they are the ones who can act on it
-   * (recording is theirs to turn on again). And WhatsApp to the alarm numbers of its profiles concerned, which any user
-   * who may edit a profile can set: so the text, like the bell, names no address of the storage (the server log has
-   * it). The storage serves every organization of the server, so only whoever runs the server can fix it.
+   * A privacy check of the recordings storage failed, or it is not set up. `not_private` (any check): anyone can read
+   * the recordings, and recording was turned off for `turnedOff`. `check_failed` (the nightly check): the check proved
+   * nothing, and recording stays on. `unset` (each night): recording is on, but this server's recordings storage or
+   * CALL_RECORDINGS_TMP is not set up, so no call of those profiles is recorded. One bell per organization concerned,
+   * for its owners and admins: they are the ones who can act on it (recording is theirs to turn on again). And WhatsApp
+   * to the alarm numbers of its profiles concerned, which any user who may edit a profile can set: so the text, like
+   * the bell, names no address of the storage (the server log has it). The storage serves every organization of the
+   * server, so only whoever runs the server can fix it.
    *
    * Each failure is only logged, so it resolves all the same: with whether at least one bell went out, for the caller
    * not to count an alert that reached nobody (every bell failing, the database down after the profiles were read).
    */
-  async recordingStorage(kind: 'not_private' | 'check_failed', profileIds: string[], turnedOff: string[]): Promise<boolean> {
+  async recordingStorage(kind: 'not_private' | 'check_failed' | 'unset', profileIds: string[], turnedOff: string[]): Promise<boolean> {
     if (!profileIds.length) return false;
     const profiles = await prisma.profile.findMany({
       where: { id: { in: profileIds } },
@@ -103,14 +114,28 @@ export class CallAlerts {
     let told = false;
     for (const [orgId, own] of byOrg) {
       const off = own.filter((p) => turnedOff.includes(p.id)).map(nameOf);
-      const title = kind === 'not_private' ? 'Call recordings can be read without a login' : 'Call recordings storage could not be checked';
-      const text =
-        kind === 'not_private'
-          ? 'The storage of call recordings serves its files without credentials: anyone who has an address can read them. ' +
+      const names = own.map(nameOf).join(', ');
+      const { title, text } = {
+        not_private: {
+          title: 'Call recordings can be read without a login',
+          text:
+            'The storage of call recordings serves its files without credentials: anyone who has an address can read them. ' +
             (off.length ? `Recording was turned off for ${off.join(', ')}. ` : '') +
-            'Whoever runs this MultiWA server must make the storage private; recording can then be turned on again.'
-          : `MultiWA could not check that the storage of call recordings refuses requests without credentials. Recording stays on for ${own.map(nameOf).join(', ')}. ` +
-            'If this repeats, ask whoever runs this MultiWA server to check the storage.';
+            'Whoever runs this MultiWA server must make the storage private; recording can then be turned on again.',
+        },
+        check_failed: {
+          title: 'Call recordings storage could not be checked',
+          text:
+            `MultiWA could not check that the storage of call recordings refuses requests without credentials. Recording stays on for ${names}. ` +
+            'If this repeats, ask whoever runs this MultiWA server to check the storage.',
+        },
+        unset: {
+          title: 'Call recordings are not being made',
+          text:
+            `Recording is on for ${names}, but this MultiWA server's recordings storage is not set up, so their calls are not recorded. ` +
+            'Whoever runs this server must set it up; GET /calls/media/status says what is missing.',
+        },
+      }[kind];
       try {
         await this.notifications.createForOrg(orgId, NotificationType.SYSTEM, title, text, { kind: 'call_recordings_storage', status: kind }, ['owner', 'admin']);
         told = true;
@@ -139,5 +164,58 @@ export class CallAlerts {
       }
     }
     return told;
+  }
+
+  /**
+   * A call on `profileId` was not recorded (the recorder did not start, or the announcement did not play; the call was
+   * connected all the same), or its recording could not be stored (it is kept on the server, and tried again at the
+   * next restart and each night). The bell for the organization's owners and admins (recording is theirs), and WhatsApp
+   * to the profile's alarm numbers, through another connected profile. At most once an hour per profile and kind.
+   */
+  async recordingFailed(kind: RecordingFailure, profileId: string, at = new Date()): Promise<void> {
+    const key = `${profileId}:${kind}`;
+    const last = this.lastRecordingAlertAt.get(key);
+    if (at.getTime() - (last ?? -Infinity) < RECORDING_ALERT_EVERY_MS) return;
+    // Taken before the first await: the recorder does not wait for its alerts, so failures at one moment would each pass.
+    this.lastRecordingAlertAt.set(key, at.getTime());
+    let belled = false;
+    try {
+      const [p] = await prisma.profile.findMany({
+        where: { id: { in: [profileId] } },
+        select: { id: true, displayName: true, phoneNumber: true, settings: true, workspace: { select: { organizationId: true } } },
+      });
+      const orgId = p?.workspace?.organizationId;
+      if (!p || !orgId) {
+        this.logger.warn(`Call recording alert for ${clean(profileId)} skipped: the profile has no organization`);
+        return;
+      }
+      const name = p.displayName || p.id;
+      const title = kind === 'upload_failed' ? `Call recording not stored: ${name}` : `Call not recorded: ${name}`;
+      const text =
+        kind === 'upload_failed'
+          ? `A call recording of ${name} could not be stored: the recordings storage did not take it, or this server could not prepare it (the API log says which). It is kept on this server and tried again at the next restart and each night.`
+          : `A call on ${name} was answered in the dashboard but not recorded: ` +
+            (kind === 'recorder_failed' ? 'the recorder did not start. The call was connected.' : 'the announcement did not play to the caller. The call was connected without it.');
+      try {
+        await this.notifications.createForOrg(orgId, NotificationType.SYSTEM, title, text, { kind: 'call_recording_failed', status: kind }, ['owner', 'admin']);
+        belled = true;
+      } catch (e) {
+        this.logger.warn(`Call recording bell for ${clean(profileId)} failed: ${clean((e as Error)?.message ?? e)}`);
+      }
+      try {
+        await sendOpsAlert(this.messages, this.logger, {
+          what: `Call recording alert for ${p.id}`,
+          organizationId: orgId,
+          excludeProfileId: p.id,
+          ownPhone: p.phoneNumber,
+          recipients: (p.settings as Record<string, unknown> | null)?.quietAlarmNotify,
+          text: `⚠️ ${title}. ${text}`,
+        });
+      } catch (e) {
+        this.logger.warn(`Call recording alert for ${clean(profileId)} failed: ${clean((e as Error)?.message ?? e)}`);
+      }
+    } finally {
+      if (!belled) this.lastRecordingAlertAt.set(key, last ?? -Infinity); // a bell that failed starts no hour
+    }
   }
 }

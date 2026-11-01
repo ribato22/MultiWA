@@ -111,10 +111,10 @@ describe('CallAlerts.workerDied', () => {
   });
 });
 
-// The recordings storage failed a privacy check: found public (by any check), or not checkable (at night). One bell per
-// organization, for its owner and admins only, naming only its own profiles, and WhatsApp to its profiles' alarm numbers
-// (each once). The storage's address is never in it: one storage serves every organization of the server, so the
-// alert asks whoever runs the server to fix it.
+// The recordings storage failed a privacy check: found public (by any check), or not checkable (at night); or it is not
+// set up while profiles record (at night). One bell per organization, for its owner and admins only, naming only its
+// own profiles, and WhatsApp to its profiles' alarm numbers (each once). The storage's address is never in it: one
+// storage serves every organization of the server, so the alert asks whoever runs the server to fix it.
 describe('CallAlerts.recordingStorage', () => {
   const PUBLIC = 'The storage of call recordings serves its files without credentials: anyone who has an address can read them. ';
   const FIX = 'Whoever runs this MultiWA server must make the storage private; recording can then be turned on again.';
@@ -168,6 +168,23 @@ describe('CallAlerts.recordingStorage', () => {
       { kind: 'call_recordings_storage', status: 'check_failed' }, ADMINS);
   });
 
+  // Recording on, but this server's recordings storage or CALL_RECORDINGS_TMP not set up: the calls are not recorded.
+  it('not set up: the bell names the profiles whose calls are not recorded, and says who must act; WhatsApp the same', async () => {
+    findMany.mockResolvedValue([
+      { id: 'p1', displayName: 'Line 1', settings: { quietAlarmNotify: ['628111000111'] }, workspace: { organizationId: 'o1' } },
+      { id: 'p2', displayName: null, settings: {}, workspace: { organizationId: 'o1' } },
+    ]);
+    const title = 'Call recordings are not being made';
+    const text =
+      "Recording is on for Line 1, p2, but this MultiWA server's recordings storage is not set up, so their calls are not recorded. " +
+      'Whoever runs this server must set it up; GET /calls/media/status says what is missing.';
+    expect(await alerts.recordingStorage('unset', ['p1', 'p2'], [])).toBe(true);
+    expect(notifications.createForOrg.mock.calls).toEqual([['o1', 'system', title, text, { kind: 'call_recordings_storage', status: 'unset' }, ADMINS]]);
+    expect((sendOpsAlert as any).mock.calls.map((c: any[]) => c[2])).toEqual([
+      { what: 'Call recordings storage alert for o1', organizationId: 'o1', excludeProfileId: '', ownPhone: null, recipients: ['628111000111'], text: `⚠️ ${title}. ${text}` },
+    ]);
+  });
+
   it('nobody concerned, or none in an organization: nothing at all, and nobody told', async () => {
     expect(await alerts.recordingStorage('not_private', [], [])).toBe(false);
     expect(findMany).not.toHaveBeenCalled();
@@ -192,5 +209,75 @@ describe('CallAlerts.recordingStorage', () => {
     expect(await alerts.recordingStorage('not_private', ['p1', 'p2', 'p3'], [])).toBe(false);
     expect(sendOpsAlert).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenCalledWith('Call recordings storage bell for o1 failed: db down');
+  });
+});
+
+describe('CallAlerts.recordingFailed', () => {
+  let notifications: { createForOrg: ReturnType<typeof vi.fn> };
+  let alerts: CallAlerts;
+  beforeEach(() => {
+    findMany.mockReset().mockResolvedValue([profile('p1', 'o1', ['628111000111'], '628111000100')]);
+    (sendOpsAlert as any).mockReset().mockResolvedValue(undefined);
+    notifications = { createForOrg: vi.fn().mockResolvedValue([]) };
+    alerts = new CallAlerts(notifications as any, {} as any);
+  });
+
+  it('a call not recorded: the bell to the owners and admins, WhatsApp to the alarm numbers, never through that profile', async () => {
+    await alerts.recordingFailed('announcement_failed', 'p1', AT);
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: ['p1'] } } }));
+    expect(notifications.createForOrg).toHaveBeenCalledWith(
+      'o1', 'system', 'Call not recorded: Line p1',
+      'A call on Line p1 was answered in the dashboard but not recorded: the announcement did not play to the caller. The call was connected without it.',
+      { kind: 'call_recording_failed', status: 'announcement_failed' }, ['owner', 'admin'],
+    );
+    expect((sendOpsAlert as any).mock.calls[0][2]).toEqual({
+      what: 'Call recording alert for p1', organizationId: 'o1', excludeProfileId: 'p1', ownPhone: '628111000100', recipients: ['628111000111'],
+      text: '⚠️ Call not recorded: Line p1. A call on Line p1 was answered in the dashboard but not recorded: the announcement did not play to the caller. The call was connected without it.',
+    });
+  });
+
+  it.each([
+    ['recorder_failed', 'Call not recorded: Line p1', 'A call on Line p1 was answered in the dashboard but not recorded: the recorder did not start. The call was connected.'],
+    ['upload_failed', 'Call recording not stored: Line p1', 'A call recording of Line p1 could not be stored: the recordings storage did not take it, or this server could not prepare it (the API log says which). It is kept on this server and tried again at the next restart and each night.'],
+  ] as const)('%s says so', async (kind, title, text) => {
+    await alerts.recordingFailed(kind, 'p1', AT);
+    expect(notifications.createForOrg.mock.calls[0].slice(2, 4)).toEqual([title, text]);
+  });
+
+  // A recorder that is broken fails every call: one alert an hour says it.
+  it('at most once an hour per profile and kind; a bell that failed starts no hour', async () => {
+    await alerts.recordingFailed('recorder_failed', 'p1', AT);
+    await alerts.recordingFailed('recorder_failed', 'p1', later(59));
+    await alerts.recordingFailed('announcement_failed', 'p1', later(59)); // another kind
+    findMany.mockResolvedValueOnce([profile('p2', 'o1')]);
+    await alerts.recordingFailed('recorder_failed', 'p2', later(59)); // another profile
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(3);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(3);
+    await alerts.recordingFailed('recorder_failed', 'p1', later(61));
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(4);
+    notifications.createForOrg.mockRejectedValueOnce(new Error('db down'));
+    await alerts.recordingFailed('upload_failed', 'p1', later(62));
+    await alerts.recordingFailed('upload_failed', 'p1', later(63));
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(6);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(6);
+  });
+
+  // The recorder does not wait for its alerts, and the passes at boot and at night fail a profile's kept recordings
+  // back to back.
+  it('failures at the same moment send one alert; a profile read that failed starts no hour', async () => {
+    await Promise.all([alerts.recordingFailed('upload_failed', 'p1', AT), alerts.recordingFailed('upload_failed', 'p1', AT)]);
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(1);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(1);
+    findMany.mockRejectedValueOnce(new Error('db down'));
+    await expect(alerts.recordingFailed('recorder_failed', 'p1', AT)).rejects.toThrow('db down');
+    await alerts.recordingFailed('recorder_failed', 'p1', later(1));
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(2);
+  });
+
+  it('a profile with no organization is left out', async () => {
+    findMany.mockResolvedValue([{ ...profile('p1', 'o1'), workspace: null }]);
+    await alerts.recordingFailed('recorder_failed', 'p1', AT);
+    expect(notifications.createForOrg).not.toHaveBeenCalled();
+    expect(sendOpsAlert).not.toHaveBeenCalled();
   });
 });

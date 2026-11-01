@@ -1,16 +1,40 @@
 // The S3 store of call recordings: every object private (no ACL; server-side encryption when asked), keys under the
 // prefix, Range reads, a paged listing. And its privacy check, which fetches a probe WITHOUT credentials through the
 // endpoint and S3_PUBLIC_URL. The client and fetch are stand-ins.
+import { ReadStream, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { Readable } from 'stream';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { LocalRecordingStore, S3RecordingStore, createRecordingStore } from './recording-store';
 
 const CONFIG = { bucket: 'recs', prefix: 'call-recordings/', publicBases: ['http://minio:9000'] };
 const client = (reply: (command: any) => unknown = () => ({})) => ({ send: vi.fn(async (command: any) => reply(command)) });
 const sent = (s3: ReturnType<typeof client>) => s3.send.mock.calls.map(([c]) => [c.constructor, c.input]);
+const dirs: string[] = [];
+const dir = () => {
+  const d = mkdtempSync(join(tmpdir(), 'rec-s3-'));
+  dirs.push(d);
+  return d;
+};
+afterAll(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+});
+/** A file of twelve bytes, to store. */
+const twelveBytes = () => {
+  const path = join(dir(), 'a.webm');
+  writeFileSync(path, 'twelve bytes');
+  return path;
+};
 
 describe('S3RecordingStore', () => {
+  // Its tmpDir is '' exactly when its tmpProblem is set: a recorder that trusted tmpProblem alone would write into the
+  // working directory.
+  it('built without a directory for recordings in progress: says so', () => {
+    expect(new S3RecordingStore(client(), CONFIG)).toMatchObject({ tmpDir: '', tmpProblem: 'CALL_RECORDINGS_TMP is not set' });
+  });
+
   it('puts privately: no ACL, under the prefix, with its type; SSE when configured', async () => {
     const s3 = client();
     await new S3RecordingStore(s3, CONFIG).put('probe/x', Buffer.from('a'), 'text/plain');
@@ -19,6 +43,56 @@ describe('S3RecordingStore', () => {
       [PutObjectCommand, { Bucket: 'recs', Key: 'call-recordings/probe/x', Body: Buffer.from('a'), ContentType: 'text/plain' }],
       [PutObjectCommand, { Bucket: 'recs', Key: 'call-recordings/probe/y', Body: Buffer.from('b'), ContentType: 'text/plain', ServerSideEncryption: 'aws:kms' }],
     ]);
+  });
+
+  // One PUT with the file's own stream and length: a multipart upload's object is dated by the start of its upload, and
+  // the nightly sweep would take a long call's recording, stored just before it ran, for an hour-old orphan.
+  it('stores a file in one PUT: streamed, with its length, privately', async () => {
+    let streamed = '';
+    const s3 = client(async (c) => {
+      for await (const chunk of c.input.Body) streamed += chunk;
+      return {};
+    });
+    await new S3RecordingStore(s3, { ...CONFIG, sse: 'AES256' }).putFile('o/p/2026/10/c.webm', twelveBytes(), 'audio/webm');
+    expect(sent(s3)).toHaveLength(1);
+    const [[command, input]] = sent(s3) as Array<[unknown, any]>;
+    expect(command).toBe(PutObjectCommand);
+    expect(input).toMatchObject({ Bucket: 'recs', Key: 'call-recordings/o/p/2026/10/c.webm', ContentLength: 12, ContentType: 'audio/webm', ServerSideEncryption: 'AES256' });
+    expect(input).not.toHaveProperty('ACL');
+    expect(input.Body).toBeInstanceOf(ReadStream);
+    expect(streamed).toBe('twelve bytes');
+  });
+
+  // From 2 MB the SDK sends `Expect: 100-continue`: a store that refuses then never reads the file. Left open, the file
+  // keeps its disk space after the recorder deletes it, until the api restarts.
+  it('a PUT that fails closes its file all the same', async () => {
+    const s3 = client(() => {
+      throw Object.assign(new Error('Service Unavailable'), { $metadata: { httpStatusCode: 503 } });
+    });
+    await expect(new S3RecordingStore(s3, CONFIG).putFile('o/p/2026/10/c.webm', twelveBytes(), 'audio/webm')).rejects.toThrow('Service Unavailable');
+    expect(sent(s3)[0][1].Body.destroyed).toBe(true);
+  });
+
+  // An 'error' event nobody listens to is thrown: a disk failing under a recording being stored would end the process,
+  // and every live call with it.
+  it('a read error fails the PUT at once, and never goes uncaught', async () => {
+    const eio = Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' });
+    const s3 = {
+      send: vi.fn(async (command: any, options?: { abortSignal?: AbortSignal }) => {
+        command.input.Body.destroy(eio);
+        const signal = options?.abortSignal;
+        await new Promise((_resolve, reject) => signal?.addEventListener('abort', () => reject(signal.reason)));
+      }),
+    };
+    const uncaught = vi.fn();
+    process.on('uncaughtException', uncaught);
+    try {
+      await expect(new S3RecordingStore(s3, CONFIG).putFile('o/p/2026/10/c.webm', twelveBytes(), 'audio/webm')).rejects.toBe(eio);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(uncaught).not.toHaveBeenCalled();
+    } finally {
+      process.off('uncaughtException', uncaught);
+    }
   });
 
   it('sizes by HEAD; a 404 is no object, another error is thrown', async () => {
@@ -188,6 +262,7 @@ describe('createRecordingStore: S3', () => {
     expect(made).toEqual([{
       endpoint: 'http://minio:9000', region: 'ap-southeast-3', credentials: { accessKeyId: 'a', secretAccessKey: 'b' }, forcePathStyle: true,
       requestHandler: { connectionTimeout: 5_000, socketTimeout: 20_000 },
+      requestChecksumCalculation: 'WHEN_REQUIRED', responseChecksumValidation: 'WHEN_REQUIRED',
     }]);
     expect((store as any).config).toEqual({ bucket: 'recs', prefix: 'call-recordings/', sse: 'AES256', publicBases: ['http://minio:9000', 'https://cdn.example.com'] });
     expect(store.location).toBe('s3:recs/call-recordings/');
@@ -251,5 +326,17 @@ describe('createRecordingStore: S3', () => {
     expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_STORAGE: '', STORAGE_TYPE: 's3' }, () => client())).toBeInstanceOf(S3RecordingStore);
     expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_STORAGE: 'local', STORAGE_TYPE: 's3' })).not.toBeInstanceOf(LocalRecordingStore); // local, CALL_RECORDINGS_PATH unset
     expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_STORAGE: 'local', STORAGE_TYPE: 's3' }).type).toBe('local');
+  });
+
+  it('a directory for recordings in progress, as for local recordings; refused or unset, recording only: what is stored stays reachable', () => {
+    const tmp = dir();
+    expect(createRecordingStore({ ...S3_ENV, CALL_RECORDINGS_TMP: tmp }, () => client())).toMatchObject({ tmpDir: tmp, tmpProblem: null });
+    const refused = createRecordingStore({ ...S3_ENV, STORAGE_PATH: tmp, CALL_RECORDINGS_TMP: join(tmp, 'x') }, () => client());
+    expect(refused).toBeInstanceOf(S3RecordingStore);
+    expect(refused).toMatchObject({
+      type: 's3', problem: null, location: 's3:media/call-recordings/', tmpDir: '',
+      tmpProblem: 'CALL_RECORDINGS_TMP must be a directory of its own, not inside or around STORAGE_PATH',
+    });
+    expect(createRecordingStore(S3_ENV, () => client())).toMatchObject({ problem: null, location: 's3:media/call-recordings/', tmpDir: '', tmpProblem: 'CALL_RECORDINGS_TMP is not set' });
   });
 });

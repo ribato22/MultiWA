@@ -1,11 +1,15 @@
 // MultiWA Gateway - the nightly job of the call recordings, and the reaction to a public storage
 // apps/api/src/modules/calls/recordings/call-recordings.cron.ts
 //
-// At 02:30 server time (the process's TZ): the storage's privacy check, then retention, then the orphan sweep. Each
-// step on its own, so one failing does not skip the others; every step is idempotent, so a second api process doing
-// the same is harmless for the data, though each process sends its own alerts. Any check that finds the storage
-// public, this job's or an admin's turning recording on, turns recording off on every profile and alerts the admins:
-// the probe's own bytes came back without credentials, so it is never a fluke.
+// At 02:30 server time (the process's TZ): the storage's privacy check, then the recordings a crash or a failed upload
+// left, then retention, then the orphan sweep. Each step on its own, so one failing does not skip the others. Every
+// step is idempotent for what is stored. The unfinished recordings' step needs a CALL_RECORDINGS_TMP of this api
+// process alone: another process sharing it would take this one's recordings in progress for leftovers. The engines
+// are per process too, and one api process is the supported setup. Any check that finds the storage public, this job's
+// or an admin's turning recording on, turns recording off on every profile and alerts the admins: the probe's own bytes
+// came back without credentials, so it is never a fluke.
+// The privacy check's step also reminds the admins, each night, of the profiles that record on a server whose
+// recordings storage is not set up.
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';
@@ -13,6 +17,7 @@ import { InternalEvents, type CallRecordingsPrivacyPayload } from '../../../metr
 import { turnRecordingOffEverywhere } from '../../profiles/profile-settings';
 import { CallAlerts } from '../coordinator/call-alerts';
 import { CallRecordingsService } from './call-recordings.service';
+import { CallRecorderService } from './call-recorder.service';
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
@@ -28,6 +33,7 @@ export class CallRecordingsCron {
   constructor(
     private readonly recordings: CallRecordingsService,
     private readonly alerts: CallAlerts,
+    private readonly recorder: CallRecorderService,
   ) {}
 
   // The cron library calls the job with its onComplete as the first argument, so the clock is taken here.
@@ -38,6 +44,9 @@ export class CallRecordingsCron {
 
   async run(now: Date): Promise<void> {
     await this.step('privacy check', () => this.checkPrivacy(now));
+    // After the check: a recording is never stored to a storage it found public. Before the sweep: stored now, a
+    // recording is no orphan.
+    await this.step('unfinished recordings', () => this.recorder.finishLeftovers(now));
     await this.step('retention', async () => {
       const deleted = await this.recordings.applyRetention(now);
       if (deleted) this.logger.log(`Retention deleted ${deleted} call recording(s)`);
@@ -77,9 +86,17 @@ export class CallRecordingsCron {
   // A public storage is handled by onPrivacyCheck, which this check's own event reaches.
   private async checkPrivacy(now: Date): Promise<void> {
     const check = await this.recordings.checkStorage(now);
-    if (check.ok || check.reason !== 'storage_check_failed') return;
-    const { recording } = await this.recordings.profilesConcerned();
-    await this.alerts.recordingStorage('check_failed', recording, []);
+    if (!check.ok && check.reason === 'storage_check_failed') {
+      const { recording } = await this.recordings.profilesConcerned();
+      await this.alerts.recordingStorage('check_failed', recording, []);
+    }
+    // The storage or CALL_RECORDINGS_TMP lost after recording was turned on (an env or compose change at a redeploy):
+    // recording stays on, but the recorder plans no recording, so the calls ring unrecorded, and only
+    // GET /calls/media/status says why. Each night, so the admins are reminded until it is set up again.
+    if (this.recordings.storageStatus().problem) {
+      const { recording } = await this.recordings.profilesConcerned();
+      if (recording.length) await this.alerts.recordingStorage('unset', recording, []);
+    }
   }
 
   private async step(name: string, work: () => Promise<unknown>): Promise<void> {

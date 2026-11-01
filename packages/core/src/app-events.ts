@@ -39,6 +39,8 @@ export const AppEvents = {
     REJECTED: 'call.rejected',
     ENDED: 'call.ended',
     UPDATED: 'call.updated',
+    /** A call's recording is stored (after its call ended): the ids and its facts, never its audio or a key. */
+    RECORDING_READY: 'call.recording.ready',
     RECORDING_DELETED: 'call.recording.deleted',
   },
 } as const;

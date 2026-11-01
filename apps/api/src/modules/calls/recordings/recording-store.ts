@@ -12,9 +12,11 @@
 //   announcements/<orgId>/<profileId>/<uuid>.<ext>   an announcement
 //   probe/<uuid>                                     the privacy check's probe, deleted at once
 // and each of them + '.<8 hex>.part': a local write not yet renamed into place.
+// A recording in progress is not here: the recorder writes it in `tmpDir` (CALL_RECORDINGS_TMP), and stores it with
+// putFile once its call ended.
 import { randomBytes, randomUUID } from 'crypto';
-import { mkdirSync } from 'fs';
-import { mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
+import { chmodSync, lstatSync, mkdirSync } from 'fs';
+import { chmod, copyFile, mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import type { Readable } from 'stream';
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
@@ -48,8 +50,20 @@ export interface RecordingStore {
    * what they are set to: GET /calls/media/status shows it to the owners and admins of every organization.
    */
   readonly problem: string | null;
+  /**
+   * Where the recorder writes a recording while its call lasts (CALL_RECORDINGS_TMP): local and private whatever the
+   * store is. '' when `problem` or `tmpProblem` is set.
+   */
+  readonly tmpDir: string;
+  /**
+   * Why recordings cannot be made here (CALL_RECORDINGS_TMP missing or refused), while what is stored stays reachable:
+   * played, deleted, under retention. Null when they can. It names settings only, as `problem` does.
+   */
+  readonly tmpProblem: string | null;
   /** Stores the object privately, replacing what the key held. */
   put(key: string, body: Buffer, mimeType: string): Promise<void>;
+  /** Stores a file privately, streamed (a recording can be tens of MB), replacing what the key held. */
+  putFile(key: string, path: string, mimeType: string): Promise<void>;
   /** The object's size in bytes, or null when there is none. */
   size(key: string): Promise<number | null>;
   /** The bytes from `start` to `end` (inclusive), or the whole object. A missing object rejects, with code ENOENT. */
@@ -108,10 +122,16 @@ export const storageFailed =
 /** A store whose settings are missing or wrong: recording cannot be turned on, and there is nothing to list or sweep. */
 export class UnsetRecordingStore implements RecordingStore {
   readonly location = '';
+  readonly tmpDir = '';
+  readonly tmpProblem = null; // `problem` covers it
 
   constructor(readonly type: RecordingStorageType, readonly problem: string) {}
 
   async put(): Promise<void> {
+    throw new Error(this.problem);
+  }
+
+  async putFile(): Promise<void> {
     throw new Error(this.problem);
   }
 
@@ -136,14 +156,50 @@ export class UnsetRecordingStore implements RecordingStore {
   }
 }
 
-/** Recordings in a directory of their own (CALL_RECORDINGS_PATH). */
+/**
+ * Writes the file's bytes to the disk before it is renamed into place: the recorder deletes its own copy right after
+ * the recording's row is written, and a power cut while the bytes were still only in memory would leave an empty
+ * recording behind that row. A directory is opened read-only: it cannot be opened for writing.
+ */
+export async function flush(path: string, flags = 'r+'): Promise<void> {
+  const file = await open(path, flags);
+  try {
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+}
+
+// How a filesystem that does not flush directories answers (see moveIntoPlace).
+const DIRECTORY_FLUSH_REFUSED = new Set(['EINVAL', 'EBADF', 'ENOTSUP']);
+
+/**
+ * Renames a flushed `.part` file into place, then flushes its directory: the rename is only an entry there, which a
+ * power cut can undo until the directory is on the disk too. The row would then point at a missing key, the bytes
+ * would sit in a `.part` file that the sweep deletes an hour later, and the recorder's own copy would already be gone.
+ * Windows cannot open a directory, so there it is not flushed; and some filesystems (network and FUSE ones among them)
+ * refuse to flush one (EINVAL, EBADF, ENOTSUP), which, as PostgreSQL does, is taken as nothing more to do.
+ */
+export async function moveIntoPlace(part: string, target: string): Promise<void> {
+  await rename(part, target);
+  if (process.platform === 'win32') return;
+  await flush(dirname(target), 'r').catch((e) => {
+    if (!DIRECTORY_FLUSH_REFUSED.has((e as NodeJS.ErrnoException)?.code ?? '')) throw e;
+  });
+}
+
+/** Recordings in a directory of their own (CALL_RECORDINGS_PATH), each file 0600: this server's user's alone. */
 export class LocalRecordingStore implements RecordingStore {
   readonly type = 'local';
   readonly problem = null;
   readonly location: string;
+  readonly tmpDir: string;
+  readonly tmpProblem: string | null;
 
-  constructor(private readonly root: string) {
+  constructor(private readonly root: string, tmp: RecordingsTmp = TMP_UNSET) {
     this.location = `local:${root}`;
+    this.tmpDir = 'dir' in tmp ? tmp.dir : '';
+    this.tmpProblem = 'problem' in tmp ? tmp.problem : null;
   }
 
   // Rebuilt from basename()-stripped segments, '.' and '..' refused: no key, not even one read back from the database,
@@ -156,12 +212,24 @@ export class LocalRecordingStore implements RecordingStore {
 
   async put(key: string, body: Buffer, _mimeType: string): Promise<void> {
     const path = this.path(key);
-    await mkdir(dirname(path), { recursive: true });
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     // Written aside, then renamed into place: a reader never sees half a file. Aside under a name of its own: two
     // writes of one key at once would interleave in a shared one.
     const part = `${path}.${randomBytes(4).toString('hex')}.part`;
-    await writeFile(part, body);
-    await rename(part, path);
+    await writeFile(part, body, { mode: 0o600 });
+    await flush(part);
+    await moveIntoPlace(part, path);
+  }
+
+  async putFile(key: string, path: string, _mimeType: string): Promise<void> {
+    const target = this.path(key);
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    const part = `${target}.${randomBytes(4).toString('hex')}.part`;
+    // Copied, not moved: the recording in progress is on a volume of its own, and stays until its row is written.
+    await copyFile(path, part);
+    await chmod(part, 0o600); // copyFile gives the copy its source's mode
+    await flush(part);
+    await moveIntoPlace(part, target);
   }
 
   async size(key: string): Promise<number | null> {
@@ -211,7 +279,7 @@ export class LocalRecordingStore implements RecordingStore {
 
 /** The part of the S3 client used here (a stand-in in the specs). */
 export interface S3Like {
-  send(command: unknown): Promise<unknown>;
+  send(command: unknown, options?: { abortSignal?: AbortSignal }): Promise<unknown>;
 }
 
 export interface S3RecordingStoreConfig {
@@ -239,15 +307,20 @@ export class S3RecordingStore implements RecordingStore {
   readonly type = 's3';
   readonly problem = null;
   readonly location: string;
+  readonly tmpDir: string;
+  readonly tmpProblem: string | null;
 
   constructor(
     private readonly s3: S3Like,
     private readonly config: S3RecordingStoreConfig,
     private readonly fetchFn: typeof fetch = fetch,
+    tmp: RecordingsTmp = TMP_UNSET,
   ) {
     // The bucket and the prefix, not the endpoint: the same bucket is often reached at a new address (http to https,
     // an internal name), and its recordings are no less its own.
     this.location = `s3:${config.bucket}/${config.prefix}`;
+    this.tmpDir = 'dir' in tmp ? tmp.dir : '';
+    this.tmpProblem = 'problem' in tmp ? tmp.problem : null;
   }
 
   private object(key: string) {
@@ -256,6 +329,27 @@ export class S3RecordingStore implements RecordingStore {
 
   async put(key: string, body: Buffer, mimeType: string): Promise<void> {
     await this.s3.send(new PutObjectCommand({ ...this.object(key), Body: body, ContentType: mimeType, ...(this.config.sse ? { ServerSideEncryption: this.config.sse } : {}) }));
+  }
+
+  async putFile(key: string, path: string, mimeType: string): Promise<void> {
+    const file = await open(path, 'r');
+    const body = file.createReadStream();
+    const failed = new AbortController();
+    body.once('error', (e) => failed.abort(e)); // a read error fails the PUT now, and never goes uncaught
+    try {
+      const { size } = await file.stat();
+      // One PUT, streamed with its length: a multipart upload's object is dated by the START of its upload, and the
+      // nightly sweep would take a long call's recording, stored just before it ran, for an hour-old orphan.
+      await this.s3.send(
+        new PutObjectCommand({
+          ...this.object(key), Body: body, ContentLength: size, ContentType: mimeType,
+          ...(this.config.sse ? { ServerSideEncryption: this.config.sse } : {}),
+        }),
+        { abortSignal: failed.signal },
+      );
+    } finally {
+      body.destroy(); // the file closes however the PUT ended (a store refusing before the body never reads it)
+    }
   }
 
   async size(key: string): Promise<number | null> {
@@ -355,8 +449,69 @@ function isLoopback(url: string): boolean {
 const listed = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names.join(''));
 
 /**
+ * What `dir` may not be inside or around, if anything: the media folder is served without a login, the sessions
+ * volume is in every sessions backup, and a directory around the application would be walked whole. Without
+ * SESSIONS_DIR the engines keep their sessions in /data/sessions or ./sessions (EngineManagerService): neither may
+ * overlap then.
+ */
+function clashOf(dir: string, value: (name: string) => string | undefined): string | null {
+  const sessions = value('SESSIONS_DIR');
+  const clashes: Array<[string, boolean]> = [
+    ['STORAGE_PATH', overlaps(dir, resolve(value('STORAGE_PATH') ?? './media'))],
+    [
+      sessions ? 'SESSIONS_DIR' : 'SESSIONS_DIR (unset: /data/sessions and ./sessions)',
+      (sessions ? [sessions] : ['/data/sessions', './sessions']).some((d) => overlaps(dir, resolve(d))),
+    ],
+    ['the working directory', inside(process.cwd(), dir)],
+  ];
+  return clashes.find(([, yes]) => yes)?.[0] ?? null;
+}
+
+/**
+ * Makes the directory `name` names, when missing, and checks that it is this server's user's alone: recordings are
+ * personal data. A symlink, a directory of another user and a shared one (the sticky bit, as on /tmp) are refused; one
+ * others may read (a Docker volume: root, 0755) is made 0700. The problem, or null.
+ */
+function ownDirectory(name: string, dir: string): string | null {
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const info = lstatSync(dir);
+    if (!info.isDirectory() || (process.getuid && info.uid !== process.getuid()) || info.mode & 0o1000) return `${name} must be a directory of this server's user alone`;
+    if (info.mode & 0o077) chmodSync(dir, 0o700);
+    return null;
+  } catch (e) {
+    // The reason names the path (EACCES … mkdir '/data/…'): it goes to the server log only.
+    logger.warn(`${name} (${clean(dir)}) cannot be created: ${clean(reasonOf(e))}`);
+    return `${name} cannot be created (the server log says why)`;
+  }
+}
+
+/** Where the recorder writes recordings in progress, or why it cannot. */
+type RecordingsTmp = { dir: string } | { problem: string };
+// CALL_RECORDINGS_TMP unset, and a store built without its directory: tmpDir is '' exactly when tmpProblem is set, so
+// a recorder trusting tmpProblem never writes into the working directory.
+const TMP_UNSET: RecordingsTmp = { problem: 'CALL_RECORDINGS_TMP is not set' };
+
+/**
+ * The directory of recordings in progress (CALL_RECORDINGS_TMP), checked like CALL_RECORDINGS_PATH, and apart from it:
+ * the nightly sweep walks the recordings directory. Required, with no default: one in the shared system temp directory
+ * could be taken by another local user, is lost on a reboot where /tmp is in RAM, and would be shared by two
+ * installations on one host, each one's boot pass discarding the other's recordings in progress.
+ */
+function recordingsTmp(value: (name: string) => string | undefined, recordingsRoot: string | null): RecordingsTmp {
+  const set = value('CALL_RECORDINGS_TMP');
+  if (!set) return TMP_UNSET;
+  const dir = resolve(set);
+  const clash = clashOf(dir, value) ?? (recordingsRoot && overlaps(dir, recordingsRoot) ? 'CALL_RECORDINGS_PATH' : null);
+  if (clash) return { problem: `CALL_RECORDINGS_TMP must be a directory of its own, not inside or around ${clash}` };
+  const problem = ownDirectory('CALL_RECORDINGS_TMP', dir);
+  return problem ? { problem } : { dir };
+}
+
+/**
  * The store the environment asks for. A missing or wrong setting gives a store whose `problem` says which: the API
- * starts all the same, and recording cannot be turned on.
+ * starts all the same, and recording cannot be turned on. CALL_RECORDINGS_TMP, which only the recorder needs, gives its
+ * `tmpProblem` instead: recording cannot be turned on, and what is stored stays playable, deletable and under retention.
  */
 export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3ClientConfig) => S3Like = (config) => new S3Client(config)): RecordingStore {
   // `|| undefined`: compose passes an unset variable as an empty string.
@@ -383,6 +538,7 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
     if (!SAFE_PREFIX.test(prefix) || prefix.split('/').some((s) => s === '.' || s === '..')) {
       return new UnsetRecordingStore('s3', 'CALL_RECORDINGS_PREFIX may hold only letters, digits, ".", "_", "-" and "/" (and no "." or ".." segment)');
     }
+    const tmp = recordingsTmp(value, null);
     const publicUrl = value('S3_PUBLIC_URL')?.replace(/\/+$/, '');
     return new S3RecordingStore(
       makeS3({
@@ -392,8 +548,13 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
         // of 6 s or more 3 s into a request, and only if no answer has come by then. So it bounds a storage slow to
         // answer, not the body of an answer that came within those 3 s, which a client reading slowly may pause (that
         // of a later one fails after 17 s paused). Each of the SDK's three attempts waits for it: about a minute for one
-        // call to a silent storage. Not requestTimeout: this SDK only warns past it.
+        // call to a silent storage, though putFile's streamed body is sent once, as the SDK retries no stream (the
+        // recorder's own four tries are its retries). Not requestTimeout: this SDK only warns past it.
         requestHandler: { connectionTimeout: 5_000, socketTimeout: 20_000 },
+        // Since 3.729 the SDK sends a streamed body with a trailing checksum (aws-chunked), which several
+        // S3-compatible stores refuse: checksums only where an operation requires one.
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+        responseChecksumValidation: 'WHEN_REQUIRED',
       }),
       {
         bucket,
@@ -404,6 +565,8 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
         // inside the api's container it reaches nothing, so the check could never pass.
         publicBases: [...new Set([endpoint, ...(publicUrl && !isLoopback(publicUrl) ? [publicUrl] : [])])],
       },
+      undefined,
+      tmp,
     );
   }
   // Not what it is set to: a path given there in place of CALL_RECORDINGS_PATH would be shown to every organization.
@@ -411,26 +574,10 @@ export function createRecordingStore(env: NodeJS.ProcessEnv, makeS3: (config: S3
   const path = value('CALL_RECORDINGS_PATH');
   if (!path) return new UnsetRecordingStore('local', 'CALL_RECORDINGS_PATH is not set');
   const root = resolve(path);
-  // The media folder is served without a login, the sessions volume is snapshotted with every session, and a root
-  // around the application would be walked whole by the nightly sweep. Without SESSIONS_DIR the engines keep their
-  // sessions in /data/sessions or ./sessions (EngineManagerService): neither may overlap then.
-  const sessions = value('SESSIONS_DIR');
-  const clashes: Array<[string, boolean]> = [
-    ['STORAGE_PATH', overlaps(root, resolve(value('STORAGE_PATH') ?? './media'))],
-    [
-      sessions ? 'SESSIONS_DIR' : 'SESSIONS_DIR (unset: /data/sessions and ./sessions)',
-      (sessions ? [sessions] : ['/data/sessions', './sessions']).some((d) => overlaps(root, resolve(d))),
-    ],
-    ['the working directory', inside(process.cwd(), root)],
-  ];
-  const clash = clashes.find(([, yes]) => yes);
-  if (clash) return new UnsetRecordingStore('local', `CALL_RECORDINGS_PATH must be a directory of its own, not inside or around ${clash[0]}`);
-  try {
-    mkdirSync(root, { recursive: true });
-  } catch (e) {
-    // The reason names the path (EACCES … mkdir '/data/…'): it goes to the server log only.
-    logger.warn(`CALL_RECORDINGS_PATH (${clean(root)}) cannot be created: ${clean(reasonOf(e))}`);
-    return new UnsetRecordingStore('local', 'CALL_RECORDINGS_PATH cannot be created (the server log says why)');
-  }
-  return new LocalRecordingStore(root);
+  const clash = clashOf(root, value);
+  if (clash) return new UnsetRecordingStore('local', `CALL_RECORDINGS_PATH must be a directory of its own, not inside or around ${clash}`);
+  // That directory IS the storage: refused, nothing can be stored.
+  const problem = ownDirectory('CALL_RECORDINGS_PATH', root);
+  if (problem) return new UnsetRecordingStore('local', problem);
+  return new LocalRecordingStore(root, recordingsTmp(value, root));
 }

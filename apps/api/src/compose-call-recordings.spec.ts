@@ -20,4 +20,12 @@ describe.each(['docker-compose.yml', 'docker-compose.production.yml', 'docker-co
   it('passes the recordings storage settings', () => {
     for (const name of SETTINGS) expect(api).toContain(`${name}: \${${name}:-}`);
   });
+
+  // Recordings in progress outlive the container too: a restart in the middle of a call leaves its recording to be
+  // stored (partial) at the next start.
+  it('gives the api a directory of its own for recordings in progress, on a volume of its own', () => {
+    expect(api).toContain('CALL_RECORDINGS_TMP: ${CALL_RECORDINGS_TMP:-/data/call-recordings-tmp}');
+    expect(api).toMatch(/^\s+- call_recordings_tmp:\/data\/call-recordings-tmp$/m);
+    expect(readCompose(file)).toMatch(/^volumes:\n(?: {2}\S.*\n)*? {2}call_recordings_tmp:\s*$/m);
+  });
 });

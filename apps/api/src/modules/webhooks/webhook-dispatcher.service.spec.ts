@@ -73,7 +73,7 @@ describe('WebhookDispatcherService', () => {
 
 describe('WebhookDispatcherService with ENGINE_HOST=worker', () => {
   // The worker dispatches the engine's events; these the api produces itself, and they never reach the worker.
-  it('still dispatches the events the API produces itself (call.updated, call.recording.deleted), nothing else', () => {
+  it('still dispatches the events the API produces itself (call.updated, the recording events), nothing else', () => {
     process.env.ENGINE_HOST = 'worker';
     try {
       let handler: (event: string, payload: unknown) => void = () => undefined;
@@ -84,9 +84,11 @@ describe('WebhookDispatcherService with ENGINE_HOST=worker', () => {
       handler(AppEvents.MESSAGE.RECEIVED, { profileId: 'p1' });
       handler(AppEvents.CALL.UPDATED, { profileId: 'p1', callId: 'c1' });
       handler(AppEvents.CALL.RECORDING_DELETED, { profileId: 'p1', callId: 'c1', recordingId: 'r1' });
+      handler(AppEvents.CALL.RECORDING_READY, { profileId: 'p1', callId: 'c1', recordingId: 'r1' });
       expect(dispatch.mock.calls).toEqual([
         [AppEvents.CALL.UPDATED, { profileId: 'p1', callId: 'c1' }],
         [AppEvents.CALL.RECORDING_DELETED, { profileId: 'p1', callId: 'c1', recordingId: 'r1' }],
+        [AppEvents.CALL.RECORDING_READY, { profileId: 'p1', callId: 'c1', recordingId: 'r1' }],
       ]);
     } finally {
       delete process.env.ENGINE_HOST;
