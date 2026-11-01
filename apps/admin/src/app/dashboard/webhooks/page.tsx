@@ -20,6 +20,9 @@ import {
   PhoneIncoming,
   PhoneMissed,
   PhoneOff,
+  PhoneCall,
+  CircleDot,
+  Trash2,
   RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
@@ -69,9 +72,12 @@ const WEBHOOK_EVENTS: WebhookEvent[] = [
   { value: 'contact.created',   label: 'Contact Created',   Icon: UserPlus,      tone: 'text-rose-300' },
   { value: 'group.update',      label: 'Group Update',      Icon: Users,         tone: 'text-orange-300' },
   { value: 'call.received',     label: 'Call Received',     Icon: PhoneIncoming, tone: 'text-sky-300' },
+  { value: 'call.answered',          label: 'Call Answered',     Icon: PhoneCall,     tone: 'text-emerald-300' },
   { value: 'call.ended',        label: 'Call Ended',        Icon: PhoneMissed,   tone: 'text-rose-300' },
   { value: 'call.rejected',     label: 'Call Rejected',     Icon: PhoneOff,      tone: 'text-amber-300' },
   { value: 'call.updated',      label: 'Call Updated',      Icon: RefreshCw,     tone: 'text-violet-300' },
+  { value: 'call.recording.ready',   label: 'Recording Ready',   Icon: CircleDot,     tone: 'text-sky-300' },
+  { value: 'call.recording.deleted', label: 'Recording Deleted', Icon: Trash2,        tone: 'text-rose-300' },
 ];
 // Compares the listed events only: a webhook made through the API can subscribe to events this list lacks.
 const hasAllListed = (events: string[]) => WEBHOOK_EVENTS.every((e) => events.includes(e.value));

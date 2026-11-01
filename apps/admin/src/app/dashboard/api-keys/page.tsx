@@ -70,6 +70,8 @@ const PERMISSIONS = [
   { value: 'webhooks:read', label: 'Read Webhooks', group: 'Webhooks' },
   { value: 'webhooks:write', label: 'Manage Webhooks', group: 'Webhooks' },
   { value: 'broadcast:write', label: 'Send Broadcasts', group: 'Broadcast' },
+  { value: 'recordings:read', label: 'Play recordings', group: 'Recordings' },
+  { value: 'recordings:delete', label: 'Delete recordings', group: 'Recordings' },
 ];
 
 export default function ApiKeysPage() {
@@ -294,7 +296,7 @@ export default function ApiKeysPage() {
                     <div className="flex flex-wrap gap-1">
                       {(apiKey.permissions || []).slice(0, 2).map(p => (
                         <Badge key={p} variant="secondary" className="text-xs">
-                          {p.split(':')[0]}
+                          {PERMISSIONS.find((x) => x.value === p)?.label ?? p}
                         </Badge>
                       ))}
                       {(apiKey.permissions || []).length > 2 && (
@@ -364,7 +366,7 @@ export default function ApiKeysPage() {
               <div className="flex flex-wrap gap-1">
                 {(apiKey.permissions || []).slice(0, 3).map(p => (
                   <Badge key={p} variant="secondary" className="text-xs">
-                    {p.split(':')[0]}
+                    {PERMISSIONS.find((x) => x.value === p)?.label ?? p}
                   </Badge>
                 ))}
                 {(apiKey.permissions || []).length > 3 && (

@@ -12,6 +12,8 @@ import {
   Smartphone,
   MessagesSquare,
   PhoneIncoming,
+  PhoneMissed,
+  PhoneOff,
   MessageSquare,
   Users,
   LayoutTemplate,
@@ -71,7 +73,12 @@ const notifIcons: Record<string, NotifTypeInfo> = {
   automation:    { Icon: Zap,           tone: 'text-amber-300' },
   system:        { Icon: Wrench,        tone: 'text-muted-foreground' },
   security:      { Icon: Lock,          tone: 'text-rose-300' },
+  call:          { Icon: PhoneMissed,   tone: 'text-rose-300' },
 };
+// The call alerts (the media server died, a recording failed, the recording storage) come as `system`, with a kind.
+const CALL_ALERT: NotifTypeInfo = { Icon: PhoneOff, tone: 'text-amber-300' };
+const notifIcon = (n: Notification): NotifTypeInfo =>
+  (String(n.metadata?.kind ?? '').startsWith('call') ? CALL_ALERT : notifIcons[n.type]) ?? { Icon: Bell, tone: 'text-muted-foreground' };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -355,7 +362,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         </div>
                       ) : (
                         notifications.map(notif => {
-                          const typeInfo = notifIcons[notif.type] ?? { Icon: Bell, tone: 'text-muted-foreground' };
+                          const typeInfo = notifIcon(notif);
                           const TypeIcon = typeInfo.Icon;
                           return (
                             <button
