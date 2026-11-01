@@ -2,7 +2,7 @@
 // a 1-s timeslice; its Info is 25 bytes at offset 48, after the 36-byte EBML header and the Segment's 12-byte header):
 // the Duration written into Info, a block cut off at the end dropped, any other layout copied as it is.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
 import { copyFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -141,8 +141,10 @@ describe('finalizeWebm', () => {
     ['no block at all (cut right after Tracks)', FIXTURE.subarray(0, TRACKS_END)],
     ['not a WebM at all', Buffer.from('not a recording')],
   ])('copies as it is: %s', async (_what, body, windowBytes) => {
+    const src = file(body);
+    chmodSync(src, 0o644); // whatever the umask, so that the copy's 0600 is finalizeWebm's doing
     const dst = out();
-    expect(await finalizeWebm(file(body), dst, { windowBytes })).toEqual({ durationMs: 0, bytes: body.length, rewritten: false });
+    expect(await finalizeWebm(src, dst, { windowBytes })).toEqual({ durationMs: 0, bytes: body.length, rewritten: false });
     expect(readFileSync(dst).equals(body)).toBe(true);
     expect(modeOf(dst)).toBe(0o600); // copied from a file of 0644
   });

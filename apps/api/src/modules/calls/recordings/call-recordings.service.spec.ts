@@ -681,6 +681,42 @@ describe('CallRecordingsService: the storage status and its privacy check', () =
     expect(service.storageStatus()).toEqual({ storage: 'local', configured: false, problem: 'CALL_RECORDINGS_TMP is not set', lastCheck: null });
   });
 
+  // Only the recorder needs CALL_RECORDINGS_TMP: a guard of `problem ?? tmpProblem` anywhere else would lock away what
+  // is stored.
+  it('a store that cannot make recordings here still plays, deletes, purges, applies retention and sweeps what it holds', async () => {
+    const store = new MemoryRecordingStore();
+    store.tmpProblem = 'CALL_RECORDINGS_TMP is not set';
+    const { service } = make(store);
+
+    store.file(KEY, '0123456789', NOW);
+    db.callRecording.findUnique.mockResolvedValue(rec());
+    expect(await text((await service.play(CALL, ACTOR, undefined, false)).body)).toBe('0123456789');
+
+    db.callRecording.updateMany.mockResolvedValue({ count: 1 });
+    await expect(service.deleteByAdmin(CALL, ADMIN)).resolves.toMatchObject({ recordingId: 'r1' });
+    expect(store.files.has(KEY)).toBe(false);
+
+    store.file('a');
+    db.callRecording.findMany.mockResolvedValueOnce([{ storageKey: 'a', storageType: 'local', storageLocation: HERE }]);
+    db.profile.findUnique.mockResolvedValue({ settings: {} });
+    await service.purgeProfile(PROFILE);
+    expect(store.files.has('a')).toBe(false);
+
+    store.file('p1/0');
+    db.callRecording.groupBy.mockResolvedValue([{ profileId: 'p1' }]);
+    db.profile.findMany.mockResolvedValueOnce([{ id: 'p1', settings: {}, workspace: { organizationId: ORG } }]);
+    db.callRecording.findMany.mockResolvedValueOnce([rec({ id: 'p1-0', profileId: 'p1', storageKey: 'p1/0', createdAt: new Date(NOW.getTime() - 91 * DAY) })]);
+    expect(await service.applyRetention(NOW)).toBe(1);
+    expect(store.files.has('p1/0')).toBe(false);
+
+    const orphan = recordingKey(ORG, PROFILE, '44444444-4444-4444-8444-444444444444', NOW);
+    store.file(orphan, 'x', new Date(NOW.getTime() - ORPHAN_MIN_AGE_MS - 1000));
+    db.profile.findMany.mockResolvedValueOnce([]);
+    db.callRecording.findMany.mockResolvedValueOnce([]);
+    expect(await service.sweepOrphans(NOW)).toBe(1);
+    expect(store.files.size).toBe(0);
+  });
+
   it('a storage that cannot say whether the announcement is there fails the check, and no probe is put', async () => {
     const { service, store } = make();
     const announcement = { storageKey: announcementKey(ORG, PROFILE, 'mp3'), mimeType: 'audio/mpeg', durationSec: 3 };

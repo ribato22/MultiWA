@@ -127,6 +127,7 @@ describe('LocalRecordingStore', () => {
   it('stores a file under its key: copied aside, then renamed into place; the file itself stays', async () => {
     const src = join(root, 'a.webm');
     writeFileSync(src, 'a recording');
+    chmodSync(src, 0o644); // whatever the umask, so that the copy's 0600 is the store's doing
     const withTmp = new LocalRecordingStore(root, { dir: '/x' });
     await withTmp.putFile('o/p/2026/10/c.webm', src, 'audio/webm');
     expect(readFileSync(join(root, 'o/p/2026/10/c.webm'), 'utf8')).toBe('a recording');
