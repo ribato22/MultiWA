@@ -198,6 +198,41 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     }
   });
 
+  // The upload reads the length from the file's headers, which a crafted file can make lie: the page checks what it
+  // decoded, before any of it plays.
+  it('refuses an announcement that decodes longer than the limit, before any of it plays', async () => {
+    const gains: number[] = [];
+    const refused = page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 1.5).toString('base64'), 1000).catch((e: Error) => e.message);
+    gains.push(await page.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value));
+    expect(await refused).toBe('Announcement too long: 1.5 s');
+    expect(gains).toEqual([1]); // the agent was never held for it
+    expect(await page.evaluate(() => (window as any).__mwCall.announcing)).toBe(false);
+    expect((await page.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 0.3).toString('base64'), 1000)).durationMs).toBe(300);
+  });
+
+  // Played on, it would reach the next call on this page: into the microphone they share, its agent held silent, and
+  // that call's own announcement refused while this one "plays".
+  it('an announcement ends with its call: cut off 250-500 ms after the end, the agent given back, the line free', async () => {
+    const p = await openRecordingPage();
+    try {
+      await p.evaluate(answerActiveCall, 'CALL1', 5000);
+      await p.evaluate(trackIntervals);
+      const gain = () => p.evaluate(() => (window as any).__mwCall.inputs.agent.gain.value);
+      const started = Date.now();
+      const playing = p.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 4).toString('base64')).catch((e: Error) => e.message);
+      await sleep(600);
+      expect(await gain()).toBe(0); // it plays
+      await p.evaluate(() => (window as any).__fakeWa.ring('CALL2')); // CALL1 is over: the next call rings
+      expect(await playing).toBe('The call ended');
+      expect(Date.now() - started).toBeLessThan(2000); // not the 4 s of the file
+      expect(await gain()).toBe(1);
+      expect(await liveIntervals(p)).toBe(0); // its poll is cleared
+      expect((await p.evaluate(playAnnouncementInPage, 'CALL2', sineWav(880, 0.3).toString('base64'))).durationMs).toBe(300);
+    } finally {
+      await p.close();
+    }
+  }, 20_000);
+
   it('records stereo: the caller on the left, what the caller hears on the right', async () => {
     const from = chunks.length;
     expect(await page.evaluate(startRecordingInPage, 'CALL1', 1000)).toEqual(normalPick('destination'));

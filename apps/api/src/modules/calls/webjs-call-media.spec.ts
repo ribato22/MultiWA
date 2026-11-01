@@ -249,7 +249,9 @@ describe('WebJsCallMedia without a browser', () => {
     await media.hangUp('c1');
     expect(page.evaluate).toHaveBeenLastCalledWith(hangUpActiveCall, 'c1', 10000);
     expect(await media.playAnnouncement('c1', Buffer.from([1, 2, 3]))).toEqual({ durationMs: 900 });
-    expect(page.evaluate).toHaveBeenLastCalledWith(playAnnouncementInPage, 'c1', 'AQID'); // the audio as base64
+    expect(page.evaluate).toHaveBeenLastCalledWith(playAnnouncementInPage, 'c1', 'AQID', null); // the audio as base64, no limit
+    await media.playAnnouncement('c1', Buffer.from([1, 2, 3]), { maxDurationMs: 30_500 });
+    expect(page.evaluate).toHaveBeenLastCalledWith(playAnnouncementInPage, 'c1', 'AQID', 30_500);
   });
 
   it('a page rejection surfaces unchanged', async () => {
