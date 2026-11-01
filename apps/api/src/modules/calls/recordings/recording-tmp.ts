@@ -3,10 +3,12 @@
 //
 // In the store's tmpDir, per call (its calls row id, a lowercase uuid):
 //   <callId>.webm        the recording, appended chunk by chunk as the page sends them
-//   <callId>.json        what is known of it: { announced, stopped }, written whole and flushed (aside, then renamed)
+//   <callId>.json        what is known of it: { announced, stopped, announcedAtMs }, written whole and flushed (aside,
+//                        then renamed)
 //   <callId>.final.webm  the copy with its length written in, while it is being stored
 // The state is written FIRST, so a recording never lacks one; a crash leaves both, and the next boot (or the nightly
-// job) finishes them: discarded when the announcement had not played, stored as partial when not stopped cleanly.
+// job) finishes them: discarded when the announcement had not played (or the file ends before it did), stored as
+// partial when not stopped cleanly.
 // Only names of these shapes are ever touched: the directory may hold anything else.
 import { randomBytes } from 'crypto';
 import { readdir, readFile, rm, stat, writeFile } from 'fs/promises';
@@ -18,6 +20,11 @@ export interface RecordingState {
   announced: boolean;
   /** Its recorder stopped and gave its last chunks: otherwise what was written is all there is (partial). */
   stopped: boolean;
+  /**
+   * When the announcement ended, in ms after the recorder started. Counted after the page's own start, so never later
+   * than the file's own time of that moment: a file that ends sooner cuts the announcement short.
+   */
+  announcedAtMs?: number;
 }
 
 const OWN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(webm|json|final\.webm|json\.[0-9a-f]{8}\.part)$/;
@@ -51,7 +58,11 @@ export async function writeState(dir: string, callId: string, state: RecordingSt
 export async function readState(dir: string, callId: string): Promise<RecordingState | null> {
   try {
     const raw = JSON.parse(await readFile(tmpFiles(dir, callId).state, 'utf8'));
-    return { announced: raw?.announced === true, stopped: raw?.stopped === true };
+    return {
+      announced: raw?.announced === true,
+      stopped: raw?.stopped === true,
+      ...(Number.isFinite(raw?.announcedAtMs) ? { announcedAtMs: raw.announcedAtMs } : {}),
+    };
   } catch (e) {
     if ((e as NodeJS.ErrnoException)?.code === 'ENOENT' || e instanceof SyntaxError) return null;
     throw e;

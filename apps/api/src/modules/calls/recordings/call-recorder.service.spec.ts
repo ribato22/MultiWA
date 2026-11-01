@@ -9,13 +9,14 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { PassThrough } from 'stream';
 
-vi.mock('@multiwa/database', () => ({ prisma: { callRecording: { create: vi.fn() }, call: { findUnique: vi.fn() } } }));
+vi.mock('@multiwa/database', () => ({ prisma: { callRecording: { create: vi.fn(), findUnique: vi.fn() }, call: { findUnique: vi.fn() } } }));
 vi.mock('../coordinator/call-alerts', () => ({ CallAlerts: class {} }));
 vi.mock('./call-recordings.service', () => ({ CallRecordingsService: class {} }));
-// The real listing; a spec may set the order a pass meets the calls in (a directory's own order is the filesystem's).
+// The real listing and deletes; a spec may set the order a pass meets the calls in (a directory's own order is the
+// filesystem's), or hold a delete.
 vi.mock('./recording-tmp', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./recording-tmp')>();
-  return { ...actual, leftovers: vi.fn(actual.leftovers) };
+  return { ...actual, leftovers: vi.fn(actual.leftovers), removeFiles: vi.fn(actual.removeFiles) };
 });
 
 import { prisma } from '@multiwa/database';
@@ -24,7 +25,7 @@ import { InternalEvents } from '../../../metrics/internal-events';
 import { MemoryRecordingStore } from '../../../testing/memory-recording-store';
 import { CallRecorderService } from './call-recorder.service';
 import { recordingKey } from './recording-store';
-import { leftovers, readState, writeState } from './recording-tmp';
+import { leftovers, readState, removeFiles, writeState, type RecordingState } from './recording-tmp';
 
 const db = prisma as any;
 const FIXTURE = readFileSync(join(__dirname, 'fixtures', 'recorded.webm'));
@@ -101,6 +102,7 @@ const harness = () => {
 
 beforeEach(() => {
   db.callRecording.create.mockReset().mockImplementation(async ({ data }: any) => ({ id: 'r1', createdAt: new Date(), deletedAt: null, ...data }));
+  db.callRecording.findUnique.mockReset().mockResolvedValue(null);
   db.call.findUnique.mockReset().mockResolvedValue(ROW);
 });
 afterEach(() => {
@@ -139,7 +141,7 @@ describe('CallRecorderService.begin', () => {
     expect(h.onAnnouncing).toHaveBeenCalledWith(1.5);
     expect(h.onAnnouncing.mock.invocationCallOrder[0]).toBeLessThan(h.media.playAnnouncement.mock.invocationCallOrder[0]);
     expect(h.media.playAnnouncement).toHaveBeenCalledWith('W1', ANNOUNCEMENT_BYTES, { maxDurationMs: 30_500 });
-    expect(await readState(h.store.tmpDir, CALL)).toEqual({ announced: true, stopped: false });
+    expect(await readState(h.store.tmpDir, CALL)).toEqual({ announced: true, stopped: false, announcedAtMs: expect.any(Number) });
     h.media.send(1000);
     h.media.send(2000);
     await h.recorder.end(CALL);
@@ -360,7 +362,44 @@ describe('CallRecorderService.end', () => {
     vi.spyOn(h.store, 'putFile').mockRejectedValue(new Error('connect ETIMEDOUT'));
     await h.recorder.end(CALL);
     expect(await h.idle()).toEqual(['kept']);
-    expect(await readState(h.store.tmpDir, CALL)).toEqual({ announced: true, stopped: false });
+    expect(await readState(h.store.tmpDir, CALL)).toMatchObject({ announced: true, stopped: false });
+  });
+
+  // The page sends its chunks every 5 s: a stop that fails may lose the one with the announcement's last seconds.
+  it.each([
+    ['lasted 4 s: its file (3.4 s) ends before it did, so nothing is kept', 0, 4_000, 'discarded', 0],
+    ['lasted 1.5 s after a 3-s start: counted from the start, its file (3.4 s) holds it whole', 3_000, 1_500, 'stored', 1],
+  ] as const)('a stop that fails, and an announcement that %s', async (_case, startMs, playMs, result, rows) => {
+    vi.useFakeTimers({ toFake: ['Date'] }); // the clock alone, moved by hand
+    const h = harness();
+    const start = h.media.startRecording.getMockImplementation()!;
+    h.media.startRecording.mockImplementation(async (...args) => {
+      vi.advanceTimersByTime(startMs); // the page waits for the caller's audio: before the recording's own time
+      return start(...args);
+    });
+    h.media.playAnnouncement.mockImplementation(async () => {
+      vi.advanceTimersByTime(playMs);
+      return { durationMs: playMs };
+    });
+    await h.recorder.begin(h.call);
+    h.media.send(FIXTURE.length); // all the page sent before its stop failed
+    h.media.stopRecording.mockRejectedValue(new Error('1 of 3 recording chunks were not delivered'));
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual([result]);
+    expect(db.callRecording.create).toHaveBeenCalledTimes(rows);
+    expect(h.files()).toEqual([]);
+    expect(h.alerts.recordingFailed).not.toHaveBeenCalled(); // the caller hung up, or the server stopped, then
+  });
+
+  it('a file whose write fails only as it closes (EIO, EFBIG) is saved as partial too', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    const out = (h.recorder as any).runs.get(CALL).out;
+    out.once('finish', () => out.emit('error', Object.assign(new Error('EIO: i/o error, close'), { code: 'EIO' })));
+    vi.spyOn(h.store, 'putFile').mockRejectedValue(new Error('connect ETIMEDOUT'));
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['kept']);
+    expect(await readState(h.store.tmpDir, CALL)).toMatchObject({ announced: true, stopped: false });
   });
 
   it('the upload is tried four times: stored on the fourth', async () => {
@@ -382,7 +421,7 @@ describe('CallRecorderService.end', () => {
     await h.recorder.end(CALL);
     await h.idle();
     expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]); // the final copy goes; the recording and its state stay
-    expect(await readState(h.store.tmpDir, CALL)).toEqual({ announced: true, stopped: true });
+    expect(await readState(h.store.tmpDir, CALL)).toMatchObject({ announced: true, stopped: true });
     expect(h.alerts.recordingFailed).toHaveBeenCalledWith('upload_failed', PROFILE);
     expect(h.counted()).toEqual([{ kind: 'upload', result: 'failed' }]);
     expect(db.callRecording.create).not.toHaveBeenCalled();
@@ -457,6 +496,19 @@ describe('CallRecorderService.end', () => {
     expect(h.events.emit).not.toHaveBeenCalledWith(AppEvents.CALL.RECORDING_READY, expect.anything());
   });
 
+  it.each([
+    ['stored already (P2002)', 'stored', 'P2002'],
+    ['its call gone (P2003)', 'discarded', 'P2003'],
+  ] as const)('%s, though its files could not be deleted: %s all the same, and no upload counted as failed', async (_case, result, code) => {
+    const h = harness();
+    db.callRecording.create.mockRejectedValue(Object.assign(new Error('Constraint failed'), { code }));
+    await h.recorder.begin(h.call);
+    mkdirSync(join(h.store.tmpDir, `${CALL}.json.1a2b3c4d.part`)); // a directory: its rm rejects
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual([result]);
+    expect(h.counted()).toEqual([]);
+  });
+
   it('the end of a call it does not record does nothing', async () => {
     const h = harness();
     await h.recorder.end(CALL);
@@ -469,7 +521,7 @@ describe('CallRecorderService.finishLeftovers', () => {
   const NOW = new Date('2026-11-01T02:30:00Z');
   const row = (settings: Record<string, unknown> = {}) => ({ ...ROW, profile: { settings, workspace: { organizationId: ORG } } });
   /** Files a crash left for `callId`: the fixture recording and a state, last written `daysAgo` before NOW. */
-  const leftover = async (h: ReturnType<typeof make>, callId: string, state: { announced: boolean; stopped: boolean } | null, daysAgo = 0) => {
+  const leftover = async (h: ReturnType<typeof make>, callId: string, state: RecordingState | null, daysAgo = 0) => {
     if (state) await writeState(h.store.tmpDir, callId, state);
     const recording = join(h.store.tmpDir, `${callId}.webm`);
     writeFileSync(recording, FIXTURE);
@@ -502,6 +554,7 @@ describe('CallRecorderService.finishLeftovers', () => {
     ['it has no state', null, (): unknown => row(), 0],
     ['its call is gone', { announced: true, stopped: true }, (): unknown => null, 0],
     ["it is older than its profile's retention period", { announced: true, stopped: true }, (): unknown => row({ callsRecordingRetentionDays: 7 }), 8],
+    ['its file (3.4 s) ends before its announcement did', { announced: true, stopped: false, announcedAtMs: 4_000 }, (): unknown => row(), 0],
   ] as const)('discards one when %s', async (_case, state, found, daysAgo) => {
     const h = harness();
     await leftover(h, CALL, state, daysAgo);
@@ -509,6 +562,20 @@ describe('CallRecorderService.finishLeftovers', () => {
     expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
     expect(h.files()).toEqual([]);
     expect(db.callRecording.create).not.toHaveBeenCalled();
+  });
+
+  // Another upload would put back audio an admin deleted since, or leave a copy no row points to once the storage moved.
+  it('one stored already (by a try whose files were not deleted): its files go, with no second upload and no event', async () => {
+    const h = harness();
+    await leftover(h, CALL, { announced: true, stopped: true });
+    db.call.findUnique.mockResolvedValue(row());
+    db.callRecording.findUnique.mockResolvedValue({ id: 'r1' });
+    db.callRecording.create.mockRejectedValue(Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }));
+    const put = vi.spyOn(h.store, 'putFile');
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 1, kept: 0, discarded: 0 });
+    expect(put).not.toHaveBeenCalled();
+    expect(h.files()).toEqual([]);
+    expect(h.events.emit).not.toHaveBeenCalled(); // no call.recording.ready, no counter
   });
 
   it('keeps one whose upload fails again, and tells the admins; the next night tries again', async () => {
@@ -556,6 +623,39 @@ describe('CallRecorderService.finishLeftovers', () => {
     expect(await storing).toBe('stored');
     other();
     expect(await pass).toEqual({ stored: 1, kept: 0, discarded: 0 }); // OTHER's alone
+  });
+
+  it('leaves alone a failed recording its drop is deleting in the background, though the drop ends while it lists', async () => {
+    const h = harness();
+    h.media.startRecording.mockRejectedValue(new Error('No caller audio to record'));
+    const actual = await vi.importActual<typeof import('./recording-tmp')>('./recording-tmp');
+    let deleting!: () => void;
+    const deleteHeld = new Promise<void>((resolve) => (deleting = resolve));
+    let deleteNow!: () => void;
+    const deleted = new Promise<void>((resolve) => (deleteNow = resolve));
+    vi.mocked(removeFiles).mockImplementationOnce(async (dir, callId) => {
+      deleting();
+      await deleted;
+      return actual.removeFiles(dir, callId);
+    });
+    await h.recorder.begin(h.call); // its drop goes on in the background
+    await deleteHeld;
+    let listing!: () => void;
+    const listHeld = new Promise<void>((resolve) => (listing = resolve));
+    let listNow!: () => void;
+    const listed = new Promise<void>((resolve) => (listNow = resolve));
+    vi.mocked(leftovers).mockImplementationOnce(async (dir) => {
+      const found = await actual.leftovers(dir);
+      listing();
+      await listed;
+      return found;
+    });
+    const pass = h.recorder.finishLeftovers(NOW);
+    await listHeld; // the pass saw the drop's files
+    deleteNow();
+    await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalled()); // the drop's last step
+    listNow();
+    expect(await pass).toEqual({ stored: 0, kept: 0, discarded: 0 });
   });
 
   it('does nothing without a storage set up', async () => {

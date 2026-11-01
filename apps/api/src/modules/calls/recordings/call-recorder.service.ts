@@ -9,8 +9,8 @@
 //
 // A recorder that does not start, or an announcement that does not play, leaves the call unrecorded: the agent is
 // connected all the same, the files are deleted, and the admins are alerted. A recording whose announcement did not
-// play is never kept. One that could not be stored stays in tmpDir and is tried again at boot and each night, never to
-// a storage last found public, and never past its profile's retention period.
+// play, or whose file ends before it did, is never kept. One that could not be stored stays in tmpDir and is tried
+// again at boot and each night, never to a storage last found public, and never past its profile's retention period.
 import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { once } from 'events';
@@ -85,7 +85,11 @@ interface Run {
   out: WriteStream | null;
   /** The engine's recorder may hold this call: a start was asked for, and no stop since. */
   recording: boolean;
+  /** When the engine's recorder had started (Date.now()): the announcement's end is counted from it. */
+  startedAt: number;
   announced: boolean;
+  /** When the announcement ended, in ms after the recorder started (the state's announcedAtMs). */
+  announcedAtMs?: number;
   stopped: boolean;
   /** A write to the file failed (a full disk): what is in it is all there is. */
   broken: boolean;
@@ -93,7 +97,7 @@ interface Run {
   ending: boolean;
   /** Not kept: set as its drop starts, so that an end while the drop runs keeps nothing. */
   dropped: boolean;
-  /** The file's one end, which every closer waits for: a chunk after it began belongs to no recording here. */
+  /** The file's end, once begun: a chunk after it belongs to no recording here. */
   closing?: Promise<void>;
 }
 
@@ -133,7 +137,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
   async begin(call: RecordedCall): Promise<void> {
     const run: Run = {
       call, begun: Promise.resolve(), saving: Promise.resolve(), out: null,
-      recording: false, announced: false, stopped: false, broken: false, ending: false, dropped: false,
+      recording: false, startedAt: 0, announced: false, stopped: false, broken: false, ending: false, dropped: false,
     };
     this.runs.set(call.callId, run);
     run.begun = this.record(run);
@@ -154,16 +158,18 @@ export class CallRecorderService implements OnApplicationBootstrap {
 
   /**
    * What a crash or a failed upload left in tmpDir, for calls no run here holds: discarded when its announcement had
-   * not played, when its call is gone, or once older than its profile's retention period (logged); stored otherwise,
-   * in one try, partial unless its recorder was stopped cleanly. At boot and each night.
+   * not played (or its file ends before it did), when its call is gone, or once older than its profile's retention
+   * period (logged); only its files deleted when it is stored already; stored otherwise, in one try, partial unless its
+   * recorder was stopped cleanly. At boot and each night.
    */
   async finishLeftovers(now = new Date()): Promise<Record<KeepResult, number>> {
     const counts: Record<KeepResult, number> = { stored: 0, kept: 0, discarded: 0 };
     if (this.store.problem || !this.store.tmpDir) return counts;
+    const before = [...this.runs.keys(), ...this.keeping.keys()];
     const listed = await leftovers(this.store.tmpDir);
-    // The calls held as the files were listed: one whose storing ends before its turn would be met without its files,
-    // and counted as discarded.
-    const busy = new Set([...this.runs.keys(), ...this.keeping.keys()]);
+    // The calls held as the files were listed, from its start to its end: one whose storing or drop ends before its
+    // turn would be met without its files, and counted as discarded.
+    const busy = new Set([...before, ...this.runs.keys(), ...this.keeping.keys()]);
     for (const { callId, modifiedAt } of listed) {
       if (busy.has(callId) || this.runs.has(callId) || this.keeping.has(callId)) continue;
       const result = await this.track(callId, this.leftover(callId, modifiedAt, now));
@@ -204,6 +210,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
       if (!call.live()) return await this.drop(run, null);
       run.recording = true;
       await withTimeout(call.media.startRecording(call.waCallId, (chunk) => this.chunk(run, chunk)), START_MS, 'the recorder did not start in time');
+      run.startedAt = Date.now();
       failure = 'announcement_failed';
       if (!call.live()) return await this.drop(run, null);
       const audio = await this.announcementBytes(call.announcement.storageKey);
@@ -218,6 +225,8 @@ export class CallRecorderService implements OnApplicationBootstrap {
       // out, a server_restart end): the recording lacks the rest of its announcement.
       if (!call.live()) return await this.drop(run, null);
       run.announced = true;
+      // Counted here, after the page's own start: never later than the file's own time of that moment.
+      run.announcedAtMs = Date.now() - run.startedAt;
       await this.save(run);
     } catch (e) {
       // The caller is on the line, waiting for the agent: the cleanup (the engine's stop alone may take 10 s) goes on
@@ -269,7 +278,9 @@ export class CallRecorderService implements OnApplicationBootstrap {
    */
   private save(run: Run): Promise<void> {
     run.saving = run.saving
-      .then(() => writeState(this.store.tmpDir, run.call.callId, { announced: run.announced, stopped: run.stopped && !run.broken }))
+      .then(() =>
+        writeState(this.store.tmpDir, run.call.callId, { announced: run.announced, stopped: run.stopped && !run.broken, announcedAtMs: run.announcedAtMs }),
+      )
       .catch((e) => this.logger.warn(`Call ${clean(run.call.callId)}: its recording's state was not written: ${message(e)}`));
     return run.saving;
   }
@@ -287,7 +298,10 @@ export class CallRecorderService implements OnApplicationBootstrap {
     }
   }
 
-  /** Ends the file once: a drop and an end may both close it, and the second waits for the same end. */
+  /**
+   * Ends the file. Only one of a drop and an end ever closes it (`dropped` keeps finish out), so the stored end is a
+   * guard, not a path in use: a second closer would wait for the same end rather than end the stream twice.
+   */
   private close(run: Run): Promise<void> {
     run.closing ??= (async () => {
       if (!run.out) return;
@@ -304,8 +318,9 @@ export class CallRecorderService implements OnApplicationBootstrap {
     await this.stopEngine(run, true);
     await this.close(run);
     await run.saving;
-    this.runs.delete(call.callId);
     await removeFiles(this.store.tmpDir, call.callId).catch((e) => this.logger.warn(`Call ${clean(call.callId)}: its recording's files were not deleted: ${message(e)}`));
+    // Only now: a pass that lists the files meanwhile leaves them to this drop, rather than count them as its own.
+    this.runs.delete(call.callId);
     if (!failed) return;
     const what = failed.failure === 'recorder_failed' ? 'the recorder did not start' : 'the announcement did not play';
     this.logger.warn(`Call ${clean(call.callId)} of profile ${clean(call.profileId)} goes on unrecorded: ${what}: ${message(failed.error)}`);
@@ -313,19 +328,20 @@ export class CallRecorderService implements OnApplicationBootstrap {
     void this.alerts.recordingFailed(failed.failure, call.profileId).catch((e) => this.logger.warn(`The recording alert for ${clean(call.profileId)} failed: ${message(e)}`));
   }
 
-  /** After the end: once `record` is done, the state saved and the file closed, the recording is kept. */
+  /** After the end: once `record` is done, the file closed and the state saved, the recording is kept. */
   private async finish(run: Run): Promise<KeepResult> {
     const { call } = run;
     await run.begun;
     if (run.dropped) return 'discarded'; // its drop, perhaps still running, deletes its files
-    await this.save(run);
+    // Closed first: a write that fails only at the close (EIO, EFBIG) is then in the state, as not stopped.
     await this.close(run);
+    await this.save(run);
     this.runs.delete(call.callId);
     if (!run.announced) {
       await removeFiles(this.store.tmpDir, call.callId);
       return 'discarded';
     }
-    return this.keep(call.callId, call, !run.stopped || run.broken, this.retryAfterMs);
+    return this.keep(call.callId, call, !run.stopped || run.broken, this.retryAfterMs, run.announcedAtMs);
   }
 
   private async leftover(callId: string, modifiedAt: Date, now: Date): Promise<KeepResult> {
@@ -347,14 +363,18 @@ export class CallRecorderService implements OnApplicationBootstrap {
     if (now.getTime() - modifiedAt.getTime() > retentionDaysOf(call.profile.settings) * DAY_MS) {
       return discard("it is older than its profile's retention period");
     }
-    return this.keep(callId, { profileId: call.profileId, organizationId, startedAt: call.startedAt }, !state.stopped, []);
+    // Stored already, by a try whose files were not deleted: another upload would put back audio an admin deleted since,
+    // or leave a copy no row points to once the storage moved.
+    if (await prisma.callRecording.findUnique({ where: { callId }, select: { id: true } })) return this.filesGone(callId, 'stored');
+    return this.keep(callId, { profileId: call.profileId, organizationId, startedAt: call.startedAt }, !state.stopped, [], state.announcedAtMs);
   }
 
   /**
    * Stores the recording in tmpDir: its length written in, put (a first try, then one after each of `waits`), its
    * row, then its files go and call.recording.ready goes out. 'kept': not stored now; its files stay for the next try.
+   * 'discarded': its file ends before its announcement did (`announcedAtMs`).
    */
-  private async keep(callId: string, call: CallFacts, partial: boolean, waits: number[]): Promise<KeepResult> {
+  private async keep(callId: string, call: CallFacts, partial: boolean, waits: number[], announcedAtMs: number | undefined): Promise<KeepResult> {
     const dir = this.store.tmpDir;
     const files = tmpFiles(dir, callId);
     // No upload, counter or alert of its own: the storage's alert covers it.
@@ -367,6 +387,13 @@ export class CallRecorderService implements OnApplicationBootstrap {
     try {
       const webm = await finalizeWebm(files.recording, files.final);
       if (!webm.rewritten) this.logger.warn(`The recording of call ${clean(callId)} is stored without its length: it is not laid out as a browser records`);
+      else if (webm.durationMs < (announcedAtMs ?? 0)) {
+        // The page sends its chunks every 5 s, and the one with the announcement's last seconds never came (a stop that
+        // failed or hung, a crash): this file cuts the announcement short. No row and no alert: the caller hung up, or
+        // the server stopped, at that point.
+        this.logger.warn(`The recording of call ${clean(callId)} is discarded: its file ends before its announcement did`);
+        return await this.filesGone(callId, 'discarded');
+      }
       const put = await this.put(key, files.final, waits);
       if (put === 'public') return keptHere();
       if (put === 'failed') {
@@ -387,20 +414,15 @@ export class CallRecorderService implements OnApplicationBootstrap {
         if (code === 'P2003') {
           // Its call is gone (its profile was deleted meanwhile): there is nothing to keep it for.
           await this.store.delete(key).catch(() => undefined);
-          await removeFiles(dir, callId);
-          return 'discarded';
+          return await this.filesGone(callId, 'discarded');
         }
         if (code !== 'P2002') throw e;
-        await removeFiles(dir, callId); // stored already, by an earlier try whose files were not deleted
-        return 'stored';
+        return await this.filesGone(callId, 'stored'); // stored already, by an earlier try whose files were not deleted
       }
-      // Stored once its row exists: a later pass meets P2002 and sends nothing, so ready cannot wait for the files.
+      // Stored once its row exists: a later pass finds the row and sends nothing, so ready cannot wait for the files.
       this.counter({ kind: 'upload', result: 'ok' });
       this.ready(row, call.profileId);
-      await removeFiles(dir, callId).catch((e) =>
-        this.logger.warn(`The recording of call ${clean(callId)} is stored, but its files were not deleted; the next pass will: ${message(e)}`),
-      );
-      return 'stored';
+      return await this.filesGone(callId, 'stored');
     } catch (e) {
       this.logger.warn(`The recording of call ${clean(callId)} was not stored; it is kept on this server for the next try: ${message(e)}`);
       // Counted, but no alert: a database that is down (a row not written) cannot store the bell either.
@@ -409,6 +431,14 @@ export class CallRecorderService implements OnApplicationBootstrap {
     } finally {
       await rm(files.final, { force: true }).catch(() => undefined);
     }
+  }
+
+  /** Deletes the call's files. What was decided stands when they cannot be deleted: logged, and the next pass will. */
+  private async filesGone(callId: string, result: KeepResult): Promise<KeepResult> {
+    await removeFiles(this.store.tmpDir, callId).catch((e) =>
+      this.logger.warn(`The recording of call ${clean(callId)} is ${result}, but its files were not deleted; the next pass will: ${message(e)}`),
+    );
+    return result;
   }
 
   /** 'public': a privacy check found the storage readable without a login before a try, so it was not made. */

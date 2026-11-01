@@ -34,6 +34,13 @@ describe('recording-tmp', () => {
     expect(await readState(dir, B)).toBeNull();
   });
 
+  it('reads back when the announcement ended, a finite number of ms; anything else there is left out', async () => {
+    await writeState(dir, A, { announced: true, stopped: false, announcedAtMs: 1520 });
+    expect(await readState(dir, A)).toEqual({ announced: true, stopped: false, announcedAtMs: 1520 });
+    writeFileSync(tmpFiles(dir, B).state, '{"announced":true,"stopped":true,"announcedAtMs":"1520"}');
+    expect(await readState(dir, B)).toStrictEqual({ announced: true, stopped: true });
+  });
+
   // The state alone decides whether a recording is kept: an empty one after a power cut would discard a recording whose
   // announcement played.
   it('flushes the state to the disk: the file, then its directory (which Windows cannot open)', async () => {
