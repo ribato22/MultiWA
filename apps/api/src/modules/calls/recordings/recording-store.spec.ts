@@ -61,7 +61,7 @@ describe('LocalRecordingStore', () => {
   it('puts, sizes, reads whole and in ranges, deletes; a missing object has no size and deletes fine', async () => {
     const key = recordingKey(ORG, PROFILE, CALL, new Date('2026-10-31T00:00:00Z'));
     await store.put(key, Buffer.from('0123456789'), 'audio/webm');
-    expect(existsSync(join(root, ORG, PROFILE, '2026', '10', `${CALL}.webm`))).toBe(true);
+    expect(statSync(join(root, ORG, PROFILE, '2026', '10', `${CALL}.webm`)).mode & 0o777).toBe(0o600);
     expect(statSync(join(root, ORG)).mode & 0o777).toBe(0o700);
     expect(await store.size(key)).toBe(10);
     expect(await text(await store.read(key))).toBe('0123456789');
@@ -130,6 +130,7 @@ describe('LocalRecordingStore', () => {
     const withTmp = new LocalRecordingStore(root, { dir: '/x' });
     await withTmp.putFile('o/p/2026/10/c.webm', src, 'audio/webm');
     expect(readFileSync(join(root, 'o/p/2026/10/c.webm'), 'utf8')).toBe('a recording');
+    expect(statSync(join(root, 'o/p/2026/10/c.webm')).mode & 0o777).toBe(0o600); // copied from a file of 0644
     expect(readdirSync(join(root, 'o/p/2026/10'))).toEqual(['c.webm']); // no .part left behind
     expect(statSync(join(root, 'o')).mode & 0o777).toBe(0o700);
     expect(readFileSync(src, 'utf8')).toBe('a recording');

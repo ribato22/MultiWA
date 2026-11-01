@@ -16,7 +16,7 @@
 // putFile once its call ended.
 import { randomBytes, randomUUID } from 'crypto';
 import { chmodSync, lstatSync, mkdirSync } from 'fs';
-import { copyFile, mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
+import { chmod, copyFile, mkdir, open, readdir, rename, rm, stat, writeFile } from 'fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'path';
 import type { Readable } from 'stream';
 import { Logger, ServiceUnavailableException } from '@nestjs/common';
@@ -156,7 +156,21 @@ export class UnsetRecordingStore implements RecordingStore {
   }
 }
 
-/** Recordings in a directory of their own (CALL_RECORDINGS_PATH). */
+/**
+ * Writes the file's bytes to the disk before it is renamed into place: the recorder deletes its own copy right after
+ * the recording's row is written, and a power cut while the bytes were still only in memory would leave an empty
+ * recording behind that row.
+ */
+async function flush(path: string): Promise<void> {
+  const file = await open(path, 'r+');
+  try {
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+}
+
+/** Recordings in a directory of their own (CALL_RECORDINGS_PATH), each file 0600: this server's user's alone. */
 export class LocalRecordingStore implements RecordingStore {
   readonly type = 'local';
   readonly problem = null;
@@ -184,7 +198,8 @@ export class LocalRecordingStore implements RecordingStore {
     // Written aside, then renamed into place: a reader never sees half a file. Aside under a name of its own: two
     // writes of one key at once would interleave in a shared one.
     const part = `${path}.${randomBytes(4).toString('hex')}.part`;
-    await writeFile(part, body);
+    await writeFile(part, body, { mode: 0o600 });
+    await flush(part);
     await rename(part, path);
   }
 
@@ -194,6 +209,8 @@ export class LocalRecordingStore implements RecordingStore {
     const part = `${target}.${randomBytes(4).toString('hex')}.part`;
     // Copied, not moved: the recording in progress is on a volume of its own, and stays until its row is written.
     await copyFile(path, part);
+    await chmod(part, 0o600); // copyFile gives the copy its source's mode
+    await flush(part);
     await rename(part, target);
   }
 
