@@ -225,6 +225,91 @@ describe('CallSessionService: who is rung', () => {
 describe('CallSessionService: recorded calls', () => {
   const announcement = { storageKey: 'announcements/o/p/a.wav', mimeType: 'audio/wav', durationSec: 1.5 };
 
+  /** The recorder's begin held until the returned function lets it resolve; `announcing`: held as its announcement plays. */
+  function holdBegin(h: ReturnType<typeof harness>, announcing = false) {
+    let done!: () => void;
+    h.recorder.begin.mockImplementationOnce((call: any) => {
+      if (announcing) call.onAnnouncing(1.5);
+      return new Promise((r) => (done = () => r(undefined)));
+    });
+    return () => done();
+  }
+
+  /** u1's page reloads: it rejoins, then produces anew (agent-producer-2) and listens. */
+  async function reloaded(h: ReturnType<typeof harness>) {
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true });
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await agentReady(h);
+    await flush();
+  }
+
+  it('a page reloaded while the caller is attached is still recorded, and connected after the announcement, then call:active', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    let attached!: () => void;
+    h.handle.attachCaller.mockReturnValueOnce(new Promise((r) => (attached = () => r({ via: 'destination', freshCandidates: 1, fallback: false }))));
+    const played = holdBegin(h, true);
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.handle.attachCaller).toHaveBeenCalled());
+    await reloaded(h);
+    attached();
+    await vi.waitFor(() => expect(h.recorder.begin).toHaveBeenCalledTimes(1));
+    await flush();
+    expect(h.handle.connectAgent).not.toHaveBeenCalled(); // no agent voice before the announcement
+    expect(h.sent('call:active')).toEqual([]);
+    played();
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+    expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
+    expect(S.markEnded).not.toHaveBeenCalled();
+  });
+
+  it('a page reloaded while the recorder starts is not connected before the announcement played: then the new page is', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    const played = holdBegin(h);
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.recorder.begin).toHaveBeenCalled());
+    await reloaded(h);
+    expect(h.handle.connectAgent).not.toHaveBeenCalled();
+    played();
+    await vi.waitFor(() => expect(h.handle.connectAgent).toHaveBeenCalled());
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+    expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
+    expect(S.markEnded).not.toHaveBeenCalled();
+  });
+
+  it('a page reloaded during the announcement gets call:active only once it played', async () => {
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    const played = holdBegin(h, true);
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:announcing')).toHaveLength(1));
+    await reloaded(h);
+    expect(h.sent('call:active')).toEqual([]);
+    played();
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+    await flush();
+    expect(h.sent('call:active')).toHaveLength(1);
+    expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
+  });
+
+  // end never throws; one that did anyway must not stop the call's end.
+  it("a recorder that fails to stop all the same never stops the call's end: stored, its media closed", async () => {
+    const h = harness();
+    const warn = vi.spyOn((h.service as any).logger, 'warn');
+    h.recorder.plan.mockReturnValue({ announcement });
+    h.recorder.end.mockRejectedValueOnce(new Error('Target\r\nclosed'));
+    await answered(h);
+    await expect(h.service.hangup(as('u1'), 'c1')).resolves.toEqual({ ok: true });
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'agent', 'hangup', expect.any(Date));
+    expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+    expect(h.service.activeSessionCount()).toBe(0);
+    expect(warn).toHaveBeenCalledWith('Call c1: its recording was not stopped cleanly: Targetclosed');
+  });
+
   it('rings saying whether the call is recorded', async () => {
     const h = harness();
     h.recorder.plan.mockReturnValueOnce({ announcement });

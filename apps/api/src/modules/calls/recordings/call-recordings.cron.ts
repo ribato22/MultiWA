@@ -2,11 +2,12 @@
 // apps/api/src/modules/calls/recordings/call-recordings.cron.ts
 //
 // At 02:30 server time (the process's TZ): the storage's privacy check, then the recordings a crash or a failed upload
-// left, then retention, then the orphan sweep. Each step on its own, so one failing does not skip the others; every
-// step is idempotent, so a second api process doing the same is harmless for the data, though each process sends its
-// own alerts. Any check that finds the storage public, this job's or an admin's turning recording on, turns recording
-// off on every profile and alerts the admins: the probe's own bytes came back without credentials, so it is never a
-// fluke.
+// left, then retention, then the orphan sweep. Each step on its own, so one failing does not skip the others. Every
+// step is idempotent for what is stored. The unfinished recordings' step needs a CALL_RECORDINGS_TMP of this api
+// process alone: another process sharing it would take this one's recordings in progress for leftovers. The engines
+// are per process too, and one api process is the supported setup. Any check that finds the storage public, this job's
+// or an admin's turning recording on, turns recording off on every profile and alerts the admins: the probe's own bytes
+// came back without credentials, so it is never a fluke.
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Cron } from '@nestjs/schedule';

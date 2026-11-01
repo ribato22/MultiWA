@@ -105,6 +105,8 @@ interface Session {
   answering: Promise<CallRecord | null> | null;
   /** A reloaded agent page is producing anew (call:rejoin). */
   rejoining: boolean;
+  /** A recorded call's agent waits for the announcement: a rejoin before it has played is connected after it, by connect. */
+  holdAgent: boolean;
   socketsLost: boolean;
   linkLost: boolean;
   timers: { connect?: NodeJS.Timeout; grace?: NodeJS.Timeout; talk?: NodeJS.Timeout; page?: NodeJS.Timeout };
@@ -420,7 +422,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       callId: call.id, waCallId: call.waCallId, profileId: call.profileId, organizationId, userId, startedAt: call.startedAt,
       connectDeadline: Date.now() + this.timing.connectMs, media, recording,
       phase: 'connecting', room: null, handle: null, agent: null, agentProducerId: null, agentListening: false,
-      ready: { promise, resolve, reject }, answerTried: false, answeredAt: null, answering: null, rejoining: false, socketsLost: false, linkLost: false,
+      ready: { promise, resolve, reject }, answerTried: false, answeredAt: null, answering: null, rejoining: false, holdAgent: false, socketsLost: false, linkLost: false,
       timers: {},
     };
     session.timers.connect = setTimeout(() => void this.stopConnecting(session, { failure: 'connect_timeout', reRing: true }), this.timing.connectMs);
@@ -449,7 +451,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   private agentMaybeReady(session: Session): void {
     if (!session.agentProducerId || !session.agentListening) return;
     if (session.phase === 'connecting') session.ready.resolve(session.agentProducerId);
-    else if (session.phase === 'active' && session.rejoining) void this.reconnectAgent(session, session.agentProducerId);
+    else if (session.phase === 'active' && session.rejoining && !session.holdAgent) void this.reconnectAgent(session, session.agentProducerId);
   }
 
   /** A newer rejoin supersedes this one: its failure is then no end, and its success no call:active. */
@@ -549,6 +551,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       session.timers.connect = undefined;
       session.answeredAt = new Date();
       session.phase = 'active';
+      session.holdAgent = !!session.recording;
       session.answering = markAnswered(session.callId, session.userId, session.answeredAt).catch((e) => {
         this.logger.warn(`Call ${session.callId}: its answer was not stored: ${message(e)}`);
         return null;
@@ -573,8 +576,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       if (pick.freshCandidates > 1 || pick.fallback) {
         this.logger.warn(`Call ${session.callId}: the caller's audio is a guess (${clean(pick.freshCandidates)} fresh candidate(s), fallback ${clean(pick.fallback)})`);
       }
-      // A rejoin meanwhile took this producer off the call (or replaced it): reconnectAgent connects the new one.
-      if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
+      if (session.phase !== 'active') return;
+      // A rejoin meanwhile took this producer off the call (or replaced it): reconnectAgent connects the new one. On a
+      // recorded call, only once the announcement has played (holdAgent): the caller hears it before any agent's voice.
       if (session.recording) {
         // Never throws: a recorder or an announcement that fails leaves the call unrecorded, not ended. Caught all the
         // same, so that a failure of the recorder never reaches the catch below, which ends the call.
@@ -586,8 +590,11 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
             onAnnouncing: (durationSec) => this.gateway.emitToUsers([session.userId], 'call:announcing', { callId: session.callId, durationSec }),
           })
           .catch((e) => this.logger.warn(`Call ${session.callId}: its recording failed, and it goes on unrecorded: ${message(e)}`));
-        if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
-      }
+        session.holdAgent = false;
+        if (session.phase !== 'active') return;
+        // A rejoin meanwhile was held back: its new producer is connected now, after the announcement, by the rejoin's path.
+        if (session.agentProducerId !== agentProducerId || session.rejoining) return this.agentMaybeReady(session);
+      } else if (session.agentProducerId !== agentProducerId) return;
       failure = 'agent_connect_failed';
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
       // The page's receive transport links at its first consume, this one: until now it was never linked.
@@ -633,7 +640,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     // The caller's own end needs no hang-up, and neither does a shutdown: the engines close with the process.
     if (endedBy !== 'caller' && endReason !== 'server_restart') await this.hangUpQuietly(session);
     // The recorder's last chunks come with its stop, before the media closes; storing it goes on in the background.
-    if (session.recording) await this.recorder.end(session.callId);
+    // Caught all the same: a failure of the recorder never stops the call's end, which timers reach unawaited too.
+    if (session.recording) await this.recorder.end(session.callId).catch((e) => this.logger.warn(`Call ${session.callId}: its recording was not stopped cleanly: ${message(e)}`));
     await this.teardown(session);
     this.sessions.delete(session.callId);
     // An end while the answer is stored waits for it: its call.ended follows the call.answered, and an answer that did
