@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { PassThrough } from 'stream';
 
 vi.mock('@multiwa/database', () => ({ prisma: { callRecording: { create: vi.fn() }, call: { findUnique: vi.fn() } } }));
 vi.mock('../coordinator/call-alerts', () => ({ CallAlerts: class {} }));
@@ -65,7 +66,10 @@ function make() {
   const store = new MemoryRecordingStore();
   store.tmpDir = mkdtempSync(join(tmpdir(), 'recorder-'));
   store.file(ANNOUNCEMENT.storageKey, ANNOUNCEMENT_BYTES);
-  const recordings = { storageStatus: vi.fn(() => ({ lastCheck: null as null | { reason?: string } })) };
+  const recordings = {
+    storageStatus: vi.fn(() => ({ lastCheck: null as null | { ok?: boolean; reason?: string } })),
+    checkStorage: vi.fn(async (): Promise<{ ok: boolean; reason?: string }> => ({ ok: true })),
+  };
   const alerts = { recordingFailed: vi.fn(async () => undefined) };
   const events = { emit: vi.fn() };
   const realtime = { emitCallUpdate: vi.fn() };
@@ -186,6 +190,66 @@ describe('CallRecorderService.begin', () => {
     await vi.advanceTimersByTimeAsync(8_000);
     await begun;
     await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalledWith('recorder_failed', PROFILE));
+  });
+
+  it('an announcement not read in 5 s (a body that stalls after a quick answer) did not play, and its stream is let go of', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const stalled = new PassThrough(); // never ends
+    let reading!: () => void;
+    const read = new Promise<void>((resolve) => (reading = resolve));
+    vi.spyOn(h.store, 'read').mockImplementation(async () => {
+      reading();
+      return stalled;
+    });
+    let begun = false;
+    void h.recorder.begin(h.call).then(() => (begun = true));
+    await read;
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(begun).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(begun).toBe(true);
+    expect(stalled.destroyed).toBe(true);
+    await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalledWith('announcement_failed', PROFILE));
+    expect(h.media.playAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it('an announcement that does not end is waited for as long as its own length allows: 10 s for 1.5 s, not 38.5 s', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    let playing!: () => void;
+    const played = new Promise<void>((resolve) => (playing = resolve));
+    h.media.playAnnouncement.mockImplementation(() => {
+      playing();
+      return new Promise(() => undefined); // a hung page
+    });
+    let begun = false;
+    void h.recorder.begin(h.call).then(() => (begun = true));
+    await played;
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(begun).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(begun).toBe(true);
+    await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalledWith('announcement_failed', PROFILE));
+  });
+
+  it('a stream that opens after the read gave up is let go of as it opens', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const late = new PassThrough();
+    let open!: (body: PassThrough) => void;
+    let reading!: () => void;
+    const read = new Promise<void>((resolve) => (reading = resolve));
+    vi.spyOn(h.store, 'read').mockImplementation(() => {
+      reading();
+      return new Promise((resolve) => (open = resolve));
+    });
+    const begun = h.recorder.begin(h.call);
+    await read;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await begun;
+    open(late);
+    await vi.waitFor(() => expect(late.destroyed).toBe(true));
   });
 
   it('a failed recording does not keep the agent waiting for its cleanup; an end meanwhile keeps nothing', async () => {
@@ -500,12 +564,33 @@ describe('CallRecorderService.finishLeftovers', () => {
     expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 0 });
   });
 
-  it('runs at boot without holding the boot up', async () => {
+  // The last privacy check lives in memory: after a restart there is none, though the storage may still be public.
+  it.each([
+    ['private: what was left is stored', { ok: true }, { stored: 1, kept: 0, discarded: 0 }, 1],
+    ['readable without a login: nothing is stored', { ok: false, reason: 'storage_not_private' }, { stored: 0, kept: 1, discarded: 0 }, 0],
+  ] as const)('at boot, with something left, checks the storage first, without holding the boot up; found %s', async (_case, check, counts, puts) => {
     const h = harness();
-    let release!: () => void;
-    const spy = vi.spyOn(h.recorder, 'finishLeftovers').mockImplementation(() => new Promise((resolve) => (release = () => resolve({ stored: 0, kept: 0, discarded: 0 }))));
+    await leftover(h, CALL, { announced: true, stopped: true });
+    db.call.findUnique.mockResolvedValue(row());
+    h.recordings.checkStorage.mockImplementation(async () => {
+      h.recordings.storageStatus.mockReturnValue({ lastCheck: check }); // the status then reports it, as the service's does
+      return check;
+    });
+    const put = vi.spyOn(h.store, 'putFile');
+    const pass = vi.spyOn(h.recorder, 'finishLeftovers');
     expect(h.recorder.onApplicationBootstrap()).toBeUndefined();
-    expect(spy).toHaveBeenCalled();
-    release();
+    await vi.waitFor(() => expect(pass).toHaveBeenCalled());
+    expect(await pass.mock.results[0].value).toEqual(counts);
+    expect(put).toHaveBeenCalledTimes(puts);
+    expect(h.recordings.checkStorage.mock.invocationCallOrder[0]).toBeLessThan(pass.mock.invocationCallOrder[0]);
+  });
+
+  it('a boot with nothing left makes no privacy probe', async () => {
+    const h = harness();
+    const pass = vi.spyOn(h.recorder, 'finishLeftovers');
+    h.recorder.onApplicationBootstrap();
+    await vi.waitFor(() => expect(pass).toHaveBeenCalled());
+    await pass.mock.results[0].value;
+    expect(h.recordings.checkStorage).not.toHaveBeenCalled();
   });
 });

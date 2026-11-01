@@ -16,6 +16,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { once } from 'events';
 import { createWriteStream, type WriteStream } from 'fs';
 import { rm, stat } from 'fs/promises';
+import type { Readable } from 'stream';
 import { finished } from 'stream/promises';
 import { prisma } from '@multiwa/database';
 import { AppEvents, REALTIME_EMITTER, type RealtimeEmitter } from '@multiwa/core';
@@ -35,9 +36,14 @@ const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const message = (e: unknown) => clean((e as Error)?.message ?? e);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const START_MS = 8_000; // the page waits up to 5 s for the caller's audio
+// Reading the announcement, while the caller waits in silence: the stores' own bounds are about a minute on a silent S3,
+// and none on a body that stalls after a quick answer or on a hung local mount.
+const READ_MS = 5_000;
 const ANNOUNCEMENT_LIMIT_MS = ANNOUNCEMENT_LIMIT_SECONDS * 1000;
-// The page refuses what decodes longer than the limit, and cuts one off 5 s past its own length.
-const ANNOUNCE_MS = ANNOUNCEMENT_LIMIT_MS + 8_000;
+// The page refuses what decodes longer than the limit, and cuts one off 5 s past its own length. The wait follows the
+// length its upload read (with the padding the limit allows): a short announcement on a hung page does not leave the
+// caller in silence for the longest one's wait, and a file that plays longer than it says only ends sooner, unrecorded.
+const announceMs = (durationSec: number) => Math.min(ANNOUNCEMENT_LIMIT_MS, durationSec * 1000 + 500) + 8_000;
 const STOP_MS = 10_000; // the last chunk comes with the stop, and the agent's Hang up waits for it
 // The waits between an upload's four tries: well inside the hour the orphan sweep leaves a new file alone.
 const RETRY_AFTER_MS = [2_000, 8_000, 30_000];
@@ -169,9 +175,17 @@ export class CallRecorderService implements OnApplicationBootstrap {
     return counts;
   }
 
-  /** At boot: what the previous process left (calls a crash or a restart cut short). Not awaited: the API starts at once. */
+  /**
+   * At boot: what the previous process left (calls a crash or a restart cut short). Not awaited: the API starts at once.
+   * The last privacy check lives in memory, so a restart forgets one that found the storage public, and that storage
+   * may still be: with anything left to store, it is checked first (a public one is reacted to, and gets nothing).
+   * With nothing left, no probe.
+   */
   onApplicationBootstrap(): void {
-    void this.finishLeftovers().catch((e) => this.logger.warn(`The unfinished call recordings were not finished at boot: ${message(e)}`));
+    void (async () => {
+      if (this.store.tmpDir && (await leftovers(this.store.tmpDir)).length) await this.recordings.checkStorage();
+      await this.finishLeftovers();
+    })().catch((e) => this.logger.warn(`The unfinished call recordings were not finished at boot: ${message(e)}`));
   }
 
   private async record(run: Run): Promise<void> {
@@ -197,7 +211,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
       call.onAnnouncing(call.announcement.durationSec);
       await withTimeout(
         call.media.playAnnouncement(call.waCallId, audio, { maxDurationMs: ANNOUNCEMENT_LIMIT_MS }),
-        ANNOUNCE_MS,
+        announceMs(call.announcement.durationSec),
         'the announcement did not finish in time',
       );
       // An end meanwhile stopped the recorder while the page played on (WhatsApp's call still up: a hang-up that timed
@@ -219,16 +233,34 @@ export class CallRecorderService implements OnApplicationBootstrap {
     run.out.write(chunk);
   }
 
-  /** The announcement's bytes, at most what an upload may be: a larger file is not the one uploaded. */
+  /**
+   * The announcement's bytes, at most what an upload may be (a larger file is not the one uploaded), within READ_MS:
+   * the caller waits in silence meanwhile.
+   */
   private async announcementBytes(key: string): Promise<Buffer> {
-    const parts: Buffer[] = [];
-    let size = 0;
-    for await (const part of await this.store.read(key)) {
-      size += (part as Buffer).length;
-      if (size > ANNOUNCEMENT_MAX_BYTES) throw new Error('the announcement file is larger than an upload may be');
-      parts.push(part as Buffer);
+    let body: Readable | null = null;
+    let late = false;
+    const read = (async () => {
+      body = await this.store.read(key);
+      if (late) {
+        body.destroy(); // opened after the deadline: nobody reads it
+        throw new Error('the announcement was opened too late');
+      }
+      const parts: Buffer[] = [];
+      let size = 0;
+      for await (const part of body) {
+        size += (part as Buffer).length;
+        if (size > ANNOUNCEMENT_MAX_BYTES) throw new Error('the announcement file is larger than an upload may be');
+        parts.push(part as Buffer);
+      }
+      return Buffer.concat(parts);
+    })();
+    try {
+      return await withTimeout(read, READ_MS, 'the announcement was not read in time');
+    } finally {
+      late = true;
+      (body as Readable | null)?.destroy(); // a read cut off by the deadline lets go of its connection or file
     }
-    return Buffer.concat(parts);
   }
 
   /**
