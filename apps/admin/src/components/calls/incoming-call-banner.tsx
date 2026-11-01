@@ -11,7 +11,7 @@ export function IncomingCallBanner() {
   const banners = calls?.state.banners ?? [];
   if (!calls || !banners.length) return null;
   return (
-    <section aria-label="Incoming calls" className="pointer-events-auto fixed right-6 top-20 z-[60] flex w-[22rem] flex-col gap-2">
+    <section aria-label="Incoming calls" className="pointer-events-auto fixed right-4 top-20 z-[60] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 sm:right-6">
       {banners.map((b) => {
         const label = ringingCallerLabel(b.call.caller);
         const unavailable = !b.call.answerable

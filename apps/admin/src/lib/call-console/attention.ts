@@ -9,15 +9,18 @@ export function unlockAudio(): AudioContext {
   return ctx;
 }
 
-/** Two tones, like a desk phone, every 3 s. One tab of the browser rings (a Web Lock); the agent's others stay quiet. */
+/**
+ * Two tones, like a desk phone, every 3 s, from one tab of the browser: a Web Lock picks it, and a tab already ringing
+ * keeps the ringer, so the agent answering there sets no other tab ringing. A tab the browser keeps silent (no click on
+ * it since it loaded) reports it through onBlocked and leaves the ringer to the others until a click lets it sound. A
+ * tab closed while it rings hands the ringer to no one: the others ring from the next call. Without Web Locks (plain
+ * HTTP) every tab rings.
+ */
 export function startRinging(onBlocked: (blocked: boolean) => void): () => void {
-  let stopped = false;
+  const ac = unlockAudio();
+  const stop = new AbortController();
   let timer: ReturnType<typeof setInterval> | undefined;
-  let release: (() => void) | undefined;
   const ring = () => {
-    const ac = unlockAudio();
-    // Without a click since the page loaded, the browser keeps the context suspended: the banner asks for one.
-    onBlocked(ac.state !== 'running');
     if (ac.state !== 'running') return;
     const t = ac.currentTime;
     const gain = ac.createGain();
@@ -35,26 +38,36 @@ export function startRinging(onBlocked: (blocked: boolean) => void): () => void 
       osc.stop(t + 1);
     }
   };
-  const onGesture = () => unlockAudio();
-  window.addEventListener('pointerdown', onGesture);
-  window.addEventListener('keydown', onGesture);
   const run = () => {
     ring();
     timer = setInterval(ring, 3000);
   };
-  if (navigator.locks) {
+  const take = () => {
+    onBlocked(false);
+    if (!navigator.locks) return run();
     void navigator.locks.request('multiwa-call-ringer', { ifAvailable: true }, (lock) => {
-      if (!lock || stopped) return undefined;
+      if (!lock || stop.signal.aborted) return undefined;
       run();
-      return new Promise<void>((resolve) => {
-        release = resolve;
-      });
+      return new Promise<void>((resolve) => stop.signal.addEventListener('abort', () => resolve()));
     });
-  } else run();
+  };
+  const onState = () => {
+    if (ac.state !== 'running') return;
+    ac.removeEventListener('statechange', onState);
+    take();
+  };
+  const onGesture = () => unlockAudio();
+  if (ac.state === 'running') take();
+  else {
+    onBlocked(true);
+    ac.addEventListener('statechange', onState);
+    window.addEventListener('pointerdown', onGesture);
+    window.addEventListener('keydown', onGesture);
+  }
   return () => {
-    stopped = true;
+    stop.abort();
     clearInterval(timer);
-    release?.();
+    ac.removeEventListener('statechange', onState);
     window.removeEventListener('pointerdown', onGesture);
     window.removeEventListener('keydown', onGesture);
   };
@@ -79,7 +92,12 @@ export function flashTitle(text: string): () => void {
 /** A desktop alert while the tab is in the background, when the agent allowed them; a click brings the tab forward. */
 export function desktopAlert(title: string, body: string, tag: string): () => void {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted' || document.visibilityState !== 'hidden') return () => undefined;
-  const n = new Notification(title, { body, tag, requireInteraction: true });
+  let n: Notification;
+  try {
+    n = new Notification(title, { body, tag, requireInteraction: true });
+  } catch {
+    return () => undefined; // Chrome on Android: only a service worker may show one, and the constructor throws
+  }
   n.onclick = () => {
     window.focus();
     n.close();

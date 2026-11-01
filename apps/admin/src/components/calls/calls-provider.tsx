@@ -5,12 +5,11 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { api } from '@/lib/api';
-import { endedText, ringingCallerLabel } from '@/lib/calls';
+import { endedText } from '@/lib/calls';
 import { getSocketUrl } from '@/lib/socket';
 import { canAnswerCalls, type CurrentUser } from '@/lib/current-user';
-import { desktopAlert, flashTitle, startRinging } from '@/lib/call-console/attention';
 import { initialState, reduce, type ConsoleState, type RingingCall } from '@/lib/call-console/console-state';
-import { prefs } from '@/lib/call-console/prefs';
+import { useRingingAttention } from './use-ringing-attention';
 
 type Ack = { ok: true; [key: string]: any } | { ok: false; reason: string; message?: string };
 /** A `call:*` command and its ack; no ack within `ms` reads as the reason `timeout`. */
@@ -51,8 +50,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
   const [answerBlocked, setAnswerBlocked] = useState<string | null>(() =>
     typeof window !== 'undefined' && window.isSecureContext && !!navigator.mediaDevices?.getUserMedia ? null : 'Calls in the dashboard need HTTPS',
   );
-  const [soundBlocked, setSoundBlocked] = useState(false);
-  const [announcement, setAnnouncement] = useState('');
+  const { soundBlocked, announcement } = useRingingAttention(state, user.id);
 
   // Calls ring only for profiles that answer in the dashboard: without one, the header shows no call controls.
   useEffect(() => {
@@ -114,27 +112,6 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     };
   }, [agent, user.id]);
 
-  // A call ringing here: the live region names each new one; then the ringtone (unless this browser muted it), the
-  // title flash, and a desktop alert per call.
-  const ringingIds = state.banners.filter((b) => b.status === 'ringing').map((b) => b.call.callId).join(' ');
-  const announced = useRef(new Set<string>());
-  useEffect(() => {
-    const calls = stateRef.current.banners.filter((b) => b.status === 'ringing').map((b) => b.call);
-    const fresh = calls.filter((c) => !announced.current.has(c.callId)).at(-1);
-    announced.current = new Set(calls.map((c) => c.callId));
-    if (fresh) setAnnouncement(`Incoming call from ${ringingCallerLabel(fresh.caller)} on ${fresh.profileName}${fresh.recorded ? '. This call is recorded' : ''}`);
-    if (!calls.length) return;
-    const stops = [
-      flashTitle('📞 Incoming call'),
-      ...calls.map((c) => desktopAlert('Incoming call', `${ringingCallerLabel(c.caller)} on ${c.profileName}`, c.callId)),
-    ];
-    if (!prefs.ringerMuted(user.id)) stops.push(startRinging(setSoundBlocked));
-    return () => {
-      stops.forEach((stop) => stop());
-      setSoundBlocked(false);
-    };
-  }, [ringingIds, user.id]);
-
   // "Answered by …", a failed answer and a call's end show for a moment, then go.
   useEffect(() => {
     const fading = state.banners.filter((b) => b.status === 'taken' || b.status === 'failed').map((b) => b.call.callId);
@@ -163,7 +140,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       {children}
       {agent && (
         <div id="calls-announcer" aria-live="assertive" aria-atomic="true" className="sr-only">
-          {announcement}
+          <span key={announcement.id}>{announcement.text}</span>
         </div>
       )}
     </CallsContext.Provider>

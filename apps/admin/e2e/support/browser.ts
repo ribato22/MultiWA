@@ -2,7 +2,8 @@
 // It runs inside the page, so it is self-contained.
 export function installBrowserFakes() {
   const w = window as any;
-  // Desktop alerts: recorded instead of shown. `__notificationPermission` steers the permission ('granted' by default).
+  // Desktop alerts: recorded instead of shown. `__notificationPermission` steers the permission ('granted' by default);
+  // `__notificationThrows` makes the constructor throw, as Chrome on Android does (only a service worker shows one).
   w.__notifications = [];
   w.Notification = class {
     static get permission() {
@@ -15,6 +16,7 @@ export function installBrowserFakes() {
     onclick: (() => void) | null = null;
     closed = false;
     constructor(public title: string, public options: NotificationOptions = {}) {
+      if (w.__notificationThrows) throw new TypeError('Illegal constructor');
       w.__notifications.push(this);
     }
     close() {
