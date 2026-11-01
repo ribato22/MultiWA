@@ -16,14 +16,11 @@ import { pipeline } from 'stream/promises';
 
 const EBML = 0x1a45dfa3;
 const SEGMENT = 0x18538067;
-const SEEK_HEAD = 0x114d9b74;
 const INFO = 0x1549a966;
-const CUES = 0x1c53bb6b;
+const TRACKS = 0x1654ae6b;
 const CLUSTER = 0x1f43b675;
 const TIMECODE = 0xe7;
-const POSITION = 0xa7;
 const SIMPLE_BLOCK = 0xa3;
-const BLOCK_GROUP = 0xa0;
 const TIMECODE_SCALE = 0x2ad7b1;
 const DURATION = 0x4489;
 const WINDOW = 64 * 1024;
@@ -166,7 +163,10 @@ async function walk(r: Reader): Promise<Layout | null> {
       pos = e.data; // its children follow; one of unknown size ends where the next Cluster starts
       continue;
     }
-    if (e.size === null || e.id === SEEK_HEAD || e.id === CUES || e.id === BLOCK_GROUP || e.id === POSITION) return null;
+    // MediaRecorder's own elements only. Damaged bytes mid-file (a chunk lost to a bug) can read as a header whose size
+    // runs past the end, which would pass for a clean cut end and stop the copy at the damage. Any other element (a
+    // SeekHead, Cues, a Position or a BlockGroup among them) is copied as it is.
+    if (e.size === null || (e.id !== INFO && e.id !== TRACKS && e.id !== TIMECODE && e.id !== SIMPLE_BLOCK)) return null;
     const next = e.data + e.size;
     if (next > r.size) break; // the file ends inside this element: the copy leaves it out
     if (e.id === INFO) {

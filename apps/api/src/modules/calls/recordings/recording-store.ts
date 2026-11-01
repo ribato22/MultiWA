@@ -159,15 +159,26 @@ export class UnsetRecordingStore implements RecordingStore {
 /**
  * Writes the file's bytes to the disk before it is renamed into place: the recorder deletes its own copy right after
  * the recording's row is written, and a power cut while the bytes were still only in memory would leave an empty
- * recording behind that row.
+ * recording behind that row. A directory is opened read-only: it cannot be opened for writing.
  */
-async function flush(path: string): Promise<void> {
-  const file = await open(path, 'r+');
+async function flush(path: string, flags = 'r+'): Promise<void> {
+  const file = await open(path, flags);
   try {
     await file.sync();
   } finally {
     await file.close();
   }
+}
+
+/**
+ * Renames a flushed `.part` file into place, then flushes its directory: the rename is only an entry there, which a
+ * power cut can undo until the directory is on the disk too. The row would then point at a missing key, the bytes
+ * would sit in a `.part` file that the sweep deletes an hour later, and the recorder's own copy would already be gone.
+ * Windows cannot open a directory, so there it is not flushed.
+ */
+async function moveIntoPlace(part: string, target: string): Promise<void> {
+  await rename(part, target);
+  if (process.platform !== 'win32') await flush(dirname(target), 'r');
 }
 
 /** Recordings in a directory of their own (CALL_RECORDINGS_PATH), each file 0600: this server's user's alone. */
@@ -178,7 +189,7 @@ export class LocalRecordingStore implements RecordingStore {
   readonly tmpDir: string;
   readonly tmpProblem: string | null;
 
-  constructor(private readonly root: string, tmp: RecordingsTmp = { dir: '' }) {
+  constructor(private readonly root: string, tmp: RecordingsTmp = TMP_UNSET) {
     this.location = `local:${root}`;
     this.tmpDir = 'dir' in tmp ? tmp.dir : '';
     this.tmpProblem = 'problem' in tmp ? tmp.problem : null;
@@ -200,7 +211,7 @@ export class LocalRecordingStore implements RecordingStore {
     const part = `${path}.${randomBytes(4).toString('hex')}.part`;
     await writeFile(part, body, { mode: 0o600 });
     await flush(part);
-    await rename(part, path);
+    await moveIntoPlace(part, path);
   }
 
   async putFile(key: string, path: string, _mimeType: string): Promise<void> {
@@ -211,7 +222,7 @@ export class LocalRecordingStore implements RecordingStore {
     await copyFile(path, part);
     await chmod(part, 0o600); // copyFile gives the copy its source's mode
     await flush(part);
-    await rename(part, target);
+    await moveIntoPlace(part, target);
   }
 
   async size(key: string): Promise<number | null> {
@@ -296,7 +307,7 @@ export class S3RecordingStore implements RecordingStore {
     private readonly s3: S3Like,
     private readonly config: S3RecordingStoreConfig,
     private readonly fetchFn: typeof fetch = fetch,
-    tmp: RecordingsTmp = { dir: '' },
+    tmp: RecordingsTmp = TMP_UNSET,
   ) {
     // The bucket and the prefix, not the endpoint: the same bucket is often reached at a new address (http to https,
     // an internal name), and its recordings are no less its own.
@@ -470,6 +481,9 @@ function ownDirectory(name: string, dir: string): string | null {
 
 /** Where the recorder writes recordings in progress, or why it cannot. */
 type RecordingsTmp = { dir: string } | { problem: string };
+// CALL_RECORDINGS_TMP unset, and a store built without its directory: tmpDir is '' exactly when tmpProblem is set, so
+// a recorder trusting tmpProblem never writes into the working directory.
+const TMP_UNSET: RecordingsTmp = { problem: 'CALL_RECORDINGS_TMP is not set' };
 
 /**
  * The directory of recordings in progress (CALL_RECORDINGS_TMP), checked like CALL_RECORDINGS_PATH, and apart from it:
@@ -479,7 +493,7 @@ type RecordingsTmp = { dir: string } | { problem: string };
  */
 function recordingsTmp(value: (name: string) => string | undefined, recordingsRoot: string | null): RecordingsTmp {
   const set = value('CALL_RECORDINGS_TMP');
-  if (!set) return { problem: 'CALL_RECORDINGS_TMP is not set' };
+  if (!set) return TMP_UNSET;
   const dir = resolve(set);
   const clash = clashOf(dir, value) ?? (recordingsRoot && overlaps(dir, recordingsRoot) ? 'CALL_RECORDINGS_PATH' : null);
   if (clash) return { problem: `CALL_RECORDINGS_TMP must be a directory of its own, not inside or around ${clash}` };

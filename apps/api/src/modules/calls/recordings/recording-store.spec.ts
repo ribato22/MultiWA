@@ -136,6 +136,12 @@ describe('LocalRecordingStore', () => {
     expect(readFileSync(src, 'utf8')).toBe('a recording');
     expect(withTmp).toMatchObject({ tmpDir: '/x', tmpProblem: null });
   });
+
+  // Its tmpDir is '' exactly when its tmpProblem is set: a recorder that trusted tmpProblem alone would write into the
+  // working directory.
+  it('built without a directory for recordings in progress: says so', () => {
+    expect(store).toMatchObject({ tmpDir: '', tmpProblem: 'CALL_RECORDINGS_TMP is not set' });
+  });
 });
 
 describe('createRecordingStore: local', () => {

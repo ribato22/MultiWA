@@ -22,12 +22,17 @@ vi.mock('fs/promises', async (importOriginal) => {
 const FIXTURE = readFileSync(join(__dirname, 'fixtures', 'recorded.webm'));
 const INFO_AT = 48;
 // Then, in the fixture: Info 48-78, Tracks 78-146, the first Cluster's header 146-158 and its Timecode 158-161, then
-// SimpleBlocks of 486 bytes (3 of header) from 161: the first ends at 647, and one starts mid-file at 13 785.
+// SimpleBlocks of 486 bytes (3 of header) from 161: the first ends at 647, the second Cluster's header (12 bytes) is at
+// 8 423, and a block starts mid-file at 13 785.
 const INFO = FIXTURE.subarray(INFO_AT, 78);
 const TRACKS_END = 146;
 const TIMECODE_AT = 158;
 const FIRST_BLOCK_END = 647;
+const SECOND_CLUSTER_AT = 8_423;
 const MID_FILE_BLOCK_AT = 13_785;
+// 4 bytes lost from 14 273, 2 bytes into a block's header (a chunk lost to a bug): that block then reads as 384 bytes,
+// and ends on bytes that read as an element of 1 129 363 bytes (a5 31 3b 93), running past the end of the file.
+const GAP = Buffer.concat([FIXTURE.subarray(0, 14_273), FIXTURE.subarray(14_277)]);
 /** The fixture with `bytes` put in at `at`. */
 const withAt = (at: number, bytes: Buffer | number[]) => Buffer.concat([FIXTURE.subarray(0, at), Buffer.from(bytes), FIXTURE.subarray(at)]);
 const modeOf = (path: string) => statSync(path).mode & 0o777;
@@ -91,6 +96,16 @@ describe('finalizeWebm', () => {
     expect(readFileSync(dst).subarray(INFO_AT + 5 + 36).equals(FIXTURE.subarray(INFO_AT + 5 + 25, FIRST_BLOCK_END))).toBe(true);
   });
 
+  // 12 bytes is the most a header has here (a Cluster's: a 4-byte id and an 8-byte unknown size). 12 bytes that are no
+  // header are no cut inside one: copied as it is, below.
+  it('cuts a file that ends 11 bytes into a 12-byte header there', async () => {
+    expect(FIXTURE.readUInt32BE(SECOND_CLUSTER_AT)).toBe(0x1f43b675); // a Cluster's id
+    const dst = out();
+    // up to that header, plus the Duration's 11 bytes
+    expect(await finalizeWebm(file(FIXTURE.subarray(0, SECOND_CLUSTER_AT + 11)), dst)).toEqual({ durationMs: 1021, bytes: 8_434, rewritten: true });
+    expect(readFileSync(dst).subarray(INFO_AT + 5 + 36).equals(FIXTURE.subarray(INFO_AT + 5 + 25, SECOND_CLUSTER_AT))).toBe(true);
+  });
+
   it('a recording of one block lasts one Opus frame', async () => {
     expect(await finalizeWebm(file(FIXTURE.subarray(0, FIRST_BLOCK_END)), out())).toEqual({ durationMs: 20, bytes: FIRST_BLOCK_END + 11, rewritten: true });
   });
@@ -120,6 +135,8 @@ describe('finalizeWebm', () => {
     ['an Info larger than the window it is read through', FIXTURE, 24],
     ['a Timecode larger than 8 bytes', Buffer.concat([FIXTURE.subarray(0, TIMECODE_AT), Buffer.from([0xe7, 0x89, ...Array(9).fill(0)]), FIXTURE.subarray(TIMECODE_AT + 3)])],
     ['a byte mid-file that is no header (not the end of the file)', withAt(MID_FILE_BLOCK_AT, [0x00])],
+    ['4 bytes lost mid-file, the bytes after them read as an element running past the end (not the end of the file)', GAP],
+    ['12 bytes at the end that are no header (a cut inside a header leaves at most 11)', Buffer.concat([FIXTURE, Buffer.alloc(12)])],
     ['a last SimpleBlock shorter than its own head', Buffer.concat([FIXTURE, Buffer.from([0xa3, 0x81, 0x81])])],
     ['no block at all (cut right after Tracks)', FIXTURE.subarray(0, TRACKS_END)],
     ['not a WebM at all', Buffer.from('not a recording')],

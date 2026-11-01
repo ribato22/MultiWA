@@ -29,6 +29,12 @@ const twelveBytes = () => {
 };
 
 describe('S3RecordingStore', () => {
+  // Its tmpDir is '' exactly when its tmpProblem is set: a recorder that trusted tmpProblem alone would write into the
+  // working directory.
+  it('built without a directory for recordings in progress: says so', () => {
+    expect(new S3RecordingStore(client(), CONFIG)).toMatchObject({ tmpDir: '', tmpProblem: 'CALL_RECORDINGS_TMP is not set' });
+  });
+
   it('puts privately: no ACL, under the prefix, with its type; SSE when configured', async () => {
     const s3 = client();
     await new S3RecordingStore(s3, CONFIG).put('probe/x', Buffer.from('a'), 'text/plain');
