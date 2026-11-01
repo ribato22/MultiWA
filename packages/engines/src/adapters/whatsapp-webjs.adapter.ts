@@ -51,6 +51,19 @@ export const BROWSER_LOSS_REASONS = {
   memoryLimit: 'MEMORY_LIMIT',
 } as const;
 
+/** How often a ready profile's Chromium memory is measured. */
+const MEMORY_CHECK_MS = 60_000;
+
+/**
+ * WWEBJS_MEMORY_LIMIT_MB: the anonymous resident memory, in MB, of a profile's Chromium (browser and renderers)
+ * above which it is recycled from its stored session. 2500 by default, 0 turns the check off, anything else
+ * falls back to the default. On a 7.3 GB host one renderer reached 4.9 GB and the OOM killer took it.
+ */
+export function memoryLimitMb(raw: string | undefined): number {
+  const n = Number(raw);
+  return raw !== undefined && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 2500;
+}
+
 export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   readonly engineType = 'whatsapp-web-js' as const;
   
@@ -78,6 +91,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   callMedia?: WebJsCallMedia;
   // Clients whose page or browser loss was already reported: a crash followed by the browser closing is one loss.
   private lostClients = new WeakSet<object>();
+  private memoryTimer: ReturnType<typeof setInterval> | null = null;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -419,6 +433,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     if (!client) return;
     // Let go first: closing the browser below fires its 'disconnected', which is not a loss.
     this.client = null;
+    this.stopMemoryWatch();
     try {
       await client.destroy();
     } catch (e) {
@@ -430,19 +445,47 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   /**
    * whatsapp-web.js reports WhatsApp's own disconnects, never a crashed page or a dead browser: on 2026-10-31
    * the OOM killer took a profile's renderer and the profile read "connected" with a dead page for 21 hours.
-   * Report those as disconnects, so the engine-managers recycle the engine from its stored session.
+   * Report those as disconnects, so the engine-managers recycle the engine from its stored session, and do the
+   * same for a Chromium whose memory passes WWEBJS_MEMORY_LIMIT_MB, before the host runs out.
    */
   private watchBrowser(client: Client): void {
     (client as any).pupPage?.on?.('error', () => this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.pageCrashed));
     (client as any).pupBrowser?.on?.('disconnected', () =>
       this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.browserClosed),
     );
+    const limitMb = memoryLimitMb(process.env.WWEBJS_MEMORY_LIMIT_MB);
+    this.stopMemoryWatch();
+    if (limitMb > 0) {
+      this.memoryTimer = setInterval(() => this.checkMemory(client, limitMb), MEMORY_CHECK_MS);
+      this.memoryTimer.unref?.();
+    }
+  }
+
+  /** Measured only while ready: a profile still loading its chats is not a leak. */
+  private checkMemory(client: Client, limitMb: number): void {
+    if (client !== this.client || !this.isReady()) return;
+    const pid = (client as any).pupBrowser?.process?.()?.pid;
+    const mb = typeof pid === 'number' ? this.readBrowserMemoryMb(pid) : null;
+    if (mb === null || mb <= limitMb) return;
+    console.warn(`[WhatsApp-WebJS] Chromium of profile ${this.config?.profileId} holds ${mb} MB (limit ${limitMb} MB)`);
+    this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.memoryLimit);
+  }
+
+  /** The measurement, as a method so a test can stand in for /proc. */
+  private readBrowserMemoryMb(pid: number): number | null {
+    return processTreeRssAnonMb(pid);
+  }
+
+  private stopMemoryWatch(): void {
+    if (this.memoryTimer) clearInterval(this.memoryTimer);
+    this.memoryTimer = null;
   }
 
   /** Once per client, and only for the client this adapter still holds: its own destroy() is not a loss. */
   private reportBrowserLoss(client: Client, reason: string): void {
     if (client !== this.client || this.lostClients.has(client)) return;
     this.lostClients.add(client);
+    this.stopMemoryWatch();
     console.warn(
       `[WhatsApp-WebJS] ${reason} for profile ${this.config?.profileId}: reported as a disconnect to recycle its engine from the stored session`,
     );

@@ -4,7 +4,7 @@
 // The Client is a bare emitter (as in webjs-call-events.spec.ts): no browser starts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { WhatsAppWebJsAdapter, BROWSER_LOSS_REASONS } from '@multiwa/engines';
+import { WhatsAppWebJsAdapter, BROWSER_LOSS_REASONS, memoryLimitMb } from '@multiwa/engines';
 import { isSessionInvalidReason } from '@multiwa/engine-runtime';
 
 const wire = () => {
@@ -76,6 +76,66 @@ describe('WhatsAppWebJsAdapter browser loss', () => {
     adapter.client = new EventEmitter(); // a newer initialize()
     client.pupPage.emit('error', new Error('Page crashed!'));
     expect(config.onDisconnected).not.toHaveBeenCalled();
+  });
+
+  it('recycles a Chromium above WWEBJS_MEMORY_LIMIT_MB, once', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
+    const { adapter, config } = wire();
+    ready(adapter);
+    adapter.readBrowserMemoryMb = vi.fn(() => 2600);
+    await adapter.connect();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(adapter.readBrowserMemoryMb).toHaveBeenCalledWith(4242);
+    expect(config.onDisconnected.mock.calls).toEqual([['MEMORY_LIMIT']]);
+  });
+
+  it('leaves a Chromium at or below the limit alone', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
+    const { adapter, config } = wire();
+    ready(adapter);
+    adapter.readBrowserMemoryMb = vi.fn(() => 2500);
+    await adapter.connect();
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(adapter.readBrowserMemoryMb).toHaveBeenCalledTimes(3);
+    expect(config.onDisconnected).not.toHaveBeenCalled();
+  });
+
+  it('does not measure a profile that is not ready yet', async () => {
+    vi.useFakeTimers();
+    const { adapter } = wire();
+    adapter.readBrowserMemoryMb = vi.fn(() => 9999);
+    await adapter.connect();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(adapter.readBrowserMemoryMb).not.toHaveBeenCalled();
+  });
+
+  it('runs no memory check when WWEBJS_MEMORY_LIMIT_MB is 0', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '0');
+    const { adapter } = wire();
+    await adapter.connect();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops measuring once it is destroyed', async () => {
+    vi.useFakeTimers();
+    const { adapter } = wire();
+    ready(adapter);
+    await adapter.connect();
+    expect(vi.getTimerCount()).toBe(1);
+    await adapter.destroy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('memoryLimitMb', () => {
+  it('reads a whole number of MB, 0 for off, and falls back to 2500', () => {
+    expect(memoryLimitMb('3000')).toBe(3000);
+    expect(memoryLimitMb('0')).toBe(0);
+    for (const raw of [undefined, '', ' ', 'abc', '-5', '1.5']) expect(memoryLimitMb(raw)).toBe(2500);
   });
 });
 
