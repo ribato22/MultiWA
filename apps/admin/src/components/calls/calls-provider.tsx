@@ -138,13 +138,33 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     };
   }, [agent, user.id]);
 
-  // "Answered by …", a failed answer and a call's end show for a moment, then go.
+  // "Answered by …", a failed answer and a call's end show for a moment, then go: each call on its own timer, from when
+  // it started to fade, so another call's news does not hold it up. A call that stops fading (it rings again) keeps none.
+  const fades = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   useEffect(() => {
     const fading = state.banners.filter((b) => b.status === 'taken' || b.status === 'failed').map((b) => b.call.callId);
     if (state.active?.phase === 'ended') fading.push(state.active.call.callId);
-    const timers = fading.map((callId) => setTimeout(() => dispatch({ type: 'drop', callId }), FADE_MS));
-    return () => timers.forEach(clearTimeout);
+    for (const [callId, timer] of fades.current) {
+      if (fading.includes(callId)) continue;
+      clearTimeout(timer);
+      fades.current.delete(callId);
+    }
+    for (const callId of fading) {
+      if (fades.current.has(callId)) continue;
+      const timer = setTimeout(() => {
+        fades.current.delete(callId);
+        dispatch({ type: 'drop', callId });
+      }, FADE_MS);
+      fades.current.set(callId, timer);
+    }
   }, [state.banners, state.active]);
+  useEffect(
+    () => () => {
+      fades.current.forEach(clearTimeout);
+      fades.current.clear();
+    },
+    [],
+  );
 
   const value = useMemo<CallsConsole | null>(
     () =>

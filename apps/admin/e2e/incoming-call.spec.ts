@@ -139,6 +139,20 @@ test('a browser that cannot show a desktop alert still shows the call', async ({
   await expect(card).toBeVisible(); // and the fixture fails the test on an uncaught error
 });
 
+test('"Answered by …" fades on time while another call rings', async ({ page, backend }) => {
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: 'u-jane', byUserName: 'Jane' });
+  const taken = banner(page).getByText('Answered by Jane');
+  await expect(taken).toBeVisible();
+  const at = Date.now();
+  await page.waitForTimeout(2500);
+  backend.emit('call:ringing', ringing(SARI));
+  await expect(banner(page).getByRole('group', { name: 'Call from Bu Sari' })).toBeVisible();
+  await expect(taken).toHaveCount(0, { timeout: 8000 });
+  expect(Date.now() - at).toBeLessThan(5200); // its own 4 s, not 4 s from the other call's ring
+});
+
 test('two tabs of the browser: one of them rings', async ({ page, context, backend }) => {
   const other = await context.newPage();
   await other.goto('/dashboard/calls');
