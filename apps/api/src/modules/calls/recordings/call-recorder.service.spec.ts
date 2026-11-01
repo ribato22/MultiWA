@@ -259,7 +259,11 @@ describe('CallRecorderService.begin', () => {
     h.media.startRecording.mockRejectedValue(new Error('No caller audio to record'));
     let release!: () => void;
     h.media.stopRecording.mockImplementation(() => new Promise((resolve) => (release = () => resolve({ durationMs: 0 }))));
-    await h.recorder.begin(h.call); // resolves while the engine's stop is still held
+    let bound!: NodeJS.Timeout;
+    const stillHeld = new Promise((resolve) => (bound = setTimeout(resolve, 2_000, 'held')));
+    // begin resolves while the engine's stop is still held
+    expect(await Promise.race([h.recorder.begin(h.call).then(() => 'begun'), stillHeld])).toBe('begun');
+    clearTimeout(bound);
     expect(h.media.stopRecording).toHaveBeenCalledWith('W1');
     await h.recorder.end(CALL);
     expect(await h.idle()).toEqual(['discarded']);
@@ -389,6 +393,15 @@ describe('CallRecorderService.end', () => {
     expect(db.callRecording.create).toHaveBeenCalledTimes(rows);
     expect(h.files()).toEqual([]);
     expect(h.alerts.recordingFailed).not.toHaveBeenCalled(); // the caller hung up, or the server stopped, then
+  });
+
+  it('a file that could not be written on, though stopped cleanly and uploaded, is stored as partial', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    (h.recorder as any).runs.get(CALL).out.emit('error', Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }));
+    await h.recorder.end(CALL);
+    expect(await h.idle()).toEqual(['stored']);
+    expect(db.callRecording.create.mock.calls[0][0].data.partial).toBe(true);
   });
 
   it('a file whose write fails only as it closes (EIO, EFBIG) is saved as partial too', async () => {
@@ -562,6 +575,14 @@ describe('CallRecorderService.finishLeftovers', () => {
     expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
     expect(h.files()).toEqual([]);
     expect(db.callRecording.create).not.toHaveBeenCalled();
+  });
+
+  it('discards one whose recording file is gone, its state alone left', async () => {
+    const h = harness();
+    await writeState(h.store.tmpDir, CALL, { announced: true, stopped: true });
+    db.call.findUnique.mockResolvedValue(row());
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
+    expect(h.files()).toEqual([]);
   });
 
   // Another upload would put back audio an admin deleted since, or leave a copy no row points to once the storage moved.
