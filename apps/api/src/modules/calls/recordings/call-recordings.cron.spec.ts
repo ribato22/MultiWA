@@ -10,6 +10,7 @@ import { InternalEvents } from '../../../metrics/internal-events';
 vi.mock('../../profiles/profile-settings', () => ({ turnRecordingOffEverywhere: vi.fn() }));
 vi.mock('../coordinator/call-alerts', () => ({ CallAlerts: class {} }));
 vi.mock('./call-recordings.service', () => ({ CallRecordingsService: class {} }));
+vi.mock('./call-recorder.service', () => ({ CallRecorderService: class {} }));
 
 import { turnRecordingOffEverywhere } from '../../profiles/profile-settings';
 import { CallRecordingsCron } from './call-recordings.cron';
@@ -27,7 +28,8 @@ function make() {
   };
   // Resolves whether a bell went out.
   const alerts = { recordingStorage: vi.fn().mockResolvedValue(true) };
-  return { recordings, alerts, cron: new CallRecordingsCron(recordings as any, alerts as any) };
+  const recorder = { finishLeftovers: vi.fn().mockResolvedValue({ stored: 0, kept: 0, discarded: 0 }) };
+  return { recordings, alerts, recorder, cron: new CallRecordingsCron(recordings as any, alerts as any, recorder as any) };
 }
 
 beforeEach(() => {
@@ -235,6 +237,26 @@ describe('CallRecordingsCron', () => {
     recordings.checkStorage.mockResolvedValue({ ok: false, reason: 'recordings_storage_unset', detail: 'x' });
     await cron.run(NOW);
     expect(alerts.recordingStorage).not.toHaveBeenCalled();
+    expect(recordings.sweepOrphans).toHaveBeenCalled();
+  });
+
+  // After the check: a recording is never stored to a storage that check found public. Before the sweep: a recording
+  // stored now is no orphan.
+  it('finishes the recordings left over after the privacy check, and before retention and the sweep', async () => {
+    const { cron, recordings, recorder } = make();
+    await cron.run(NOW);
+    expect(recorder.finishLeftovers).toHaveBeenCalledWith(NOW);
+    const order = (fn: { mock: { invocationCallOrder: number[] } }) => fn.mock.invocationCallOrder[0];
+    expect(order(recordings.checkStorage)).toBeLessThan(order(recorder.finishLeftovers));
+    expect(order(recorder.finishLeftovers)).toBeLessThan(order(recordings.applyRetention));
+    expect(order(recorder.finishLeftovers)).toBeLessThan(order(recordings.sweepOrphans));
+  });
+
+  it('a failure there skips nothing else', async () => {
+    const { cron, recordings, recorder } = make();
+    recorder.finishLeftovers.mockRejectedValue(new Error('EACCES'));
+    await cron.run(NOW);
+    expect(recordings.applyRetention).toHaveBeenCalled();
     expect(recordings.sweepOrphans).toHaveBeenCalled();
   });
 
