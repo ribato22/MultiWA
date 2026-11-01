@@ -235,6 +235,45 @@ describe('CallRecorderService.begin', () => {
     await vi.waitFor(() => expect(h.alerts.recordingFailed).toHaveBeenCalledWith('announcement_failed', PROFILE));
   });
 
+  it("an announcement's end is counted from its play and its decoded length: a reply held up 4 s does not move it", async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const read = h.store.read.bind(h.store);
+    vi.spyOn(h.store, 'read').mockImplementation(async (key) => {
+      vi.advanceTimersByTime(700); // between the recorder's start and the play
+      return read(key);
+    });
+    let playing!: () => void;
+    const played = new Promise<void>((resolve) => (playing = resolve));
+    let reply!: (result: { durationMs: number }) => void;
+    h.media.playAnnouncement.mockImplementation(() => {
+      playing();
+      return new Promise((resolve) => (reply = resolve));
+    });
+    const begun = h.recorder.begin(h.call);
+    await played;
+    await vi.advanceTimersByTimeAsync(4_000); // its onended, the play's finally, the evaluate reply, a stalled event loop
+    reply({ durationMs: 1_500 });
+    await begun;
+    expect(await readState(h.store.tmpDir, CALL)).toMatchObject({ announced: true, announcedAtMs: 2_200 }); // not 4_700
+  });
+
+  // Forward, every recording shorter than the step would be discarded; back, none would ever be.
+  it.each([
+    ['an hour forward (a VM resume)', 3_600_000],
+    ['an hour back (a chrony step)', -3_600_000],
+  ] as const)("the announcement's end is on the monotonic clock: a wall clock stepping %s meanwhile does not move it", async (_case, step) => {
+    vi.useFakeTimers();
+    const h = harness();
+    const read = h.store.read.bind(h.store);
+    vi.spyOn(h.store, 'read').mockImplementation(async (key) => {
+      vi.setSystemTime(Date.now() + step); // the wall clock alone: performance.now() goes on as it did
+      return read(key);
+    });
+    await h.recorder.begin(h.call);
+    expect((await readState(h.store.tmpDir, CALL))?.announcedAtMs).toBe(1_500);
+  });
+
   it('a stream that opens after the read gave up is let go of as it opens', async () => {
     vi.useFakeTimers();
     const h = harness();
@@ -374,7 +413,7 @@ describe('CallRecorderService.end', () => {
     ['lasted 4 s: its file (3.4 s) ends before it did, so nothing is kept', 0, 4_000, 'discarded', 0],
     ['lasted 1.5 s after a 3-s start: counted from the start, its file (3.4 s) holds it whole', 3_000, 1_500, 'stored', 1],
   ] as const)('a stop that fails, and an announcement that %s', async (_case, startMs, playMs, result, rows) => {
-    vi.useFakeTimers({ toFake: ['Date'] }); // the clock alone, moved by hand
+    vi.useFakeTimers({ toFake: ['performance'] }); // the monotonic clock alone, moved by hand
     const h = harness();
     const start = h.media.startRecording.getMockImplementation()!;
     h.media.startRecording.mockImplementation(async (...args) => {
@@ -542,9 +581,12 @@ describe('CallRecorderService.finishLeftovers', () => {
     utimesSync(recording, at, at);
     if (state) utimesSync(join(h.store.tmpDir, `${callId}.json`), at, at);
   };
+  /** A check in this process found the storage private, as the boot's and the nightly job's do before their pass. */
+  const checkedPrivate = (h: ReturnType<typeof make>) => h.recordings.storageStatus.mockReturnValue({ lastCheck: { ok: true } });
 
   it('stores one a restart cut short (announced, not stopped) as partial, in one try', async () => {
     const h = harness();
+    checkedPrivate(h);
     await leftover(h, CALL, { announced: true, stopped: false });
     db.call.findUnique.mockResolvedValue(row());
     const put = vi.spyOn(h.store, 'putFile');
@@ -556,10 +598,23 @@ describe('CallRecorderService.finishLeftovers', () => {
 
   it('a stopped one that could not be stored before is stored now, and not as partial', async () => {
     const h = harness();
+    checkedPrivate(h);
     await leftover(h, CALL, { announced: true, stopped: true });
     db.call.findUnique.mockResolvedValue(row());
     await h.recorder.finishLeftovers(NOW);
     expect(db.callRecording.create.mock.calls[0][0].data.partial).toBe(false);
+  });
+
+  // Some are left because the storage was found public before a restart, which forgets it.
+  it('with no privacy check in this process, keeps one it would store, uploading nothing, and still discards the rest', async () => {
+    const h = harness(); // its storage status: no last check
+    await leftover(h, CALL, { announced: true, stopped: true });
+    await leftover(h, OTHER, { announced: false, stopped: false });
+    db.call.findUnique.mockResolvedValue(row());
+    const put = vi.spyOn(h.store, 'putFile');
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 1, discarded: 1 });
+    expect(put).not.toHaveBeenCalled();
+    expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]);
   });
 
   it.each([
@@ -570,6 +625,7 @@ describe('CallRecorderService.finishLeftovers', () => {
     ['its file (3.4 s) ends before its announcement did', { announced: true, stopped: false, announcedAtMs: 4_000 }, (): unknown => row(), 0],
   ] as const)('discards one when %s', async (_case, state, found, daysAgo) => {
     const h = harness();
+    checkedPrivate(h); // a file that ends too soon is found only on the way to the upload
     await leftover(h, CALL, state, daysAgo);
     db.call.findUnique.mockResolvedValue(found());
     expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
@@ -601,6 +657,7 @@ describe('CallRecorderService.finishLeftovers', () => {
 
   it('keeps one whose upload fails again, and tells the admins; the next night tries again', async () => {
     const h = harness();
+    checkedPrivate(h);
     await leftover(h, CALL, { announced: true, stopped: true });
     db.call.findUnique.mockResolvedValue(row());
     vi.spyOn(h.store, 'putFile').mockRejectedValueOnce(new Error('503'));
@@ -619,6 +676,7 @@ describe('CallRecorderService.finishLeftovers', () => {
 
   it('leaves alone a call it was storing when the pass listed it, though that storing is over by its turn', async () => {
     const h = harness();
+    checkedPrivate(h);
     await h.recorder.begin(h.call);
     let upload!: () => void;
     const put = vi.spyOn(h.store, 'putFile').mockImplementationOnce(async (...args) => {
@@ -689,7 +747,9 @@ describe('CallRecorderService.finishLeftovers', () => {
   it.each([
     ['private: what was left is stored', { ok: true }, { stored: 1, kept: 0, discarded: 0 }, 1],
     ['readable without a login: nothing is stored', { ok: false, reason: 'storage_not_private' }, { stored: 0, kept: 1, discarded: 0 }, 0],
+    ['neither private nor public (one public URL timed out): nothing is stored', { ok: false, reason: 'storage_check_failed' }, { stored: 0, kept: 1, discarded: 0 }, 0],
   ] as const)('at boot, with something left, checks the storage first, without holding the boot up; found %s', async (_case, check, counts, puts) => {
+    vi.useFakeTimers({ toFake: ['Date'], now: NOW }); // the boot's pass takes today's date: the leftover's own, so it never expires
     const h = harness();
     await leftover(h, CALL, { announced: true, stopped: true });
     db.call.findUnique.mockResolvedValue(row());
@@ -703,6 +763,7 @@ describe('CallRecorderService.finishLeftovers', () => {
     await vi.waitFor(() => expect(pass).toHaveBeenCalled());
     expect(await pass.mock.results[0].value).toEqual(counts);
     expect(put).toHaveBeenCalledTimes(puts);
+    expect(h.files()).toEqual(puts ? [] : [`${CALL}.json`, `${CALL}.webm`]);
     expect(h.recordings.checkStorage.mock.invocationCallOrder[0]).toBeLessThan(pass.mock.invocationCallOrder[0]);
   });
 

@@ -21,8 +21,9 @@ export interface RecordingState {
   /** Its recorder stopped and gave its last chunks: otherwise what was written is all there is (partial). */
   stopped: boolean;
   /**
-   * When the announcement ended, in ms after the recorder started. Counted after the page's own start, so never later
-   * than the file's own time of that moment: a file that ends sooner cuts the announcement short.
+   * When the announcement ended at the earliest, in ms after the recorder started: from the ask to play it (the page
+   * decodes it, then starts it), plus its decoded length, counted from once the page's own recorder had started. So
+   * never later than the file's own time of that end: a file that ends sooner cuts the announcement short.
    */
   announcedAtMs?: number;
 }

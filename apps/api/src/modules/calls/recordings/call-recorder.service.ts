@@ -10,7 +10,7 @@
 // A recorder that does not start, or an announcement that does not play, leaves the call unrecorded: the agent is
 // connected all the same, the files are deleted, and the admins are alerted. A recording whose announcement did not
 // play, or whose file ends before it did, is never kept. One that could not be stored stays in tmpDir and is tried
-// again at boot and each night, never to a storage last found public, and never past its profile's retention period.
+// again at boot and each night, once a check found the storage private, and never past its profile's retention period.
 import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { once } from 'events';
@@ -85,10 +85,14 @@ interface Run {
   out: WriteStream | null;
   /** The engine's recorder may hold this call: a start was asked for, and no stop since. */
   recording: boolean;
-  /** When the engine's recorder had started (Date.now()): the announcement's end is counted from it. */
+  /**
+   * When the engine's recorder had started, on the monotonic clock (performance.now()): the announcement's end is
+   * counted from it. A wall clock that steps meanwhile (chrony, a VM resume) would move that end by the step: forward,
+   * every recording shorter than the step would be discarded; back, none would ever be.
+   */
   startedAt: number;
   announced: boolean;
-  /** When the announcement ended, in ms after the recorder started (the state's announcedAtMs). */
+  /** When the announcement ended at the earliest, in ms after the recorder started (the state's announcedAtMs). */
   announcedAtMs?: number;
   stopped: boolean;
   /** A write to the file failed (a full disk): what is in it is all there is. */
@@ -160,7 +164,8 @@ export class CallRecorderService implements OnApplicationBootstrap {
    * What a crash or a failed upload left in tmpDir, for calls no run here holds: discarded when its announcement had
    * not played (or its file ends before it did), when its call is gone, or once older than its profile's retention
    * period (logged); only its files deleted when it is stored already; stored otherwise, in one try, partial unless its
-   * recorder was stopped cleanly. At boot and each night.
+   * recorder was stopped cleanly, once a check in this process found the storage private (kept until then). At boot
+   * and each night.
    */
   async finishLeftovers(now = new Date()): Promise<Record<KeepResult, number>> {
     const counts: Record<KeepResult, number> = { stored: 0, kept: 0, discarded: 0 };
@@ -184,8 +189,8 @@ export class CallRecorderService implements OnApplicationBootstrap {
   /**
    * At boot: what the previous process left (calls a crash or a restart cut short). Not awaited: the API starts at once.
    * The last privacy check lives in memory, so a restart forgets one that found the storage public, and that storage
-   * may still be: with anything left to store, it is checked first (a public one is reacted to, and gets nothing).
-   * With nothing left, no probe.
+   * may still be: with anything left to store, it is checked first (a public one is reacted to; only a private one gets
+   * them). With nothing left, no probe.
    */
   onApplicationBootstrap(): void {
     void (async () => {
@@ -210,13 +215,14 @@ export class CallRecorderService implements OnApplicationBootstrap {
       if (!call.live()) return await this.drop(run, null);
       run.recording = true;
       await withTimeout(call.media.startRecording(call.waCallId, (chunk) => this.chunk(run, chunk)), START_MS, 'the recorder did not start in time');
-      run.startedAt = Date.now();
+      run.startedAt = performance.now();
       failure = 'announcement_failed';
       if (!call.live()) return await this.drop(run, null);
       const audio = await this.announcementBytes(call.announcement.storageKey);
       if (!call.live()) return await this.drop(run, null);
       call.onAnnouncing(call.announcement.durationSec);
-      await withTimeout(
+      const playAt = performance.now();
+      const played = await withTimeout(
         call.media.playAnnouncement(call.waCallId, audio, { maxDurationMs: ANNOUNCEMENT_LIMIT_MS }),
         announceMs(call.announcement.durationSec),
         'the announcement did not finish in time',
@@ -225,8 +231,10 @@ export class CallRecorderService implements OnApplicationBootstrap {
       // out, a server_restart end): the recording lacks the rest of its announcement.
       if (!call.live()) return await this.drop(run, null);
       run.announced = true;
-      // Counted here, after the page's own start: never later than the file's own time of that moment.
-      run.announcedAtMs = Date.now() - run.startedAt;
+      // The page decodes the announcement, then starts it only once this ask reached it: so its end in the file is never
+      // sooner than this, which under-counts by the decode. Not the time its reply came back: onended, puppeteer and a
+      // stalled event loop on the way would push it past the file's own end, and a whole recording would be discarded.
+      run.announcedAtMs = playAt - run.startedAt + played.durationMs;
       await this.save(run);
     } catch (e) {
       // The caller is on the line, waiting for the agent: the cleanup (the engine's stop alone may take 10 s) goes on
@@ -366,6 +374,14 @@ export class CallRecorderService implements OnApplicationBootstrap {
     // Stored already, by a try whose files were not deleted: another upload would put back audio an admin deleted since,
     // or leave a copy no row points to once the storage moved.
     if (await prisma.callRecording.findUnique({ where: { callId }, select: { id: true } })) return this.filesGone(callId, 'stored');
+    // Some are here because the storage was found public, which a restart forgets: one goes only where a check in this
+    // process found the storage private. The boot and the nightly job check just before their pass, so a check that
+    // could not tell leaves it to the next pass. A call's own end needs no check of its own: its storage was checked
+    // when recording was turned on, and is each night.
+    if (this.recordings.storageStatus().lastCheck?.ok !== true) {
+      this.logger.warn(`An unfinished recording of call ${clean(callId)} is kept on this server: the recordings storage was not last found private`);
+      return 'kept';
+    }
     return this.keep(callId, { profileId: call.profileId, organizationId, startedAt: call.startedAt }, !state.stopped, [], state.announcedAtMs);
   }
 
