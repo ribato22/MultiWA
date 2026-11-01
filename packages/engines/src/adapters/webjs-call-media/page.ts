@@ -353,7 +353,6 @@ export async function playAnnouncementInPage(callId: string, b64: string, maxMs:
     const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
     const buf = await call.ctx.decodeAudioData(bytes.buffer);
     if (maxMs !== null && buf.duration * 1000 > maxMs) throw new Error(`Announcement too long: ${Math.round(buf.duration * 10) / 10} s`);
-    if (over()) throw new Error('The call ended');
     const src = call.ctx.createBufferSource();
     src.buffer = buf;
     src.connect(call.inputs.announcement);
