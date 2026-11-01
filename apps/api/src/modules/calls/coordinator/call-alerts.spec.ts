@@ -221,7 +221,7 @@ describe('CallAlerts.recordingFailed', () => {
 
   it.each([
     ['recorder_failed', 'Call not recorded: Line p1', 'A call on Line p1 was answered in the dashboard but not recorded: the recorder did not start. The call was connected.'],
-    ['upload_failed', 'Call recording not stored: Line p1', 'A call recording of Line p1 could not be stored: the recordings storage did not take it after 4 tries. It is kept on this server and tried again tonight.'],
+    ['upload_failed', 'Call recording not stored: Line p1', 'A call recording of Line p1 could not be stored: the recordings storage did not take it. It is kept on this server and tried again at the next restart and each night.'],
   ] as const)('%s says so', async (kind, title, text) => {
     await alerts.recordingFailed(kind, 'p1', AT);
     expect(notifications.createForOrg.mock.calls[0].slice(2, 4)).toEqual([title, text]);
@@ -232,13 +232,29 @@ describe('CallAlerts.recordingFailed', () => {
     await alerts.recordingFailed('recorder_failed', 'p1', AT);
     await alerts.recordingFailed('recorder_failed', 'p1', later(59));
     await alerts.recordingFailed('announcement_failed', 'p1', later(59)); // another kind
-    expect(notifications.createForOrg).toHaveBeenCalledTimes(2);
-    await alerts.recordingFailed('recorder_failed', 'p1', later(61));
+    findMany.mockResolvedValueOnce([profile('p2', 'o1')]);
+    await alerts.recordingFailed('recorder_failed', 'p2', later(59)); // another profile
     expect(notifications.createForOrg).toHaveBeenCalledTimes(3);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(3);
+    await alerts.recordingFailed('recorder_failed', 'p1', later(61));
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(4);
     notifications.createForOrg.mockRejectedValueOnce(new Error('db down'));
     await alerts.recordingFailed('upload_failed', 'p1', later(62));
     await alerts.recordingFailed('upload_failed', 'p1', later(63));
-    expect(notifications.createForOrg).toHaveBeenCalledTimes(5);
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(6);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(6);
+  });
+
+  // The recorder does not wait for its alerts, and the passes at boot and at night fail a profile's kept recordings
+  // back to back.
+  it('failures at the same moment send one alert; a profile read that failed starts no hour', async () => {
+    await Promise.all([alerts.recordingFailed('upload_failed', 'p1', AT), alerts.recordingFailed('upload_failed', 'p1', AT)]);
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(1);
+    expect(sendOpsAlert).toHaveBeenCalledTimes(1);
+    findMany.mockRejectedValueOnce(new Error('db down'));
+    await expect(alerts.recordingFailed('recorder_failed', 'p1', AT)).rejects.toThrow('db down');
+    await alerts.recordingFailed('recorder_failed', 'p1', later(1));
+    expect(notifications.createForOrg).toHaveBeenCalledTimes(2);
   });
 
   it('a profile with no organization is left out', async () => {
