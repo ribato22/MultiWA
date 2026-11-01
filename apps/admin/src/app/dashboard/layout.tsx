@@ -43,6 +43,7 @@ import { api, Notification } from '@/lib/api';
 import { DemoBanner } from '@/components/demo-banner';
 import { CallsProvider } from '@/components/calls/calls-provider';
 import { AvailabilityToggle } from '@/components/calls/availability-toggle';
+import { IncomingCallBanner } from '@/components/calls/incoming-call-banner';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
 type MenuItem = { name: string; href: string; Icon: LucideIcon };
@@ -475,6 +476,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </div>
       </main>
+      <IncomingCallBanner />
     </div>
   );
   // The call console wraps every dashboard page: a call outlives page changes.
