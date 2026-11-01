@@ -4,7 +4,7 @@
 // its row, call.recording.ready). The real page is in call-session.integration.spec.ts; a real Postgres in
 // test/call-recordings.e2e-spec.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -18,7 +18,7 @@ import { InternalEvents } from '../../../metrics/internal-events';
 import { MemoryRecordingStore } from '../../../testing/memory-recording-store';
 import { CallRecorderService } from './call-recorder.service';
 import { recordingKey } from './recording-store';
-import { readState } from './recording-tmp';
+import { readState, writeState } from './recording-tmp';
 
 const db = prisma as any;
 const FIXTURE = readFileSync(join(__dirname, 'fixtures', 'recorded.webm'));
@@ -297,5 +297,86 @@ describe('CallRecorderService.end', () => {
     const h = harness();
     await h.recorder.end(CALL);
     expect(h.media.stopRecording).not.toHaveBeenCalled();
+  });
+});
+
+describe('CallRecorderService.finishLeftovers', () => {
+  const OTHER = '55555555-5555-4555-8555-555555555555';
+  const NOW = new Date('2026-11-01T02:30:00Z');
+  const row = (settings: Record<string, unknown> = {}) => ({ ...ROW, profile: { settings, workspace: { organizationId: ORG } } });
+  /** Files a crash left for `callId`: the fixture recording and a state, last written `daysAgo` before NOW. */
+  const leftover = async (h: ReturnType<typeof make>, callId: string, state: { announced: boolean; stopped: boolean } | null, daysAgo = 0) => {
+    if (state) await writeState(h.store.tmpDir, callId, state);
+    const recording = join(h.store.tmpDir, `${callId}.webm`);
+    writeFileSync(recording, FIXTURE);
+    const at = new Date(NOW.getTime() - daysAgo * 86_400_000);
+    utimesSync(recording, at, at);
+    if (state) utimesSync(join(h.store.tmpDir, `${callId}.json`), at, at);
+  };
+
+  it('stores one a restart cut short (announced, not stopped) as partial, in one try', async () => {
+    const h = harness();
+    await leftover(h, CALL, { announced: true, stopped: false });
+    db.call.findUnique.mockResolvedValue(row());
+    const put = vi.spyOn(h.store, 'putFile');
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 1, kept: 0, discarded: 0 });
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(db.callRecording.create.mock.calls[0][0].data).toMatchObject({ callId: CALL, storageKey: KEY, partial: true, announcementPlayed: true });
+    expect(h.files()).toEqual([]);
+  });
+
+  it('a stopped one that could not be stored before is stored now, and not as partial', async () => {
+    const h = harness();
+    await leftover(h, CALL, { announced: true, stopped: true });
+    db.call.findUnique.mockResolvedValue(row());
+    await h.recorder.finishLeftovers(NOW);
+    expect(db.callRecording.create.mock.calls[0][0].data.partial).toBe(false);
+  });
+
+  it.each([
+    ['its announcement had not played', { announced: false, stopped: false }, (): unknown => row(), 0],
+    ['it has no state', null, (): unknown => row(), 0],
+    ['its call is gone', { announced: true, stopped: true }, (): unknown => null, 0],
+    ["it is older than its profile's retention period", { announced: true, stopped: true }, (): unknown => row({ callsRecordingRetentionDays: 7 }), 8],
+  ] as const)('discards one when %s', async (_case, state, found, daysAgo) => {
+    const h = harness();
+    await leftover(h, CALL, state, daysAgo);
+    db.call.findUnique.mockResolvedValue(found());
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
+    expect(h.files()).toEqual([]);
+    expect(db.callRecording.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps one whose upload fails again, and tells the admins; the next night tries again', async () => {
+    const h = harness();
+    await leftover(h, CALL, { announced: true, stopped: true });
+    db.call.findUnique.mockResolvedValue(row());
+    vi.spyOn(h.store, 'putFile').mockRejectedValueOnce(new Error('503'));
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 1, discarded: 0 });
+    expect(h.alerts.recordingFailed).toHaveBeenCalledWith('upload_failed', PROFILE);
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 1, kept: 0, discarded: 0 });
+  });
+
+  it('leaves alone the files of a call it is recording', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    await leftover(h, OTHER, { announced: false, stopped: false });
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 1 });
+    expect(h.files()).toEqual([`${CALL}.json`, `${CALL}.webm`]);
+  });
+
+  it('does nothing without a storage set up', async () => {
+    const h = harness();
+    h.store.problem = 'CALL_RECORDINGS_PATH is not set';
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 0, kept: 0, discarded: 0 });
+  });
+
+  it('runs at boot without holding the boot up', async () => {
+    const h = harness();
+    let release!: () => void;
+    const spy = vi.spyOn(h.recorder, 'finishLeftovers').mockImplementation(() => new Promise((resolve) => (release = () => resolve({ stored: 0, kept: 0, discarded: 0 }))));
+    expect(h.recorder.onApplicationBootstrap()).toBeUndefined();
+    expect(spy).toHaveBeenCalled();
+    release();
   });
 });

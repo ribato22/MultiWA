@@ -11,28 +11,29 @@
 // connected all the same, the files are deleted, and the admins are alerted. A recording whose announcement did not
 // play is never kept. One that could not be stored stays in tmpDir and is tried again at boot and each night, never to
 // a storage last found public, and never past its profile's retention period.
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { once } from 'events';
 import { createWriteStream, type WriteStream } from 'fs';
-import { rm } from 'fs/promises';
+import { rm, stat } from 'fs/promises';
 import { finished } from 'stream/promises';
 import { prisma } from '@multiwa/database';
 import { AppEvents, REALTIME_EMITTER, type RealtimeEmitter } from '@multiwa/core';
 import { toCallPayload, withTimeout } from '@multiwa/engine-runtime';
 import type { CallMediaEngine } from '@multiwa/engines';
 import { InternalEvents, type CallRecorderPayload } from '../../../metrics/internal-events';
-import { announcementOf, recordingOn, type CallAnnouncement } from '../../profiles/profile-settings';
+import { announcementOf, recordingOn, retentionDaysOf, type CallAnnouncement } from '../../profiles/profile-settings';
 import { CallAlerts, type RecordingFailure } from '../coordinator/call-alerts';
 import { ANNOUNCEMENT_LIMIT_SECONDS, ANNOUNCEMENT_MAX_BYTES } from './announcement-audio';
 import { CallRecordingsService } from './call-recordings.service';
 import { RECORDING_STORE, isAnnouncementOf, recordingKey, type RecordingStore } from './recording-store';
-import { removeFiles, tmpFiles, writeState } from './recording-tmp';
+import { leftovers, readState, removeFiles, tmpFiles, writeState } from './recording-tmp';
 import { finalizeWebm } from './webm-duration';
 
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const message = (e: unknown) => clean((e as Error)?.message ?? e);
+const DAY_MS = 24 * 60 * 60 * 1000;
 const START_MS = 8_000; // the page waits up to 5 s for the caller's audio
 const ANNOUNCEMENT_LIMIT_MS = ANNOUNCEMENT_LIMIT_SECONDS * 1000;
 // The page refuses what decodes longer than the limit, and cuts one off 5 s past its own length.
@@ -91,7 +92,7 @@ interface Run {
 export type KeepResult = 'stored' | 'kept' | 'discarded';
 
 @Injectable()
-export class CallRecorderService {
+export class CallRecorderService implements OnApplicationBootstrap {
   private readonly logger = new Logger(CallRecorderService.name);
   private readonly runs = new Map<string, Run>();
   /** Recordings being stored (a run's end, the boot, the nightly job): never two at once for one call. */
@@ -141,6 +142,30 @@ export class CallRecorderService {
     run.ending = true;
     run.stopped = await this.stopEngine(run);
     void this.track(callId, this.finish(run));
+  }
+
+  /**
+   * What a crash or a failed upload left in tmpDir, for calls no run here holds: discarded when its announcement had
+   * not played, when its call is gone, or once older than its profile's retention period (logged); stored otherwise,
+   * in one try, partial unless its recorder was stopped cleanly. At boot and each night.
+   */
+  async finishLeftovers(now = new Date()): Promise<Record<KeepResult, number>> {
+    const counts: Record<KeepResult, number> = { stored: 0, kept: 0, discarded: 0 };
+    if (this.store.problem || !this.store.tmpDir) return counts;
+    for (const { callId, modifiedAt } of await leftovers(this.store.tmpDir)) {
+      if (this.runs.has(callId) || this.keeping.has(callId)) continue;
+      const result = await this.track(callId, this.leftover(callId, modifiedAt, now));
+      if (result) counts[result]++;
+    }
+    if (counts.stored || counts.kept || counts.discarded) {
+      this.logger.log(`Unfinished call recordings: ${counts.stored} stored, ${counts.kept} kept for the next try, ${counts.discarded} discarded`);
+    }
+    return counts;
+  }
+
+  /** At boot: what the previous process left (calls a crash or a restart cut short). Not awaited: the API starts at once. */
+  onApplicationBootstrap(): void {
+    void this.finishLeftovers().catch((e) => this.logger.warn(`The unfinished call recordings were not finished at boot: ${message(e)}`));
   }
 
   private async record(run: Run): Promise<void> {
@@ -250,6 +275,28 @@ export class CallRecorderService {
       return 'discarded';
     }
     return this.keep(call.callId, call, !run.stopped || run.broken, this.retryAfterMs);
+  }
+
+  private async leftover(callId: string, modifiedAt: Date, now: Date): Promise<KeepResult> {
+    const dir = this.store.tmpDir;
+    const discard = async (why: string): Promise<KeepResult> => {
+      this.logger.warn(`An unfinished recording of call ${clean(callId)} is discarded: ${why}`);
+      await removeFiles(dir, callId);
+      return 'discarded';
+    };
+    const state = await readState(dir, callId);
+    if (!state?.announced) return discard('its announcement had not played');
+    if (!(await stat(tmpFiles(dir, callId).recording).then(() => true, () => false))) return discard('its recording file is missing');
+    const call = await prisma.call.findUnique({
+      where: { id: callId },
+      select: { profileId: true, startedAt: true, profile: { select: { settings: true, workspace: { select: { organizationId: true } } } } },
+    });
+    const organizationId = call?.profile?.workspace?.organizationId;
+    if (!call || !organizationId) return discard('its call is gone');
+    if (now.getTime() - modifiedAt.getTime() > retentionDaysOf(call.profile.settings) * DAY_MS) {
+      return discard("it is older than its profile's retention period");
+    }
+    return this.keep(callId, { profileId: call.profileId, organizationId, startedAt: call.startedAt }, !state.stopped, []);
   }
 
   /**
