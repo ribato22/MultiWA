@@ -18,7 +18,7 @@ export type Banner =
   | { call: RingingCall; status: 'ringing'; notice?: string } // notice: why this tab's answer did not go through
   | { call: RingingCall; status: 'answering'; mine?: boolean } // this tab clicked Answer; mine: this agent claimed it
   | { call: RingingCall; status: 'taken'; by: string } // another agent answered: it fades
-  | { call: RingingCall; status: 'failed'; message: string }; // this tab's answer failed: it fades
+  | { call: RingingCall; status: 'failed'; message: string; reason?: string }; // this tab's answer failed: it fades; reason: the reply's
 
 export type CallPhase = 'connecting' | 'announcing' | 'active' | 'hanging_up' | 'ended';
 
@@ -68,6 +68,9 @@ export type ConsoleEvent =
   | { type: 'availability'; available: boolean }
   | { type: 'offline' };
 
+/** The call:answer refusals that come before a claim: someone else's claim won. */
+const LOST_RACE = ['busy', 'already_claimed', 'not_ringing'];
+
 export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
   const without = (callId: string) => s.banners.filter((b) => b.call.callId !== callId);
   const a = s.active;
@@ -85,10 +88,11 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
     case 'ringing': {
       // A call rings again after an answer failed, for the agent who tried too; one dismissed here stays dismissed. The
       // failed answer's banner, or the ended call of a failed answer still fading on the bar, gives way to the ringing
-      // banner, which keeps why it failed (the failed banner's message first).
+      // banner, which keeps why it failed (the failed banner's message first). A lost race says nothing: it rings again
+      // because the winner's answer failed, so "someone else answered" is stale.
       if (s.dismissed.includes(e.call.callId) || live(e.call.callId)) return s;
       const b = banner(e.call.callId);
-      const notice = b?.status === 'failed' ? b.message : isActive(e.call.callId) ? a!.endedText : undefined;
+      const notice = b?.status === 'failed' ? (LOST_RACE.includes(b.reason) ? undefined : b.message) : isActive(e.call.callId) ? a!.endedText : undefined;
       const ring: Banner = notice ? { call: e.call, status: 'ringing', notice } : { call: e.call, status: 'ringing' };
       return { ...s, banners: [...without(e.call.callId), ring], active: isActive(e.call.callId) ? null : a };
     }
@@ -104,12 +108,13 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       return { ...s, banners: s.banners.map((x) => (x.call.callId === e.callId && x.status === 'ringing' ? { call: x.call, status: 'answering' } : x)) };
     case 'answerFailed': {
       const b = banner(e.callId);
-      // Refused before this tab could claim: the claim seen here is another tab's. Any other refusal is this tab's own
-      // claim failing (the audio did not connect), and fades like any failed answer.
-      if (b?.status === 'answering' && b.mine && ['busy', 'already_claimed', 'not_ringing'].includes(e.reason)) return theirs(b.call);
+      // Refused before this tab could claim, or no reason (its microphone was refused before it asked): the claim seen
+      // here is another tab's. Any other refusal is this tab's own claim failing (the audio did not connect), and fades
+      // like any failed answer.
+      if (b?.status === 'answering' && b.mine && (e.reason === undefined || LOST_RACE.includes(e.reason))) return theirs(b.call);
       // Rung again before the reply came: it still rings, and says why this answer did not go through.
       if (b?.status === 'ringing') return { ...s, banners: swap(b, { ...b, notice: e.message }) };
-      if (b?.status === 'answering') return { ...s, banners: swap(b, { call: b.call, status: 'failed', message: e.message }) };
+      if (b?.status === 'answering') return { ...s, banners: swap(b, { call: b.call, status: 'failed', message: e.message, reason: e.reason }) };
       return s;
     }
     case 'answered':
@@ -128,8 +133,9 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
         },
       };
     case 'announcing':
-      if (!isActive(e.callId) || a!.phase !== 'connecting') return s;
-      return { ...s, active: { ...a!, phase: 'announcing', announcing: { durationSec: e.durationSec, since: e.at } } };
+      if (!isActive(e.callId) || (a!.phase !== 'connecting' && a!.phase !== 'hanging_up')) return s;
+      // A hang-up under way stays one, but a failed one then goes back to the announcement.
+      return { ...s, active: { ...a!, phase: a!.phase === 'hanging_up' ? 'hanging_up' : 'announcing', announcing: { durationSec: e.durationSec, since: e.at } } };
     case 'active':
       if (!live(e.callId)) return s;
       // A hang-up under way stays one, but a failed one then goes back to the call it hung up.

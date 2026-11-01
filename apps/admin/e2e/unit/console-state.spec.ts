@@ -31,10 +31,10 @@ test('this tab’s own answer: its claim marks the banner as this agent’s, ano
   ]);
 });
 
-test('two tabs of this agent answer at once: the tab that lost shows the call as the other tab’s, in either order', () => {
+test('two tabs of this agent answer at once: the tab that lost, or whose microphone was refused, shows the call as the other tab’s, in either order', () => {
   const answering: ConsoleEvent[] = [{ type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' }];
-  // the refusals that come before a claim
-  for (const reason of ['busy', 'already_claimed', 'not_ringing']) {
+  // the refusals that come before a claim, and a microphone refused before this tab could claim (no reason)
+  for (const reason of ['busy', 'already_claimed', 'not_ringing', undefined]) {
     const refused: ConsoleEvent = { type: 'answerFailed', callId: 'c1', message: 'Could not answer', reason };
     for (const s of [run(...answering, claimed('u1', 'Ada'), refused), run(...answering, refused, claimed('u1', 'Ada'))]) {
       expect(s.banners).toEqual([]);
@@ -51,15 +51,21 @@ test('this tab’s own claim failing before its end comes fades as a failed answ
   expect(run(...claimedHere, failed)).toMatchObject({ banners: [{ call: call(), status: 'failed', message: 'Could not connect audio' }], active: null });
   // the end leaves the failed answer to fade, unless the call rings again first
   const ended = run(...claimedHere, failed, { type: 'ended', callId: 'c1', text: 'Could not connect audio' });
-  expect(ended.banners).toEqual([{ call: call(), status: 'failed', message: 'Could not connect audio' }]);
+  expect(ended.banners).toEqual([{ call: call(), status: 'failed', message: 'Could not connect audio', reason: 'media_failed' }]);
   expect(reduce(ended, { type: 'drop', callId: 'c1' }).banners).toEqual([]);
   expect(reduce(ended, { type: 'ringing', call: call() })).toMatchObject({
     banners: [{ call: call(), status: 'ringing', notice: 'Could not connect audio' }],
     active: null,
   });
-  // a reply without a reason cannot be another tab's
-  const noReason = run(...claimedHere, { type: 'answerFailed', callId: 'c1', message: 'Could not answer' });
-  expect(noReason).toMatchObject({ banners: [{ call: call(), status: 'failed', message: 'Could not answer' }], active: null });
+});
+
+test('a call rung again after another agent won the race rings without saying someone else answered', () => {
+  // Jane's claim beat this tab's; her audio then did not connect, and the call rings again.
+  const s = run(
+    { type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' }, claimed('u2', 'Jane'),
+    { type: 'answerFailed', callId: 'c1', message: 'Someone else answered', reason: 'already_claimed' }, { type: 'ringing', call: call() },
+  );
+  expect(s.banners).toEqual([{ call: call(), status: 'ringing' }]);
 });
 
 test('rung again before this tab’s answer was refused: it still rings, and says why the answer did not go through', () => {
@@ -133,6 +139,14 @@ test('a hang-up that failed before call:active goes back to the announcement, or
   const announcing = run({ type: 'answered', call: call() }, { type: 'announcing', callId: 'c1', durationSec: 6, at: 1000 }, { type: 'hangingUp', callId: 'c1' });
   expect(reduce(announcing, failed).active).toMatchObject({ phase: 'announcing', announcing: { durationSec: 6, since: 1000 }, problem: 'try again' });
   expect(run({ type: 'answered', call: call() }, { type: 'hangingUp', callId: 'c1' }, failed).active).toMatchObject({ phase: 'connecting', problem: 'try again' });
+});
+
+test('call:announcing during a hang-up keeps it hanging up, and a failed hang-up then goes back to the announcement', () => {
+  const s = run({ type: 'answered', call: call() }, { type: 'hangingUp', callId: 'c1' }, { type: 'announcing', callId: 'c1', durationSec: 6, at: 1000 });
+  expect(s.active).toMatchObject({ phase: 'hanging_up', announcing: { durationSec: 6, since: 1000 } });
+  expect(reduce(s, { type: 'hangUpFailed', callId: 'c1', text: 'try again' }).active).toMatchObject({
+    phase: 'announcing', announcing: { durationSec: 6, since: 1000 }, problem: 'try again',
+  });
 });
 
 test('a late result for another call leaves the call on the bar alone', () => {
