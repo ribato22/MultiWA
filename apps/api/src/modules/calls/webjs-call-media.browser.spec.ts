@@ -257,7 +257,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     }
   }, 20_000);
 
-  // Nor does one right after the decode: a call that really ended meanwhile is cut off by the poll, 250-500 ms in.
+  // Nor does one right after the decode: a call that really ended meanwhile is cut off by the poll, 500 ms in.
   it('one read that finds the call gone right after the decode does not refuse an announcement', async () => {
     const p = await openRecordingPage();
     try {
@@ -272,14 +272,14 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
           const call = CC.activeCall;
           Object.defineProperty(CC, 'activeCall', {
             configurable: true,
-            get() { Object.defineProperty(CC, 'activeCall', { value: call, writable: true, configurable: true, enumerable: true }); return null; },
+            get() { w.__readEmpty = true; Object.defineProperty(CC, 'activeCall', { value: call, writable: true, configurable: true, enumerable: true }); return null; },
           });
           return ctx.decodeAudioData(b);
         };
       });
       const played = await p.evaluate(playAnnouncementInPage, 'CALL1', sineWav(660, 1).toString('base64')).catch((e: Error) => e.message);
       expect(played).toEqual({ durationMs: 1000 });
-      expect(await p.evaluate(() => 'value' in Object.getOwnPropertyDescriptor((window as any).require('WAWebCallCollection'), 'activeCall')!)).toBe(true); // a read did find the call gone
+      expect(await p.evaluate(() => (window as any).__readEmpty)).toBe(true); // a read did find the call gone
     } finally {
       await p.close();
     }

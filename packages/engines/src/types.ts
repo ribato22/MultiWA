@@ -281,10 +281,10 @@ export interface CallMediaEngine {
    * Play audio to the caller through the call's microphone; the agent input is held silent meanwhile. One
    * announcement at a time: a second one rejects ("Announcement already playing") and leaves the first alone. One that
    * decodes longer than `opts.maxDurationMs` is refused before any of it plays ("Announcement too long: …"). It ends
-   * with its call, as a recording does: 250-500 ms after the call is over it is cut off and rejects ("The call
-   * ended"). One that has not ended 5 s after its own length (a suspended or torn-down audio context never reaches the
-   * end) rejects ("Announcement did not finish") and is cut off. Each way, the agent input gets its gain back and the
-   * line is free again.
+   * with its call, as a recording does: 250-500 ms after the call is over (500 ms into playing for one that ended
+   * during the decode) it is cut off and rejects ("The call ended"). One that has not ended 5 s after its own length
+   * (a suspended or torn-down audio context never reaches the end) rejects ("Announcement did not finish") and is cut
+   * off. Each way, the agent input gets its gain back and the line is free again.
    */
   playAnnouncement(callId: string, audio: Buffer, opts?: { maxDurationMs?: number }): Promise<{ durationMs: number }>;
   /**

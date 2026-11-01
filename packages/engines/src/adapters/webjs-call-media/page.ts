@@ -331,10 +331,11 @@ export async function hangUpActiveCall(callId: string, timeoutMs: number): Promi
  * it is refused. The guard is set before the first await and released in `finally`, whatever happens.
  * `maxMs` (null: no limit) is checked on the DECODED length, before any of it plays: an upload's length is read from
  * the file's headers, which a crafted file can make lie. It ends with its call, as a recording does
- * (startRecordingInPage): when the call is over on two polls in a row (250-500 ms after its end) it is cut off and
- * rejects; played on, it would reach the next call on this page and hold that call's agent silent. A playback that
- * has not ended 5 s after its own length (a suspended or torn-down context never reaches the end) rejects too. The
- * same `finally` stops it and gives the agent input back the gain it had.
+ * (startRecordingInPage): when the call is over on two polls in a row (250-500 ms after its end; 500 ms into playing
+ * for one that ended during the decode) it is cut off and rejects; played on, it would reach the next call on this
+ * page and hold that call's agent silent. A playback that has not ended 5 s after its own length (a suspended or
+ * torn-down context never reaches the end) rejects too. The same `finally` stops it and gives the agent input back
+ * the gain it had.
  */
 export async function playAnnouncementInPage(callId: string, b64: string, maxMs: number | null = null): Promise<{ durationMs: number }> {
   const w = window as any;
