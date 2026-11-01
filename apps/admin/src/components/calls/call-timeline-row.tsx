@@ -2,10 +2,10 @@
 import type { CallRecord } from '@/lib/api';
 import { OUTCOME_LABEL } from '@/lib/calls';
 import { formatFull, formatTime } from '@/lib/datetime';
-import { OUTCOME_ICON } from '@/components/calls/outcome-icon';
+import { outcomeIcon } from '@/components/calls/outcome-icon';
 
 export function CallTimelineRow({ call }: { call: CallRecord }) {
-  const Icon = OUTCOME_ICON[call.outcome];
+  const Icon = outcomeIcon(call.outcome);
   return (
     <div className="flex justify-center my-2">
       <span

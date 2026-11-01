@@ -2,7 +2,7 @@
 import { Phone, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOff, type LucideIcon } from 'lucide-react';
 import type { CallOutcome } from '@/lib/api';
 
-export const OUTCOME_ICON: Record<CallOutcome, LucideIcon> = {
+const OUTCOME_ICON: Record<CallOutcome, LucideIcon> = {
   answered: PhoneCall,
   ringing: PhoneIncoming,
   rejected: PhoneOff,
@@ -10,3 +10,6 @@ export const OUTCOME_ICON: Record<CallOutcome, LucideIcon> = {
   missed: PhoneMissed,
   unknown: PhoneMissed,
 };
+
+/** A newer API can send an outcome this admin does not know yet (the column is plain text): it shows as missed. */
+export const outcomeIcon = (outcome: CallOutcome): LucideIcon => OUTCOME_ICON[outcome] ?? PhoneMissed;

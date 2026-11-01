@@ -1,9 +1,11 @@
-// The call helpers of lib/calls.ts (no browser).
+// The call helpers of lib/calls.ts, and the outcome icons (no browser).
 import { test, expect } from '@playwright/test';
+import { PhoneCall, PhoneMissed } from 'lucide-react';
 import {
   OUTCOME_LABEL, answeredFacts, endedText, formatDuration, fromPayload, reasonTexts, ringingCallerLabel, type CallUpdatePayload,
 } from '@/lib/calls';
-import type { CallRecord } from '@/lib/api';
+import type { CallOutcome, CallRecord } from '@/lib/api';
+import { outcomeIcon } from '@/components/calls/outcome-icon';
 
 const REC = { id: 'rec-1', durationSec: 190, bytes: 95_000, partial: false, announcementPlayed: true, createdAt: '2026-11-01T03:10:00.000Z', deletedAt: null, deleteReason: null };
 const payload: CallUpdatePayload = {
@@ -16,6 +18,11 @@ const previous = { ...fromPayload(payload), answeredBy: { id: 'u-jane', name: 'J
 
 test('a call answered in the dashboard has its label', () => {
   expect(OUTCOME_LABEL.answered).toBe('Answered');
+});
+
+test('an outcome this admin does not know yet shows the missed-call icon, never nothing', () => {
+  expect(outcomeIcon('answered')).toBe(PhoneCall);
+  expect(outcomeIcon('call_x' as CallOutcome)).toBe(PhoneMissed);
 });
 
 test('a realtime update keeps what its payload lacks: the recording, and who answered while it is still them', () => {

@@ -24,7 +24,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
-import { OUTCOME_ICON } from '@/components/calls/outcome-icon';
+import { outcomeIcon } from '@/components/calls/outcome-icon';
 import { useToast } from '@/hooks/use-toast';
 
 type Member = { id: string; name: string; email: string; isActive: boolean };
@@ -49,7 +49,7 @@ const OUTCOME_COLOUR: Record<CallOutcome, string> = {
 };
 
 function OutcomeIcon({ call }: { call: CallRecord }) {
-  const Icon = OUTCOME_ICON[call.outcome];
+  const Icon = outcomeIcon(call.outcome);
   return <Icon className={`w-4 h-4 ${OUTCOME_COLOUR[call.outcome]}${call.outcome === 'ringing' ? ' animate-pulse' : ''}`} aria-hidden="true" />;
 }
 

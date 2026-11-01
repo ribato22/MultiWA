@@ -36,13 +36,15 @@ test('a webhook can subscribe to the answered call and the recording events', as
 test('the bell shows a call alert, a call notice and other system alerts each with its icon', async ({ page, backend }) => {
   const at = '2026-11-01T03:00:00.000Z';
   backend.route(get('/notifications', {
-    total: 4,
+    total: 5,
     notifications: [
       { id: 'n1', type: 'system', title: 'A recording failed', body: 'Line 1', metadata: { kind: 'call_recording_failed' }, isRead: true, createdAt: at },
       { id: 'n2', type: 'call', title: 'Missed call', body: 'From 628111000111', metadata: { callId: 'call-1' }, isRead: true, createdAt: at },
       { id: 'n3', type: 'system', title: 'Maintenance tonight', body: 'The server restarts at 22.00', isRead: true, createdAt: at },
       // A kind that only starts like a call alert's.
       { id: 'n4', type: 'system', title: 'Callback due', body: 'Ring Pak Joko back', metadata: { kind: 'callback_due' }, isRead: true, createdAt: at },
+      // A call notice whose kind starts like a call alert's: only a system alert gets the alert icon.
+      { id: 'n5', type: 'call', title: 'Call on line 2', body: 'Line 2', metadata: { kind: 'call_x' }, isRead: true, createdAt: at },
     ],
   }));
   await page.goto('/dashboard/api-keys');
@@ -52,4 +54,5 @@ test('the bell shows a call alert, a call notice and other system alerts each wi
   await expect(row('Missed call').locator('svg.lucide-phone-missed')).toBeVisible();
   await expect(row('Maintenance tonight').locator('svg.lucide-wrench')).toBeVisible();
   await expect(row('Callback due').locator('svg.lucide-wrench')).toBeVisible();
+  await expect(row('Call on line 2').locator('svg.lucide-phone-missed')).toBeVisible();
 });
