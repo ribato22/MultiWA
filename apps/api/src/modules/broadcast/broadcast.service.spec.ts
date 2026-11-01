@@ -4,6 +4,7 @@
 // loop runs instantly and deterministically.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { HttpException, HttpStatus } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({
   prisma: {
@@ -422,6 +423,25 @@ describe('BroadcastService (durable execution)', () => {
       await (service as any).runExecution('b1');
 
       expect(msg.sendText).toHaveBeenCalledTimes(2);
+      const last = updateData().pop();
+      expect(last.stats.sent).toBe(0);
+      expect(last.stats.failed).toBe(1);
+    });
+
+    it('does not retry a send that timed out, as it may still be delivered', async () => {
+      msg.sendText.mockRejectedValue(new HttpException({ error: 'SEND_TIMEOUT' }, HttpStatus.GATEWAY_TIMEOUT));
+      vi.mocked(prisma.broadcast.findUnique)
+        .mockResolvedValueOnce(
+          runningBroadcast({
+            resolvedRecipients: ['a'],
+            settings: { delayMin: 0, delayMax: 0, batchSize: 1000, retryFailed: true, retryAttempts: 3 },
+          }) as any,
+        )
+        .mockResolvedValue({ status: 'running' } as any);
+
+      await (service as any).runExecution('b1');
+
+      expect(msg.sendText).toHaveBeenCalledTimes(1); // another attempt could send it twice
       const last = updateData().pop();
       expect(last.stats.sent).toBe(0);
       expect(last.stats.failed).toBe(1);

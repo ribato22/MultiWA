@@ -6,13 +6,13 @@
 // put their own deadline on top with this.
 
 /**
- * `work`, or a rejection with `message` once `ms` have passed. The work is not cancelled: it
- * runs on, and its outcome is ignored. The timer never outlives the work.
+ * `work`, or a rejection with `message` (or the error it makes) once `ms` have passed. The work
+ * is not cancelled: it runs on, and its outcome is ignored. The timer never outlives the work.
  */
-export function withTimeout<T>(work: Promise<T>, ms: number, message = 'ENGINE_TIMEOUT'): Promise<T> {
+export function withTimeout<T>(work: Promise<T>, ms: number, message: string | (() => Error) = 'ENGINE_TIMEOUT'): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
+    timer = setTimeout(() => reject(typeof message === 'function' ? message() : new Error(message)), ms);
   });
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }

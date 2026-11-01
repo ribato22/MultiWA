@@ -90,7 +90,9 @@ async function bootstrap() {
       '',
       '## Errors',
       'Conventional HTTP status codes. Validation failures return `400` with a `message` array;',
-      'missing/invalid credentials return `401`; daily send-limit hits return `429`.',
+      'missing/invalid credentials return `401`; daily send-limit hits return `429`. A send the',
+      'WhatsApp engine has not finished after `SEND_TIMEOUT_MS` (60 s) returns `504` `SEND_TIMEOUT`:',
+      'it may still be delivered, so a retry can send it twice.',
     ].join('\n');
 
     const config = new DocumentBuilder()
