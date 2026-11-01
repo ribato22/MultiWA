@@ -18,7 +18,7 @@ import { AppEvents } from '@multiwa/core';
 import { InternalEvents } from '../../../metrics/internal-events';
 import { MemoryRecordingStore } from '../../../testing/memory-recording-store';
 import { CallRecordingsService, ORPHAN_MIN_AGE_MS, SWEEP_BATCH } from './call-recordings.service';
-import { announcementKey, recordingKey } from './recording-store';
+import { announcementKey, recordingKey, type PrivacyCheck } from './recording-store';
 
 const db = prisma as any;
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -640,6 +640,30 @@ describe('CallRecordingsService: the storage status and its privacy check', () =
       [InternalEvents.CALL_RECORDINGS_PRIVACY, { result: 'check_failed' }],
     ]);
     expect(service.storageStatus().lastCheck).toEqual({ at: NOW.toISOString(), ok: false, reason: 'storage_check_failed' });
+  });
+
+  // The nightly or boot check and an admin turning recording on may overlap. The recorder trusts the status before
+  // every upload, so the check that started last is the one it keeps.
+  it.each([
+    ['a minute later', MINUTE],
+    ['later, though the wall clock was stepped back an hour meanwhile', -60 * MINUTE],
+  ])('an older check that finishes last never overwrites a newer one, started %s, that found the storage public', async (_case, step) => {
+    const { service, store, events } = make();
+    let older!: (check: PrivacyCheck) => void;
+    vi.spyOn(store, 'checkPrivate')
+      .mockImplementationOnce(() => new Promise((resolve) => (older = resolve)))
+      .mockResolvedValueOnce({ ok: false, reason: 'storage_not_private', detail: 'x' });
+    const first = service.checkStorage(NOW);
+    const newer = new Date(NOW.getTime() + step);
+    await service.checkStorage(newer);
+    older({ ok: true });
+    await first;
+    expect(service.storageStatus().lastCheck).toEqual({ at: newer.toISOString(), ok: false, reason: 'storage_not_private' });
+    // each check still reports what it found
+    expect(events.emit.mock.calls).toEqual([
+      [InternalEvents.CALL_RECORDINGS_PRIVACY, { result: 'not_private' }],
+      [InternalEvents.CALL_RECORDINGS_PRIVACY, { result: 'ok' }],
+    ]);
   });
 
   // No check at all: an install without recordings would warn every night.

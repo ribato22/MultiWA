@@ -73,6 +73,9 @@ export interface RecordingReader {
 export class CallRecordingsService {
   private readonly logger = new Logger(CallRecordingsService.name);
   private lastCheck: { at: string; ok: boolean; reason?: PrivacyFailure } | null = null;
+  /** The privacy checks started, and which of them lastCheck is: two may overlap. */
+  private checksStarted = 0;
+  private lastCheckNo = 0;
   /**
    * `[userId, ip, userAgent, recordingId, action]` as JSON → when that read was audited. In insertion order: the first
    * is the oldest.
@@ -96,8 +99,15 @@ export class CallRecordingsService {
 
   /** The privacy check of the storage (turning recording on, and nightly): counted, and kept for the status. */
   async checkStorage(at = new Date()): Promise<PrivacyCheck> {
+    const no = ++this.checksStarted;
     const check = await this.store.checkPrivate();
-    this.lastCheck = check.ok ? { at: at.toISOString(), ok: true } : { at: at.toISOString(), ok: false, reason: check.reason };
+    // The status keeps the check that started last, whichever finishes last: a slow older one that found the storage
+    // private must not undo a newer one that found it public, as the recorder trusts the status before every upload.
+    // In the order they started, not by `at`: a wall clock stepped back would make every newer check lose.
+    if (no > this.lastCheckNo) {
+      this.lastCheckNo = no;
+      this.lastCheck = check.ok ? { at: at.toISOString(), ok: true } : { at: at.toISOString(), ok: false, reason: check.reason };
+    }
     // An unconfigured storage is no check: neither counted nor warned about, or an install without recordings would
     // warn every night.
     if (check.ok || check.reason !== 'recordings_storage_unset') {
