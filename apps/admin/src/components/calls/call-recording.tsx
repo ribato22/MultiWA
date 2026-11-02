@@ -20,6 +20,8 @@ let playing: HTMLAudioElement | null = null;
 export function CallRecording({ call, canManage, onChange }: { call: CallRecord; canManage: boolean; onChange: (row: CallRecord) => void }) {
   const { toast } = useToast();
   const [url, setUrl] = useState<string | null>(null);
+  // The row's action in flight, one at a time: each fetch of the file is audited, and the buttons say what runs. The
+  // others wait as aria-disabled, not disabled, and ignore a press: the one pressed keeps the focus.
   const [busy, setBusy] = useState<'play' | 'download' | 'delete' | null>(null);
   const [confirming, setConfirming] = useState(false);
   const player = useRef<HTMLAudioElement>(null);
@@ -34,11 +36,12 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
     gone.current = leaving.signal;
     return () => leaving.abort();
   }, []);
-  // The player takes the focus from Play, which it replaces; its file goes with it.
+  // The player takes the focus from Play, which it replaces, not from where the agent went meanwhile; its file goes
+  // with it.
   useEffect(() => {
     if (!url) return;
     const el = player.current;
-    el?.focus();
+    if (document.activeElement === document.body) el?.focus();
     return () => {
       URL.revokeObjectURL(url);
       if (playing === el) playing = null;
@@ -83,6 +86,7 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
 
   // The whole file comes before it plays (seeking then works in the blob): about 0.5 MB a minute.
   const play = async () => {
+    if (busy) return;
     setBusy('play');
     const res = await fetchFile(false);
     if (!res) return;
@@ -90,6 +94,7 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
     setUrl(URL.createObjectURL(res.blob));
   };
   const download = async () => {
+    if (busy) return;
     setBusy('download');
     const res = await fetchFile(true);
     if (!res) return;
@@ -99,6 +104,7 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
     setTimeout(() => URL.revokeObjectURL(href), 60_000);
   };
   const remove = async () => {
+    if (busy) return;
     setBusy('delete');
     const res = await api.deleteCallRecording(call.id);
     // One already gone (404) reads the same way as one deleted now.
@@ -135,22 +141,35 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
                 if (playing && playing !== e.currentTarget) playing.pause();
                 playing = e.currentTarget;
               }}
-              aria-label={`Recording of the call with ${callerLabel(call)}`}
+              aria-label={`Recording of the call from ${callerLabel(call)}`}
               className="h-8 max-w-[16rem]"
             />
           ) : playable ? (
-            <Button size="sm" variant="outline" disabled={busy === 'play'} onClick={play}>
+            // Named with the call, as every row has one; while it loads, its text says so.
+            <Button
+              size="sm"
+              variant="outline"
+              aria-disabled={!!busy}
+              onClick={play}
+              aria-label={busy === 'play' ? undefined : `Play the recording of the call from ${callerLabel(call)}`}
+            >
               {busy === 'play' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <Play className="mr-1.5 h-4 w-4" aria-hidden="true" />}
               {busy === 'play' ? `Loading ${mb(r.bytes)}…` : 'Play'}
             </Button>
           ) : null}
-          <Button size="sm" variant="outline" disabled={busy === 'download'} onClick={download} aria-label={`Download the recording of the call from ${callerLabel(call)}`}>
+          <Button size="sm" variant="outline" aria-disabled={!!busy} onClick={download} aria-label={`Download the recording of the call from ${callerLabel(call)}`}>
             {busy === 'download' ? <Loader2 className="h-4 w-4 mw-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
           </Button>
           {/* The trigger gets the focus back when the dialog closes without a delete. */}
           <AlertDialog open={confirming} onOpenChange={setConfirming}>
             <AlertDialogTrigger asChild>
-              <Button size="sm" variant="ghost" aria-label={`Delete the recording of the call from ${callerLabel(call)}`}>
+              <Button
+                size="sm"
+                variant="ghost"
+                aria-disabled={!!busy}
+                onClick={(e) => busy && e.preventDefault()}
+                aria-label={`Delete the recording of the call from ${callerLabel(call)}`}
+              >
                 <Trash2 className="h-4 w-4" aria-hidden="true" />
               </Button>
             </AlertDialogTrigger>
@@ -158,13 +177,13 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete this recording?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  The recording of the call with {callerLabel(call)} is deleted for good; the call stays listed. The deletion is logged.
+                  The recording of the call from {callerLabel(call)} is deleted for good; the call stays listed. The deletion is logged.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={busy === 'delete'}>Cancel</AlertDialogCancel>
                 <AlertDialogAction
-                  disabled={busy === 'delete'}
+                  aria-disabled={busy === 'delete'}
                   className="bg-red-600 text-white hover:bg-red-700"
                   onClick={(e) => {
                     e.preventDefault(); // the dialog closes once the delete is done

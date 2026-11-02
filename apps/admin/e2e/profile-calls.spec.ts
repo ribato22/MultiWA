@@ -1,4 +1,4 @@
-import { test, expect, gate, get, on, requestEnded, ME, PROFILE, STATUS, type FakeBackend, type Reply } from './support/fixtures';
+import { test, expect, gate, get, on, rendered, requestEnded, ME, PROFILE, STATUS, type FakeBackend, type Reply } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { sineWav } from './support/audio';
 import type { Page } from '@playwright/test';
@@ -94,6 +94,37 @@ test('a read of the checklist that answers after a newer one leaves the newer on
   await expect(s).not.toContainText('Auto-reject is on');
 });
 
+test('a read of the checklist that left before a save and answers after it leaves the save shown', async ({ page, backend }) => {
+  let stored = settings();
+  let hold = false;
+  const slow = gate();
+  backend.route(on('GET', '/calls/media/status', async () => {
+    const then = status(stored); // what the server had when the read came
+    if (hold) await slow.passed;
+    return { json: then };
+  }));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => {
+    stored = { ...stored, ...JSON.parse(r.body!.toString()) };
+    return { json: stored };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const answer = s.getByRole('switch', { name: 'Answer calls in the dashboard' });
+  await expect(answer).toHaveAttribute('aria-checked', 'false');
+  hold = true;
+  await s.getByRole('button', { name: 'Check again' }).click();
+  await expect(s.getByRole('button', { name: 'Checking…' })).toBeVisible();
+  hold = false;
+  await answer.click();
+  await expect(answer).toHaveAttribute('aria-checked', 'true');
+  const late = requestEnded(page, '/calls/media/status');
+  slow.open();
+  await late;
+  await page.waitForTimeout(300); // the page reads the late answer
+  await expect(answer).toHaveAttribute('aria-checked', 'true');
+  await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
+});
+
 test('the checklist says it is being read, and when the calls status does not list this profile', async ({ page, backend }) => {
   const slow = gate();
   backend.route(on('GET', '/calls/media/status', async () => {
@@ -151,6 +182,60 @@ test('one change at a time: while a switch is saved, the other controls wait', a
   slow.open();
   await expect(s.getByRole('switch', { name: 'Answer calls in the dashboard' })).toHaveAttribute('aria-checked', 'true');
   await expect(record).toBeEnabled();
+});
+
+test('a switch pressed with Space keeps the focus while it is saved and after; Space again meanwhile changes nothing', async ({ page, backend }) => {
+  const slow = gate();
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', async () => {
+    await slow.passed;
+    return { json: settings({ answerInDashboard: true }) };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const answer = section(page).getByRole('switch', { name: 'Answer calls in the dashboard' });
+  await answer.focus();
+  await page.keyboard.press('Space');
+  await expect.poll(() => puts(backend)).toEqual([{ answerInDashboard: true }]);
+  await expect(answer).toBeDisabled();
+  await rendered(page);
+  await expect(answer).toBeFocused();
+  await page.keyboard.press('Space'); // while it is saved
+  await page.waitForTimeout(300); // a second save would be out by now
+  expect(puts(backend)).toEqual([{ answerInDashboard: true }]);
+  await expect(answer).toHaveAttribute('aria-checked', 'false');
+  slow.open();
+  await expect(answer).toHaveAttribute('aria-checked', 'true');
+  await expect(answer).toBeEnabled();
+  await expect(answer).toBeFocused();
+});
+
+test('the retention’s Save keeps the focus while it saves and once saved, pressed with Enter or clicked', async ({ page, backend }) => {
+  let slow = gate();
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', async (r) => {
+    await slow.passed;
+    return { json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const days = s.getByLabel('Keep recordings for (days)');
+  const save = s.getByRole('button', { name: 'Save' });
+  const pressEnter = async () => {
+    await save.focus();
+    await page.keyboard.press('Enter');
+  };
+  for (const [value, press] of [['30', pressEnter], ['45', () => save.click()]] as const) {
+    slow = gate();
+    await days.fill(value);
+    const answered = requestEnded(page, '/calls-settings');
+    await press();
+    await expect.poll(() => puts(backend).at(-1)).toEqual({ retentionDays: Number(value) });
+    await rendered(page);
+    await expect(save).toBeFocused(); // while it saves
+    slow.open();
+    await answered;
+    await page.waitForTimeout(300); // the page reads the answer
+    await expect(save).toBeDisabled(); // saved: nothing left to save
+    await expect(save).toBeFocused();
+  }
 });
 
 test('a retention typed but not saved stays through a saved switch and a new read of the checklist', async ({ page, backend }) => {
@@ -279,7 +364,11 @@ test('removing the announcement asks first', async ({ page, backend }) => {
 
 test('closed without a removal, the dialog gives the focus back to Remove: Cancel, Escape, and a removal the server refused', async ({ page, backend }) => {
   backend.route(get('/calls/media/status', status({ answerInDashboard: true, recording: true, announcement: ANNOUNCEMENT })));
-  backend.route(on('DELETE', '/profiles/p-1/calls-announcement', { status: 409, json: { message: 'Turn recording off before removing the announcement', reasons: ['recording_on'] } }));
+  const slow = gate();
+  backend.route(on('DELETE', '/profiles/p-1/calls-announcement', async () => {
+    await slow.passed;
+    return { status: 409, json: { message: 'Turn recording off before removing the announcement', reasons: ['recording_on'] } };
+  }));
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
   const remove = s.getByRole('button', { name: 'Remove' });
@@ -295,6 +384,11 @@ test('closed without a removal, the dialog gives the focus back to Remove: Cance
   await expect(remove).toBeFocused();
   await remove.click();
   await confirm.getByRole('button', { name: 'Remove' }).click();
+  const removing = confirm.getByRole('button', { name: 'Removing…' });
+  await expect(removing).toBeDisabled();
+  await rendered(page);
+  await expect(removing).toBeFocused(); // while the removal runs
+  slow.open();
   await expect(s.getByRole('alert')).toContainText('Turn recording off first');
   await expect(confirm).toHaveCount(0);
   await expect(remove).toBeFocused();

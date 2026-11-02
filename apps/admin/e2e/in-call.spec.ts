@@ -1,4 +1,4 @@
-import { test, expect, ringing, type FakeBackend } from './support/fixtures';
+import { test, expect, rendered, ringing, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
@@ -83,6 +83,26 @@ test('Answer opens the microphone, claims the call, connects its audio in the or
   await expect(page.getByRole('group', { name: 'Calls availability' })).toContainText('On a call');
   await expect(bar(page)).toBeFocused(); // the Answer it replaced had the focus: the call has it, not Hang up
   await expectAccessible(page, '[aria-label="Current call"]');
+});
+
+test('Answer keeps the focus while it connects; an answer the server refuses hands it to its card, which says why', async ({ page, backend }) => {
+  let refuse!: () => void;
+  backend.reply('call:answer', () => new Promise((resolve) => (refuse = () => resolve({ ok: false, reason: 'already_claimed' }))));
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => backend.commands('call:answer')).toHaveLength(1);
+  const connecting = banner(page).getByRole('button', { name: 'Connecting…' });
+  await expect(connecting).toBeDisabled();
+  await rendered(page);
+  await expect(connecting).toBeFocused();
+  await page.keyboard.press('Enter'); // pressed again while it connects
+  refuse();
+  const card = banner(page).getByRole('group', { name: 'Call from Pak Joko' });
+  await expect(card.getByRole('alert')).toContainText('Someone else answered');
+  await expect(card).toBeFocused();
+  expect(backend.commands('call:answer')).toHaveLength(1);
 });
 
 test('a microphone the browser refuses stops the answer before any claim', async ({ page, context, backend }) => {

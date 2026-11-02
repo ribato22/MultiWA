@@ -69,6 +69,12 @@ export const requestEnded = (page: Page, part: string) =>
     const ended = (r: { url(): string }) => void (r.url().includes(part) && resolve());
     page.on('requestfinished', ended).on('requestfailed', ended);
   });
+/**
+ * Settles once the page has rendered twice. Chrome moves the focus off an element that became disabled only when it
+ * renders, so a check that the focus stayed put waits for this first.
+ */
+export const rendered = (page: Page) =>
+  page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 /** A gate for a reply to wait at: what awaits `passed` goes on once the test calls `open()`. */
 export function gate() {
   let open!: () => void;

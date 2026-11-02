@@ -1,4 +1,4 @@
-import { test, expect, gate, on, requestEnded, ME, PROFILE, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, on, rendered, requestEnded, ME, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { sineWav } from './support/audio';
 import type { Locator, Page } from '@playwright/test';
@@ -37,8 +37,8 @@ test('an answered call shows who answered, how fast, the talk time and its recor
   await expect(row).toContainText('Answered by Jane · 6 s to answer · Talk 3:12');
   await expect(row).toContainText('Recording 3:10');
   await expect(row.getByText('Partial: the server stopped before the call ended')).toBeVisible(); // not only on hover
-  await row.getByRole('button', { name: 'Play' }).click();
-  const audio = row.getByLabel('Recording of the call with Pak Joko');
+  await row.getByRole('button', { name: 'Play the recording of the call from Pak Joko' }).click();
+  const audio = row.getByLabel('Recording of the call from Pak Joko', { exact: true });
   await expect(audio).toHaveAttribute('src', /^blob:/);
   expect(backend.requests.find((r) => r.path === '/calls/call-9/recording')?.headers.authorization).toBe('Bearer test-token');
   await expect.poll(() => audio.evaluate((a: HTMLAudioElement) => a.duration)).toBeCloseTo(2, 0);
@@ -62,6 +62,64 @@ test('an admin downloads a recording as a file', async ({ page, backend }) => {
   expect(asked?.headers.authorization).toBe('Bearer test-token');
 });
 
+test('Download keeps the focus while its file comes, and after', async ({ page, backend }) => {
+  listing(backend, () => ANSWERED);
+  const slow = gate();
+  backend.route(on('GET', '/calls/call-9/recording', async () => {
+    await slow.passed;
+    return { body: sineWav(1), headers: { 'content-type': 'audio/webm' } };
+  }));
+  await page.goto('/dashboard/calls');
+  const download = rowOf(page).getByRole('button', { name: 'Download the recording of the call from Pak Joko' });
+  await download.focus();
+  await page.keyboard.press('Enter');
+  await expect(download).toBeDisabled();
+  await rendered(page);
+  await expect(download).toBeFocused();
+  const [file] = await Promise.all([page.waitForEvent('download'), slow.open()]);
+  expect(file.suggestedFilename()).toBe('call-call-9.webm');
+  await expect(download).toBeEnabled();
+  await expect(download).toBeFocused();
+});
+
+test('one action at a time in a row: Play while its file downloads, or Download while it loads to play, asks for no second file', async ({ page, backend }) => {
+  listing(backend, () => ANSWERED);
+  let slow = gate();
+  backend.route(on('GET', '/calls/call-9/recording', async () => {
+    await slow.passed;
+    return WAV;
+  }));
+  const asked = () => backend.requests.filter((r) => r.path === '/calls/call-9/recording').length;
+  await page.goto('/dashboard/calls');
+  const row = rowOf(page);
+  const play = row.getByRole('button', { name: /^Play/ });
+  const download = row.getByRole('button', { name: 'Download the recording of the call from Pak Joko' });
+  // Keys reach a button that waits, as a press does: it must do nothing.
+  const press = async (button: Locator) => {
+    await button.focus();
+    await page.keyboard.press('Enter');
+  };
+  await press(download);
+  await expect.poll(asked).toBe(1);
+  await press(play);
+  await page.waitForTimeout(300); // a second request would be out by now
+  expect(asked()).toBe(1);
+  await expect(play).toBeDisabled();
+  await Promise.all([page.waitForEvent('download'), slow.open()]);
+  await expect(play).toBeEnabled();
+  slow = gate();
+  await press(play);
+  await expect.poll(asked).toBe(2);
+  const loading = row.getByRole('button', { name: /^Loading/ });
+  await press(download);
+  await page.waitForTimeout(300); // a second request would be out by now
+  expect(asked()).toBe(2);
+  await expect(loading).toBeDisabled(); // still loading, and says so
+  slow.open();
+  await expect(row.getByLabel(/^Recording of the call/)).toBeVisible();
+  await expect(download).toBeFocused(); // the player takes the focus only from Play
+});
+
 test('an admin deletes a recording after confirming; the row then says it was deleted', async ({ page, backend }) => {
   let deleted = false;
   listing(backend, () => (deleted ? { ...ANSWERED, recording: { ...REC, deletedAt: NOW, deleteReason: 'admin' } } : ANSWERED));
@@ -72,7 +130,7 @@ test('an admin deletes a recording after confirming; the row then says it was de
   await page.goto('/dashboard/calls');
   await rowOf(page).getByRole('button', { name: 'Delete the recording of the call from Pak Joko' }).click();
   const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
-  await expect(confirm).toContainText('Pak Joko');
+  await expect(confirm).toContainText('The recording of the call from Pak Joko is deleted for good');
   await confirm.getByRole('button', { name: 'Delete' }).click();
   await expect(rowOf(page)).toContainText('Recording deleted by an admin');
   await expect(confirm).toHaveCount(0);
@@ -96,7 +154,11 @@ test('after a delete the focus stays on the row, and a toast says the recording 
 
 test('closed without a delete, the dialog gives the focus back to Delete: Cancel, Escape, and a delete that failed', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
-  backend.route(on('DELETE', '/calls/call-9/recording', { status: 500, json: { message: 'Internal server error' } }));
+  const slow = gate();
+  backend.route(on('DELETE', '/calls/call-9/recording', async () => {
+    await slow.passed;
+    return { status: 500, json: { message: 'Internal server error' } };
+  }));
   await page.goto('/dashboard/calls');
   const del = rowOf(page).getByRole('button', { name: 'Delete the recording of the call from Pak Joko' });
   const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
@@ -111,6 +173,11 @@ test('closed without a delete, the dialog gives the focus back to Delete: Cancel
   await expect(del).toBeFocused();
   await del.click();
   await confirm.getByRole('button', { name: 'Delete' }).click();
+  const deleting = confirm.getByRole('button', { name: 'Deleting…' });
+  await expect(deleting).toBeDisabled();
+  await rendered(page);
+  await expect(deleting).toBeFocused(); // while the delete runs
+  slow.open();
   await expect(page.getByText('Could not delete the recording')).toBeVisible();
   await expect(confirm).toHaveCount(0);
   await expect(del).toBeFocused();
@@ -140,12 +207,19 @@ for (const [done, button] of [['played', 'Play'], ['downloaded', 'Download the r
   });
 }
 
-test('Play hands the focus to the player that takes its place', async ({ page, backend }) => {
+test('Play keeps the focus while its file loads, then hands it to the player that takes its place', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
-  backend.route(on('GET', '/calls/call-9/recording', WAV));
+  const slow = gate();
+  backend.route(on('GET', '/calls/call-9/recording', async () => {
+    await slow.passed;
+    return WAV;
+  }));
   await page.goto('/dashboard/calls');
-  await rowOf(page).getByRole('button', { name: 'Play' }).click();
-  await expect(rowOf(page).getByLabel('Recording of the call with Pak Joko')).toBeFocused();
+  await rowOf(page).getByRole('button', { name: /^Play/ }).click();
+  await rendered(page);
+  await expect(rowOf(page).getByRole('button', { name: /^Loading/ })).toBeFocused();
+  slow.open();
+  await expect(rowOf(page).getByLabel('Recording of the call from Pak Joko', { exact: true })).toBeFocused();
 });
 
 test('one recording plays at a time: playing another pauses the first', async ({ page, backend }) => {
@@ -156,12 +230,12 @@ test('one recording plays at a time: playing another pauses the first', async ({
   backend.route((r) => (r.method === 'GET' && r.path === '/calls' ? { json: { calls: r.query.get('outcome') === 'ringing' ? [] : [ANSWERED, SARI], nextCursor: null } } : undefined));
   backend.route(on('GET', /^\/calls\/call-[89]\/recording$/, { body: sineWav(20), headers: { 'content-type': 'audio/wav' } }));
   await page.goto('/dashboard/calls');
-  await rowOf(page).getByRole('button', { name: 'Play' }).click();
-  const first = rowOf(page).getByLabel('Recording of the call with Pak Joko');
+  await rowOf(page).getByRole('button', { name: 'Play the recording of the call from Pak Joko' }).click();
+  const first = rowOf(page).getByLabel('Recording of the call from Pak Joko', { exact: true });
   await expect.poll(() => playing(first)).toBe(true);
-  await rowOf(page, 'Bu Sari').getByRole('button', { name: 'Play' }).click();
-  await expect.poll(() => playing(rowOf(page, 'Bu Sari').getByLabel('Recording of the call with Bu Sari'))).toBe(true);
-  expect(await playing(first)).toBe(false);
+  await rowOf(page, 'Bu Sari').getByRole('button', { name: 'Play the recording of the call from Bu Sari' }).click();
+  await expect.poll(() => playing(rowOf(page, 'Bu Sari').getByLabel('Recording of the call from Bu Sari', { exact: true }))).toBe(true);
+  await expect.poll(() => playing(first)).toBe(false); // paused in the second one's play event, a moment later
 });
 
 test('a recording under 0.1 MB says so while it loads', async ({ page, backend }) => {
@@ -175,7 +249,7 @@ test('a recording under 0.1 MB says so while it loads', async ({ page, backend }
   await rowOf(page).getByRole('button', { name: 'Play' }).click();
   await expect(rowOf(page).getByRole('button', { name: 'Loading < 0.1 MB…' })).toBeDisabled();
   slow.open();
-  await expect(rowOf(page).getByLabel('Recording of the call with Pak Joko')).toBeVisible();
+  await expect(rowOf(page).getByLabel('Recording of the call from Pak Joko', { exact: true })).toBeVisible();
 });
 
 test('leaving the page while a recording loads gives the load up: no file is kept for nothing', async ({ page, backend }) => {

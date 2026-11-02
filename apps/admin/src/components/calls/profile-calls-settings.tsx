@@ -44,7 +44,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const [checking, setChecking] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
-  // The change in flight. Every control waits meanwhile: each answer is the whole settings, and two could cross.
+  // The change in flight. Every control waits meanwhile: each answer is the whole settings, and two could cross. They
+  // wait as aria-disabled, not disabled, and ignore a press: the control pressed keeps the focus, for a keyboard and a
+  // screen reader.
   const [busy, setBusy] = useState<string | null>(null);
   // The retention as typed, until it is saved: a read of the settings meanwhile leaves it.
   const [retentionDraft, setRetentionDraft] = useState<string | null>(null);
@@ -52,7 +54,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const [confirmRemove, setConfirmRemove] = useState(false);
   const file = useRef<HTMLInputElement>(null);
   const uploadButton = useRef<HTMLButtonElement>(null);
-  // Only the latest read shows: an older one answering after it (a slow link) is stale.
+  // Only the latest read shows: an older one answering after it (a slow link) is stale, and so is one that answers
+  // after a change's answer (it may have left before the change).
   const loadSeq = useRef(0);
   // Aborted when the section goes: an announcement still loading is given up, not kept for nothing.
   const gone = useRef<AbortSignal>();
@@ -83,16 +86,23 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   if (!allowed) return null;
 
   const refused = (message: string | undefined, body: any) => setRefusal({ message: message ?? 'Not available', texts: reasonTexts(body?.reasons ?? []) });
+  /** A change answered: a read still out is dropped. */
+  const outdateReads = () => {
+    loadSeq.current++;
+    setChecking(false);
+  };
   const dropPreview = () => {
     if (preview) URL.revokeObjectURL(preview);
     setPreview(null);
   };
   /** A refused change shows why, in the server's own reasons; a saved one shows the settings as stored. */
   const save = async (what: string, body: { answerInDashboard?: boolean; recording?: boolean; retentionDays?: number }) => {
+    if (busy) return;
     setBusy(what);
     setRefusal(null);
     const res = await api.updateCallsSettings(profileId, body);
     setBusy(null);
+    outdateReads();
     if (res.status === 409) return refused(res.error, res.body);
     if (!res.data) return toast({ title: 'Could not save', description: res.error, variant: 'destructive' });
     const stored = res.data;
@@ -109,12 +119,14 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setRefusal(null);
     const res = await api.uploadCallsAnnouncement(profileId, f);
     setBusy(null);
+    outdateReads();
     if (!res.data) return refused(res.error ?? 'The announcement could not be stored', res.body);
     const announcement = res.data.announcement;
     setP((x) => (x ? { ...x, announcement } : x));
     dropPreview();
   };
   const listen = async () => {
+    if (busy) return;
     setBusy('listen');
     const signal = gone.current;
     const res = await api.fetchCallsAnnouncement(profileId, signal);
@@ -125,10 +137,12 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setPreview(URL.createObjectURL(res.blob));
   };
   const remove = async () => {
+    if (busy) return;
     setBusy('remove');
     setRefusal(null);
     const res = await api.deleteCallsAnnouncement(profileId);
     setBusy(null);
+    outdateReads();
     setConfirmRemove(false);
     if (res.error) return refused(res.error, res.body);
     setP((x) => (x ? { ...x, announcement: null } : x));
@@ -138,6 +152,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const retention = retentionDraft ?? (p ? String(p.retentionDays) : '');
   const days = Number(retention);
   const retentionValid = Number.isInteger(days) && days >= 1 && days <= 3650;
+  const retentionChanged = retentionValid && days !== p?.retentionDays;
   const checks =
     server && p
       ? [
@@ -173,7 +188,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                 <Label htmlFor="calls-answer" className="cursor-pointer text-xs font-medium text-slate-200">Answer calls in the dashboard</Label>
                 <p className="mt-0.5 text-[11px] text-slate-400">Agents online get a banner and answer in the browser.</p>
               </div>
-              <Switch id="calls-answer" checked={p.answerInDashboard} disabled={!!busy} onCheckedChange={(on) => save('answer', { answerInDashboard: on })} />
+              <Switch id="calls-answer" checked={p.answerInDashboard} aria-disabled={!!busy} onCheckedChange={(on) => save('answer', { answerInDashboard: on })} />
             </div>
             <ul aria-label="What answering in the dashboard needs" className="space-y-1 text-xs">
               {checks.map((c) => (
@@ -199,7 +214,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               <Switch
                 id="calls-record"
                 checked={p.recording}
-                disabled={!!busy || (!p.recording && !p.announcement)}
+                disabled={!p.recording && !p.announcement}
+                aria-disabled={!!busy}
                 onCheckedChange={(on) => save('recording', { recording: on })}
               />
             </div>
@@ -223,12 +239,12 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     if (f) void upload(f);
                   }}
                 />
-                <Button ref={uploadButton} size="sm" variant="outline" disabled={!!busy} onClick={() => file.current?.click()}>
+                <Button ref={uploadButton} size="sm" variant="outline" aria-disabled={!!busy} onClick={() => !busy && file.current?.click()}>
                   {busy === 'upload' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <Upload className="mr-1.5 h-4 w-4" aria-hidden="true" />}
                   {p.announcement ? 'Replace' : 'Upload announcement'}
                 </Button>
                 {p.announcement && (
-                  <Button size="sm" variant="outline" disabled={!!busy} onClick={listen}>
+                  <Button size="sm" variant="outline" aria-disabled={!!busy} onClick={listen}>
                     <Play className="mr-1.5 h-4 w-4" aria-hidden="true" />
                     Listen
                   </Button>
@@ -238,7 +254,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                 <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
                   {p.announcement && (
                     <AlertDialogTrigger asChild>
-                      <Button size="sm" variant="ghost" disabled={!!busy}>
+                      <Button size="sm" variant="ghost" aria-disabled={!!busy} onClick={(e) => busy && e.preventDefault()}>
                         <Trash2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
                         Remove
                       </Button>
@@ -258,7 +274,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     <AlertDialogFooter>
                       <AlertDialogCancel disabled={busy === 'remove'}>Cancel</AlertDialogCancel>
                       <AlertDialogAction
-                        disabled={busy === 'remove'}
+                        aria-disabled={busy === 'remove'}
                         className="bg-red-600 text-white hover:bg-red-700"
                         onClick={(e) => {
                           e.preventDefault(); // the dialog closes once the server answered
@@ -289,7 +305,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               />
               <p className="text-[11px] text-slate-400">1 to 3650. Older recordings are deleted every night.</p>
             </div>
-            <Button size="sm" disabled={!retentionValid || days === p.retentionDays || !!busy} onClick={() => save('retention', { retentionDays: days })}>
+            {/* With nothing to save (just saved, too) it waits rather than go disabled: it keeps the focus. */}
+            <Button size="sm" aria-disabled={!retentionChanged || !!busy} onClick={() => retentionChanged && save('retention', { retentionDays: days })}>
               Save
             </Button>
           </div>

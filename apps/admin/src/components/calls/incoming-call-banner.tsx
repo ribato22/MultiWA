@@ -10,8 +10,10 @@ import { useCalls } from './calls-provider';
 export function IncomingCallBanner() {
   const calls = useCalls();
   const answerRef = useRef<HTMLButtonElement>(null);
+  const failedRef = useRef<HTMLDivElement>(null);
   const banners = calls?.state.banners ?? [];
   const newest = banners.filter((b) => b.status === 'ringing').at(-1)?.call.callId;
+  const failed = banners.filter((b) => b.status === 'failed').at(-1)?.call.callId;
   // Focus goes to the newest call's Answer, unless the agent is typing: an Enter meant for a field must not answer.
   useEffect(() => {
     if (!newest) return;
@@ -19,6 +21,11 @@ export function IncomingCallBanner() {
     if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
     answerRef.current?.focus();
   }, [newest]);
+  // A failed answer takes its card's buttons away, and says why there: the focus that fell with Answer goes to the card,
+  // not to the page.
+  useEffect(() => {
+    if (failed && document.activeElement === document.body) failedRef.current?.focus();
+  }, [failed]);
   if (!calls || !banners.length) return null;
   return (
     <section aria-label="Incoming calls" className="pointer-events-auto fixed right-4 top-20 z-[60] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 sm:right-6">
@@ -30,6 +37,8 @@ export function IncomingCallBanner() {
         return (
           <div
             key={b.call.callId}
+            ref={b.call.callId === failed ? failedRef : undefined}
+            tabIndex={b.status === 'failed' ? -1 : undefined}
             role="group"
             aria-label={`Call from ${label}`}
             onKeyDown={(e) => {
@@ -79,11 +88,13 @@ export function IncomingCallBanner() {
                   Click anywhere on the page to hear the ringtone
                 </p>
                 <div className="mt-3 flex gap-2">
+                  {/* While it connects, Answer waits and keeps the focus: the console takes one answer per call. */}
                   <Button
                     ref={b.call.callId === newest ? answerRef : undefined}
                     size="sm"
                     className="flex-1"
-                    disabled={!!unavailable || b.status === 'answering'}
+                    disabled={!!unavailable}
+                    aria-disabled={b.status === 'answering'}
                     onClick={() => calls.answer(b.call.callId)}
                   >
                     {b.status === 'answering' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <Phone className="mr-1.5 h-4 w-4" aria-hidden="true" />}
