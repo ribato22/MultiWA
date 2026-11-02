@@ -72,7 +72,7 @@ export interface CallsConsole {
   quality: Quality | null;
   /** The browser would not play the caller until a click (a tab reloaded mid-call). */
   playBlocked: boolean;
-  /** The microphone this tab's call uses (its deviceId), once its audio is connected. */
+  /** The microphone this tab's call uses (its deviceId), once its audio is connected; '' while none is (it stopped). */
   micId: string | null;
   /** The console's socket is connected: while it is not, nothing about the call reaches this tab. */
   socketUp: boolean;
@@ -205,6 +205,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     // answer's from the claim's reply. Mute and Hang up reach it there, and a stop ends it.
     let pendingMic: MediaStreamTrack | null = null;
     let hangingUp = false; // this tab's Hang up is on its way: no audio of the call is heard from here meanwhile
+    let micGone: AgentMedia | null = null; // the audio whose microphone stopped, until another one is open
+    let micSaid: string | null = null; // what the bar last said of the microphone
     let asking = 0; // the attempt whose call:rejoin is out: only from its emit to its reply, not while its microphone opens
     /**
      * A call:active naming another producer than this tab's, for the call whose rejoin this tab has out: sent before that
@@ -223,6 +225,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     };
     const stopAudio = () => {
       attempt++;
+      micGone = null;
       acquiring = null;
       pendingMic?.stop(); // the browser's microphone light goes off now, not once the attempt notices
       pendingMic = null;
@@ -274,7 +277,10 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         if (mediaRef.current === media) onAudioFailed(callId);
       });
       media.onMicEnded(() => {
-        if (mediaRef.current === media) dispatch({ type: 'problem', callId, text: 'The microphone stopped: plug it back in, or choose another one' });
+        if (mediaRef.current !== media) return;
+        micGone = media;
+        setMicId('');
+        void reopenMic(media, callId);
       });
       const el = audioRef.current!;
       el.srcObject = media.remote;
@@ -283,6 +289,29 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         () => setPlayBlocked(false),
         () => setPlayBlocked(true),
       );
+    };
+    /**
+     * The call's microphone stopped (unplugged): another one opens by itself, the one chosen in Settings → Calls if it is
+     * there, else the browser's own, and the agent is told which. With none to open, the agent is told why, and the next
+     * microphone plugged in is tried. The choice stored stays the agent's.
+     */
+    const reopenMic = async (media: AgentMedia, callId: string) => {
+      let mic: MediaStreamTrack | undefined;
+      try {
+        mic = await openMic(user.id);
+        if (micGone !== media) return mic.stop(); // the call's audio went, or the agent chose one meanwhile
+        await media.replaceMic(mic);
+      } catch (e) {
+        mic?.stop();
+        if (micGone !== media) return;
+        dispatch({ type: 'problem', callId, text: (micSaid = micProblem(e)) });
+        navigator.mediaDevices.addEventListener('devicechange', () => micGone === media && void reopenMic(media, callId), { once: true });
+        return;
+      }
+      if (micGone !== media) return; // the audio went meanwhile, and its close stops this microphone too
+      micGone = null;
+      setMicId(mic.getSettings().deviceId ?? '');
+      dispatch({ type: 'problem', callId, text: (micSaid = `The microphone stopped: the call now uses ${mic.label || 'the browser’s default microphone'}`) });
     };
     socket.on('call:announcing', (p: { callId: string; durationSec: number }) =>
       dispatch({ type: 'announcing', callId: p.callId, durationSec: p.durationSec, at: Date.now() }),
@@ -393,6 +422,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         next = stream.getAudioTracks()[0];
         await media.replaceMic(next);
         setMicId(next.getSettings().deviceId ?? deviceId);
+        micGone = null;
+        // What the bar said of the microphone before is over.
+        if (micSaid && stateRef.current.active?.problem === micSaid) dispatch({ type: 'problem', callId, text: null });
       } catch {
         next?.stop();
         dispatch({ type: 'problem', callId, text: 'That microphone could not be used' });

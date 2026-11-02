@@ -410,6 +410,91 @@ test('the microphone list shows the one in use, and follows a microphone plugged
   await expect(page.getByRole('option')).toHaveText(['Desk microphone', 'Headset', 'USB microphone']);
 });
 
+/**
+ * Microphones the test unplugs and plugs back in: `__unplug(id)` takes one off the list and ends the track opened on it,
+ * as the browser does; `__plugIn(id)` lists it again. Chrome's fake device stands in for each: a microphone asked for by
+ * its id opens if it is listed (an `ideal` one that is not gives way to the first listed, the browser's default), and
+ * none listed is none found.
+ */
+function pluggable(mics: Array<[id: string, label: string]>) {
+  if (window.origin === 'null') return; // the blank page axe finishes its run in
+  const w = window as any;
+  const labels = new Map(mics);
+  let listed = mics.map(([id]) => id);
+  const opened: Array<[string, MediaStreamTrack]> = [];
+  const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.enumerateDevices = async () =>
+    listed.map((deviceId) => ({ deviceId, kind: 'audioinput', label: labels.get(deviceId), groupId: deviceId, toJSON() { return this; } })) as MediaDeviceInfo[];
+  navigator.mediaDevices.getUserMedia = async (c?: MediaStreamConstraints) => {
+    const asked = ((c?.audio as MediaTrackConstraints | undefined)?.deviceId ?? {}) as ConstrainDOMStringParameters;
+    const id = [asked.exact, asked.ideal].find((x) => listed.includes(x as string)) as string | undefined ?? (asked.exact ? undefined : listed[0]);
+    if (!id) throw new DOMException('Requested device not found', 'NotFoundError');
+    const track = (await gum({ audio: true })).getAudioTracks()[0];
+    const settings = track.getSettings.bind(track);
+    track.getSettings = () => ({ ...settings(), deviceId: id });
+    Object.defineProperty(track, 'label', { value: labels.get(id) });
+    opened.push([id, track]);
+    return new MediaStream([track]);
+  };
+  w.__unplug = (id: string) => {
+    listed = listed.filter((x) => x !== id);
+    for (const [at, track] of opened) {
+      if (at !== id || track.readyState === 'ended') continue;
+      track.stop();
+      track.dispatchEvent(new Event('ended'));
+    }
+    navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+  };
+  w.__plugIn = (id: string) => {
+    listed.push(id);
+    navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+  };
+}
+/** The microphone the call sends, and whether it is live. */
+const sending = (page: Page) =>
+  page.evaluate(() => {
+    const track = (window as any).__pcs.flatMap((pc: RTCPeerConnection) => pc.getSenders()).find((s: RTCRtpSender) => s.track)?.track as MediaStreamTrack | undefined;
+    return track && { label: track.label, state: track.readyState };
+  });
+
+test('a microphone unplugged mid-call gives way to another by itself, the choice stored stays, and the one unplugged can be chosen again once it is back', async ({ page, context, backend }) => {
+  await context.addInitScript(pluggable, [['mic-a', 'Desk microphone'], ['mic-b', 'Headset']]);
+  await open(page);
+  await page.evaluate(() => localStorage.setItem('multiwa:calls:u-ada:mic', 'mic-b'));
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('Headset');
+  await expect.poll(() => sending(page)).toEqual({ label: 'Headset', state: 'live' });
+  await page.evaluate(() => (window as any).__unplug('mic-b'));
+  await expect(bar(page).getByRole('alert')).toHaveText('The microphone stopped: the call now uses Desk microphone');
+  await expect.poll(() => sending(page)).toEqual({ label: 'Desk microphone', state: 'live' });
+  await expect(picker).toHaveText('Desk microphone');
+  expect(await page.evaluate(() => localStorage.getItem('multiwa:calls:u-ada:mic'))).toBe('mic-b');
+  await page.evaluate(() => (window as any).__plugIn('mic-b'));
+  await picker.click();
+  await page.getByRole('option', { name: 'Headset' }).click();
+  await expect.poll(() => sending(page)).toEqual({ label: 'Headset', state: 'live' });
+  await expect(picker).toHaveText('Headset');
+  await expect(bar(page).getByRole('alert')).toHaveCount(0);
+});
+
+test('the only microphone unplugged mid-call says why the caller hears nothing, and comes back by itself once one is plugged in', async ({ page, context, backend }) => {
+  await context.addInitScript(pluggable, [['mic-a', 'Desk microphone']]);
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('Desk microphone'); // one microphone: it can be chosen again
+  await page.evaluate(() => (window as any).__unplug('mic-a'));
+  await expect(bar(page).getByRole('alert')).toHaveText('No microphone found: plug one in and try again');
+  await expect.poll(() => sending(page)).toEqual({ label: 'Desk microphone', state: 'ended' });
+  await page.evaluate(() => (window as any).__plugIn('mic-a'));
+  await expect(bar(page).getByRole('alert')).toHaveText('The microphone stopped: the call now uses Desk microphone');
+  await expect.poll(() => sending(page)).toEqual({ label: 'Desk microphone', state: 'live' });
+  await expect(picker).toHaveText('Desk microphone');
+});
+
 // Where the focus goes when the call console lets go of it. The agent was on a link of the page (not a field, where no
 // ring takes the focus) when the call rang.
 const working = (page: Page) => page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Chat', exact: true });

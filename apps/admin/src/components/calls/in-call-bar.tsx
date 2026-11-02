@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CALL_AUDIO_TEXT, formatDuration, ringingCallerLabel } from '@/lib/calls';
 import { consoleFocus, settleFocus, takeFocus } from '@/lib/call-console/focus';
-import { prefs } from '@/lib/call-console/prefs';
 import { useCalls } from './calls-provider';
 
 const QUALITY = {
@@ -60,8 +59,6 @@ export function InCallBar() {
     : a.phase === 'announcing' ? 'The caller hears the recording notice'
     : null;
   const q = calls.quality && a.local && a.phase === 'active' ? QUALITY[calls.quality] : null;
-  // The microphone in use, else the one chosen in Settings → Calls, if the list has it.
-  const mic = [calls.micId, prefs.mic(calls.me.id)].find((id) => mics.some((m) => m.deviceId === id)) ?? mics[0]?.deviceId;
   return (
     <div
       ref={barRef}
@@ -124,13 +121,15 @@ export function InCallBar() {
               Mute
             </Button>
           )}
-          {a.local && mics.length > 1 && (
-            <Select value={mic} onValueChange={calls.switchMic}>
+          {/* Once the call's audio is here: the microphone in use, or none while one that stopped is replaced. Any other
+              one listed can be chosen, the one that stopped too once it is back. */}
+          {a.local && calls.micId !== null && mics.length > 0 && (
+            <Select value={calls.micId} onValueChange={calls.switchMic}>
               {/* A phone screen shows a microphone icon for the name, which a screen reader still hears. */}
               <SelectTrigger className="h-8 w-auto gap-1.5 px-2 text-xs sm:w-40 sm:px-3" aria-label="Microphone">
                 <Mic className="h-4 w-4 sm:hidden" aria-hidden="true" />
                 <span className="sr-only sm:not-sr-only">
-                  <SelectValue />
+                  <SelectValue placeholder="No microphone" />
                 </span>
               </SelectTrigger>
               <SelectContent data-call-console>

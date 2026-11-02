@@ -427,14 +427,14 @@ test('a microphone that stopped is still said after a reconnect: Reconnecting…
   await open(page);
   await onCall(page, backend);
   await expect.poll(() => openPeers(page)).toBe(2);
-  // Unplugged: the microphone's track ends.
+  // Unplugged: the microphone's track ends, and another one takes its place.
   await page.evaluate(() =>
     (window as any).__pcs
       .flatMap((pc: RTCPeerConnection) => pc.getSenders())
       .find((s: RTCRtpSender) => s.track)
       .track.dispatchEvent(new Event('ended')),
   );
-  const stopped = 'The microphone stopped: plug it back in, or choose another one';
+  const stopped = /The microphone stopped: the call now uses /;
   await expect(bar(page)).toContainText(stopped);
   backend.offline = true;
   backend.blip();
