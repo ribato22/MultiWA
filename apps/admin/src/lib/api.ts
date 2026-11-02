@@ -250,27 +250,37 @@ class ApiClient {
     }
 
     this.isRefreshing = true;
+    // A refresh token works once: the API reads a second use as theft and revokes the login, in every tab. So the
+    // browser's tabs refresh one at a time (a Web Lock, in a secure context), and one that waited while another
+    // refreshed takes that token instead of refreshing again.
+    const stale = this.getToken();
+    const refresh = async () => {
+      const now = this.getToken();
+      if (now && now !== stale) return true;
+      const refreshToken = this.getRefreshToken();
+      if (!refreshToken) return false;
+
+      const res = await fetch(`${this.baseUrl}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+
+      if (!res.ok) return false;
+
+      const data = await res.json();
+      const tokens = data.data || data;
+      if (tokens.accessToken) {
+        localStorage.setItem('accessToken', tokens.accessToken);
+        if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
+        return true;
+      }
+      return false;
+    };
     this.refreshPromise = (async () => {
       try {
-        const refreshToken = this.getRefreshToken();
-        if (!refreshToken) return false;
-
-        const res = await fetch(`${this.baseUrl}/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
-        });
-
-        if (!res.ok) return false;
-
-        const data = await res.json();
-        const tokens = data.data || data;
-        if (tokens.accessToken) {
-          localStorage.setItem('accessToken', tokens.accessToken);
-          if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
-          return true;
-        }
-        return false;
+        const locks = globalThis.navigator?.locks;
+        return await (locks ? locks.request('multiwa-token-refresh', refresh) : refresh());
       } catch {
         return false;
       } finally {

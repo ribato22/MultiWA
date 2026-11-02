@@ -52,6 +52,17 @@ test('a socket the server closed stays offline with the same login', async ({ pa
   expect(backend.commands('call:availability').length).toBe(reads);
 });
 
+test('a socket the server closed once the token is gone (signed out in another tab) does not connect again', async ({ page, backend }) => {
+  await page.goto('/dashboard/calls');
+  await expect(toggle(page)).toBeEnabled();
+  const reads = backend.commands('call:availability').length;
+  await page.evaluate(() => localStorage.removeItem('accessToken'));
+  backend.dropSockets();
+  await expect(page.getByText('Calls offline')).toBeVisible();
+  await page.waitForTimeout(1500);
+  expect(backend.commands('call:availability').length).toBe(reads);
+});
+
 test('after a token refresh, a socket the server closed connects again', async ({ page, backend }) => {
   await page.goto('/dashboard/calls');
   await expect(toggle(page)).toBeEnabled();

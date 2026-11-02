@@ -88,9 +88,10 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       dispatch({ type: 'offline' });
       if (reason !== 'io server disconnect') return;
       // The server drops a socket whose token expired, or whose login is gone. A request's 401 refreshes an expired
-      // token (or signs out), so the same token after one is a login that is gone.
+      // token; the same token after one is a login that is gone, and no token is a sign-out.
       if (localStorage.getItem('accessToken') === sentToken) await api.me().catch(() => undefined);
-      if (!closed && localStorage.getItem('accessToken') !== sentToken) socket.connect();
+      const token = localStorage.getItem('accessToken');
+      if (!closed && token && token !== sentToken) socket.connect();
     });
     socket.on('call:availability', (p: { available: boolean }) => confirmed(p.available));
     const setAvailable = async (on: boolean) => {

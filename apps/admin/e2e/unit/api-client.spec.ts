@@ -1,9 +1,10 @@
 // The admin's API client, against a stubbed fetch (no browser, no server).
 import { test, expect } from '@playwright/test';
-import { api } from '@/lib/api';
+import { api, ApiClient } from '@/lib/api';
 
-// The globals a test stubs: fetch, and for a signed-in page window and localStorage. Each is put back after the test.
-const GLOBALS = ['fetch', 'window', 'localStorage'];
+// The globals a test stubs: fetch, for a signed-in page window and localStorage, and the browser's navigator. Each is
+// put back after the test.
+const GLOBALS = ['fetch', 'window', 'localStorage', 'navigator'];
 const real = GLOBALS.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
 const stub = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
 
@@ -105,6 +106,47 @@ test('a failed refresh signs out: both tokens cleared, and the page sent to the 
   expect(await api.fetchCallRecording('c-1')).toEqual({ status: 401, error: 'Unauthorized' });
   expect(store.size).toBe(0);
   expect(window.location.href).toBe('/auth/login');
+});
+
+/** The browser's Web Locks: a request runs once the one before it is done, whichever tab made it. */
+function webLocks() {
+  let last: Promise<unknown> = Promise.resolve();
+  stub('navigator', {
+    locks: {
+      request: (_name: string, fn: () => Promise<unknown>) => {
+        const run = last.then(fn);
+        last = run.catch(() => undefined);
+        return run;
+      },
+    },
+  });
+}
+
+test('two tabs whose requests get a 401 at once refresh the token once, and both retries carry the new token', async () => {
+  const { store } = signedIn();
+  webLocks();
+  // The API rotates refresh tokens: one works once, and a second use reads as theft.
+  let current = 'old-refresh';
+  const sent: Array<{ url: string; authorization?: string }> = [];
+  stub('fetch', async (url: string, init: RequestInit = {}) => {
+    const authorization = ((init.headers ?? {}) as Record<string, string>).Authorization;
+    sent.push({ url, authorization });
+    if (url !== '/api/v1/auth/refresh') {
+      return authorization === 'Bearer new-token' ? Response.json({ id: 'u-ada' }) : Response.json({ message: 'Unauthorized' }, { status: 401 });
+    }
+    await new Promise((r) => setTimeout(r, 20)); // on the way
+    if (JSON.parse(String(init.body)).refreshToken !== current) return Response.json({ message: 'Refresh token reuse' }, { status: 401 });
+    current = 'new-refresh';
+    return Response.json({ accessToken: 'new-token', refreshToken: 'new-refresh' });
+  });
+  const tabs = [new ApiClient(), new ApiClient()]; // one localStorage, one browser
+  const replies = await Promise.all(tabs.map((tab) => tab.me()));
+  expect(sent.filter((s) => s.url === '/api/v1/auth/refresh')).toHaveLength(1);
+  expect(replies.map((r) => r.status)).toEqual([200, 200]);
+  expect(sent.filter((s) => s.url === '/api/v1/auth/me').map((s) => s.authorization)).toEqual([
+    'Bearer old-token', 'Bearer old-token', 'Bearer new-token', 'Bearer new-token',
+  ]);
+  expect(Object.fromEntries(store)).toEqual({ accessToken: 'new-token', refreshToken: 'new-refresh' });
 });
 
 const announcement = (bytes: number) => new File([new Uint8Array(bytes)], 'notice.mp3', { type: 'audio/mpeg' });
