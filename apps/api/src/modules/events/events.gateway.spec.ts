@@ -320,6 +320,25 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/s4.*: connection refused$/));
   });
 
+  it('a socket closed because its credentials could not be checked leaves no line when it goes (each is back every few seconds); any other socket does', async () => {
+    vi.useFakeTimers();
+    vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    const log = vi.spyOn((gateway as any).logger, 'log').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValueOnce(new Error('connection refused'));
+    const held = socket('s1');
+    await gateway.handleConnection(held);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(held.conn.close).toHaveBeenCalledTimes(1);
+    leave(held);
+    gateway.handleDisconnect(held);
+    const checked = socket('s2');
+    await gateway.handleConnection(checked);
+    leave(checked);
+    gateway.handleDisconnect(checked);
+    expect(log).not.toHaveBeenCalledWith('Client disconnected: s1');
+    expect(log).toHaveBeenCalledWith('Client disconnected: s2');
+  });
+
   it('bad credentials are still refused, never closed for a retry: an invalid JWT, an inactive user, a missing or expired session', async () => {
     const refusals = [
       () => verify.mockRejectedValueOnce(new Error('jwt expired')),

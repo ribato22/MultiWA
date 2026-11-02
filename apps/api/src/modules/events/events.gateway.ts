@@ -130,7 +130,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   }
 
   handleDisconnect(client: Socket) {
-    this.logger.log(`Client disconnected: ${client.id}`);
+    // Not for a socket whose credentials could not be checked: noteUnchecked counted it, and while the database is down
+    // it is closed and back every few seconds, so a line for each would flood the log.
+    if (!client.data?.authUnchecked) this.logger.log(`Client disconnected: ${client.id}`);
     // Clean up client from all profile rooms
     this.clients.forEach((clientSet, profileId) => {
       clientSet.delete(client.id);
