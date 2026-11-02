@@ -22,8 +22,8 @@ const command = (socket: Socket, event: string, args: object, ms: number): Promi
   socket.timeout(ms).emitWithAck(event, args).catch(() => ({ ok: false as const, reason: 'timeout' }));
 
 // The server's own budgets: an answer connects within 10 s; a recorded call's hang-up stops the recorder before the
-// media closes (up to about 27 s).
-const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_000 };
+// media closes (up to about 27 s); a rejoin closes the old audio first (up to 8 s).
+const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_000, rejoin: 15_000 };
 const FADE_MS = 4_000; // "Answered by …" and a call's end stay this long
 
 /** sessionStorage: the call whose audio this tab holds, so a reload can rejoin it (the server has no "my call" query). */
@@ -71,9 +71,10 @@ export interface CallsConsole {
   setMuted(muted: boolean): void;
   switchMic(deviceId: string): void;
   resumeAudio(): void;
+  takeHere(): void;
 }
 
-type Commands = Pick<CallsConsole, 'setAvailable' | 'dismiss' | 'answer' | 'hangUp' | 'setMuted' | 'switchMic' | 'resumeAudio'>;
+type Commands = Pick<CallsConsole, 'setAvailable' | 'dismiss' | 'answer' | 'hangUp' | 'setMuted' | 'switchMic' | 'resumeAudio' | 'takeHere'>;
 
 const CallsContext = createContext<CallsConsole | null>(null);
 /** The console, or null for a login that takes no calls (a viewer). */
@@ -177,7 +178,11 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       setQuality(null);
       setPlayBlocked(false);
     };
-    const onAudioFailed = (callId: string) => dispatch({ type: 'problem', callId, text: 'The call’s audio dropped' });
+    const onAudioFailed = (callId: string) => {
+      // The audio failed (the network, or the server closed this peer): build it again, as after a reload.
+      const call = storedCall();
+      if (call?.callId === callId) void rejoin(call);
+    };
     /** The call's audio in this tab: mediasoup over this socket, and the caller in the hidden <audio>. */
     // `reply`: the ok reply of call:answer or call:rejoin ({ callerProducerId, iceServers }).
     // `muted`: a call rebuilt while the agent was muted (a reload, a failure) starts muted.
@@ -238,8 +243,10 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         return;
       }
       if (closed) return mic.stop(); // the console went (a sign-out) while the microphone opened
+      expecting.add(callId);
       const reply = await command(socket, 'call:answer', { callId }, ACK_MS.answer);
       if (!reply.ok) {
+        expecting.delete(callId);
         mic.stop();
         dispatch({ type: 'answerFailed', callId, reason: reply.reason, message: ANSWER_FAILURE_TEXT[reply.reason] ?? ANSWER_FAILURE_TEXT.error });
         return;
@@ -300,7 +307,90 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       );
     };
 
-    cmd.current = { setAvailable, dismiss, answer, hangUp, setMuted, switchMic, resumeAudio };
+    // ── this tab and the others ──
+    // The server re-sends call:active only after an answer or a rejoin: one this tab did not ask for means another
+    // tab or browser of this agent took the call's audio, and this tab lets go of its own.
+    const expecting = new Set<string>();
+    socket.on('call:active', (p: { callId: string }) => {
+      if (expecting.delete(p.callId) || p.callId !== audioCallId) return;
+      stopAudio();
+      keep(null);
+      dispatch({ type: 'local', callId: p.callId, local: false });
+    });
+    /** This tab takes the call's audio: after a reload, from another tab, or when its own audio failed. */
+    const rejoin = async (call: RingingCall) => {
+      const a = stateRef.current.active;
+      const muted = a?.call.callId === call.callId && a.phase !== 'ended' ? a.muted : false;
+      dispatch({ type: 'restored', call, local: true });
+      const fail = (text: string) => {
+        dispatch({ type: 'local', callId: call.callId, local: false });
+        dispatch({ type: 'problem', callId: call.callId, text });
+      };
+      let mic: MediaStreamTrack;
+      try {
+        mic = await openMic(user.id);
+      } catch (e) {
+        return fail(micProblem(e));
+      }
+      // The console went while the microphone opened (a sign-out), or the socket did: a rejoin sent when it is back
+      // would race the one its connect starts after a reload.
+      if (closed || !socket.connected) {
+        mic.stop();
+        return fail('The call’s audio could not be reconnected: try again');
+      }
+      expecting.add(call.callId);
+      const reply = await command(socket, 'call:rejoin', { callId: call.callId }, ACK_MS.rejoin);
+      if (!reply.ok) {
+        expecting.delete(call.callId);
+        mic.stop();
+        if (reply.reason !== 'not_in_call' && reply.reason !== 'not_allowed') return fail('The call’s audio could not be reconnected: try again');
+        keep(null);
+        dispatch({ type: 'ended', callId: call.callId, text: 'The call is over' });
+        return;
+      }
+      // Only now does the tab that had the audio let go: if this tab could not take it, that one keeps it.
+      channel?.postMessage({ type: 'media', callId: call.callId });
+      keep(call);
+      try {
+        await startAudio(call.callId, reply, mic, muted);
+      } catch {
+        fail('The call’s audio could not be reconnected: try again');
+      }
+    };
+    socket.on('connect', () => {
+      const call = storedCall();
+      const rejoining = !!call && !mediaRef.current;
+      if (rejoining) void rejoin(call); // a reload, or a navigation that loaded the page anew
+      // A socket that was down missed what happened meanwhile: every call this tab shows is read again.
+      const { banners, active } = stateRef.current;
+      for (const b of banners) {
+        void api.getCall(b.call.callId).then(({ data }) => {
+          if (data && data.outcome !== 'ringing') dispatch({ type: 'ended', callId: b.call.callId, text: null });
+        });
+      }
+      if (active && active.phase !== 'ended' && !(rejoining && active.call.callId === call?.callId)) {
+        void api.getCall(active.call.callId).then(({ data }) => {
+          // Over, or (shown as another tab's) ringing again: no tab of this agent has it.
+          if (!data || (!data.endedAt && (active.local || data.outcome !== 'ringing'))) return;
+          if (audioCallId === active.call.callId) stopAudio();
+          if (storedCall()?.callId === active.call.callId) keep(null);
+          dispatch({ type: 'ended', callId: active.call.callId, text: 'Call ended' });
+        });
+      }
+    });
+    channel?.addEventListener('message', ({ data }) => {
+      // Another tab of this browser took the call's audio: this one lets go of its own.
+      if (data?.type !== 'media' || data.callId !== audioCallId) return;
+      stopAudio();
+      keep(null);
+      dispatch({ type: 'local', callId: data.callId, local: false });
+    });
+    const takeHere = () => {
+      const a = stateRef.current.active;
+      if (a && !a.local && a.phase !== 'ended' && a.phase !== 'hanging_up') void rejoin(a.call);
+    };
+
+    cmd.current = { setAvailable, dismiss, answer, hangUp, setMuted, switchMic, resumeAudio, takeHere };
     return () => {
       cmd.current = {};
       closed = true;
@@ -353,6 +443,17 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     return () => clearInterval(timer);
   }, [hasAudio]);
 
+  // Leaving the page drops the call's audio here: the browser asks first.
+  useEffect(() => {
+    if (!hasAudio) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [hasAudio]);
+
   // A browser the media library cannot drive is told so before any call is claimed, not after.
   useEffect(() => {
     if (!agent || answerBlocked) return;
@@ -379,6 +480,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             setMuted: (muted) => cmd.current.setMuted?.(muted),
             switchMic: (deviceId) => cmd.current.switchMic?.(deviceId),
             resumeAudio: () => cmd.current.resumeAudio?.(),
+            takeHere: () => cmd.current.takeHere?.(),
           }
         : null,
     [agent, user, state, profilesRing, answerBlocked, soundBlocked, quality, playBlocked],

@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import {
@@ -191,7 +192,7 @@ export default function NewProfilePage() {
     <div className="max-w-2xl mx-auto animate-fade-in">
       {/* Breadcrumb */}
       <nav className="flex items-center gap-2 text-sm text-muted-foreground mb-6" aria-label="Breadcrumb">
-        <a href="/dashboard/profiles" className="hover:text-primary transition-colors">Profiles</a>
+        <Link href="/dashboard/profiles" className="hover:text-primary transition-colors">Profiles</Link>
         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/60" aria-hidden="true" />
         <span className="text-foreground">New Profile</span>
       </nav>
