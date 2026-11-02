@@ -54,11 +54,11 @@ export const STATUS = {
 
 export type Req = { method: string; path: string; query: URLSearchParams; headers: Record<string, string>; body: Buffer | null };
 export type Reply = { status?: number; json?: unknown; body?: Buffer | string; headers?: Record<string, string> };
-export type Rest = (req: Req) => Reply | undefined;
+export type Rest = (req: Req) => Reply | Promise<Reply> | undefined;
 type Command = (args: any) => unknown | Promise<unknown>;
 
-/** A REST route: `path` is the API path after `/api/v1`. */
-export const on = (method: string, path: string | RegExp, reply: Reply | ((req: Req) => Reply)): Rest => (req) =>
+/** A REST route: `path` is the API path after `/api/v1`. A promise holds the answer until it settles, as a slow link. */
+export const on = (method: string, path: string | RegExp, reply: Reply | ((req: Req) => Reply | Promise<Reply>)): Rest => (req) =>
   req.method === method && (typeof path === 'string' ? req.path === path : path.test(req.path))
     ? typeof reply === 'function' ? reply(req) : reply
     : undefined;
@@ -150,7 +150,7 @@ export class FakeBackend {
     return (this.replies[event] ?? this.defaults[event])(args);
   }
 
-  serve(req: Req): Reply {
+  serve(req: Req): Reply | Promise<Reply> {
     this.requests.push(req);
     for (const r of [...this.rest, ...DEFAULT_REST]) {
       const out = r(req);
@@ -166,7 +166,7 @@ let current: FakeBackend | null = null;
 async function fulfill(backend: FakeBackend, route: Route) {
   const req = route.request();
   const url = new URL(req.url());
-  const out = backend.serve({
+  const out = await backend.serve({
     method: req.method(),
     path: url.pathname.replace(/^\/api\/v1/, ''),
     query: url.searchParams,

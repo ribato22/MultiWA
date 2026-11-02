@@ -5,7 +5,7 @@
 const API_BASE = '/api/v1';
 
 // The API's own limit on an announcement upload (its multipart `fileSize`), in bytes.
-const ANNOUNCEMENT_MAX_BYTES = 2 * 1024 * 1024;
+export const ANNOUNCEMENT_MAX_BYTES = 2 * 1024 * 1024;
 
 // How long a token refresh may take before it is given up. Long enough not to abort a slow refresh the server may
 // have carried out: this browser would keep the refresh token it rotated, and the next refresh, read as reuse, would

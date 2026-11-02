@@ -82,6 +82,8 @@ export interface CallsConsole {
   switchMic(deviceId: string): void;
   resumeAudio(): void;
   takeHere(): void;
+  /** A profile was set to answer its calls in the dashboard: the header shows the call controls from now on. */
+  profileAnswers(): void;
 }
 
 type Commands = Pick<CallsConsole, 'setAvailable' | 'dismiss' | 'answer' | 'hangUp' | 'setMuted' | 'switchMic' | 'resumeAudio' | 'takeHere'>;
@@ -608,6 +610,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             switchMic: (deviceId) => cmd.current.switchMic?.(deviceId),
             resumeAudio: () => cmd.current.resumeAudio?.(),
             takeHere: () => cmd.current.takeHere?.(),
+            profileAnswers: () => setProfilesRing(true),
           }
         : null,
     [agent, user, state, profilesRing, answerBlocked, soundBlocked, quality, playBlocked, micId, socketUp],

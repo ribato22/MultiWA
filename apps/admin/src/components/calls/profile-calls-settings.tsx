@@ -3,14 +3,18 @@
 // recording them; the announcement the caller hears first; how long recordings are kept.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, Play, Trash2, Upload, XCircle } from 'lucide-react';
-import { api, type CallsMediaStatus } from '@/lib/api';
+import { ANNOUNCEMENT_MAX_BYTES, api, type CallsMediaStatus } from '@/lib/api';
 import { READINESS_TEXT, reasonTexts } from '@/lib/calls';
 import { canManageCalls, currentUser } from '@/lib/current-user';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useCalls } from './calls-provider';
 
 const FORMAT: Record<string, string> = { 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/ogg': 'ogg', 'audio/webm': 'webm', 'audio/mp4': 'm4a' };
 type ProfileCalls = CallsMediaStatus['profiles'][number];
@@ -18,27 +22,49 @@ type Refusal = { message: string; texts: string[] };
 // The server-wide readiness reasons: the checklist's server lines say them, once.
 const SERVER_REASONS = ['media_disabled', 'media_server_down', 'engine_host_worker'];
 
+/**
+ * What the server would refuse anyway, said before the file is sent: its size, or a file that is no audio file by its
+ * type or its name (the server reads the format from the file itself).
+ */
+const fileProblem = (f: File) =>
+  f.size > ANNOUNCEMENT_MAX_BYTES
+    ? `The file must be at most ${ANNOUNCEMENT_MAX_BYTES / (1024 * 1024)} MB`
+    : !FORMAT[f.type] && !Object.values(FORMAT).includes(f.name.split('.').pop()?.toLowerCase() ?? '')
+      ? 'The announcement must be an mp3, wav, ogg, webm or m4a file'
+      : null;
+
 /** `refreshKey`: what the page knows that the profile's readiness depends on; a change reads the checklist again. */
 export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: string; refreshKey?: string }) {
   const [allowed] = useState(() => canManageCalls(currentUser()?.role));
+  const calls = useCalls();
   const { toast } = useToast();
   const [server, setServer] = useState<CallsMediaStatus['server'] | null>(null);
   const [p, setP] = useState<ProfileCalls | null>(null);
+  const [checking, setChecking] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
+  // The change in flight. Every control waits meanwhile: each answer is the whole settings, and two could cross.
   const [busy, setBusy] = useState<string | null>(null);
-  const [retention, setRetention] = useState('');
+  // The retention as typed, until it is saved: a read of the settings meanwhile leaves it.
+  const [retentionDraft, setRetentionDraft] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const file = useRef<HTMLInputElement>(null);
+  const uploadButton = useRef<HTMLButtonElement>(null);
+  // Only the latest read shows: an older one answering after it (a slow link) is stale.
+  const loadSeq = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    setChecking(true);
     const res = await api.getCallsMediaStatus();
+    if (seq !== loadSeq.current) return;
+    setChecking(false);
     if (!res.data) return setLoadError(res.error ?? 'Could not read the calls status');
     setLoadError(null);
+    setRefusal(null); // what was refused may be fixed since: the checklist says what is still missing
     setServer(res.data.server);
-    const mine = res.data.profiles.find((x) => x.profileId === profileId) ?? null;
-    setP(mine);
-    if (mine) setRetention(String(mine.retentionDays));
+    setP(res.data.profiles.find((x) => x.profileId === profileId) ?? null);
   }, [profileId]);
   useEffect(() => {
     if (allowed) void load();
@@ -63,14 +89,18 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     if (!res.data) return toast({ title: 'Could not save', description: res.error, variant: 'destructive' });
     const stored = res.data;
     setP((x) => (x ? { ...x, ...stored } : x));
-    setRetention(String(stored.retentionDays));
+    if (body.retentionDays !== undefined) setRetentionDraft(null);
+    // Its calls ring in the dashboard from now on: the header's call controls show without a reload.
+    if (stored.answerInDashboard) calls?.profileAnswers();
   };
   const upload = async (f: File) => {
+    if (file.current) file.current.value = ''; // the same file may be picked again
+    const problem = fileProblem(f);
+    if (problem) return setRefusal({ message: problem, texts: [] });
     setBusy('upload');
     setRefusal(null);
     const res = await api.uploadCallsAnnouncement(profileId, f);
     setBusy(null);
-    if (file.current) file.current.value = ''; // the same file may be picked again
     if (!res.data) return refused(res.error ?? 'The announcement could not be stored', res.body);
     const announcement = res.data.announcement;
     setP((x) => (x ? { ...x, announcement } : x));
@@ -89,11 +119,13 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setRefusal(null);
     const res = await api.deleteCallsAnnouncement(profileId);
     setBusy(null);
+    setConfirmRemove(false);
     if (res.error) return refused(res.error, res.body);
     setP((x) => (x ? { ...x, announcement: null } : x));
     dropPreview();
   };
 
+  const retention = retentionDraft ?? (p ? String(p.retentionDays) : '');
   const days = Number(retention);
   const retentionValid = Number.isInteger(days) && days >= 1 && days <= 3650;
   const checks =
@@ -110,11 +142,19 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
 
   return (
     <section aria-label="Calls" className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
-      <div>
-        <h2 className="text-base font-semibold text-slate-100">Calls</h2>
-        <p className="mt-0.5 text-xs text-slate-400">Answer this profile’s WhatsApp voice calls in the dashboard, and record them.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-slate-100">Calls</h2>
+          <p className="mt-0.5 text-xs text-slate-400">Answer this profile’s WhatsApp voice calls in the dashboard, and record them.</p>
+        </div>
+        {/* What changed elsewhere (the server, WhatsApp) shows once the checklist is read again. */}
+        <Button size="sm" variant="outline" onClick={() => void load()}>
+          {checking ? 'Checking…' : 'Check again'}
+        </Button>
       </div>
+      {!server && !loadError && <p className="text-sm text-slate-400">Reading the calls status…</p>}
       {loadError && <p role="alert" className="text-sm text-amber-300">{loadError}</p>}
+      {server && !p && <p className="text-sm text-amber-300">The calls status does not list this profile: reload the page, or check again in a moment.</p>}
       {server && p && (
         <>
           <div className="space-y-3 rounded-lg border border-slate-800/80 bg-slate-950/30 p-4">
@@ -123,7 +163,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                 <Label htmlFor="calls-answer" className="cursor-pointer text-xs font-medium text-slate-200">Answer calls in the dashboard</Label>
                 <p className="mt-0.5 text-[11px] text-slate-400">Agents online get a banner and answer in the browser.</p>
               </div>
-              <Switch id="calls-answer" checked={p.answerInDashboard} disabled={busy === 'answer'} onCheckedChange={(on) => save('answer', { answerInDashboard: on })} />
+              <Switch id="calls-answer" checked={p.answerInDashboard} disabled={!!busy} onCheckedChange={(on) => save('answer', { answerInDashboard: on })} />
             </div>
             <ul aria-label="What answering in the dashboard needs" className="space-y-1 text-xs">
               {checks.map((c) => (
@@ -149,7 +189,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               <Switch
                 id="calls-record"
                 checked={p.recording}
-                disabled={busy === 'recording' || (!p.recording && !p.announcement)}
+                disabled={!!busy || (!p.recording && !p.announcement)}
                 onCheckedChange={(on) => save('recording', { recording: on })}
               />
             </div>
@@ -173,18 +213,18 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     if (f) void upload(f);
                   }}
                 />
-                <Button size="sm" variant="outline" disabled={busy === 'upload'} onClick={() => file.current?.click()}>
+                <Button ref={uploadButton} size="sm" variant="outline" disabled={!!busy} onClick={() => file.current?.click()}>
                   {busy === 'upload' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <Upload className="mr-1.5 h-4 w-4" aria-hidden="true" />}
                   {p.announcement ? 'Replace' : 'Upload announcement'}
                 </Button>
                 {p.announcement && (
-                  <Button size="sm" variant="outline" disabled={busy === 'listen'} onClick={listen}>
+                  <Button size="sm" variant="outline" disabled={!!busy} onClick={listen}>
                     <Play className="mr-1.5 h-4 w-4" aria-hidden="true" />
                     Listen
                   </Button>
                 )}
                 {p.announcement && (
-                  <Button size="sm" variant="ghost" disabled={busy === 'remove'} onClick={remove}>
+                  <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => setConfirmRemove(true)}>
                     <Trash2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
                     Remove
                   </Button>
@@ -192,6 +232,33 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               </div>
               {preview && <audio controls src={preview} aria-label="The announcement" className="h-8" />}
             </div>
+            <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+              <AlertDialogContent
+                onCloseAutoFocus={(e) => {
+                  if (p?.announcement) return; // refused: back to Remove
+                  e.preventDefault(); // removed, and Remove with it: the focus goes to the upload, not to the page
+                  uploadButton.current?.focus();
+                }}
+              >
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Remove the announcement?</AlertDialogTitle>
+                  <AlertDialogDescription>Recording calls needs one: it can be turned on again once another announcement is uploaded.</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={busy === 'remove'}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={busy === 'remove'}
+                    className="bg-red-600 text-white hover:bg-red-700"
+                    onClick={(e) => {
+                      e.preventDefault(); // the dialog closes once the server answered
+                      void remove();
+                    }}
+                  >
+                    {busy === 'remove' ? 'Removing…' : 'Remove'}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
 
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-800/80 bg-slate-950/30 p-4">
@@ -203,12 +270,12 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                 min={1}
                 max={3650}
                 value={retention}
-                onChange={(e) => setRetention(e.target.value)}
+                onChange={(e) => setRetentionDraft(e.target.value)}
                 className="w-32 border-slate-800 bg-slate-950/40 text-slate-100"
               />
               <p className="text-[11px] text-slate-400">1 to 3650. Older recordings are deleted every night.</p>
             </div>
-            <Button size="sm" disabled={!retentionValid || days === p.retentionDays || busy === 'retention'} onClick={() => save('retention', { retentionDays: days })}>
+            <Button size="sm" disabled={!retentionValid || days === p.retentionDays || !!busy} onClick={() => save('retention', { retentionDays: days })}>
               Save
             </Button>
           </div>
