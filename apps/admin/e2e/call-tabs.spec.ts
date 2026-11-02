@@ -297,6 +297,16 @@ test('a call whose answer failed here, then answered in another tab, can still b
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
 });
 
+test('signing out during a call forgets it in this tab: the next login here does not rejoin it', async ({ page, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  expect(await storedCalls(page)).toHaveLength(1);
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/auth\/login$/);
+  expect(await storedCalls(page)).toEqual([]);
+});
+
 test('a call another tab is still connecting is not offered here until the server put it through', async ({ page, backend }) => {
   await open(page);
   backend.emit('call:ringing', ringing({ recorded: true }));

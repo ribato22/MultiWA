@@ -41,7 +41,7 @@ import {
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
 import { DemoBanner } from '@/components/demo-banner';
-import { CallsProvider } from '@/components/calls/calls-provider';
+import { CallsProvider, forgetStoredCall } from '@/components/calls/calls-provider';
 import { AvailabilityToggle } from '@/components/calls/availability-toggle';
 import { IncomingCallBanner } from '@/components/calls/incoming-call-banner';
 import { InCallBar } from '@/components/calls/in-call-bar';
@@ -191,6 +191,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   };
 
   const handleLogout = () => {
+    forgetStoredCall(user.id); // the next login in this tab must not rejoin this one's call
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');

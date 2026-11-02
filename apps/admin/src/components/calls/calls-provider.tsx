@@ -328,12 +328,17 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       // Giving up a call while it connects rings it again for everyone, this agent too: it stays away here.
       if (a.phase === 'connecting') dismiss(a.call.callId);
       dispatch({ type: 'hangingUp', callId: a.call.callId });
+      // Nothing more the agent says reaches the caller, or a recording: a recorded call's hang-up takes up to half a minute.
+      mediaRef.current?.setMuted(true);
       const reply = await command(socket, 'call:hangup', { callId: a.call.callId }, ACK_MS.hangup);
       if (reply.ok || reply.reason === 'not_in_call') {
         if (mineCall() === a.call.callId) stopAudio();
         if (storedCall()?.callId === a.call.callId) keep(null);
         dispatch({ type: 'ended', callId: a.call.callId, text: 'You hung up' }); // call:ended has usually said so already
-      } else dispatch({ type: 'hangUpFailed', callId: a.call.callId, text: 'The hang-up did not go through: try again' });
+      } else {
+        mediaRef.current?.setMuted(muted); // the call goes on, muted or not as the agent had it
+        dispatch({ type: 'hangUpFailed', callId: a.call.callId, text: 'The hang-up did not go through: try again' });
+      }
     };
     const setMuted = (on: boolean) => {
       muted = on;

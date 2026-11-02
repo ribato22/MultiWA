@@ -247,6 +247,37 @@ test('a call:active naming another producer means another tab or browser of the 
   await expect(bar(page)).not.toContainText('On a call in another tab');
 });
 
+test('Hang up silences the microphone at once; a hang-up that fails gives the agent back their own mute', async ({ page, backend }) => {
+  let reply!: (r: unknown) => void;
+  backend.reply('call:hangup', () => new Promise((resolve) => (reply = resolve)));
+  await open(page);
+  await answer(page, backend, { recorded: true });
+  await expect.poll(() => produced(backend)).toBe(1);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() }); // once the voice is produced, as the server does
+  await expect(bar(page).getByRole('timer', { name: 'Call time' })).toBeVisible();
+  const enabled = async () => (await senderTracks(page)).map((t) => t.enabled);
+  await expect.poll(enabled).toEqual([true]);
+  const hangUp = bar(page).getByRole('button', { name: 'Hang up' });
+  const mute = bar(page).getByRole('button', { name: 'Mute' });
+  // A recorded call's hang-up can take half a minute: nothing the agent says meanwhile reaches the caller or the recording.
+  await hangUp.click();
+  await expect(bar(page)).toContainText('Hanging up…');
+  await expect.poll(enabled).toEqual([false]);
+  await expect.poll(() => backend.commands('call:hangup').length).toBe(1);
+  reply({ ok: false, reason: 'error' });
+  await expect(hangUp).toBeEnabled();
+  await expect(bar(page)).toContainText('The hang-up did not go through: try again');
+  await expect.poll(enabled).toEqual([true]); // unmuted, as the agent left it
+  await mute.click();
+  await expect.poll(enabled).toEqual([false]);
+  await hangUp.click();
+  await expect.poll(() => backend.commands('call:hangup').length).toBe(2);
+  reply({ ok: false, reason: 'error' });
+  await expect(hangUp).toBeEnabled();
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  expect(await enabled()).toEqual([false]); // still muted
+});
+
 test('Enter on Answer, then Enter again, does not hang up: the focus goes to the call, not to Hang up', async ({ page, backend }) => {
   await open(page);
   backend.emit('call:ringing', ringing());
