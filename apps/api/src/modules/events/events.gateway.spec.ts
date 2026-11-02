@@ -248,7 +248,7 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
     const timers = vi.spyOn(globalThis, 'setTimeout');
     await gateway.handleConnection(socket('s1'));
-    const hold: NodeJS.Timeout = timers.mock.results[timers.mock.calls.findIndex(([, ms]) => ms < 60_000)].value; // not the quiet minute
+    const hold: NodeJS.Timeout = timers.mock.results[timers.mock.calls.findIndex(([, ms]) => ms !== undefined && ms < 60_000)].value; // not the quiet minute
     clearTimeout(hold);
     gateway.onModuleDestroy();
     expect(hold.hasRef()).toBe(false);
