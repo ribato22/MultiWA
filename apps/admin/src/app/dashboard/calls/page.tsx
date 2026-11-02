@@ -12,9 +12,10 @@ import { api, type CallFollowUp, type CallOutcome, type CallRecord, type Profile
 import { getSocketUrl } from '@/lib/socket';
 import { formatFull, formatRelative } from '@/lib/datetime';
 import {
-  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, callerLabel, filterQuery, fromPayload, knownOutcome, matchesFilter, upsertCall,
+  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, answeredFacts, callerLabel, filterQuery, fromPayload, knownOutcome, matchesFilter, upsertCall,
   type CallFilter, type CallUpdatePayload,
 } from '@/lib/calls';
+import { canManageCalls, currentUser } from '@/lib/current-user';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,6 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { outcomeIcon } from '@/components/calls/outcome-icon';
+import { CallRecording } from '@/components/calls/call-recording';
 import { useToast } from '@/hooks/use-toast';
 
 type Member = { id: string; name: string; email: string; isActive: boolean };
@@ -56,6 +58,8 @@ function OutcomeIcon({ call }: { call: CallRecord }) {
 
 export default function CallsPage() {
   const { toast } = useToast();
+  // Owner and admin play, download and delete recordings; everyone sees the facts. The API checks it again.
+  const [canManage] = useState(() => canManageCalls(currentUser()?.role));
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileId, setProfileId] = useState('');
   const [filter, setFilter] = useState<CallFilter>('open');
@@ -164,6 +168,12 @@ export default function CallsPage() {
         const others = prev.filter((c) => c.id !== p.callId);
         return p.outcome === 'ringing' ? [fromPayload(p, prev.find((c) => c.id === p.callId)), ...others] : others;
       });
+      if (p.hasRecording) {
+        // The call's recording was stored: its facts come with the row.
+        void api.getCall(p.callId).then(({ data: stored }) => {
+          if (stored) setCalls((prev) => prev.map((c) => (c.id === p.callId ? { ...c, recording: stored.recording } : c)));
+        });
+      }
       if (!seen) {
         // The payload has no contact: the stored row of a call not shown yet has its chat (name, Open chat). Only those
         // relations are taken over, by id and never inserted: outcome and follow-up stay what the socket said, so a
@@ -303,12 +313,14 @@ export default function CallsPage() {
                           {call.isVideo && <Video className="inline w-3 h-3 mr-1" aria-label="Video call" />}
                           {formatRelative(call.startedAt)}
                           {assigned ? ` · ${assigned}` : ''}
+                          {call.outcome === 'answered' && ` · ${answeredFacts(call, memberName(call.answeredByUserId))}`}
                         </p>
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={call.outcome === 'missed' ? 'destructive' : 'secondary'}>{OUTCOME_LABEL[knownOutcome(call.outcome)]}</Badge>
                       <Badge variant="outline">{FOLLOW_UP_LABEL[call.followUp]}</Badge>
+                      <CallRecording call={call} canManage={canManage} onChange={(row) => setCalls((prev) => prev.map((c) => (c.id === row.id ? row : c)))} />
                       {call.conversationId && (
                         <Button asChild size="sm" variant="ghost">
                           <Link href={`/dashboard/chat?profile=${call.profileId}&conv=${call.conversationId}`} aria-label={`Open chat with ${callerLabel(call)}`}>
