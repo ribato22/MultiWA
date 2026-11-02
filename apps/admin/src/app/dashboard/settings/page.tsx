@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   X,
   CheckCircle2,
@@ -90,15 +90,28 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   // The tab a link asks for (`?tab=calls`), also when it is followed on this page (the bell's Notification Settings).
   const asked = useSearchParams().get('tab');
-  const [tab, setTab] = useState('account');
+  const router = useRouter();
+  const [tab, setTab] = useState(asked ?? 'account');
   useEffect(() => {
     if (asked) setTab(asked);
   }, [asked]);
+  // The URL names the tab shown: a reload or Back opens it again, and a link to another tab always switches to it.
+  const select = (v: string) => {
+    setTab(v);
+    router.replace(`/dashboard/settings?tab=${v}`, { scroll: false });
+  };
   // The Calls tab is there when the header's call controls are: a profile answers calls in the dashboard, or a call is
   // here. Never for a role that takes no calls (it has no console), nor in an organization that does not use them.
-  const callsTab = !!useCalls()?.inUse;
-  // A tab this page does not have, or not for this user, opens Account.
+  const calls = useCalls();
+  const callsTab = !!calls?.inUse;
+  // A link to the Calls tab waits until the console knows whether there is one: it must not show Account, then switch.
+  const waiting = tab === 'calls' && !!calls && !calls.inUseKnown;
+  // A tab this page does not have, or not for this user, opens Account, and the URL says so: a later ring then leaves
+  // the tab as it is.
   const shown = TABS.includes(tab) && (tab !== 'calls' || callsTab) ? tab : 'account';
+  useEffect(() => {
+    if (!waiting && shown !== tab) select(shown);
+  }, [waiting, shown, tab]);
 
   // Team state
   const [members, setMembers] = useState<Member[]>([]);
@@ -466,7 +479,7 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading) {
+  if (loading || waiting) {
     return (
       <div className="space-y-6">
         <div>
@@ -490,7 +503,7 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs value={shown} onValueChange={setTab} className="space-y-6">
+      <Tabs value={shown} onValueChange={select} className="space-y-6">
         <TabsList className="bg-secondary/30">
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>

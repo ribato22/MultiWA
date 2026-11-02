@@ -62,6 +62,8 @@ export interface CallsConsole {
   state: ConsoleState;
   /** A profile rings in the dashboard, or a call is here: the header shows the call controls. */
   inUse: boolean;
+  /** inUse is known: the profiles were read, or a call came first. Until then, false may mean not read yet. */
+  inUseKnown: boolean;
   /** Why this page cannot answer calls (no HTTPS, or a browser the media library cannot drive), else null. */
   answerBlocked: string | null;
   /** The ringtone needs a click on the page first (the browser's autoplay rule). */
@@ -96,6 +98,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
   const agent = canAnswerCalls(user.role);
   const [state, dispatch] = useReducer(reduce, initialState);
   const [profilesRing, setProfilesRing] = useState(false);
+  const [profilesRead, setProfilesRead] = useState(false);
   const cmd = useRef<Partial<Commands>>({});
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -116,6 +119,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     void api.getProfiles().then(({ data }) => {
       const answers = !!data?.some((p) => p.settings?.callsAnswerInDashboard === true);
       setProfilesRing((rang) => rang || answers);
+      setProfilesRead(true);
     });
   }, [agent]);
 
@@ -589,13 +593,15 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     });
   }, [agent]);
 
+  const inUse = profilesRing || !!state.active || state.banners.length > 0;
   const value = useMemo<CallsConsole | null>(
     () =>
       agent
         ? {
             me: user,
             state,
-            inUse: profilesRing || !!state.active || state.banners.length > 0,
+            inUse,
+            inUseKnown: profilesRead || inUse,
             answerBlocked,
             soundBlocked,
             quality,
@@ -613,7 +619,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             profileAnswers: () => setProfilesRing(true),
           }
         : null,
-    [agent, user, state, profilesRing, answerBlocked, soundBlocked, quality, playBlocked, micId, socketUp],
+    [agent, user, state, inUse, profilesRead, answerBlocked, soundBlocked, quality, playBlocked, micId, socketUp],
   );
   return (
     <CallsContext.Provider value={value}>

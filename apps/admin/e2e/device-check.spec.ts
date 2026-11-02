@@ -1,4 +1,4 @@
-import { test, expect, get, ringing, ME, PROFILE } from './support/fixtures';
+import { test, expect, gate, get, on, requestEnded, ringing, ME, PROFILE } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { holdMics } from './support/browser';
 import { RING_INTERVAL_MS } from '@/lib/call-console/attention';
@@ -252,24 +252,64 @@ test('no microphone plugged in says so', async ({ page, context }) => {
   await expect(section(page).getByRole('alert')).toHaveText('No microphone found: plug one in and try again');
 });
 
-test('a link to a tab that does not exist opens Account', async ({ page }) => {
+test('a link to a tab that does not exist opens Account, and the URL says so', async ({ page }) => {
   await page.goto('/dashboard/settings?tab=nonsense');
   await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('tabpanel')).toContainText('Account Information');
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=account$/);
 });
 
-test('the bell’s Notification Settings opens that tab, from Settings too', async ({ page, backend }) => {
+test('the bell’s Notification Settings opens that tab, from Settings too, whatever tab was clicked since', async ({ page, backend }) => {
   backend.route(get('/notifications', { notifications: [{ id: 'n-1', type: 'info', title: 'Hello', body: 'A notification', isRead: true, createdAt: '2026-11-01T03:00:00.000Z' }], total: 1 }));
+  const bell = async () => {
+    await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+    await page.getByRole('link', { name: 'Notification Settings' }).click();
+  };
   await page.goto('/dashboard/settings');
   await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
-  await page.getByRole('button', { name: 'Notifications', exact: true }).click();
-  await page.getByRole('link', { name: 'Notification Settings' }).click();
+  await bell();
+  await expect(tab(page, 'Notifications')).toHaveAttribute('aria-selected', 'true');
+  await tab(page, 'Team').click();
+  await expect(tab(page, 'Team')).toHaveAttribute('aria-selected', 'true');
+  await bell(); // the URL named Notifications already
   await expect(tab(page, 'Notifications')).toHaveAttribute('aria-selected', 'true');
 });
 
-test('Settings has a Calls tab once a profile answers calls in the dashboard, as the header has its call controls', async ({ page, backend }) => {
+test('the tab clicked is in the URL: a reload keeps it, and so does Back from another page', async ({ page }) => {
+  await page.goto('/dashboard/settings');
+  await tab(page, 'Security').click();
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=security$/);
+  await page.reload();
+  await expect(tab(page, 'Security')).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Calls', exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard\/calls$/);
+  await page.goBack();
+  await expect(tab(page, 'Security')).toHaveAttribute('aria-selected', 'true');
+});
+
+test('a link to the Calls tab waits until the console knows whether a profile answers calls here: Account never shows first', async ({ page, context, backend }) => {
+  await context.addInitScript(() => {
+    new MutationObserver(() => {
+      if (document.querySelector('[role="tab"][aria-selected="true"]')?.textContent === 'Account') (window as any).__accountShown = true;
+    }).observe(document, { childList: true, subtree: true, attributes: true });
+  });
+  const slow = gate();
+  backend.route(on('GET', '/profiles', async () => {
+    await slow.passed;
+    return { json: [PROFILE] };
+  }));
+  const me = requestEnded(page, '/auth/me');
+  await page.goto('/dashboard/settings?tab=calls');
+  await me;
+  await page.waitForTimeout(500); // the page would show a tab by now
+  slow.open();
+  await expect(tab(page, 'Calls')).toHaveAttribute('aria-selected', 'true');
+  expect(await page.evaluate(() => !!(window as any).__accountShown)).toBe(false);
+});
+
+test('Settings has a Calls tab once a profile answers calls in the dashboard, as the header has its call controls; a ring then leaves the tab shown', async ({ page, backend }) => {
   backend.route(get('/profiles', [{ ...PROFILE, settings: {} }]));
-  await page.goto('/dashboard/settings?tab=calls'); // a link to the tab opens Account meanwhile
+  await page.goto('/dashboard/settings?tab=calls'); // no profile answers there: Account
   await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
   await expect.poll(() => page.evaluate(() => (window as any).__socketOpen())).toBe(true);
   await expect(tab(page, 'Calls')).toHaveCount(0);
@@ -277,6 +317,8 @@ test('Settings has a Calls tab once a profile answers calls in the dashboard, as
   backend.emit('call:ringing', ringing()); // a ring: a profile does answer in the dashboard
   await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeVisible();
   await expect(tab(page, 'Calls')).toBeVisible();
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=account$/);
 });
 
 test.describe('a viewer', () => {
