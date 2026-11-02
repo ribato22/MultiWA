@@ -9,7 +9,9 @@ const ANNOUNCEMENT_MAX_BYTES = 2 * 1024 * 1024;
 
 // How long a token refresh may take before it is given up. Long enough not to abort a slow refresh the server may
 // have carried out: this browser would keep the refresh token it rotated, and the next refresh, read as reuse, would
-// sign out every tab. Short enough that a dead connection does not hold every tab's refresh behind the lock.
+// sign out every tab. A refresh given up for a request outside /auth/ signs out, and the tabs waiting on the lock then
+// have no refresh token to send. One given up for an /auth/ request (api.me()) does not sign out: each waiting tab
+// then sends the same refresh token in turn, and on a dead connection each waits its own minute.
 const REFRESH_TIMEOUT_MS = 60_000;
 
 // Types
@@ -269,8 +271,8 @@ class ApiClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
-        // Every tab's refresh waits on this one: one that hangs gives up (a sign-out) instead of holding them all. An
-        // optional call: an older Safari has no AbortSignal.timeout, and its TypeError would sign every 401 out.
+        // Every tab's refresh waits on this one: one that hangs is given up (see REFRESH_TIMEOUT_MS). An optional call:
+        // an older Safari has no AbortSignal.timeout, and its TypeError would sign every 401 out.
         signal: AbortSignal.timeout?.(REFRESH_TIMEOUT_MS),
       });
 

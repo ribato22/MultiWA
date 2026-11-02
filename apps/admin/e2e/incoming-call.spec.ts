@@ -228,7 +228,7 @@ test('a page whose audio runs a moment after it was made (Firefox starts it susp
     // The hint is always on the card, hidden while the ringtone can play: it must never show.
     new MutationObserver(() => {
       for (const line of document.querySelectorAll('[aria-label="Incoming calls"] p')) {
-        if (line.textContent?.includes('Click anywhere on the page to hear the ringtone') && getComputedStyle(line).visibility !== 'hidden') w.__hinted = true;
+        if (line.textContent?.includes('Click anywhere on the page to hear the ringtone') && line.checkVisibility({ visibilityProperty: true })) w.__hinted = true;
       }
     }).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
   });
