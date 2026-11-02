@@ -620,7 +620,7 @@ test('nothing to give the focus back to: it goes to the main content, not to the
   const main = page.getByRole('main');
   await expect(main).toBeFocused();
   expect(await main.evaluate((el) => getComputedStyle(el).outlineColor)).toBe('rgba(0, 0, 0, 0)'); // no ring around the page
-  // Once the focus moved on, a click beside every control (a header menu's text) focuses nothing again: the page.
+  // Once the focus moved on, a click beside every control (on the page's heading) focuses nothing again: the page.
   await page.keyboard.press('Tab');
   await expect(main).not.toHaveAttribute('tabindex');
   await page.getByRole('heading', { name: 'Calls', exact: true }).click();
