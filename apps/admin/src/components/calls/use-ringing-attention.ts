@@ -56,7 +56,7 @@ export function useRingingAttention(state: ConsoleState, userId: string) {
   useEffect(() => {
     if (!ring) return;
     const stops = [flashTitle('📞 Incoming call')];
-    if (!prefs.ringerMuted(userId)) stops.push(startRinging(setSoundBlocked));
+    if (!prefs.ringerMuted(userId)) stops.push(startRinging(setSoundBlocked, () => prefs.ringerMuted(userId)));
     return () => {
       stops.forEach((stop) => stop());
       setSoundBlocked(false);

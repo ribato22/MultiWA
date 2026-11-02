@@ -40,6 +40,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { DeviceCheck } from '@/components/calls/device-check';
+import { canAnswerCalls } from '@/lib/current-user';
 import {
   Tabs,
   TabsContent,
@@ -83,6 +85,12 @@ export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // The tab a link asks for (`?tab=calls`): read from the URL once, since useSearchParams needs a Suspense boundary.
+  const [tab, setTab] = useState('account');
+  useEffect(() => {
+    const asked = new URLSearchParams(window.location.search).get('tab');
+    if (asked) setTab(asked);
+  }, []);
 
   // Team state
   const [members, setMembers] = useState<Member[]>([]);
@@ -474,11 +482,12 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="account" className="space-y-6">
+      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="bg-secondary/30">
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          {canAnswerCalls(user?.role) && <TabsTrigger value="calls">Calls</TabsTrigger>}
           <TabsTrigger value="api">API & Webhooks</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="storage">Storage</TabsTrigger>
@@ -920,6 +929,13 @@ export default function SettingsPage() {
             </div>
           </div>
         </TabsContent>
+
+        {/* Calls Tab */}
+        {canAnswerCalls(user?.role) && (
+          <TabsContent value="calls">
+            <DeviceCheck />
+          </TabsContent>
+        )}
 
         {/* API Tab */}
         <TabsContent value="api">
