@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useCalls } from './calls-provider';
@@ -232,42 +233,46 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     Listen
                   </Button>
                 )}
-                {p.announcement && (
-                  <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => setConfirmRemove(true)}>
-                    <Trash2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
-                    Remove
-                  </Button>
-                )}
+                {/* Remove is the trigger, so the focus comes back to it; the dialog itself stays when Remove goes with
+                    the announcement, and its close then hands the focus to the upload. */}
+                <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+                  {p.announcement && (
+                    <AlertDialogTrigger asChild>
+                      <Button size="sm" variant="ghost" disabled={!!busy}>
+                        <Trash2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                        Remove
+                      </Button>
+                    </AlertDialogTrigger>
+                  )}
+                  <AlertDialogContent
+                    onCloseAutoFocus={(e) => {
+                      if (p?.announcement) return; // cancelled or refused: back to Remove
+                      e.preventDefault(); // removed, and Remove with it: the focus goes to the upload, not to the page
+                      uploadButton.current?.focus();
+                    }}
+                  >
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Remove the announcement?</AlertDialogTitle>
+                      <AlertDialogDescription>Recording calls needs one: it can be turned on again once another announcement is uploaded.</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel disabled={busy === 'remove'}>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        disabled={busy === 'remove'}
+                        className="bg-red-600 text-white hover:bg-red-700"
+                        onClick={(e) => {
+                          e.preventDefault(); // the dialog closes once the server answered
+                          void remove();
+                        }}
+                      >
+                        {busy === 'remove' ? 'Removing…' : 'Remove'}
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
               {preview && <audio controls src={preview} aria-label="The announcement" className="h-8" />}
             </div>
-            <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
-              <AlertDialogContent
-                onCloseAutoFocus={(e) => {
-                  if (p?.announcement) return; // refused: back to Remove
-                  e.preventDefault(); // removed, and Remove with it: the focus goes to the upload, not to the page
-                  uploadButton.current?.focus();
-                }}
-              >
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Remove the announcement?</AlertDialogTitle>
-                  <AlertDialogDescription>Recording calls needs one: it can be turned on again once another announcement is uploaded.</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={busy === 'remove'}>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={busy === 'remove'}
-                    className="bg-red-600 text-white hover:bg-red-700"
-                    onClick={(e) => {
-                      e.preventDefault(); // the dialog closes once the server answered
-                      void remove();
-                    }}
-                  >
-                    {busy === 'remove' ? 'Removing…' : 'Remove'}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
           </div>
 
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-800/80 bg-slate-950/30 p-4">

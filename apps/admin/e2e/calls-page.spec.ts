@@ -94,6 +94,28 @@ test('after a delete the focus stays on the row, and a toast says the recording 
   await expectAccessible(page, 'ul[aria-label="Calls"]');
 });
 
+test('closed without a delete, the dialog gives the focus back to Delete: Cancel, Escape, and a delete that failed', async ({ page, backend }) => {
+  listing(backend, () => ANSWERED);
+  backend.route(on('DELETE', '/calls/call-9/recording', { status: 500, json: { message: 'Internal server error' } }));
+  await page.goto('/dashboard/calls');
+  const del = rowOf(page).getByRole('button', { name: 'Delete the recording of the call from Pak Joko' });
+  const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
+  await del.click();
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(del).toBeFocused();
+  await del.click();
+  await expect(confirm).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(confirm).toHaveCount(0);
+  await expect(del).toBeFocused();
+  await del.click();
+  await confirm.getByRole('button', { name: 'Delete' }).click();
+  await expect(page.getByText('Could not delete the recording')).toBeVisible();
+  await expect(confirm).toHaveCount(0);
+  await expect(del).toBeFocused();
+});
+
 test('a delete that went through says so, even when the row cannot be read again', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
   backend.route(on('DELETE', '/calls/call-9/recording', { json: { callId: 'call-9', recordingId: 'rec-9', deletedAt: NOW } }));

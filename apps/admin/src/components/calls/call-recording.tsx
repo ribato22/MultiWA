@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 
@@ -146,10 +147,13 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
           <Button size="sm" variant="outline" disabled={busy === 'download'} onClick={download} aria-label={`Download the recording of the call from ${callerLabel(call)}`}>
             {busy === 'download' ? <Loader2 className="h-4 w-4 mw-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setConfirming(true)} aria-label={`Delete the recording of the call from ${callerLabel(call)}`}>
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-          </Button>
+          {/* The trigger gets the focus back when the dialog closes without a delete. */}
           <AlertDialog open={confirming} onOpenChange={setConfirming}>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="ghost" aria-label={`Delete the recording of the call from ${callerLabel(call)}`}>
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete this recording?</AlertDialogTitle>

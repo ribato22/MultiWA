@@ -277,6 +277,29 @@ test('removing the announcement asks first', async ({ page, backend }) => {
   await expect(s.getByRole('button', { name: 'Upload announcement' })).toBeFocused(); // not the page: Remove went
 });
 
+test('closed without a removal, the dialog gives the focus back to Remove: Cancel, Escape, and a removal the server refused', async ({ page, backend }) => {
+  backend.route(get('/calls/media/status', status({ answerInDashboard: true, recording: true, announcement: ANNOUNCEMENT })));
+  backend.route(on('DELETE', '/profiles/p-1/calls-announcement', { status: 409, json: { message: 'Turn recording off before removing the announcement', reasons: ['recording_on'] } }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const remove = s.getByRole('button', { name: 'Remove' });
+  const confirm = page.getByRole('alertdialog', { name: 'Remove the announcement?' });
+  await remove.click();
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await remove.click();
+  await expect(confirm).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(confirm).toHaveCount(0);
+  await expect(remove).toBeFocused();
+  await remove.click();
+  await confirm.getByRole('button', { name: 'Remove' }).click();
+  await expect(s.getByRole('alert')).toContainText('Turn recording off first');
+  await expect(confirm).toHaveCount(0);
+  await expect(remove).toBeFocused();
+});
+
 test('recordings are kept for 1 to 3650 days', async ({ page, backend }) => {
   backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
   await page.goto('/dashboard/profiles/p-1');
