@@ -61,8 +61,20 @@ test('the ringer follows its switch at once: off, a ringing call goes quiet; on 
   await page.waitForTimeout(RING_INTERVAL_MS + 500); // a ring cycle
   expect(await tones(page)).toBe(after);
   await expect(banner(page)).toBeVisible(); // still ringing, without a sound
+  // On again just after a ring would have come (one every RING_INTERVAL_MS from the first): a ringer that only went
+  // quiet would ring at the next one, most of an interval later.
+  const on = await page.evaluate(
+    (interval) =>
+      new Promise<number>((resolve) => {
+        const first: number = (window as any).__toneTimes[0];
+        const next = first + Math.ceil((performance.now() - first) / interval) * interval;
+        setTimeout(() => resolve(performance.now()), next + 200 - performance.now());
+      }),
+    RING_INTERVAL_MS,
+  );
   await ringer.click();
-  await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(after); // at once, not at its next ring
+  const rang = () => page.evaluate((at) => ((window as any).__toneTimes as number[]).find((t) => t > at) ?? Infinity, on);
+  await expect.poll(rang).toBeLessThan(on + RING_INTERVAL_MS / 2); // at once, not at its next ring
   await expect(section(page)).toContainText('Off: a call still shows its banner, without a sound, even one already ringing.');
 });
 

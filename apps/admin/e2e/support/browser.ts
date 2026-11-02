@@ -71,11 +71,13 @@ export function installBrowserFakes() {
     revokeObjectURL(url);
   };
   w.__liveBlobs = () => [...live];
-  // Tones: every oscillator started (the ringer's, the speaker test's).
+  // Tones: every oscillator started (the ringer's, the speaker test's), and when (`__toneTimes`, on performance.now()).
   w.__tones = 0;
+  w.__toneTimes = [];
   const start = OscillatorNode.prototype.start;
   OscillatorNode.prototype.start = function (this: OscillatorNode, ...args: any[]) {
     w.__tones++;
+    w.__toneTimes.push(performance.now());
     return (start as any).apply(this, args);
   };
   // A tab the browser keeps silent (the config lets every tab sound): `__audioBlocked = true`, set before the first ring
