@@ -1,4 +1,4 @@
-import { test, expect, get, ringing, ME, type FakeBackend } from './support/fixtures';
+import { test, expect, get, rendered, requestEnded, ringing, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { holdMics } from './support/browser';
 import type { Page } from '@playwright/test';
@@ -174,6 +174,52 @@ test('a call another tab had, whose end this tab missed while its socket was dow
   backend.emit('call:ringing', ringing({ callId: 'call-2' }));
   await expect(banner(page)).toBeVisible();
   await expect.poll(() => tones(page), { timeout: 2000 }).toBeGreaterThan(before);
+});
+
+/** The server's read of a call another tab of the agent still connects: it rings, and names nobody (it hides a claim). */
+const STILL_CONNECTING = { id: 'call-1', outcome: 'ringing', endedAt: null, answeredByUserId: null, answeredBy: null };
+
+test('a socket that drops while another tab of the agent connects the call keeps the call as theirs, and hears it go through', async ({ page, backend }) => {
+  await open(page);
+  backend.emit('call:ringing', ringing({ recorded: true }));
+  await expect(banner(page)).toBeVisible();
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: ME.id, byUserName: ME.name }); // answered in another tab
+  await expect(bar(page)).toContainText('On a call in another tab');
+  backend.route(get('/calls/call-1', STILL_CONNECTING));
+  const read = requestEnded(page, '/calls/call-1');
+  backend.blip();
+  await read; // read again at the reconnect
+  await rendered(page);
+  await expect(bar(page)).toContainText('On a call in another tab');
+  backend.emit('call:announcing', { callId: 'call-1', durationSec: 6 });
+  await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Calls availability' })).toContainText('On a call');
+  // Answered since, by this agent: another drop keeps it too.
+  backend.route(get('/calls/call-1', { ...STILL_CONNECTING, outcome: 'answered', answeredByUserId: ME.id, answeredAt: new Date().toISOString() }));
+  const again = requestEnded(page, '/calls/call-1');
+  backend.blip();
+  await again;
+  await rendered(page);
+  await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
+});
+
+test("a call another tab's answer gave back while this tab's socket was down ends here once the server's time to connect it is over", async ({ page, backend }) => {
+  await page.clock.install();
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: ME.id, byUserName: ME.name }); // answered in another tab
+  await expect(bar(page)).toContainText('On a call in another tab');
+  // That answer's audio did not connect meanwhile, and the call rings again: the read is the same as while it connects.
+  backend.route(get('/calls/call-1', STILL_CONNECTING));
+  const reads = () => backend.requests.filter((r) => r.path === '/calls/call-1').length;
+  backend.blip();
+  await expect.poll(async () => (await page.clock.runFor(1_000), reads())).toBe(1); // reconnected, and read again
+  await page.clock.runFor(10_000);
+  await expect(bar(page)).toContainText('On a call in another tab'); // that answer may still connect
+  await page.clock.runFor(5_000); // the server's time for it is over
+  await expect.poll(reads).toBe(2);
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeVisible(); // no longer on a call
 });
 
 test('a socket that drops and comes back while a reload waits for the microphone rejoins once, and the end of the call closes all of it', async ({ page, context, backend }) => {

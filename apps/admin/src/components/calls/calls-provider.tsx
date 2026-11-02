@@ -534,13 +534,22 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         });
       }
       if (active && active.phase !== 'ended' && !(rejoining && active.call.callId === call?.callId)) {
-        void api.getCall(active.call.callId).then(({ data }) => {
-          // Over, or (shown as another tab's) ringing again: no tab of this agent has it.
-          if (!data || (!data.endedAt && (active.local || data.outcome !== 'ringing'))) return;
-          if (mineCall() === active.call.callId) stopAudio();
-          if (storedCall()?.callId === active.call.callId) keep(null);
-          dispatch({ type: 'ended', callId: active.call.callId, text: 'Call ended' });
-        });
+        const callId = active.call.callId;
+        const read = (again: boolean) =>
+          void api.getCall(callId).then(({ data }) => {
+            const shown = stateRef.current.active;
+            if (!data || closed || shown?.call.callId !== callId || shown.phase === 'ended') return;
+            // This tab's own call, or another tab's that this agent answered: the call goes on.
+            if (!data.endedAt && (shown.local || (data.outcome === 'answered' && data.answeredByUserId === user.id))) return;
+            // Ringing: another tab's answer may still be connecting (the read hides who claimed a call). That answer
+            // connects or is given back within the server's time for it, and this tab hears which: it is read again then.
+            if (!data.endedAt && data.outcome === 'ringing' && !again) return void setTimeout(() => read(true), ACK_MS.answer);
+            // Over, or no tab of this agent has it: another agent's, or ringing for everyone again.
+            if (mineCall() === callId) stopAudio();
+            if (storedCall()?.callId === callId) keep(null);
+            dispatch({ type: 'ended', callId, text: 'Call ended' });
+          });
+        read(false);
       }
     });
     channel?.addEventListener('message', ({ data }) => {
