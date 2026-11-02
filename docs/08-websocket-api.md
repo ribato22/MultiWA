@@ -22,7 +22,7 @@ The user must be active, a JWT's login session must still be live (as on the RES
 
 A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one. Its session is checked again every minute: a JWT socket whose session was logged out, revoked or has expired, or whose user was deactivated, is disconnected the same way, so a revoked device stops receiving calls within a minute.
 
-If the server cannot check the credentials (its database is unavailable), it closes the connection instead: the client sees `disconnect` with the reason `transport close`, and Socket.IO reconnects by itself.
+If the server cannot check the credentials (its database is unavailable), it closes the connection after a few seconds instead: the client sees `disconnect` with the reason `transport close`, and Socket.IO then reconnects by itself. Until then the socket gets no events, and a `join` answers `Forbidden`.
 
 ---
 

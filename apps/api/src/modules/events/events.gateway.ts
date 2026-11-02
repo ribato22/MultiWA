@@ -35,6 +35,12 @@ const sessionTokenHash = (token: string) => crypto.createHash('sha256').update(t
 /** How often the dashboard sockets' sessions are checked again: a revoked device stops being rung within this. */
 const SESSION_SWEEP_MS = 60_000;
 
+/** A socket whose credentials could not be checked is closed after this long, plus up to the jitter (see handleConnection). */
+const UNCHECKED_HOLD_MS = 5_000;
+const UNCHECKED_HOLD_JITTER_MS = 10_000;
+/** The sockets whose credentials could not be checked make one warning at most this often. */
+const UNCHECKED_WARN_MS = 60_000;
+
 /** The /ws namespace's options: every gateway on it (this one, CallsGateway) declares the same. */
 export const WS_GATEWAY_OPTIONS: GatewayMetadata = {
   namespace: '/ws',
@@ -59,6 +65,8 @@ export interface SocketPrincipal {
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy, RealtimeEmitter {
   private readonly logger = new Logger(EventsGateway.name);
   private sweepTimer?: NodeJS.Timeout;
+  /** The sockets whose credentials could not be checked since the last warning, and the latest error. */
+  private unchecked: { count: number; error: unknown; warning?: NodeJS.Timeout } = { count: 0, error: undefined };
 
   constructor(private readonly jwt: JwtService, private readonly eventEmitter: EventEmitter2) {}
 
@@ -88,9 +96,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     if (!client.connected) return;
     if (!auth && client.data.authUnchecked) {
       // Not refused: its credentials could not be checked. A closed transport is one the client reconnects by itself,
-      // with its own backoff, and the next handshake checks them again; a refusal would leave it off until a reload.
-      this.logger.warn(`Closed socket ${client.id}: its credentials could not be checked`);
-      client.conn.close();
+      // and the next handshake checks them again; a refusal would leave it off until a reload. Not closed at once
+      // either: socket.io-client resets its reconnect backoff whenever a connection opens, so a socket closed at once
+      // is back within about a second, every tab and integration, each time with lookups against a database that is
+      // trying to recover. Held open a few seconds, jittered so that they do not all come back together. Until then
+      // it has no principal: it joins no room, its joins are Forbidden and its call commands not_allowed.
+      setTimeout(() => {
+        if (client.connected) client.conn.close();
+      }, UNCHECKED_HOLD_MS + Math.random() * UNCHECKED_HOLD_JITTER_MS).unref();
       return;
     }
     if (!auth) {
@@ -130,15 +143,32 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
    * The socket's principal, authenticated ONCE per socket: the promise is kept on the socket and shared by every
    * gateway on /ws, since Nest runs their connection hooks in no set order and dispatches messages before they end.
    * A lookup that throws (the database is down) gives no principal either, and marks the socket `authUnchecked`, so
-   * that handleConnection closes it instead of refusing it. It never rejects: Nest drops the hooks' promises, so a
-   * rejection would reach the process's rejection guard, which rethrows it and the api exits.
+   * that handleConnection closes it, a few seconds on, instead of refusing it. It never rejects: Nest drops the hooks'
+   * promises, so a rejection would reach the process's rejection guard, which rethrows it and the api exits.
    */
   authOf(client: Socket): Promise<SocketPrincipal | null> {
     return (client.data.auth ??= this.authenticate(client).catch((e) => {
       client.data.authUnchecked = true;
-      this.logger.warn(`Could not authenticate socket ${client.id}: ${clean((e as Error)?.message ?? e)}`);
+      this.noteUnchecked(client, (e as Error)?.message ?? e);
       return null;
     }));
+  }
+
+  /**
+   * While the database is down every socket is unchecked, and each comes back every few seconds: one debug line per
+   * socket, and a warning at most once a minute with how many there were and the latest error.
+   */
+  private noteUnchecked(client: Socket, error: unknown): void {
+    this.logger.debug(`Could not check the credentials of socket ${client.id}: ${clean(error)}`);
+    this.unchecked.count++;
+    this.unchecked.error = error;
+    this.unchecked.warning ??= setTimeout(() => {
+      const { count, error: latest } = this.unchecked;
+      this.unchecked = { count: 0, error: undefined };
+      this.logger.warn(
+        `Could not check the credentials of ${count} socket(s) in the last minute (each is closed after a few seconds, and reconnects); the latest error: ${clean(latest)}`,
+      );
+    }, UNCHECKED_WARN_MS).unref();
   }
 
   // Handle 'join' event (frontend: socket.emit('join', { profileId }))
