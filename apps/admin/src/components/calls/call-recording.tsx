@@ -160,8 +160,9 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
           <Button size="sm" variant="outline" aria-disabled={!!busy} onClick={download} aria-label={`Download the recording of the call from ${callerLabel(call)}`}>
             {busy === 'download' ? <Loader2 className="h-4 w-4 mw-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
           </Button>
-          {/* The trigger gets the focus back when the dialog closes without a delete. */}
-          <AlertDialog open={confirming} onOpenChange={setConfirming}>
+          {/* The trigger gets the focus back when the dialog closes without a delete. It stays open, Escape too, while
+              the delete runs: its answer closes it. */}
+          <AlertDialog open={confirming} onOpenChange={(open) => busy !== 'delete' && setConfirming(open)}>
             <AlertDialogTrigger asChild>
               <Button
                 size="sm"

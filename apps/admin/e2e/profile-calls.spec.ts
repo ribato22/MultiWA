@@ -458,6 +458,28 @@ test('closed without a removal, the dialog gives the focus back to Remove: Cance
   await expect(remove).toBeFocused();
 });
 
+test('Escape while the removal runs leaves the dialog open: once removed, the focus goes to the upload, not to the page', async ({ page, backend }) => {
+  backend.route(get('/calls/media/status', status({ announcement: ANNOUNCEMENT })));
+  const slow = gate();
+  backend.route(on('DELETE', '/profiles/p-1/calls-announcement', async () => {
+    await slow.passed;
+    return { json: { profileId: 'p-1', announcement: null } };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  await s.getByRole('button', { name: 'Remove' }).click();
+  const confirm = page.getByRole('alertdialog', { name: 'Remove the announcement?' });
+  await confirm.getByRole('button', { name: 'Remove' }).click();
+  await expect(confirm.getByRole('button', { name: 'Removing…' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300); // the dialog would be closed by now
+  await expect(confirm).toBeVisible();
+  slow.open();
+  await expect(s).toContainText('Upload an announcement first');
+  await expect(confirm).toHaveCount(0);
+  await expect(s.getByRole('button', { name: 'Upload announcement' })).toBeFocused();
+});
+
 test('recordings are kept for 1 to 3650 days', async ({ page, backend }) => {
   backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
   await page.goto('/dashboard/profiles/p-1');

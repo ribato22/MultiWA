@@ -183,6 +183,28 @@ test('closed without a delete, the dialog gives the focus back to Delete: Cancel
   await expect(del).toBeFocused();
 });
 
+test('Escape while the delete runs leaves the dialog open: once deleted, the focus goes to the row, not to the page', async ({ page, backend }) => {
+  let deleted = false;
+  listing(backend, () => (deleted ? { ...ANSWERED, recording: { ...REC, deletedAt: NOW, deleteReason: 'admin' } } : ANSWERED));
+  const slow = gate();
+  backend.route(on('DELETE', '/calls/call-9/recording', async () => {
+    await slow.passed;
+    deleted = true;
+    return { json: { callId: 'call-9', recordingId: 'rec-9', deletedAt: NOW } };
+  }));
+  await page.goto('/dashboard/calls');
+  await deleteRecording(page);
+  const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
+  await expect(confirm.getByRole('button', { name: 'Deleting…' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300); // the dialog would be closed by now
+  await expect(confirm).toBeVisible();
+  slow.open();
+  await expect(rowOf(page)).toContainText('Recording deleted by an admin');
+  await expect(confirm).toHaveCount(0);
+  await expect.poll(() => focused(page)).toBe('Recording deleted by an admin');
+});
+
 test('a delete that went through says so, even when the row cannot be read again', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
   backend.route(on('DELETE', '/calls/call-9/recording', { json: { callId: 'call-9', recordingId: 'rec-9', deletedAt: NOW } }));

@@ -260,8 +260,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                   </Button>
                 )}
                 {/* Remove is the trigger, so the focus comes back to it; the dialog itself stays when Remove goes with
-                    the announcement, and its close then hands the focus to the upload. */}
-                <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+                    the announcement, and its close then hands the focus to the upload. It stays open, Escape too,
+                    while the removal runs: its answer closes it. */}
+                <AlertDialog open={confirmRemove} onOpenChange={(open) => busy !== 'remove' && setConfirmRemove(open)}>
                   {p.announcement && (
                     <AlertDialogTrigger asChild>
                       <Button size="sm" variant="ghost" aria-disabled={!!busy} onClick={(e) => busy && e.preventDefault()}>
