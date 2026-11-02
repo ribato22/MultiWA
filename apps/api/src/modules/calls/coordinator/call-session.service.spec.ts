@@ -73,6 +73,7 @@ function harness() {
     signalingFor: vi.fn((p: string) => (p === 'agent' ? agentPeer : peer())),
     close: vi.fn(),
     closePeer: vi.fn(),
+    silenceAgent: vi.fn(async () => undefined),
     // The page's receive transport links at its first consume, which is the agent's connect.
     linkUp: vi.fn((peer: string) => peer !== 'page' || handle.connectAgent.mock.calls.length > 0),
     onLinkChange: vi.fn((l: any) => links.push(l)),
@@ -348,6 +349,24 @@ describe('CallSessionService: recorded calls', () => {
     stopped();
     expect(await hungUp).toEqual({ ok: true });
     expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+  });
+
+  it("a call that starts to end carries none of the agent's voice: silenced before WhatsApp's hang-up and the recorder's stop, whoever ended it", async () => {
+    const first = (fn: { mock: { invocationCallOrder: number[] } }) => fn.mock.invocationCallOrder[0];
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    await answered(h);
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: true });
+    expect(h.room.silenceAgent).toHaveBeenCalledTimes(1);
+    expect(first(h.room.silenceAgent)).toBeLessThan(first(h.media.hangUp));
+    expect(first(h.room.silenceAgent)).toBeLessThan(first(h.recorder.end));
+    // The caller's own end: no hang-up, the recorder's stop all the same.
+    const caller = harness();
+    caller.recorder.plan.mockReturnValue({ announcement });
+    await answered(caller);
+    await caller.service.onEngineSignal({ profileId: 'p1', waCallId: 'W1', state: 'ended' });
+    expect(caller.room.silenceAgent).toHaveBeenCalledTimes(1);
+    expect(first(caller.room.silenceAgent)).toBeLessThan(first(caller.recorder.end));
   });
 
   it('a call that ends during its announcement never connects its agent', async () => {

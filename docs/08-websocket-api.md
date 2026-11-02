@@ -126,7 +126,7 @@ When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), 
 | client → server | `call:hangup` | `{ callId }` → `{ ok: true }`, or a reason: `not_allowed`, `not_in_call`. On a recorded call the reply can take up to about 30 s: the recorder is stopped before the media closes |
 | client → server | `call:availability` | `{ available? }` → `{ ok: true, available }`; without `available` it only reads the state (for a new tab). Or `not_allowed`, or `invalid` when `available` is given and is not a boolean |
 
-The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`).
+The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`). From the moment a call starts to end, whatever ended it, the agent's voice no longer reaches the caller or the recording, from any tab or device of the agent.
 
 An agent who turned calls off stays unavailable until they turn them back on, or until they have had no socket for `CALLS_AGENT_GRACE_MS`: a reload keeps it, and closing the dashboard ends it. The API keeps it in memory, so a restart of the API (a deploy too) forgets it: every agent who had turned calls off is available, and rung, again.
 

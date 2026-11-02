@@ -6,8 +6,8 @@
 // connects within CALLS_CONNECT_TIMEOUT_MS: a media room, the page's bridge, the agent's transports, and only then
 // WhatsApp's own Accept. A claim whose audio does not connect is given back, and the call rings again unless it was
 // hung up. Once WhatsApp has answered, the call ends with the agent's Hang up, the caller's, the talk-time cap, an agent
-// lost for CALLS_AGENT_GRACE_MS, or a media failure (the page's media link down as long, too): every end hangs up what
-// WhatsApp still holds, closes the media, and stores who ended it and why.
+// lost for CALLS_AGENT_GRACE_MS, or a media failure (the page's media link down as long, too): every end silences the
+// agent at once, hangs up what WhatsApp still holds, closes the media, and stores who ended it and why.
 // Sessions live in this process, with the engines and the media server they use: a restart ends them, and the next
 // boot closes their rows.
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, forwardRef } from '@nestjs/common';
@@ -656,6 +656,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     const at = new Date();
     if (session.phase !== 'active') return;
     session.phase = 'ending';
+    // From now on nothing the agent says reaches the caller or the recording, whichever tab or device has the call:
+    // WhatsApp's hang-up and the recorder's stop below can take half a minute.
+    void session.room?.silenceAgent();
     this.clearTimers(session);
     // The caller's own end needs no hang-up, and neither does a shutdown: the engines close with the process.
     if (endedBy !== 'caller' && endReason !== 'server_restart') await this.hangUpQuietly(session);
