@@ -107,7 +107,6 @@ const replay = (a: any) =>
   a.op === 'rtpCapabilities' ? media.routerRtpCapabilities
   : a.op === 'createTransport' ? (a.direction === 'recv' ? media.recv : media.send)
   : a.op === 'consume' ? media.consumer
-  : a.op === 'produce' ? { id: 'agent-producer' }
   : null;
 
 export class FakeBackend {
@@ -118,6 +117,8 @@ export class FakeBackend {
   available = true;
   /** While set, the server refuses new connections: a page whose socket dropped keeps trying (its network is down). */
   offline = false;
+  /** The agent's voices produced so far: each its own id, as the server's are (`agent-producer-1` first). */
+  private produced = 0;
   private readonly rest: Rest[] = [];
   private readonly replies: Record<string, Command> = {};
   /** The server's normal replies; a test's `reply` can delegate to them. */
@@ -129,7 +130,7 @@ export class FakeBackend {
     'call:answer': (a) => ({ ok: true, callId: a.callId, callerProducerId: media.consumer.producerId, iceServers: [] }),
     'call:rejoin': (a) => ({ ok: true, callId: a.callId, callerProducerId: media.consumer.producerId, iceServers: [] }),
     'call:hangup': () => ({ ok: true }),
-    'call:media': (a) => ({ ok: true, result: replay(a) }),
+    'call:media': (a) => ({ ok: true, result: a.op === 'produce' ? { id: `agent-producer-${++this.produced}` } : replay(a) }),
   };
 
   constructor(private readonly io: Server) {}

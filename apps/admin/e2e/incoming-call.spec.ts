@@ -28,6 +28,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('a ringing call shows on any page: who, on which line, the chat link, and that it is recorded', async ({ page, backend }) => {
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'API Keys' }).click();
+  await expect(page).toHaveURL(/\/dashboard\/api-keys$/);
   backend.emit('call:ringing', ringing({ recorded: true }));
   const card = banner(page).getByRole('group', { name: 'Call from Pak Joko' });
   await expect(card).toContainText('Line 1');
@@ -64,6 +66,43 @@ test('a hidden tab gets a desktop alert; another agent answering closes it, and 
   await expect(banner(page)).toContainText('Answered by Jane');
   await expect.poll(() => page.evaluate(() => (window as any).__notifications[0].closed)).toBe(true);
   await expect(banner(page)).toHaveCount(0, { timeout: 6000 });
+});
+
+test('a click on a desktop alert brings the tab forward and closes the alert', async ({ page, backend }) => {
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__setHidden(true);
+    w.focus = () => (w.__broughtForward = true);
+  });
+  backend.emit('call:ringing', ringing());
+  await expect.poll(() => alerts(page)).toEqual([['call-1', false]]);
+  await page.evaluate(() => (window as any).__notifications[0].onclick());
+  expect(await page.evaluate(() => (window as any).__broughtForward)).toBe(true);
+  expect(await alerts(page)).toEqual([['call-1', true]]);
+});
+
+test('on plain HTTP a call still rings, and its banner says to answer it on the phone', async ({ page, context, backend }) => {
+  await context.addInitScript(() => Object.defineProperty(window, 'isSecureContext', { value: false }));
+  await page.reload();
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toContainText('Answer on the phone');
+  await expect(banner(page)).toContainText('Calls in the dashboard need HTTPS');
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeDisabled();
+  await expect(banner(page).getByRole('button', { name: 'Dismiss' })).toBeEnabled();
+});
+
+test('a browser the media library cannot drive is told so before any answer: the banner says which browsers can', async ({ page, context, backend }) => {
+  await context.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'userAgent', { get: () => 'Mozilla/5.0 (X11) SomeBrowser/1.0' });
+    Object.defineProperty(Navigator.prototype, 'userAgentData', { get: () => undefined });
+  });
+  await page.reload();
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toContainText('This browser cannot answer calls: use a current Chrome, Edge, Firefox or Safari');
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeDisabled();
+  expect(backend.commands('call:answer')).toEqual([]);
 });
 
 test('a call that cannot be answered here says why', async ({ page, backend }) => {

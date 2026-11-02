@@ -213,6 +213,25 @@ test('the bar shows the network quality, which a screen reader hears as such, an
   await expect(bar(page).getByText('Network quality:')).toHaveClass(/sr-only/); // the icon and the word say it on screen
 });
 
+test('a caller the browser would not play until a click (a tab reloaded mid-call) is heard with Hear the caller, and the focus stays on the call', async ({ page, context, backend }) => {
+  await context.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function (this: HTMLMediaElement) {
+      return (window as any).__clicked ? play.call(this) : Promise.reject(new DOMException('play() needs a click first', 'NotAllowedError'));
+    };
+  });
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const hear = bar(page).getByRole('button', { name: 'Hear the caller' });
+  await hear.focus();
+  await page.evaluate(() => ((window as any).__clicked = true));
+  await page.keyboard.press('Enter');
+  await expect(hear).toHaveCount(0);
+  expect(await page.evaluate(() => (document.querySelector('audio[hidden]') as HTMLAudioElement).paused)).toBe(false);
+  await expect(bar(page)).toBeFocused();
+});
+
 test('Hang up waits for the server, up to half a minute on a recorded call, then says how it ended', async ({ page, backend }) => {
   await page.clock.install();
   let release!: () => void;
@@ -340,7 +359,7 @@ test('a call:active naming another producer means another tab or browser of the 
   // And back here: this tab's own call:active keeps the audio it built.
   await bar(page).getByRole('button', { name: 'Take the call here' }).click();
   await expect.poll(() => produced(backend)).toBe(2);
-  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString(), agentProducerId: 'agent-producer' });
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString(), agentProducerId: 'agent-producer-2' });
   await expect(bar(page).getByRole('timer', { name: 'Call time' })).toBeVisible();
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
   await expect.poll(() => openPeers(page)).toBe(2);
@@ -612,7 +631,7 @@ test('two calls ringing: a card that goes without the focus leaves it where the 
   await messages.focus(); // back to the page
   backend.emit('call:ended', { callId: 'call-2', outcome: 'missed' });
   await expect(card(page, 'Bu Sari')).toHaveCount(0);
-  await page.waitForTimeout(300); // the console's effects have run
+  await rendered(page); // the console's effects have run
   await expect(messages).toBeFocused();
 });
 

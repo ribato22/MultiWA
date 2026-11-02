@@ -55,11 +55,15 @@ test('a reload during a call rejoins it: new audio, and "Connecting…" until th
   await onCall(page, backend);
   page.on('dialog', (d) => void d.accept()); // the leave-page warning
   await page.reload();
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect(bar(page)).toContainText('Connecting…');
   await expect.poll(() => backend.commands('call:media').filter((a) => a.op === 'produce').length).toBe(2);
-  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 61_000).toISOString() });
+  // The server connects this page's voice, not the one the reload left: this tab knows its own.
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 61_000).toISOString(), agentProducerId: 'agent-producer-2' });
   await expect(timer(page)).toHaveText(/^1:0[1-5]$/);
+  await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
+  await expect(bar(page)).not.toContainText('On a call in another tab');
+  expect(await openPeers(page)).toBe(2);
 });
 
 test('a reload while the network is down shows the call stored here at once, Reconnecting…, its Hang up waiting for the server, and still asks before leaving', async ({ page, backend }) => {
@@ -82,7 +86,7 @@ test('a reload while the network is down shows the call stored here at once, Rec
   expect(d.type()).toBe('beforeunload');
   await d.dismiss(); // stay on the page
   backend.offline = false;
-  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect(hangUp).not.toHaveAttribute('aria-disabled', 'true');
   expect(backend.commands('call:hangup')).toEqual([]);
 });
@@ -260,7 +264,7 @@ test('a socket that drops and comes back while a reload waits for the microphone
   await expect.poll(() => backend.commands('call:availability').length, { timeout: 10_000 }).toBeGreaterThan(reads); // connected again
   await page.evaluate(() => (window as any).__openMic());
   await expect.poll(() => produced(backend)).toBeGreaterThanOrEqual(2); // the first page's, then this page's
-  expect(backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  expect(backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 70 });
   await expect(bar(page)).toContainText('The caller hung up');
   await expect
@@ -282,9 +286,9 @@ test('audio that fails while the socket is down lets the microphone go at once, 
   await expect(bar(page)).toContainText('Reconnecting…');
   expect(await openPeers(page)).toBe(0);
   backend.offline = false; // back within the agent grace: the call goes on, its audio built again
-  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect.poll(() => produced(backend)).toBe(2);
-  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 70_000).toISOString(), agentProducerId: 'agent-producer' });
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 70_000).toISOString(), agentProducerId: 'agent-producer-2' });
   await expect(timer(page)).toBeVisible();
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
   await expect(bar(page)).not.toContainText('Reconnecting…');
@@ -307,7 +311,7 @@ test('a call another device of the agent took during an outage stays there: the 
     typeof a.ifProducerId === 'string' && a.ifProducerId !== 'producer-phone' ? { ok: false, reason: 'moved' } : backend.defaults['call:rejoin'](a),
   );
   backend.offline = false;
-  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect(bar(page)).toContainText('On a call in another tab');
   await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
   await expect(bar(page).getByRole('alert')).toHaveCount(0); // nothing went wrong
@@ -325,7 +329,7 @@ test('a reload keeps the mute: the audio rebuilt here is still muted', async ({ 
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toHaveAttribute('aria-pressed', 'true');
   page.on('dialog', (d) => void d.accept());
   await page.reload();
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect.poll(() => produced(backend)).toBe(2);
   await expect.poll(() => senderEnabled(page)).toEqual([false]);
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toHaveAttribute('aria-pressed', 'true');
@@ -383,10 +387,10 @@ test("a reload rejoining the call is not put off by the late call:active of its 
   await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
   // The server connected the previous page's producer just before this page's rejoin reached it (a recorded call whose
   // announcement ended then).
-  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 61_000).toISOString(), agentProducerId: 'agent-producer' });
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 61_000).toISOString(), agentProducerId: 'agent-producer-1' });
   await expect(timer(page)).toBeVisible();
   await page.evaluate(() => (window as any).__openMic());
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect.poll(() => produced(backend)).toBe(2);
   await expect(bar(page)).not.toContainText('On a call in another tab');
   expect(await openPeers(page)).toBe(2);
@@ -450,7 +454,7 @@ test('Take the call here is not undone by the late call:active of the tab that h
   // Not this tab's voice: the call is not on here until its own call:active.
   await expect(bar(page)).toContainText('Connecting…');
   await expect(timer(page)).toHaveCount(0);
-  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'agent-producer' });
+  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'agent-producer-1' });
   await expect(timer(page)).toBeVisible();
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
   await expect.poll(() => openPeers(page)).toBe(2);
@@ -484,13 +488,13 @@ test('a reload that finds the call moved to another device shows it as theirs, a
   backend.reply('call:rejoin', (a) => (a.ifProducerId ? { ok: false, reason: 'moved' } : backend.defaults['call:rejoin'](a)));
   page.on('dialog', (d) => void d.accept());
   await page.reload();
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect(bar(page)).toContainText('On a call in another tab');
   await expect(timer(page)).toHaveText(/^1:0\d$/); // answered a minute ago
   await expect(bar(page).getByRole('alert')).toHaveCount(0);
   expect(await storedCalls(page)).toEqual([]);
   await bar(page).getByRole('button', { name: 'Take the call here' }).click();
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }, { callId: 'call-1' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }, { callId: 'call-1' }]);
   await expect.poll(() => produced(backend)).toBe(2);
 });
 
@@ -546,7 +550,7 @@ test('audio that fails while a hang-up is on its way is not built again; a hang-
   expect(backend.commands('call:rejoin')).toEqual([]);
   hungUp({ ok: false, reason: 'error' });
   await expect(bar(page)).toContainText('The hang-up did not go through: try again');
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
   await expect.poll(() => produced(backend)).toBe(2);
 });
 
