@@ -9,6 +9,9 @@ export function unlockAudio(): AudioContext {
   return ctx;
 }
 
+/** How often the ringtone rings while a call rings. */
+export const RING_INTERVAL_MS = 3000;
+
 /**
  * Two tones, like a desk phone, every 3 s, from one tab of the browser: the tab that gets the Web Lock rings while calls
  * ring. The others asked for it once and do not wait in line, so answering in the ringing tab sets no other tab ringing,
@@ -42,7 +45,7 @@ export function startRinging(onBlocked: (blocked: boolean) => void, muted: () =>
   };
   const run = () => {
     ring();
-    timer = setInterval(ring, 3000);
+    timer = setInterval(ring, RING_INTERVAL_MS);
   };
   const take = () => {
     onBlocked(false);

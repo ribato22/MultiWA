@@ -1,8 +1,13 @@
-import { test, expect, get, ringing, ME } from './support/fixtures';
+import { test, expect, get, ringing, ME, PROFILE } from './support/fixtures';
 import { expectAccessible } from './support/axe';
+import { holdMics } from './support/browser';
+import { RING_INTERVAL_MS } from '@/lib/call-console/attention';
 import type { Page } from '@playwright/test';
 
 const section = (page: Page) => page.getByRole('region', { name: 'Calls in this browser' });
+/** The microphones this page opened (holdMics), and whether each is still live. */
+const micStates = (page: Page) => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.readyState) as string[]);
+const tab = (page: Page, name: string) => page.getByRole('tab', { name, exact: true });
 
 test('Settings → Calls checks the microphone with a level meter, plays a test sound, and keeps the ringer choice', async ({ page }) => {
   await page.goto('/dashboard/settings?tab=calls');
@@ -46,9 +51,11 @@ test('turning the ringer off silences a call that is ringing', async ({ page, ba
   await expect.poll(tones, { timeout: 8000 }).toBeGreaterThan(0);
   await section(page).getByRole('switch', { name: 'Ring for incoming calls' }).click();
   const after = await tones();
-  await page.waitForTimeout(3500); // a ring cycle
+  await page.waitForTimeout(RING_INTERVAL_MS + 500); // a ring cycle
   expect(await tones()).toBe(after);
   await expect(page.getByRole('region', { name: 'Incoming calls' })).toBeVisible(); // still ringing, without a sound
+  // Turned back on, the ringer waits for the next call: the help text says so.
+  await expect(section(page)).toContainText('Off: the banner still shows, without a sound. Turned back on, it rings from the next call.');
 });
 
 test('desktop alerts can be turned on from Settings → Calls', async ({ page, context }) => {
@@ -106,14 +113,124 @@ test('a microphone chosen here and since unplugged gives way to one this browser
   expect(await page.evaluate(() => (window as any).__asked as string[])).toEqual([JSON.stringify({ audio: { deviceId: { exact: 'mic-a' } } })]);
 });
 
+test('a second click while the browser asks for the microphone starts no second test: Stop leaves no microphone open', async ({ page, context }) => {
+  await holdMics(context);
+  await page.goto('/dashboard/settings?tab=calls');
+  const s = section(page);
+  await s.getByRole('button', { name: 'Test the microphone' }).dblclick();
+  await page.evaluate(() => (window as any).__openMic());
+  await s.getByRole('button', { name: 'Stop the test' }).click();
+  await expect(s.getByRole('button', { name: 'Test the microphone' })).toBeVisible();
+  await expect.poll(() => micStates(page)).toEqual(['ended']);
+});
+
+test('leaving Settings while the browser asks for the microphone leaves no microphone open', async ({ page, context }) => {
+  await holdMics(context);
+  await page.goto('/dashboard/settings?tab=calls');
+  await section(page).getByRole('button', { name: 'Test the microphone' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Calls', exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard\/calls$/);
+  await page.evaluate(() => (window as any).__openMic()); // the agent allows it only now
+  await expect.poll(() => micStates(page)).toEqual(['ended']);
+});
+
+test('on plain HTTP the ringer can still be turned off, and the speaker tested; the microphone says it needs HTTPS', async ({ page, context }) => {
+  await context.addInitScript(() => Object.defineProperty(window, 'isSecureContext', { value: false }));
+  await page.goto('/dashboard/settings?tab=calls');
+  const ringer = page.getByRole('switch', { name: 'Ring for incoming calls' });
+  await ringer.click();
+  await expect(ringer).toHaveAttribute('aria-checked', 'false');
+  expect(await page.evaluate(() => localStorage.getItem('multiwa:calls:u-ada:ringer'))).toBe('off');
+  const s = section(page);
+  await expect(s.getByRole('alert')).toContainText('Calls in the dashboard need this page on HTTPS');
+  await expect(s.getByRole('button', { name: 'Test the microphone' })).toHaveCount(0);
+  await expect(s.getByRole('button', { name: 'Turn on desktop alerts' })).toHaveCount(0);
+  await expect(s.getByRole('button', { name: 'Play a test sound' })).toBeVisible();
+});
+
+test('before the browser lists its microphones, the test asks for the one chosen here; the list then shows the one opened, and follows one plugged in', async ({ page, context }) => {
+  await context.addInitScript(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const device = (deviceId: string, label: string) => ({ deviceId, kind: 'audioinput', label, groupId: deviceId, toJSON() { return this; } });
+    // As Firefox and Safari list them until the microphone is allowed: no id, no name.
+    w.__devices = [device('', '')];
+    w.__asked = [];
+    navigator.mediaDevices.getUserMedia = async (c?: MediaStreamConstraints) => {
+      w.__asked.push(JSON.stringify(c));
+      const stream = await gum({ audio: true });
+      // The headset chosen before is not plugged in: the browser opened the desk microphone, and now lists them.
+      const track = stream.getAudioTracks()[0];
+      const settings = track.getSettings.bind(track);
+      track.getSettings = () => ({ ...settings(), deviceId: 'mic-a' });
+      w.__devices = [device('mic-c', 'USB microphone'), device('mic-a', 'Desk microphone')];
+      return stream;
+    };
+    navigator.mediaDevices.enumerateDevices = async () => w.__devices as MediaDeviceInfo[];
+    w.__plugIn = () => {
+      w.__devices = [...w.__devices, device('mic-d', 'Conference microphone')];
+      navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+    };
+  });
+  await page.goto('/dashboard/settings?tab=calls');
+  await page.evaluate(() => localStorage.setItem('multiwa:calls:u-ada:mic', 'mic-b'));
+  await page.reload();
+  const s = section(page);
+  await s.getByRole('button', { name: 'Test the microphone' }).click();
+  await expect(s.getByRole('button', { name: 'Stop the test' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__asked as string[])).toEqual([JSON.stringify({ audio: { deviceId: { ideal: 'mic-b' } } })]);
+  const picker = s.getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('Desk microphone');
+  await page.evaluate(() => (window as any).__plugIn());
+  await picker.click();
+  await expect(page.getByRole('option')).toHaveText(['USB microphone', 'Desk microphone', 'Conference microphone']);
+});
+
+test('no microphone plugged in says so', async ({ page, context }) => {
+  await context.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = () => Promise.reject(new DOMException('Requested device not found', 'NotFoundError'));
+  });
+  await page.goto('/dashboard/settings?tab=calls');
+  await section(page).getByRole('button', { name: 'Test the microphone' }).click();
+  await expect(section(page).getByRole('alert')).toHaveText('No microphone found: plug one in and try again');
+});
+
+test('a link to a tab that does not exist opens Account', async ({ page }) => {
+  await page.goto('/dashboard/settings?tab=nonsense');
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel')).toContainText('Account Information');
+});
+
+test('the bell’s Notification Settings opens that tab, from Settings too', async ({ page, backend }) => {
+  backend.route(get('/notifications', { notifications: [{ id: 'n-1', type: 'info', title: 'Hello', body: 'A notification', isRead: true, createdAt: '2026-11-01T03:00:00.000Z' }], total: 1 }));
+  await page.goto('/dashboard/settings');
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+  await page.getByRole('link', { name: 'Notification Settings' }).click();
+  await expect(tab(page, 'Notifications')).toHaveAttribute('aria-selected', 'true');
+});
+
+test('Settings has a Calls tab once a profile answers calls in the dashboard, as the header has its call controls', async ({ page, backend }) => {
+  backend.route(get('/profiles', [{ ...PROFILE, settings: {} }]));
+  await page.goto('/dashboard/settings?tab=calls'); // a link to the tab opens Account meanwhile
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await expect.poll(() => page.evaluate(() => (window as any).__socketOpen())).toBe(true);
+  await expect(tab(page, 'Calls')).toHaveCount(0);
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toHaveCount(0);
+  backend.emit('call:ringing', ringing()); // a ring: a profile does answer in the dashboard
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeVisible();
+  await expect(tab(page, 'Calls')).toBeVisible();
+});
+
 test.describe('a viewer', () => {
   test.use({ user: { ...ME, role: 'viewer' } });
 
   test('has no Calls tab in Settings', async ({ page, backend }) => {
     backend.route(get('/auth/me', { ...ME, role: 'viewer' }));
     await page.goto('/dashboard/settings?tab=calls'); // a link to the tab shows them nothing of it either
-    await expect(page.getByRole('tab', { name: 'Account' })).toBeVisible();
-    await expect(page.getByRole('tab', { name: 'Calls' })).toHaveCount(0);
+    await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+    await expect(tab(page, 'Calls')).toHaveCount(0);
     await expect(section(page)).toHaveCount(0);
   });
 });

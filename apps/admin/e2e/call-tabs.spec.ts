@@ -1,6 +1,7 @@
 import { test, expect, get, ringing, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
-import type { BrowserContext, Page } from '@playwright/test';
+import { holdMics } from './support/browser';
+import type { Page } from '@playwright/test';
 
 const banner = (page: Page) => page.getByRole('region', { name: 'Incoming calls' });
 const bar = (page: Page) => page.getByRole('group', { name: 'Current call' });
@@ -37,28 +38,6 @@ const keepMic = (page: Page) =>
   page.evaluate(() => {
     const w = window as any;
     w.__mic = w.__pcs.flatMap((pc: RTCPeerConnection) => pc.getSenders()).find((s: RTCRtpSender) => s.track)?.track;
-  });
-/**
- * From the next page on, the microphone opens when the test says so (`__openMic()` opens every one asked for), as when
- * the browser asks the agent first; `__micTracks` records each one opened.
- */
-const holdMics = (context: BrowserContext) =>
-  context.addInitScript(() => {
-    const w = window as any;
-    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    const held: Array<() => void> = [];
-    w.__micTracks = [];
-    w.__micsAsked = () => held.length;
-    w.__openMic = () => held.splice(0).forEach((open) => open());
-    navigator.mediaDevices.getUserMedia = (c) =>
-      new Promise((resolve, reject) =>
-        held.push(() =>
-          gum(c).then((stream) => {
-            w.__micTracks.push(...stream.getAudioTracks());
-            resolve(stream);
-          }, reject),
-        ),
-      );
   });
 const socketOpen = (page: Page) => page.evaluate(() => (window as any).__socketOpen() as boolean);
 /** Answered and active for a minute already: the server said so once the agent's voice was produced, as it does. */

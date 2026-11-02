@@ -103,6 +103,14 @@ export const SETTINGS_REASON_TEXT: Record<string, string> = {
 /** A refusal's reasons as texts, each once (several reasons share a text); an unknown reason shows as it came. */
 export const reasonTexts = (reasons: string[], texts: Record<string, string> = SETTINGS_REASON_TEXT) => [...new Set(reasons.map((r) => texts[r] ?? r))];
 
+/** Why the microphone did not open (getUserMedia's error): for a call, and for the test of Settings → Calls. */
+export const micProblem = (e: unknown) =>
+  (e as DOMException)?.name === 'NotAllowedError'
+    ? 'Allow the microphone for this site to answer calls'
+    : (e as DOMException)?.name === 'NotFoundError'
+      ? 'No microphone found: plug one in and try again'
+      : 'The microphone could not be opened';
+
 export const NO_AUDIO = 'Could not connect audio';
 export const HANG_UP_FAILED = 'The hang-up did not go through: try again';
 

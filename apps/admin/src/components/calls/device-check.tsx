@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { currentUser } from '@/lib/current-user';
+import { micProblem } from '@/lib/calls';
 import { playTestTone } from '@/lib/call-console/attention';
 import { prefs } from '@/lib/call-console/prefs';
 
@@ -20,19 +21,34 @@ const PERMISSION_TEXT = {
 
 export function DeviceCheck() {
   const [me] = useState(currentUser);
+  // The microphone and desktop alerts need HTTPS. The speaker test and the ringer do not: calls ring on plain HTTP too.
   const [secure] = useState(() => typeof window !== 'undefined' && window.isSecureContext && !!navigator.mediaDevices?.getUserMedia);
   const [permission, setPermission] = useState<keyof typeof PERMISSION_TEXT>('unknown');
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [mic, setMic] = useState(() => (me ? prefs.mic(me.id) ?? '' : ''));
+  // The microphone a test opened: the browser picks one itself while it lists none to choose from (Firefox and Safari,
+  // until the microphone is allowed).
+  const [opened, setOpened] = useState<string | null>(null);
   const [level, setLevel] = useState(0);
   const [testing, setTesting] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [ringerMuted, setRingerMuted] = useState(() => (me ? prefs.ringerMuted(me.id) : false));
   const [alerts, setAlerts] = useState<string>(() => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission));
   const stopTest = useRef<(() => void) | null>(null);
+  // A test whose microphone is still opening (the browser may be asking the agent): a second click starts no second one.
+  const starting = useRef(false);
+  // Whether this check is still on the page: a microphone that opens once the agent left is closed at once.
+  const alive = useRef(false);
   const listMics = () =>
     navigator.mediaDevices.enumerateDevices().then((d) => setMics(d.filter((x) => x.kind === 'audioinput' && x.deviceId)), () => undefined);
 
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      stopTest.current?.();
+    };
+  }, []);
   useEffect(() => {
     if (!secure) return;
     let status: PermissionStatus | undefined;
@@ -46,28 +62,35 @@ export function DeviceCheck() {
       () => undefined,
     );
     void listMics();
+    // A microphone plugged in or out changes the list.
+    const media = navigator.mediaDevices;
+    media.addEventListener('devicechange', listMics);
     return () => {
       if (status) status.onchange = null;
-      stopTest.current?.();
+      media.removeEventListener('devicechange', listMics);
     };
   }, [secure]);
 
   if (!me) return null;
-  if (!secure) {
-    return (
-      <p role="alert" className="rounded-2xl border border-border bg-card p-6 text-sm text-amber-300">
-        Calls in the dashboard need this page on HTTPS: ask your administrator.
-      </p>
-    );
-  }
 
-  // The chosen microphone while this browser still has it (a headset may be unplugged since), else the first one.
-  const chosen = mics.find((m) => m.deviceId === mic)?.deviceId ?? mics[0]?.deviceId;
+  // The microphone to test, as the list shows it: the one a test opened, else the one chosen here, while this browser
+  // has them (a headset may be unplugged since); else the first one.
+  const chosen = [opened, mic].find((id) => mics.some((m) => m.deviceId === id)) ?? mics[0]?.deviceId;
   const test = async () => {
     if (stopTest.current) return stopTest.current();
+    if (starting.current) return;
+    starting.current = true;
     setProblem(null);
+    const tracks: MediaStreamTrack[] = [];
+    const close = () => tracks.forEach((t) => t.stop());
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: chosen ? { deviceId: { exact: chosen } } : true });
+      // A listed microphone exactly. One the browser does not list yet is asked for as a call asks for it.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: chosen ? { deviceId: { exact: chosen } } : mic ? { deviceId: { ideal: mic } } : true,
+      });
+      tracks.push(...stream.getTracks());
+      // Opened for nothing: the agent left the page while the browser asked (nothing would ever stop it), or a test runs.
+      if (!alive.current || stopTest.current) return close();
       const ctx = new AudioContext();
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
@@ -89,17 +112,21 @@ export function DeviceCheck() {
       tick();
       setTesting(true);
       setPermission('granted');
+      setOpened(stream.getAudioTracks()[0]?.getSettings().deviceId ?? null);
       void listMics(); // their names show once the microphone is allowed
       stopTest.current = () => {
         cancelAnimationFrame(frame);
-        stream.getTracks().forEach((t) => t.stop());
+        close();
         void ctx.close();
         setTesting(false);
         setLevel(0);
         stopTest.current = null;
       };
     } catch (e) {
-      setProblem((e as DOMException)?.name === 'NotAllowedError' ? 'The browser blocked the microphone: allow it in the site settings' : 'The microphone could not be opened');
+      close(); // opened, but the meter could not start
+      setProblem(micProblem(e));
+    } finally {
+      starting.current = false;
     }
   };
 
@@ -110,38 +137,45 @@ export function DeviceCheck() {
         <p className="text-sm text-muted-foreground">Check the microphone and the speaker before you answer calls here. These choices belong to this browser.</p>
       </div>
 
-      <div className="space-y-3">
-        <p className="flex items-center gap-2 text-sm text-foreground">
-          <Mic className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-          Microphone: {PERMISSION_TEXT[permission]}
-        </p>
-        {mics.length > 0 && (
-          <Select
-            value={chosen}
-            onValueChange={(v) => {
-              setMic(v);
-              prefs.setMic(me.id, v);
-              stopTest.current?.();
-            }}
-          >
-            <SelectTrigger className="w-72" aria-label="Microphone">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {mics.map((m, i) => (
-                <SelectItem key={m.deviceId} value={m.deviceId}>{m.label || `Microphone ${i + 1}`}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={test}>{testing ? 'Stop the test' : 'Test the microphone'}</Button>
-          <div role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={100} aria-valuenow={level} className="h-2 w-48 overflow-hidden rounded-full bg-secondary">
-            <div className="h-full bg-primary transition-[width] duration-75" style={{ width: `${level}%` }} />
+      {secure ? (
+        <div className="space-y-3">
+          <p className="flex items-center gap-2 text-sm text-foreground">
+            <Mic className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            Microphone: {PERMISSION_TEXT[permission]}
+          </p>
+          {mics.length > 0 && (
+            <Select
+              value={chosen}
+              onValueChange={(v) => {
+                setMic(v);
+                setOpened(null);
+                prefs.setMic(me.id, v);
+                stopTest.current?.();
+              }}
+            >
+              <SelectTrigger className="w-72" aria-label="Microphone">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {mics.map((m, i) => (
+                  <SelectItem key={m.deviceId} value={m.deviceId}>{m.label || `Microphone ${i + 1}`}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={test}>{testing ? 'Stop the test' : 'Test the microphone'}</Button>
+            <div role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={100} aria-valuenow={level} className="h-2 w-48 overflow-hidden rounded-full bg-secondary">
+              <div className="h-full bg-primary transition-[width] duration-75" style={{ width: `${level}%` }} />
+            </div>
           </div>
+          {problem && <p role="alert" className="text-sm text-amber-300">{problem}</p>}
         </div>
-        {problem && <p role="alert" className="text-sm text-amber-300">{problem}</p>}
-      </div>
+      ) : (
+        <p role="alert" className="text-sm text-amber-300">
+          Calls in the dashboard need this page on HTTPS: ask your administrator. Until then the microphone and desktop alerts can’t be checked here.
+        </p>
+      )}
 
       <div className="space-y-2">
         <p className="flex items-center gap-2 text-sm text-foreground">
@@ -154,7 +188,7 @@ export function DeviceCheck() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <Label htmlFor="calls-ringer" className="text-sm text-foreground">Ring for incoming calls</Label>
-          <p className="text-xs text-muted-foreground">Off: the banner still shows, without a sound.</p>
+          <p className="text-xs text-muted-foreground">Off: the banner still shows, without a sound. Turned back on, it rings from the next call.</p>
         </div>
         <Switch
           id="calls-ringer"
@@ -166,24 +200,26 @@ export function DeviceCheck() {
         />
       </div>
 
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="flex items-center gap-2 text-sm text-foreground">
-            <Bell className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-            Desktop alerts
-          </p>
-          <p className="text-xs text-muted-foreground">A call that rings while this tab is in the background shows a desktop alert.</p>
+      {secure && (
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="flex items-center gap-2 text-sm text-foreground">
+              <Bell className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+              Desktop alerts
+            </p>
+            <p className="text-xs text-muted-foreground">A call that rings while this tab is in the background shows a desktop alert.</p>
+          </div>
+          {alerts === 'granted' ? (
+            <span className="text-sm text-foreground">Desktop alerts are on</span>
+          ) : alerts === 'denied' ? (
+            <span className="text-sm text-amber-300">Blocked in the browser’s site settings</span>
+          ) : alerts === 'unsupported' ? (
+            <span className="text-sm text-muted-foreground">Not available in this browser</span>
+          ) : (
+            <Button variant="outline" onClick={async () => setAlerts(await Notification.requestPermission())}>Turn on desktop alerts</Button>
+          )}
         </div>
-        {alerts === 'granted' ? (
-          <span className="text-sm text-foreground">Desktop alerts are on</span>
-        ) : alerts === 'denied' ? (
-          <span className="text-sm text-amber-300">Blocked in the browser’s site settings</span>
-        ) : alerts === 'unsupported' ? (
-          <span className="text-sm text-muted-foreground">Not available in this browser</span>
-        ) : (
-          <Button variant="outline" onClick={async () => setAlerts(await Notification.requestPermission())}>Turn on desktop alerts</Button>
-        )}
-      </div>
+      )}
     </section>
   );
 }

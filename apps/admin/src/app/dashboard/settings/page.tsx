@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   X,
   CheckCircle2,
@@ -41,7 +42,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { DeviceCheck } from '@/components/calls/device-check';
-import { canAnswerCalls } from '@/lib/current-user';
+import { useCalls } from '@/components/calls/calls-provider';
 import {
   Tabs,
   TabsContent,
@@ -74,6 +75,8 @@ interface Member {
   createdAt: string;
 }
 
+const TABS = ['account', 'team', 'notifications', 'calls', 'api', 'security', 'storage'];
+
 const ROLES = [
   { value: 'admin', label: 'Admin', color: 'bg-sky-500' },
   { value: 'member', label: 'Member', color: 'bg-green-500' },
@@ -85,12 +88,17 @@ export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  // The tab a link asks for (`?tab=calls`): read from the URL once, since useSearchParams needs a Suspense boundary.
+  // The tab a link asks for (`?tab=calls`), also when it is followed on this page (the bell's Notification Settings).
+  const asked = useSearchParams().get('tab');
   const [tab, setTab] = useState('account');
   useEffect(() => {
-    const asked = new URLSearchParams(window.location.search).get('tab');
     if (asked) setTab(asked);
-  }, []);
+  }, [asked]);
+  // The Calls tab is there when the header's call controls are: a profile answers calls in the dashboard, or a call is
+  // here. Never for a role that takes no calls (it has no console), nor in an organization that does not use them.
+  const callsTab = !!useCalls()?.inUse;
+  // A tab this page does not have, or not for this user, opens Account.
+  const shown = TABS.includes(tab) && (tab !== 'calls' || callsTab) ? tab : 'account';
 
   // Team state
   const [members, setMembers] = useState<Member[]>([]);
@@ -482,12 +490,12 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+      <Tabs value={shown} onValueChange={setTab} className="space-y-6">
         <TabsList className="bg-secondary/30">
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          {canAnswerCalls(user?.role) && <TabsTrigger value="calls">Calls</TabsTrigger>}
+          {callsTab && <TabsTrigger value="calls">Calls</TabsTrigger>}
           <TabsTrigger value="api">API & Webhooks</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="storage">Storage</TabsTrigger>
@@ -931,7 +939,7 @@ export default function SettingsPage() {
         </TabsContent>
 
         {/* Calls Tab */}
-        {canAnswerCalls(user?.role) && (
+        {callsTab && (
           <TabsContent value="calls">
             <DeviceCheck />
           </TabsContent>

@@ -1,5 +1,31 @@
-// Stand-ins installed in every page before its own scripts (context.addInitScript): what the tests read or steer.
-// It runs inside the page, so it is self-contained.
+// Stand-ins in the pages, installed before their own scripts (context.addInitScript): what the tests read or steer.
+// Each runs inside the page, so it is self-contained.
+import type { BrowserContext } from '@playwright/test';
+
+/**
+ * From the next page on, the microphone opens when the test says so (`__openMic()` opens every one asked for), as when
+ * the browser asks the agent first; `__micTracks` records each one opened.
+ */
+export const holdMics = (context: BrowserContext) =>
+  context.addInitScript(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const held: Array<() => void> = [];
+    w.__micTracks = [];
+    w.__micsAsked = () => held.length;
+    w.__openMic = () => held.splice(0).forEach((open) => open());
+    navigator.mediaDevices.getUserMedia = (c) =>
+      new Promise((resolve, reject) =>
+        held.push(() =>
+          gum(c).then((stream) => {
+            w.__micTracks.push(...stream.getAudioTracks());
+            resolve(stream);
+          }, reject),
+        ),
+      );
+  });
+
+/** Installed in every page by the backend fixture. */
 export function installBrowserFakes() {
   const w = window as any;
   // Desktop alerts: recorded instead of shown. `__notificationPermission` steers the permission ('granted' by default);

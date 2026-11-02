@@ -5,7 +5,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { api } from '@/lib/api';
-import { ANSWER_FAILURE_TEXT, CALL_AUDIO_TEXT, HANG_UP_FAILED, NO_AUDIO, endedText } from '@/lib/calls';
+import { ANSWER_FAILURE_TEXT, CALL_AUDIO_TEXT, HANG_UP_FAILED, NO_AUDIO, endedText, micProblem } from '@/lib/calls';
 import { getSocketUrl } from '@/lib/socket';
 import { canAnswerCalls, type CurrentUser } from '@/lib/current-user';
 import { mediaSupported, startAgentMedia, type AgentMedia } from '@/lib/call-console/agent-media';
@@ -56,12 +56,6 @@ async function openMic(userId: string): Promise<MediaStreamTrack> {
   });
   return stream.getAudioTracks()[0];
 }
-const micProblem = (e: unknown) =>
-  (e as DOMException)?.name === 'NotAllowedError'
-    ? 'Allow the microphone for this site to answer calls'
-    : (e as DOMException)?.name === 'NotFoundError'
-      ? 'No microphone found: plug one in and try again'
-      : 'The microphone could not be opened';
 
 export interface CallsConsole {
   me: CurrentUser;
