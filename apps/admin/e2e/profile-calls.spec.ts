@@ -125,6 +125,70 @@ test('a read of the checklist that left before a save and answers after it leave
   await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
 });
 
+/** The calls status as the server has it when a read comes; `hold()` holds the next read's answer until `open()`. */
+function heldStatus(backend: FakeBackend, now: () => Partial<(typeof STATUS)['profiles'][number]>) {
+  const slow = gate();
+  let next = false;
+  backend.route(on('GET', '/calls/media/status', async () => {
+    const then = status(now());
+    if (next) {
+      next = false;
+      await slow.passed;
+    }
+    return { json: then };
+  }));
+  return { hold: () => (next = true), open: slow.open };
+}
+
+test('a read still out when a change answers is read again: the new read shows, and the old one is dropped', async ({ page, backend }) => {
+  let stored = settings();
+  let ready = false;
+  const read = heldStatus(backend, () => ({ ...stored, ...(ready ? {} : { ready: false, reasons: ['auto_reject_on'] }) }));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => {
+    stored = { ...stored, ...JSON.parse(r.body!.toString()) };
+    return { json: stored };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  await expect(s).toContainText('Auto-reject is on for this profile: turn it off');
+  ready = true; // turned off since, elsewhere
+  read.hold();
+  await s.getByRole('button', { name: 'Check again' }).click();
+  await expect(s.getByRole('button', { name: 'Checking…' })).toBeVisible();
+  const days = s.getByLabel('Keep recordings for (days)');
+  await days.fill('30');
+  await s.getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 30 }]);
+  await expect(s).toContainText('This profile can take calls in the dashboard');
+  await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
+  const late = requestEnded(page, '/calls/media/status');
+  read.open(); // the read that left before the save answers, with the retention as it was then
+  await late;
+  await page.waitForTimeout(300); // the page reads the late answer
+  await expect(days).toHaveValue('30');
+});
+
+test('a change refused while a read is out leaves the read to answer, and its refusal stays', async ({ page, backend }) => {
+  let ready = false;
+  const read = heldStatus(backend, () => (ready ? {} : { ready: false, reasons: ['auto_reject_on'] }));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', { status: 409, json: { message: 'Answering calls in the dashboard is not available for this profile', reasons: ['auto_reject_on'] } }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  await expect(s).toContainText('Auto-reject is on for this profile: turn it off');
+  ready = true;
+  read.hold();
+  await s.getByRole('button', { name: 'Check again' }).click();
+  await expect(s.getByRole('button', { name: 'Checking…' })).toBeVisible();
+  await s.getByRole('switch', { name: 'Answer calls in the dashboard' }).click();
+  const refusal = s.getByRole('alert');
+  await expect(refusal).toContainText('Answering calls in the dashboard is not available for this profile');
+  await expect(s.getByRole('button', { name: 'Checking…' })).toBeVisible(); // a refusal changed nothing: the read goes on
+  read.open();
+  await expect(s).toContainText('This profile can take calls in the dashboard');
+  await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
+  await expect(refusal).toContainText('Answering calls in the dashboard is not available for this profile'); // the read left before it
+});
+
 test('the checklist says it is being read, and when the calls status does not list this profile', async ({ page, backend }) => {
   const slow = gate();
   backend.route(on('GET', '/calls/media/status', async () => {

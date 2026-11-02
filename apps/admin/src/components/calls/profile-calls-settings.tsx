@@ -54,9 +54,13 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const [confirmRemove, setConfirmRemove] = useState(false);
   const file = useRef<HTMLInputElement>(null);
   const uploadButton = useRef<HTMLButtonElement>(null);
-  // Only the latest read shows: an older one answering after it (a slow link) is stale, and so is one that answers
-  // after a change's answer (it may have left before the change).
+  // Only the latest read shows: an older one answering after it (a slow link) is stale, and so is one still out when a
+  // change answers (it may have left before the change): the page reads again then.
   const loadSeq = useRef(0);
+  // The latest read that answered: a read is out while this is behind loadSeq.
+  const settled = useRef(0);
+  // The latest read out when a refusal showed: a read that left by then does not clear it when it answers.
+  const refusedAt = useRef(0);
   // Aborted when the section goes: an announcement still loading is given up, not kept for nothing.
   const gone = useRef<AbortSignal>();
 
@@ -65,10 +69,12 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setChecking(true);
     const res = await api.getCallsMediaStatus();
     if (seq !== loadSeq.current) return;
+    settled.current = seq;
     setChecking(false);
     if (!res.data) return setLoadError(res.error ?? 'Could not read the calls status');
     setLoadError(null);
-    setRefusal(null); // what was refused may be fixed since: the checklist says what is still missing
+    // What was refused may be fixed since, if this read left after it: the checklist says what is still missing.
+    if (seq > refusedAt.current) setRefusal(null);
     setServer(res.data.server);
     setP(res.data.profiles.find((x) => x.profileId === profileId) ?? null);
   }, [profileId]);
@@ -85,11 +91,15 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   }, []);
   if (!allowed) return null;
 
-  const refused = (message: string | undefined, body: any) => setRefusal({ message: message ?? 'Not available', texts: reasonTexts(body?.reasons ?? []) });
-  /** A change answered: a read still out is dropped. */
-  const outdateReads = () => {
-    loadSeq.current++;
-    setChecking(false);
+  const showRefusal = (r: Refusal) => {
+    refusedAt.current = loadSeq.current;
+    setRefusal(r);
+  };
+  const refused = (message: string | undefined, body: any) => showRefusal({ message: message ?? 'Not available', texts: reasonTexts(body?.reasons ?? []) });
+  // A change answered: a read still out may have left before it, and reads again. Not after a refusal, which changed
+  // nothing.
+  const readAgain = () => {
+    if (settled.current !== loadSeq.current) void load();
   };
   const dropPreview = () => {
     if (preview) URL.revokeObjectURL(preview);
@@ -102,8 +112,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setRefusal(null);
     const res = await api.updateCallsSettings(profileId, body);
     setBusy(null);
-    outdateReads();
     if (res.status === 409) return refused(res.error, res.body);
+    readAgain();
     if (!res.data) return toast({ title: 'Could not save', description: res.error, variant: 'destructive' });
     const stored = res.data;
     setP((x) => (x ? { ...x, ...stored } : x));
@@ -114,13 +124,13 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const upload = async (f: File) => {
     if (file.current) file.current.value = ''; // the same file may be picked again
     const problem = fileProblem(f);
-    if (problem) return setRefusal({ message: problem, texts: [] });
+    if (problem) return showRefusal({ message: problem, texts: [] });
     setBusy('upload');
     setRefusal(null);
     const res = await api.uploadCallsAnnouncement(profileId, f);
     setBusy(null);
-    outdateReads();
     if (!res.data) return refused(res.error ?? 'The announcement could not be stored', res.body);
+    readAgain();
     const announcement = res.data.announcement;
     setP((x) => (x ? { ...x, announcement } : x));
     dropPreview();
@@ -142,9 +152,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setRefusal(null);
     const res = await api.deleteCallsAnnouncement(profileId);
     setBusy(null);
-    outdateReads();
     setConfirmRemove(false);
     if (res.error) return refused(res.error, res.body);
+    readAgain();
     setP((x) => (x ? { ...x, announcement: null } : x));
     dropPreview();
   };
