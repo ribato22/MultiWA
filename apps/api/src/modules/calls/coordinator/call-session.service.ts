@@ -334,10 +334,12 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   onUserOffline(payload: WsUserPayload): void {
     const { userId } = payload;
     clearTimeout(this.availableAgain.get(userId)); // a second offline starts the grace over
+    // Unref'd: Nest closes the socket server after onModuleDestroy, so shutdown's own disconnects arm resets after
+    // they were cleared.
     const reset = setTimeout(() => {
       this.availableAgain.delete(userId);
       this.unavailable.delete(userId);
-    }, this.timing.agentGraceMs);
+    }, this.timing.agentGraceMs).unref();
     this.availableAgain.set(userId, reset);
     this.setSocketsLost(userId, true);
   }

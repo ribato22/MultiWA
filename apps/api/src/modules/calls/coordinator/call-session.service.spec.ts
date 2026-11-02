@@ -438,7 +438,7 @@ describe('CallSessionService: availability', () => {
     expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: true });
   });
 
-  it('shutdown clears the resets still pending', async () => {
+  it('shutdown clears the resets still pending; one armed after it (the socket server closes later) does not hold the process open', async () => {
     vi.useFakeTimers();
     const h = harness();
     await h.service.setAvailability(as('u2'), false);
@@ -446,6 +446,8 @@ describe('CallSessionService: availability', () => {
     expect(vi.getTimerCount()).toBe(1);
     await h.service.onModuleDestroy();
     expect(vi.getTimerCount()).toBe(0);
+    h.service.onUserOffline({ userId: 'u2' }); // Nest closes the socket server after onModuleDestroy
+    expect((h.service as any).availableAgain.get('u2').hasRef()).toBe(false);
   });
 
   it('a viewer, an inactive user, any API-key socket (calls are answered in the dashboard) may not; a value that is not a boolean is refused', async () => {
