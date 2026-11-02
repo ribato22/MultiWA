@@ -26,6 +26,18 @@ const produced = (backend: FakeBackend) => backend.commands('call:media').filter
 const micStates = (page: Page) => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.readyState));
 /** The peer connections still open (a closed one's signalingState is `closed`). */
 const openPeers = (page: Page) => page.evaluate(() => (window as any).__pcs.filter((pc: RTCPeerConnection) => pc.signalingState !== 'closed').length);
+/** Whether each microphone this page opened is enabled (recordMics). */
+const micEnabled = (page: Page) => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.enabled));
+/** The call's audio is built: the caller plays in the console's hidden <audio>. */
+const built = (page: Page) => page.evaluate(() => !!(document.querySelector('audio[hidden]') as HTMLAudioElement | null)?.srcObject);
+/** `call:media` with each op in `ops` held until the test calls `held[op]()`, as on a slow link. */
+const holdMedia = (backend: FakeBackend, ...ops: string[]) => {
+  const held: Record<string, () => void> = {};
+  backend.reply('call:media', (a) =>
+    ops.includes(a.op) ? new Promise((resolve) => (held[a.op] = () => resolve(backend.defaults['call:media'](a)))) : backend.defaults['call:media'](a),
+  );
+  return held;
+};
 /** Every microphone this page opens is recorded in `__micTracks`. */
 const recordMics = (page: Page) =>
   page.evaluate(() => {
@@ -201,22 +213,63 @@ test('an answer whose audio did not connect in time says so', async ({ page, bac
   await expect(bar(page)).toContainText('Could not connect audio');
 });
 
-test('Mute pressed while the audio connects holds once it is connected', async ({ page, backend }) => {
-  // The agent's voice is produced when the test says so, as on a slow link.
-  let release!: () => void;
-  backend.reply('call:media', (a) =>
-    a.op === 'produce' ? new Promise((resolve) => (release = () => resolve(backend.defaults['call:media'](a)))) : backend.defaults['call:media'](a),
-  );
+test('Mute pressed while the audio connects silences the microphone at once, and nothing in the build turns it back on', async ({ page, backend }) => {
+  const held = holdMedia(backend, 'resumeConsumer', 'produce');
   await open(page);
+  await recordMics(page);
   await answer(page, backend);
-  await expect.poll(() => produced(backend)).toBe(1);
+  await expect.poll(() => !!held.resumeConsumer).toBe(true);
   await expect(bar(page)).toContainText('Connecting…');
+  expect(await micEnabled(page)).toEqual([true]);
   const mute = bar(page).getByRole('button', { name: 'Mute' });
   await mute.click();
   await expect(mute).toHaveAttribute('aria-pressed', 'true');
-  release();
-  await expect.poll(async () => (await senderTracks(page)).map((t) => t.enabled)).toEqual([false]);
+  expect(await micEnabled(page)).toEqual([false]); // nothing is produced yet
+  held.resumeConsumer();
+  await expect.poll(() => produced(backend)).toBe(1);
+  expect(await micEnabled(page)).toEqual([false]); // the voice is produced paused
+  held.produce();
+  await expect.poll(() => built(page)).toBe(true);
+  expect((await senderTracks(page)).map((t) => t.enabled)).toEqual([false]);
   await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  await mute.click();
+  await expect.poll(() => micEnabled(page)).toEqual([true]);
+});
+
+test('Hang up while the audio connects silences the microphone at once, and the audio built meanwhile stays silent', async ({ page, backend }) => {
+  const held = holdMedia(backend, 'produce');
+  let hungUp!: (r: unknown) => void;
+  backend.reply('call:hangup', () => new Promise((resolve) => (hungUp = resolve)));
+  await open(page);
+  await recordMics(page);
+  await answer(page, backend);
+  await expect.poll(() => produced(backend)).toBe(1);
+  expect(await micEnabled(page)).toEqual([true]);
+  await bar(page).getByRole('button', { name: 'Hang up' }).click();
+  await expect(bar(page)).toContainText('Hanging up…');
+  expect(await micEnabled(page)).toEqual([false]); // the voice is not produced yet
+  held.produce();
+  await expect.poll(() => built(page)).toBe(true);
+  expect((await senderTracks(page)).map((t) => t.enabled)).toEqual([false]);
+  await expect.poll(() => backend.commands('call:hangup')).toHaveLength(1);
+  hungUp({ ok: true });
+  await expect(bar(page)).toContainText('You hung up');
+  await expect.poll(() => micStates(page)).toEqual(['ended']);
+});
+
+test('the end of a call whose audio still connects ends its microphone at once, and its audio once the build gives up', async ({ page, backend }) => {
+  const held = holdMedia(backend, 'produce');
+  await open(page);
+  await recordMics(page);
+  await answer(page, backend);
+  await expect.poll(() => produced(backend)).toBe(1);
+  backend.emit('call:ended', { callId: 'call-1', endReason: 'media_failed' }); // the server gave it up: its connect timer
+  await expect(bar(page)).toContainText('Could not connect audio');
+  await expect.poll(() => micStates(page)).toEqual(['ended']); // the voice's produce has not returned
+  expect(await openPeers(page)).toBe(2);
+  held.produce();
+  await expect.poll(() => openPeers(page)).toBe(0);
+  expect(await built(page)).toBe(false);
 });
 
 test('a call:active naming another producer means another tab or browser of the agent took the call: this tab lets go, of audio still connecting too; its own keeps the audio', async ({ page, backend }) => {

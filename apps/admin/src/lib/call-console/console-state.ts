@@ -54,7 +54,7 @@ export type ConsoleEvent =
   | { type: 'answering'; callId: string }
   | { type: 'answerFailed'; callId: string; message: string; reason?: string } // reason: the call:answer reply's
   | { type: 'answered'; call: RingingCall }
-  | { type: 'restored'; call: RingingCall; local: boolean; muted?: boolean } // muted: the mute stored with the call (a reload)
+  | { type: 'restored'; call: RingingCall; local: boolean; muted?: boolean; answeredAt?: string } // stored with the call (a reload)
   | { type: 'announcing'; callId: string; durationSec: number; at: number }
   | { type: 'active'; callId: string; answeredAt: string }
   | { type: 'ended'; callId: string; text: string | null }
@@ -122,7 +122,8 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       return { ...s, banners: without(e.call.callId), active: { call: e.call, phase: 'connecting', local: true, muted: false } };
     case 'restored':
       // A reload, the audio taken here from another tab, or rebuilt after it failed: "Connecting…" until call:active.
-      // What the server said of the call stays, for when this tab gives the audio up again (local).
+      // What the server said of the call stays (a reload's from what was stored), for when this tab gives the audio up
+      // again (local).
       return {
         ...s,
         banners: without(e.call.callId),
@@ -131,7 +132,7 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
           phase: 'connecting',
           local: e.local,
           muted: e.muted ?? (live(e.call.callId) && a!.muted),
-          answeredAt: isActive(e.call.callId) ? a!.answeredAt : undefined,
+          answeredAt: e.answeredAt ?? (isActive(e.call.callId) ? a!.answeredAt : undefined),
           announcing: isActive(e.call.callId) ? a!.announcing : undefined,
         },
       };

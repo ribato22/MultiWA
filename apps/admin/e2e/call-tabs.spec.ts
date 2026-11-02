@@ -341,3 +341,196 @@ test("a reload rejoining the call is not put off by the late call:active of its 
   await expect(bar(page)).not.toContainText('On a call in another tab');
   expect(await openPeers(page)).toBe(2);
 });
+
+test("another tab that took the call while this tab's audio was down for an outage keeps it: this tab forgets the call, and neither the reconnect nor a reload takes it back", async ({ page, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  await expect.poll(() => openPeers(page)).toBe(2);
+  backend.offline = true;
+  backend.blip();
+  await expect.poll(() => socketOpen(page)).toBe(false);
+  await failTransports(page);
+  await expect(bar(page)).toContainText('Reconnecting…');
+  // Another tab of this browser, its socket up, took the call: it tells the agent's other tabs.
+  await page.evaluate((userId) => new BroadcastChannel(`multiwa-calls:${userId}`).postMessage({ type: 'media', callId: 'call-1' }), ME.id);
+  await expect(bar(page)).toContainText('On a call in another tab');
+  expect(await storedCalls(page)).toEqual([]);
+  const reads = backend.commands('call:availability').length;
+  backend.offline = false;
+  await expect.poll(() => backend.commands('call:availability').length, { timeout: 15_000 }).toBeGreaterThan(reads);
+  await page.reload();
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+  await expect(bar(page)).toHaveCount(0);
+  expect(backend.commands('call:rejoin')).toEqual([]);
+});
+
+test('audio that cannot be built again with the socket up leaves the call to take here: the next reconnect takes nothing by itself', async ({ page, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  await expect.poll(() => openPeers(page)).toBe(2);
+  backend.reply('call:rejoin', () => ({ ok: false, reason: 'error' }));
+  await failTransports(page);
+  await expect(bar(page)).toContainText('The call’s audio could not be reconnected: try again');
+  await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
+  expect(backend.commands('call:rejoin')).toHaveLength(1);
+  expect(await storedCalls(page)).toEqual([]);
+  const reads = backend.commands('call:availability').length;
+  backend.blip();
+  await expect.poll(() => backend.commands('call:availability').length, { timeout: 10_000 }).toBeGreaterThan(reads);
+  expect(backend.commands('call:rejoin')).toHaveLength(1);
+  await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
+});
+
+test('Take the call here is not undone by the late call:active of the tab that had the call; a takeover after its reply is', async ({ page, backend }) => {
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: ME.id, byUserName: ME.name }); // answered in another tab
+  const answeredAt = new Date().toISOString();
+  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'producer-other-tab' });
+  await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
+  let rejoined!: () => void;
+  backend.reply('call:rejoin', (a) => new Promise((resolve) => (rejoined = () => resolve(backend.defaults['call:rejoin'](a)))));
+  await bar(page).getByRole('button', { name: 'Take the call here' }).click();
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1' }]);
+  // Sent before the server had this tab's rejoin: the other tab's voice, connected late (a recorded call's notice ended).
+  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'producer-other-tab' });
+  rejoined();
+  await expect.poll(() => produced(backend)).toBe(1);
+  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'agent-producer' });
+  await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
+  await expect.poll(() => openPeers(page)).toBe(2);
+  // Taken since on the agent's phone: this tab lets go.
+  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'producer-phone' });
+  await expect(bar(page)).toContainText('On a call in another tab');
+  await expect.poll(() => openPeers(page)).toBe(0);
+});
+
+test('a reload that finds the call moved to another device shows it as theirs, as the call it is, to take here', async ({ page, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  backend.reply('call:rejoin', (a) => (a.ifProducerId ? { ok: false, reason: 'moved' } : backend.defaults['call:rejoin'](a)));
+  page.on('dialog', (d) => void d.accept());
+  await page.reload();
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect(bar(page)).toContainText('On a call in another tab');
+  await expect(timer(page)).toHaveText(/^1:0\d$/); // answered a minute ago
+  await expect(bar(page).getByRole('alert')).toHaveCount(0);
+  expect(await storedCalls(page)).toEqual([]);
+  await bar(page).getByRole('button', { name: 'Take the call here' }).click();
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }, { callId: 'call-1' }]);
+  await expect.poll(() => produced(backend)).toBe(2);
+});
+
+test('a microphone that stopped is still said after a reconnect: Reconnecting… shows beside it, not over it', async ({ page, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  await expect.poll(() => openPeers(page)).toBe(2);
+  // Unplugged: the microphone's track ends.
+  await page.evaluate(() =>
+    (window as any).__pcs
+      .flatMap((pc: RTCPeerConnection) => pc.getSenders())
+      .find((s: RTCRtpSender) => s.track)
+      .track.dispatchEvent(new Event('ended')),
+  );
+  const stopped = 'The microphone stopped: plug it back in, or choose another one';
+  await expect(bar(page)).toContainText(stopped);
+  backend.offline = true;
+  backend.blip();
+  await expect(bar(page)).toContainText('Reconnecting…');
+  await expect(bar(page)).toContainText(stopped);
+  const reads = backend.commands('call:availability').length;
+  backend.offline = false;
+  await expect.poll(() => backend.commands('call:availability').length, { timeout: 15_000 }).toBeGreaterThan(reads);
+  await expect(bar(page)).not.toContainText('Reconnecting…');
+  await expect(bar(page)).toContainText(stopped);
+});
+
+test('audio that fails while a hang-up is on its way is not built again; a hang-up that then fails builds it again', async ({ page, backend }) => {
+  let hungUp!: (r: unknown) => void;
+  backend.reply('call:hangup', () => new Promise((resolve) => (hungUp = resolve)));
+  await open(page);
+  await onCall(page, backend);
+  await expect.poll(() => openPeers(page)).toBe(2);
+  await keepMic(page);
+  await bar(page).getByRole('button', { name: 'Hang up' }).click();
+  await expect.poll(() => backend.commands('call:hangup')).toHaveLength(1);
+  await failTransports(page);
+  await expect.poll(() => page.evaluate(() => (window as any).__mic.readyState)).toBe('ended');
+  expect(await openPeers(page)).toBe(0);
+  await expect(bar(page)).toContainText('Hanging up…');
+  expect(backend.commands('call:rejoin')).toEqual([]);
+  hungUp({ ok: false, reason: 'error' });
+  await expect(bar(page)).toContainText('The hang-up did not go through: try again');
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect.poll(() => produced(backend)).toBe(2);
+});
+
+test('Hang up pressed while the socket is down, its audio gone too: the reconnect sends it, and builds no audio meanwhile', async ({ page, backend }) => {
+  let hungUp!: (r: unknown) => void;
+  backend.reply('call:hangup', () => new Promise((resolve) => (hungUp = resolve)));
+  await open(page);
+  await onCall(page, backend);
+  await expect.poll(() => openPeers(page)).toBe(2);
+  backend.offline = true;
+  backend.blip();
+  await expect.poll(() => socketOpen(page)).toBe(false);
+  await failTransports(page);
+  await expect(bar(page)).toContainText('Reconnecting…');
+  await bar(page).getByRole('button', { name: 'Hang up' }).click(); // it waits for the socket
+  await expect(bar(page)).toContainText('Hanging up…');
+  const reads = backend.commands('call:availability').length;
+  backend.offline = false;
+  await expect.poll(() => backend.commands('call:availability').length, { timeout: 15_000 }).toBeGreaterThan(reads);
+  expect(backend.commands('call:hangup')).toHaveLength(1);
+  await expect(bar(page)).toContainText('Hanging up…');
+  expect(backend.commands('call:rejoin')).toEqual([]);
+  hungUp({ ok: true });
+  await expect(bar(page)).toContainText('You hung up');
+  expect(backend.commands('call:rejoin')).toEqual([]);
+  expect(await storedCalls(page)).toEqual([]);
+});
+
+test('a call taken on another device while this tab hangs up, its audio gone, is not built again here when the hang-up fails', async ({ page, backend }) => {
+  let hungUp!: (r: unknown) => void;
+  backend.reply('call:hangup', () => new Promise((resolve) => (hungUp = resolve)));
+  await open(page);
+  await onCall(page, backend);
+  await expect.poll(() => openPeers(page)).toBe(2);
+  await bar(page).getByRole('button', { name: 'Hang up' }).click();
+  await expect.poll(() => backend.commands('call:hangup')).toHaveLength(1);
+  // The agent took the call on their phone just before: the server closed this tab's peer, and says whose it is now.
+  await failTransports(page);
+  await expect.poll(() => openPeers(page)).toBe(0);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 60_000).toISOString(), agentProducerId: 'producer-phone' });
+  await expect.poll(() => storedCalls(page)).toEqual([]);
+  hungUp({ ok: false, reason: 'error' });
+  await expect(bar(page)).toContainText('On a call in another tab');
+  await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
+  expect(backend.commands('call:rejoin')).toEqual([]);
+});
+
+test('Hang up while a reload rejoins the call: the microphone that opens after it is silent', async ({ page, context, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  await holdMics(context);
+  let rejoined!: () => void;
+  backend.reply('call:rejoin', (a) => new Promise((resolve) => (rejoined = () => resolve(backend.defaults['call:rejoin'](a)))));
+  let hungUp!: (r: unknown) => void;
+  backend.reply('call:hangup', () => new Promise((resolve) => (hungUp = resolve)));
+  page.on('dialog', (d) => void d.accept());
+  await page.reload();
+  await expect(bar(page)).toContainText('Connecting…');
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
+  await bar(page).getByRole('button', { name: 'Hang up' }).click();
+  await expect(bar(page)).toContainText('Hanging up…');
+  await page.evaluate(() => (window as any).__openMic());
+  await expect.poll(() => backend.commands('call:rejoin')).toHaveLength(1);
+  expect(await page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.enabled))).toEqual([false]);
+  rejoined();
+  await expect.poll(() => produced(backend)).toBe(2);
+  expect(await page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.enabled))).toEqual([false]);
+  hungUp({ ok: true });
+  await expect(bar(page)).toContainText('You hung up');
+  await expect.poll(() => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.readyState))).toEqual(['ended']);
+});

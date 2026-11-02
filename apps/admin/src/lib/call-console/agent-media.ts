@@ -94,8 +94,9 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
       signal('produce', { transportId: send.id, kind, rtpParameters }).then(ok, fail);
     });
     // The producer starts paused when its track is disabled: mute is the producer's from here on, and a new microphone
-    // takes the producer's state (replaceMic).
-    mic.enabled = !muted;
+    // takes the producer's state (replaceMic). Disabled only, never enabled here: the caller may have disabled the track
+    // meanwhile (a Mute, a Hang up while this connected).
+    if (muted) mic.enabled = false;
     const producer = await send.produce({ track });
 
     let last = { lost: 0, received: 0 };

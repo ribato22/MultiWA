@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CircleDot, Loader2, Mic, MicOff, PhoneCall, PhoneOff, Signal, SignalLow, SignalMedium, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { formatDuration, ringingCallerLabel } from '@/lib/calls';
+import { CALL_AUDIO_TEXT, formatDuration, ringingCallerLabel } from '@/lib/calls';
 import { prefs } from '@/lib/call-console/prefs';
 import { useCalls } from './calls-provider';
 
@@ -44,11 +44,14 @@ export function InCallBar() {
   if (!calls || !a) return null;
 
   const remaining = a.announcing ? Math.max(0, Math.ceil(a.announcing.durationSec - (now - a.announcing.since) / 1000)) : 0;
+  // The socket is down: this tab's audio may still run, but nothing about the call reaches it until the socket is back.
+  const reconnecting = a.local && calls.state.availability === 'offline';
   // The live region changes with the phase only: the notice's countdown beside it is not said every second.
   const phase =
     a.phase === 'ended' ? a.endedText
     : a.phase === 'hanging_up' ? 'Hanging up…'
     : !a.local ? 'On a call in another tab'
+    : reconnecting ? CALL_AUDIO_TEXT.reconnecting
     : a.phase === 'connecting' ? 'Connecting…'
     : a.phase === 'announcing' ? 'The caller hears the recording notice'
     : null;
@@ -65,7 +68,7 @@ export function InCallBar() {
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>
             <span role="status">{phase}</span>
-            {a.local && a.phase === 'announcing' && <span aria-hidden="true" className="tabular-nums"> ({remaining} s)</span>}
+            {a.local && a.phase === 'announcing' && !reconnecting && <span aria-hidden="true" className="tabular-nums"> ({remaining} s)</span>}
           </span>
           {a.phase === 'active' && a.answeredAt && (
             <span role="timer" aria-label="Call time" className="tabular-nums">

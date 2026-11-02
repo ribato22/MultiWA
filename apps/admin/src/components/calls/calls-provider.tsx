@@ -5,7 +5,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { api } from '@/lib/api';
-import { ANSWER_FAILURE_TEXT, CALL_AUDIO_TEXT, NO_AUDIO, endedText } from '@/lib/calls';
+import { ANSWER_FAILURE_TEXT, CALL_AUDIO_TEXT, HANG_UP_FAILED, NO_AUDIO, endedText } from '@/lib/calls';
 import { getSocketUrl } from '@/lib/socket';
 import { canAnswerCalls, type CurrentUser } from '@/lib/current-user';
 import { mediaSupported, startAgentMedia, type AgentMedia } from '@/lib/call-console/agent-media';
@@ -27,14 +27,15 @@ const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_
 const FADE_MS = 4_000; // "Answered by …" and a call's end stay this long
 
 /**
- * sessionStorage, per user: the call whose audio this tab holds, with the agent's mute and this tab's producer on it,
- * so a reload rejoins it as it was (the server has no "my call" query).
+ * sessionStorage, per user: the call whose audio this tab holds, with the agent's mute, this tab's producer and the
+ * answer's time on it, so a reload rejoins it as it was (the server has no "my call" query).
  */
 const callKey = (userId: string) => `multiwa:call:${userId}`;
 interface StoredCall {
   call: RingingCall;
   muted: boolean;
   producer: string | null;
+  answeredAt?: string;
 }
 const readStoredCall = (userId: string): StoredCall | null => {
   try {
@@ -144,10 +145,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       }
     });
     socket.on('disconnect', async (reason) => {
+      // The call's audio can outlive the socket, but nothing about the call reaches this tab until it is back: the bar
+      // says so meanwhile.
       dispatch({ type: 'offline' });
-      // The call's audio can outlive the socket, but nothing about the call reaches this tab until it is back.
-      const a = stateRef.current.active;
-      if (a?.local && a.phase !== 'ended') dispatch({ type: 'problem', callId: a.call.callId, text: CALL_AUDIO_TEXT.reconnecting });
       if (reason !== 'io server disconnect') return;
       // The server drops a socket whose token expired, or whose login is gone. A request's 401 refreshes an expired
       // token; the same token after one is a login that is gone, and no token is a sign-out.
@@ -186,7 +186,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     // ── the call ──
     // This tab's audio for a call is built by one attempt at a time, an answer's or a rejoin's. Every start and stop of
     // the audio bumps `attempt`: an older attempt still connecting sees that and gives up, and the media library closes
-    // what it opened, the microphone too.
+    // what it opened. Its microphone is stopped at once (`pendingMic`): the attempt may notice only later.
     let attempt = 0;
     let acquiring: string | null = null; // the call whose audio this tab is building
     let audioCallId: string | null = null; // the call whose audio this tab holds
@@ -195,18 +195,26 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     // call:active can come late, before the rejoin reached the server.
     let ownProducer: string | null = null;
     let muted = false; // the agent's mute, whatever media exists or is being built
+    let answeredAt: string | undefined; // when the server put that call through (call:active)
+    // The microphone of the attempt building the audio, from the moment it opens until the media has it: Mute and Hang up
+    // reach it there, and a stop ends it.
+    let pendingMic: MediaStreamTrack | null = null;
+    let hangingUp = false; // this tab's Hang up is on its way: no audio of the call is heard from here meanwhile
+    let asking = 0; // the attempt whose call:rejoin waits for its reply
     const mineCall = () => audioCallId ?? acquiring;
     const stored = () => readStoredCall(user.id);
     const storedCall = () => stored()?.call ?? null;
-    /** Stores the call (or forgets it: null) with the mute and the producer; `keep()` writes them to the call stored. */
+    /** Stores the call (or forgets it: null) with the mute, the producer and the answer; `keep()` writes them to the call stored. */
     const keep = (call: RingingCall | null = storedCall()) => {
       if (!call) return forgetStoredCall(user.id);
-      const entry: StoredCall = { call, muted, producer: ownProducer };
+      const entry: StoredCall = { call, muted, producer: ownProducer, answeredAt };
       sessionStorage.setItem(callKey(user.id), JSON.stringify(entry));
     };
     const stopAudio = () => {
       attempt++;
       acquiring = null;
+      pendingMic?.stop(); // the browser's microphone light goes off now, not once the attempt notices
+      pendingMic = null;
       mediaRef.current?.close();
       mediaRef.current = null;
       audioCallId = null;
@@ -217,12 +225,12 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     };
     const onAudioFailed = (callId: string) => {
       // The audio failed (the network, or the server closed this peer): it goes now, its microphone too, and is built
-      // again as after a reload, once there is a socket to ask.
+      // again as after a reload, once there is a socket to ask. Not while this tab hangs it up (hangUp builds it again if
+      // the hang-up fails).
       stopAudio();
+      if (hangingUp) return;
       const call = storedCall();
-      if (call?.callId !== callId) return;
-      if (socket.connected) void rejoin(call);
-      else dispatch({ type: 'problem', callId, text: CALL_AUDIO_TEXT.reconnecting });
+      if (call?.callId === callId && socket.connected) void rejoin(call);
     };
     /** The call's audio in this tab: mediasoup over this socket, and the caller in the hidden <audio>. */
     // `reply`: the ok reply of call:answer or call:rejoin ({ callerProducerId, iceServers }). `mine`: the attempt it is.
@@ -245,8 +253,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       });
       // Given up as it connected: the call ended or moved, or the console went.
       if (mine !== attempt || closed) return media.close();
-      media.setMuted(muted); // a Mute pressed while it connected
+      media.setMuted(muted || hangingUp); // a Mute or a Hang up pressed while it connected
       mediaRef.current = media;
+      pendingMic = null;
       audioCallId = callId;
       acquiring = null;
       setMicId(mic.getSettings().deviceId ?? null);
@@ -267,7 +276,13 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     socket.on('call:announcing', (p: { callId: string; durationSec: number }) =>
       dispatch({ type: 'announcing', callId: p.callId, durationSec: p.durationSec, at: Date.now() }),
     );
-    socket.on('call:active', (p: { callId: string; answeredAt: string }) => dispatch({ type: 'active', callId: p.callId, answeredAt: p.answeredAt }));
+    socket.on('call:active', (p: { callId: string; answeredAt: string }) => {
+      dispatch({ type: 'active', callId: p.callId, answeredAt: p.answeredAt });
+      // Stored with the call: a reload that cannot take it back shows it as the call it is, to take here.
+      if (storedCall()?.callId !== p.callId) return;
+      answeredAt = p.answeredAt;
+      keep();
+    });
     socket.on('call:ended', (p: { callId: string }) => {
       if (p.callId === mineCall()) stopAudio(); // audio still connecting goes too
       if (storedCall()?.callId === p.callId) keep(null);
@@ -298,16 +313,18 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       }
       muted = false;
       ownProducer = null;
+      answeredAt = undefined;
       stopAudio();
       const mine = attempt;
       acquiring = callId;
+      pendingMic = mic;
       keep(banner.call);
       dispatch({ type: 'answered', call: banner.call });
       try {
         await startAudio(callId, reply, mic, mine);
       } catch {
-        // Given up meanwhile (the server ended it, its connect timer for one, or the console went): whoever gave it up
-        // closed it, and the call was given back already.
+        // Given up meanwhile: the call ended (the server's connect timer, for one), another tab or device of the agent
+        // took it, or the console went. Whoever gave it up closed it, and there is nothing to give back from here.
         if (mine !== attempt) return;
         // Claimed, but this browser could not connect: say so first (the server's own call:ended says less), then give
         // the call back, so it rings again for the others.
@@ -323,20 +340,31 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       // Giving up a call while it connects rings it again for everyone, this agent too: it stays away here.
       if (a.phase === 'connecting') dismiss(a.call.callId);
       dispatch({ type: 'hangingUp', callId: a.call.callId });
-      // Nothing more the agent says reaches the caller, or a recording: a recorded call's hang-up takes up to half a minute.
+      // Nothing more the agent says reaches the caller, or a recording, audio still being built included: a recorded
+      // call's hang-up takes up to half a minute.
+      hangingUp = true;
+      if (pendingMic) pendingMic.enabled = false;
       mediaRef.current?.setMuted(true);
       const reply = await command(socket, 'call:hangup', { callId: a.call.callId }, ACK_MS.hangup);
+      hangingUp = false;
       if (reply.ok || reply.reason === 'not_in_call') {
         if (mineCall() === a.call.callId) stopAudio();
         if (storedCall()?.callId === a.call.callId) keep(null);
         dispatch({ type: 'ended', callId: a.call.callId, text: 'You hung up' }); // call:ended has usually said so already
-      } else {
-        mediaRef.current?.setMuted(muted); // the call goes on, muted or not as the agent had it
-        dispatch({ type: 'hangUpFailed', callId: a.call.callId, text: 'The hang-up did not go through: try again' });
+        return;
       }
+      // The call goes on, muted or not as the agent had it; its audio, if it failed meanwhile, is built again.
+      if (pendingMic) pendingMic.enabled = !muted;
+      mediaRef.current?.setMuted(muted);
+      dispatch({ type: 'hangUpFailed', callId: a.call.callId, text: HANG_UP_FAILED });
+      const call = storedCall();
+      if (call?.callId !== a.call.callId || mineCall() === call.callId || !socket.connected) return;
+      void rejoin(call);
+      dispatch({ type: 'problem', callId: call.callId, text: HANG_UP_FAILED }); // still said while it reconnects
     };
     const setMuted = (on: boolean) => {
       muted = on;
+      if (pendingMic) pendingMic.enabled = !on;
       mediaRef.current?.setMuted(on);
       keep(); // a reload keeps it
       dispatch({ type: 'muted', muted: on });
@@ -367,20 +395,18 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     };
 
     // ── this tab and the others ──
-    socket.on('call:active', (p: { callId: string; agentProducerId?: string }) => {
-      // Another producer on the call than this tab's: another tab or browser of this agent took its audio, and this tab
-      // lets go of its own, or of what it was building.
-      if (p.callId !== mineCall() || !p.agentProducerId || p.agentProducerId === ownProducer) return;
-      stopAudio();
-      keep(null);
-      dispatch({ type: 'local', callId: p.callId, local: false });
-    });
     /** Another tab or device of the agent has the call: this tab lets go of its audio, of what it was building, and of the call it stored. */
     const letGo = (callId: string) => {
       if (callId === mineCall()) stopAudio();
       if (storedCall()?.callId === callId) keep(null);
       dispatch({ type: 'local', callId, local: false });
     };
+    socket.on('call:active', (p: { callId: string; agentProducerId?: string }) => {
+      // Another producer on the call than this tab's: another tab or browser of this agent took it. Not while this tab's
+      // rejoin of it waits for its reply: sent before that reply, this call:active is older than the rejoin, which decides.
+      if (!p.agentProducerId || p.agentProducerId === ownProducer || (asking === attempt && p.callId === acquiring)) return;
+      letGo(p.callId);
+    });
     /**
      * This tab takes the call's audio: after a reload, when its own audio failed, or from another tab or device (`take`:
      * Take the call here). Unless taken, it names the producer it had: one that moved meanwhile stays where it is.
@@ -389,31 +415,33 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       stopAudio();
       const mine = attempt;
       acquiring = call.callId;
+      asking = mine;
       const superseded = () => mine !== attempt || closed;
-      // The mute and the producer this tab had on the call, a reload ago too; else the bar's mute.
+      // The mute, the producer and the answer this tab had on the call, a reload ago too; else what the bar shows.
       const own = stored();
       const a = stateRef.current.active;
+      const shown = a?.call.callId === call.callId && a.phase !== 'ended' ? a : null;
       if (own?.call.callId === call.callId) {
         muted = own.muted;
         ownProducer = own.producer;
+        answeredAt = own.answeredAt ?? shown?.answeredAt;
       } else {
-        muted = a?.call.callId === call.callId && a.phase !== 'ended' ? a.muted : false;
+        muted = shown?.muted ?? false;
         ownProducer = null;
+        answeredAt = shown?.answeredAt;
       }
       const ifProducerId = take ? undefined : (ownProducer ?? undefined);
-      dispatch({ type: 'restored', call, local: true, muted });
+      dispatch({ type: 'restored', call, local: true, muted, answeredAt });
+      // Given up here: the call shows as it is, to take here again, and is no longer this tab's to rejoin by itself.
       const fail = (text: string) => {
-        acquiring = null;
+        stopAudio();
+        if (storedCall()?.callId === call.callId) keep(null);
         dispatch({ type: 'local', callId: call.callId, local: false });
         dispatch({ type: 'problem', callId: call.callId, text });
       };
       // The socket went: the call stored here (a reload's, or this tab's own audio that failed) is rejoined by the
       // connect, once the socket is back.
-      const waitForSocket = () => {
-        acquiring = null;
-        if (storedCall()?.callId !== call.callId) return fail(CALL_AUDIO_TEXT.rejoinFailed);
-        dispatch({ type: 'problem', callId: call.callId, text: CALL_AUDIO_TEXT.reconnecting });
-      };
+      const waitForSocket = () => (storedCall()?.callId === call.callId ? stopAudio() : fail(CALL_AUDIO_TEXT.rejoinFailed));
       let mic: MediaStreamTrack;
       try {
         mic = await openMic(user.id);
@@ -423,18 +451,17 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       }
       // Given up while the microphone opened: the call ended or moved, or the console went (a sign-out).
       if (superseded()) return mic.stop();
-      if (!socket.connected) {
-        mic.stop();
-        return waitForSocket();
-      }
+      pendingMic = mic;
+      mic.enabled = !(muted || hangingUp);
+      if (!socket.connected) return waitForSocket();
       const reply = await command(socket, 'call:rejoin', { callId: call.callId, ifProducerId }, ACK_MS.rejoin);
       if (superseded()) return mic.stop();
+      asking = 0;
       if (!reply.ok) {
-        mic.stop();
         if (!socket.connected) return waitForSocket();
         if (reply.reason === 'moved') return letGo(call.callId); // it stays there, and shows here as theirs
         if (reply.reason !== 'not_in_call' && reply.reason !== 'not_allowed') return fail(CALL_AUDIO_TEXT.rejoinFailed);
-        acquiring = null;
+        stopAudio();
         keep(null);
         dispatch({ type: 'ended', callId: call.callId, text: 'The call is over' });
         return;
@@ -454,10 +481,10 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       const call = storedCall();
       const { banners, active } = stateRef.current;
       // This tab's call, with no audio here and none being built: a reload, or its audio lost while the socket was down.
-      // However long it was down, the rejoin's answer says whether the call is still this tab's to take back.
-      const rejoining = !!call && !mediaRef.current && acquiring !== call.callId;
+      // However long it was down, the rejoin's answer says whether the call is still this tab's to take back. Not one it
+      // shows as another's (it let that go), nor while it hangs the call up.
+      const rejoining = !!call && !mediaRef.current && acquiring !== call.callId && active?.local !== false && !hangingUp;
       if (rejoining) void rejoin(call);
-      else if (active?.problem === CALL_AUDIO_TEXT.reconnecting) dispatch({ type: 'problem', callId: active.call.callId, text: null });
       // A socket that was down missed what happened meanwhile: every call this tab shows is read again.
       for (const b of banners) {
         void api.getCall(b.call.callId).then(({ data }) => {
@@ -475,11 +502,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       }
     });
     channel?.addEventListener('message', ({ data }) => {
-      // Another tab of this browser took the call's audio: this one lets go of its own, or of what it was building.
-      if (data?.type !== 'media' || data.callId !== mineCall()) return;
-      stopAudio();
-      keep(null);
-      dispatch({ type: 'local', callId: data.callId, local: false });
+      // Another tab of this browser took the call's audio.
+      if (data?.type === 'media') letGo(data.callId);
     });
     const takeHere = () => {
       const a = stateRef.current.active;

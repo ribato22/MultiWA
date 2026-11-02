@@ -104,6 +104,7 @@ export const SETTINGS_REASON_TEXT: Record<string, string> = {
 export const reasonTexts = (reasons: string[], texts: Record<string, string> = SETTINGS_REASON_TEXT) => [...new Set(reasons.map((r) => texts[r] ?? r))];
 
 export const NO_AUDIO = 'Could not connect audio';
+export const HANG_UP_FAILED = 'The hang-up did not go through: try again';
 
 /** Why an answer did not go through (the `call:answer` reply's reason, or no reply). */
 export const ANSWER_FAILURE_TEXT: Record<string, string> = {

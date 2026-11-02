@@ -195,3 +195,9 @@ test('audio this tab rebuilt and gave up (it failed, or another tab took it) giv
   // The server had not put it through: it still connects.
   expect(reduce(rebuilding(), { type: 'local', callId: 'c1', local: false }).active).toMatchObject({ phase: 'connecting', local: false });
 });
+
+test('a reload restores when the server put the call through: a call that stays elsewhere then shows as active, to take here', () => {
+  const s = run({ type: 'restored', call: call(), local: true, answeredAt: 'T1' });
+  expect(s.active).toMatchObject({ phase: 'connecting', local: true, answeredAt: 'T1' });
+  expect(reduce(s, { type: 'local', callId: 'c1', local: false }).active).toMatchObject({ phase: 'active', local: false, answeredAt: 'T1' });
+});
