@@ -60,6 +60,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ProfileCallsSettings } from '@/components/calls/profile-calls-settings';
 
 // "628…, 628…" → ['628…', '628…'] for the quiet-profile alarm recipients. Only commas, semicolons and newlines
 // separate: a number may hold spaces or dashes ("+62 812-3456-7890").
@@ -1259,6 +1260,9 @@ export default function ProfileDetailPage() {
           </Button>
         </div>
       </section>
+
+      {/* Its checklist names the connection and auto-reject (above): a change of either here reads it again. */}
+      <ProfileCallsSettings profileId={profileId} refreshKey={`${profile.status} ${!!profile.settings?.autoRejectCalls}`} />
 
       {/* Actions bar */}
       <section
