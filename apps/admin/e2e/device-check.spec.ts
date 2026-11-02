@@ -43,19 +43,31 @@ test('Settings → Calls checks the microphone with a level meter, plays a test 
   await expectAccessible(page, '[aria-label="Calls in this browser"]');
 });
 
-test('turning the ringer off silences a call that is ringing', async ({ page, backend }) => {
+test('turning the ringer off silences a call that is ringing, and on again rings it; a call that started while it was off stays silent', async ({ page, backend }) => {
   const tones = () => page.evaluate(() => (window as any).__tones as number);
+  const banner = page.getByRole('region', { name: 'Incoming calls' });
   await page.goto('/dashboard/settings?tab=calls');
   await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled(); // the console is connected
+  const ringer = section(page).getByRole('switch', { name: 'Ring for incoming calls' });
   backend.emit('call:ringing', ringing());
   await expect.poll(tones, { timeout: 8000 }).toBeGreaterThan(0);
-  await section(page).getByRole('switch', { name: 'Ring for incoming calls' }).click();
-  const after = await tones();
+  await ringer.click();
+  let after = await tones();
   await page.waitForTimeout(RING_INTERVAL_MS + 500); // a ring cycle
   expect(await tones()).toBe(after);
-  await expect(page.getByRole('region', { name: 'Incoming calls' })).toBeVisible(); // still ringing, without a sound
-  // Turned back on, the ringer waits for the next call: the help text says so.
-  await expect(section(page)).toContainText('Off: the banner still shows, without a sound. Turned back on, it rings from the next call.');
+  await expect(banner).toBeVisible(); // still ringing, without a sound
+  await ringer.click();
+  await expect.poll(tones, { timeout: RING_INTERVAL_MS + 2000 }).toBeGreaterThan(after); // at its next ring
+  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' });
+  await expect(banner).toHaveCount(0);
+  await ringer.click();
+  backend.emit('call:ringing', ringing({ callId: 'call-2' }));
+  await expect(banner).toBeVisible();
+  await ringer.click();
+  after = await tones();
+  await page.waitForTimeout(RING_INTERVAL_MS + 500);
+  expect(await tones()).toBe(after);
+  await expect(section(page)).toContainText('Off: the banner still shows, without a sound. A call that started ringing while it was off stays silent.');
 });
 
 test('desktop alerts can be turned on from Settings → Calls', async ({ page, context }) => {
@@ -122,6 +134,50 @@ test('a second click while the browser asks for the microphone starts no second 
   await s.getByRole('button', { name: 'Stop the test' }).click();
   await expect(s.getByRole('button', { name: 'Test the microphone' })).toBeVisible();
   await expect.poll(() => micStates(page)).toEqual(['ended']);
+});
+
+test('a microphone picked while a test opens is kept: the one opened meanwhile closes, and the next test opens the pick', async ({ page, context }) => {
+  await context.addInitScript(() => {
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    (window as any).__asked = [];
+    // The microphone asked for opens by its id: Chrome's fake device stands in for both.
+    navigator.mediaDevices.getUserMedia = async (c?: MediaStreamConstraints) => {
+      (window as any).__asked.push(JSON.stringify(c));
+      const stream = await gum({ audio: true });
+      const track = stream.getAudioTracks()[0];
+      const settings = track.getSettings.bind(track);
+      const id = (((c?.audio as MediaTrackConstraints).deviceId as ConstrainDOMStringParameters).exact as string);
+      track.getSettings = () => ({ ...settings(), deviceId: id });
+      return stream;
+    };
+    navigator.mediaDevices.enumerateDevices = async () =>
+      [
+        { deviceId: 'mic-a', kind: 'audioinput', label: 'Desk microphone', groupId: 'g1', toJSON() { return this; } },
+        { deviceId: 'mic-b', kind: 'audioinput', label: 'Headset', groupId: 'g2', toJSON() { return this; } },
+      ] as MediaDeviceInfo[];
+  });
+  await holdMics(context);
+  await page.goto('/dashboard/settings?tab=calls');
+  const s = section(page);
+  const picker = s.getByRole('combobox', { name: 'Microphone' });
+  const asked = () => page.evaluate(() => (window as any).__micsAsked() as number);
+  await expect(picker).toHaveText('Desk microphone');
+  await s.getByRole('button', { name: 'Test the microphone' }).click();
+  await expect.poll(asked).toBe(1);
+  await picker.click();
+  await page.getByRole('option', { name: 'Headset' }).click();
+  await page.evaluate(() => (window as any).__openMic()); // the desk microphone, asked for before the pick
+  await expect.poll(() => micStates(page)).toEqual(['ended']);
+  await expect(picker).toHaveText('Headset');
+  expect(await page.evaluate(() => localStorage.getItem('multiwa:calls:u-ada:mic'))).toBe('mic-b');
+  await s.getByRole('button', { name: 'Test the microphone' }).click();
+  await expect.poll(asked).toBe(1);
+  await page.evaluate(() => (window as any).__openMic());
+  await expect(s.getByRole('button', { name: 'Stop the test' })).toBeVisible();
+  await expect(picker).toHaveText('Headset');
+  expect(await page.evaluate(() => (window as any).__asked as string[])).toEqual(
+    ['mic-a', 'mic-b'].map((id) => JSON.stringify({ audio: { deviceId: { exact: id } } })),
+  );
 });
 
 test('leaving Settings while the browser asks for the microphone leaves no microphone open', async ({ page, context }) => {

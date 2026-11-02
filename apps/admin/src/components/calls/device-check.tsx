@@ -26,6 +26,8 @@ export function DeviceCheck() {
   const [permission, setPermission] = useState<keyof typeof PERMISSION_TEXT>('unknown');
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const [mic, setMic] = useState(() => (me ? prefs.mic(me.id) ?? '' : ''));
+  // The microphone chosen here, as a test still opening reads it once the browser has opened one.
+  const picked = useRef(mic);
   // The microphone a test opened: the browser picks one itself while it lists none to choose from (Firefox and Safari,
   // until the microphone is allowed).
   const [opened, setOpened] = useState<string | null>(null);
@@ -80,6 +82,7 @@ export function DeviceCheck() {
     if (stopTest.current) return stopTest.current();
     if (starting.current) return;
     starting.current = true;
+    const pick = picked.current;
     setProblem(null);
     const tracks: MediaStreamTrack[] = [];
     const close = () => tracks.forEach((t) => t.stop());
@@ -89,8 +92,9 @@ export function DeviceCheck() {
         audio: chosen ? { deviceId: { exact: chosen } } : mic ? { deviceId: { ideal: mic } } : true,
       });
       tracks.push(...stream.getTracks());
-      // Opened for nothing: the agent left the page while the browser asked (nothing would ever stop it), or a test runs.
-      if (!alive.current || stopTest.current) return close();
+      // Opened for nothing: the agent left the page while the browser asked (nothing would ever stop it), or picked
+      // another microphone meanwhile (a pick stops a test: the next one opens the pick).
+      if (!alive.current || picked.current !== pick) return close();
       const ctx = new AudioContext();
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
@@ -148,6 +152,7 @@ export function DeviceCheck() {
               value={chosen}
               onValueChange={(v) => {
                 setMic(v);
+                picked.current = v;
                 setOpened(null);
                 prefs.setMic(me.id, v);
                 stopTest.current?.();
@@ -188,7 +193,7 @@ export function DeviceCheck() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <Label htmlFor="calls-ringer" className="text-sm text-foreground">Ring for incoming calls</Label>
-          <p className="text-xs text-muted-foreground">Off: the banner still shows, without a sound. Turned back on, it rings from the next call.</p>
+          <p className="text-xs text-muted-foreground">Off: the banner still shows, without a sound. A call that started ringing while it was off stays silent.</p>
         </div>
         <Switch
           id="calls-ringer"
