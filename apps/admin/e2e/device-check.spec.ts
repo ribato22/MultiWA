@@ -85,6 +85,27 @@ test('the microphone chosen here is the one a call opens', async ({ page, contex
   await expect.poll(() => page.evaluate(() => (window as any).__asked as string[])).toContainEqual(expect.stringContaining('"ideal":"mic-b"'));
 });
 
+test('a microphone chosen here and since unplugged gives way to one this browser has', async ({ page, context }) => {
+  await context.addInitScript(() => {
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    (window as any).__asked = [];
+    navigator.mediaDevices.getUserMedia = (c?: MediaStreamConstraints) => {
+      (window as any).__asked.push(JSON.stringify(c));
+      return gum({ audio: true });
+    };
+    navigator.mediaDevices.enumerateDevices = async () =>
+      [{ deviceId: 'mic-a', kind: 'audioinput', label: 'Desk microphone', groupId: 'g1', toJSON() { return this; } }] as MediaDeviceInfo[];
+  });
+  await page.goto('/dashboard/settings?tab=calls');
+  await page.evaluate(() => localStorage.setItem('multiwa:calls:u-ada:mic', 'headset-unplugged'));
+  await page.reload();
+  const s = section(page);
+  await expect(s.getByRole('combobox', { name: 'Microphone' })).toHaveText('Desk microphone');
+  await s.getByRole('button', { name: 'Test the microphone' }).click();
+  await expect(s.getByRole('button', { name: 'Stop the test' })).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__asked as string[])).toEqual([JSON.stringify({ audio: { deviceId: { exact: 'mic-a' } } })]);
+});
+
 test.describe('a viewer', () => {
   test.use({ user: { ...ME, role: 'viewer' } });
 

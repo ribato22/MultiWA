@@ -61,11 +61,13 @@ export function DeviceCheck() {
     );
   }
 
+  // The chosen microphone while this browser still has it (a headset may be unplugged since), else the first one.
+  const chosen = mics.find((m) => m.deviceId === mic)?.deviceId ?? mics[0]?.deviceId;
   const test = async () => {
     if (stopTest.current) return stopTest.current();
     setProblem(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: mic ? { deviceId: { exact: mic } } : true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: chosen ? { deviceId: { exact: chosen } } : true });
       const ctx = new AudioContext();
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 1024;
@@ -115,7 +117,7 @@ export function DeviceCheck() {
         </p>
         {mics.length > 0 && (
           <Select
-            value={mic || mics[0].deviceId}
+            value={chosen}
             onValueChange={(v) => {
               setMic(v);
               prefs.setMic(me.id, v);
