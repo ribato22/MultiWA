@@ -2,9 +2,10 @@
 import { test, expect } from '@playwright/test';
 import { api, ApiClient } from '@/lib/api';
 
-// The globals a test stubs: fetch, for a signed-in page window and localStorage, and the browser's navigator. Each is
-// put back after the test.
-const GLOBALS = ['fetch', 'window', 'localStorage', 'navigator'];
+// The globals a test stubs: fetch, for a signed-in page window and localStorage, the browser's navigator, and
+// AbortSignal. Each is put back after the test.
+const GLOBALS = ['fetch', 'window', 'localStorage', 'navigator', 'AbortSignal'];
+const RealAbortSignal = AbortSignal;
 const real = GLOBALS.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
 const stub = (name: string, value: unknown) => Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
 
@@ -108,13 +109,16 @@ test('a failed refresh signs out: both tokens cleared, and the page sent to the 
   expect(window.location.href).toBe('/auth/login');
 });
 
-/** The browser's Web Locks: a request runs once the one before it is done, whichever tab made it. */
+/**
+ * The browser's Web Locks: a request runs once the one before it is done, whichever tab made it. The browser grants it
+ * in a task of its own, so what the holder's tab does once its request is done (a sign-out) has happened by then.
+ */
 function webLocks() {
   let last: Promise<unknown> = Promise.resolve();
   stub('navigator', {
     locks: {
       request: (_name: string, fn: () => Promise<unknown>) => {
-        const run = last.then(fn);
+        const run = last.then(() => new Promise((granted) => setTimeout(granted))).then(fn);
         last = run.catch(() => undefined);
         return run;
       },
@@ -147,6 +151,62 @@ test('two tabs whose requests get a 401 at once refresh the token once, and both
     'Bearer old-token', 'Bearer old-token', 'Bearer new-token', 'Bearer new-token',
   ]);
   expect(Object.fromEntries(store)).toEqual({ accessToken: 'new-token', refreshToken: 'new-refresh' });
+});
+
+test('a tab that waited while another tab’s refresh failed signs out too: it does not retry without a token', async () => {
+  const { store } = signedIn();
+  webLocks();
+  const sent: Array<{ url: string; authorization?: string }> = [];
+  stub('fetch', async (url: string, init: RequestInit = {}) => {
+    sent.push({ url, authorization: ((init.headers ?? {}) as Record<string, string>).Authorization });
+    if (url === '/api/v1/auth/refresh') await new Promise((r) => setTimeout(r, 20)); // on the way, then refused
+    return Response.json({ message: 'Unauthorized' }, { status: 401 });
+  });
+  // The tabs share this stub of a window: each sign-out is one visit to the login.
+  const visits: string[] = [];
+  stub('window', { location: { set href(to: string) { visits.push(to); } } });
+  const tabs = [new ApiClient(), new ApiClient()];
+  const replies = await Promise.all(tabs.map((tab) => tab.fetchCallRecording('c-1')));
+  expect(replies).toEqual([{ status: 401, error: 'Unauthorized' }, { status: 401, error: 'Unauthorized' }]);
+  // The second tab found the tokens gone: it neither refreshed nor sent the request again without a token.
+  expect(sent).toEqual([
+    { url: '/api/v1/calls/c-1/recording', authorization: 'Bearer old-token' },
+    { url: '/api/v1/calls/c-1/recording', authorization: 'Bearer old-token' },
+    { url: '/api/v1/auth/refresh', authorization: undefined },
+  ]);
+  expect(visits).toEqual(['/auth/login', '/auth/login']);
+  expect(store.size).toBe(0);
+});
+
+test('a refresh that never answers gives up after 15 s: it lets go of the lock, and the tabs sign out', async () => {
+  const { store } = signedIn();
+  webLocks();
+  const asked: number[] = [];
+  stub('AbortSignal', { timeout: (ms: number) => (asked.push(ms), RealAbortSignal.timeout(20)) }); // 15 s, made 20 ms
+  let refreshes = 0;
+  stub('fetch', (url: string, init: RequestInit = {}) => {
+    if (url !== '/api/v1/auth/refresh') return Promise.resolve(Response.json({ message: 'Unauthorized' }, { status: 401 }));
+    refreshes++;
+    // No answer ever: only its signal ends it, as it does a fetch.
+    return new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(init.signal!.reason)));
+  });
+  const tabs = [new ApiClient(), new ApiClient()];
+  const replies = await Promise.race([
+    Promise.all(tabs.map((tab) => tab.fetchCallRecording('c-1'))),
+    new Promise((resolve) => setTimeout(() => resolve('both tabs still wait on the refresh'), 2_000)),
+  ]);
+  expect(replies).toEqual([{ status: 401, error: 'Unauthorized' }, { status: 401, error: 'Unauthorized' }]);
+  expect(asked).toEqual([15_000]);
+  expect(refreshes).toBe(1); // the second tab, given the lock, found the tokens gone
+  expect(store.size).toBe(0);
+});
+
+test('a browser without AbortSignal.timeout (an older Safari) still refreshes', async () => {
+  signedIn();
+  stub('AbortSignal', {});
+  const sent = refreshingApi();
+  expect((await api.fetchCallRecording('c-1')).status).toBe(200);
+  expect(sent).toEqual(refreshed);
 });
 
 const announcement = (bytes: number) => new File([new Uint8Array(bytes)], 'notice.mp3', { type: 'audio/mpeg' });

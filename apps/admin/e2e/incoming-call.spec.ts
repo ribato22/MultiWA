@@ -183,15 +183,27 @@ test('no ringtone or title flash while this agent is on a call, here or in anoth
   await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(before); // it rings again at once
 });
 
-test('a tab the browser keeps silent says so and makes no tone; a click on the page lets it ring at once', async ({ page, backend }) => {
-  await page.evaluate(() => ((window as any).__audioBlocked = true));
+test('a tab the browser keeps silent says so and makes no tone; a click on the page lets it ring at once; Dismiss never moves', async ({ page, backend }) => {
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__audioBlocked = true;
+    // Where Dismiss is at every change of the page: the hint showing or going must not move it under a press.
+    w.__dismissAt = [];
+    new MutationObserver(() => {
+      const dismiss = [...document.querySelectorAll('[aria-label="Incoming calls"] button')].find((b) => b.textContent?.includes('Dismiss'));
+      if (dismiss) w.__dismissAt.push(JSON.stringify(dismiss.getBoundingClientRect()));
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+  });
   backend.emit('call:ringing', ringing());
   await expect(banner(page).getByText(HINT)).toBeVisible();
   await page.waitForTimeout(3500); // a ring cycle
   expect(await tones(page)).toBe(0);
   await page.getByRole('heading', { name: 'Calls', exact: true }).click(); // nothing the click does
-  await expect(banner(page).getByText(HINT)).toHaveCount(0);
+  await expect(banner(page).getByText(HINT)).toBeHidden();
   await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(0); // not at the next 3 s tick
+  const at: string[] = await page.evaluate(() => (window as any).__dismissAt);
+  expect(at.length).toBeGreaterThan(0);
+  expect([...new Set(at)]).toEqual([at[0]]);
 });
 
 test('in a tab the browser keeps silent, the first press on Dismiss dismisses, and no tone plays', async ({ page, backend }) => {
@@ -213,9 +225,12 @@ test('a page whose audio runs a moment after it was made (Firefox starts it susp
   await page.evaluate(() => {
     const w = window as any;
     w.__audioRunsIn = 50;
+    // The hint is always on the card, hidden while the ringtone can play: it must never show.
     new MutationObserver(() => {
-      if (document.body.textContent?.includes('Click anywhere on the page to hear the ringtone')) w.__hinted = true;
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+      for (const line of document.querySelectorAll('[aria-label="Incoming calls"] p')) {
+        if (line.textContent?.includes('Click anywhere on the page to hear the ringtone') && getComputedStyle(line).visibility !== 'hidden') w.__hinted = true;
+      }
+    }).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
   });
   backend.emit('call:ringing', ringing());
   await expect.poll(() => tones(page), { timeout: 2000 }).toBeGreaterThan(0);
@@ -242,7 +257,7 @@ test('two tabs, the first one kept silent by the browser: the second rings, and 
   await expect(banner(page).getByText(HINT)).toBeVisible();
   await expect.poll(() => tones(other), { timeout: 8000 }).toBeGreaterThan(0);
   expect(await tones(page)).toBe(0);
-  await expect(banner(other).getByText(HINT)).toHaveCount(0);
+  await expect(banner(other).getByText(HINT)).toBeHidden();
 });
 
 test.describe('on a phone screen', () => {

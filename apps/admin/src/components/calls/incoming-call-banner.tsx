@@ -63,12 +63,11 @@ export function IncomingCallBanner() {
                   </div>
                 )}
                 {b.status === 'ringing' && b.notice && <p role="alert" className="mt-2 text-xs text-amber-300">{b.notice}</p>}
-                {calls.soundBlocked && b.status === 'ringing' && (
-                  <p className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
-                    <VolumeX className="h-3 w-3" aria-hidden="true" />
-                    Click anywhere on the page to hear the ringtone
-                  </p>
-                )}
+                {/* Always there, only hidden: a line that came and went would move the buttons under a press. */}
+                <p className={`mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground ${calls.soundBlocked && b.status === 'ringing' ? '' : 'invisible'}`}>
+                  <VolumeX className="h-3 w-3" aria-hidden="true" />
+                  Click anywhere on the page to hear the ringtone
+                </p>
                 <div className="mt-3 flex gap-2">
                   <Button size="sm" variant="outline" disabled={b.status === 'answering'} onClick={() => calls.dismiss(b.call.callId)}>
                     <X className="mr-1.5 h-4 w-4" aria-hidden="true" />

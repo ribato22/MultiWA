@@ -264,6 +264,9 @@ class ApiClient {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
+        // Every tab's refresh waits on this one: one that hangs gives up (a sign-out) instead of holding them all. An
+        // optional call: an older Safari has no AbortSignal.timeout, and its TypeError would sign every 401 out.
+        signal: AbortSignal.timeout?.(15_000),
       });
 
       if (!res.ok) return false;
