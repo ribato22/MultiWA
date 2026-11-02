@@ -178,11 +178,11 @@ test('a tab that waited while another tab’s refresh failed signs out too: it d
   expect(store.size).toBe(0);
 });
 
-test('a refresh that never answers gives up after 15 s: it lets go of the lock, and the tabs sign out', async () => {
+test('a refresh that never answers gives up after a minute: it lets go of the lock, and the tabs sign out', async () => {
   const { store } = signedIn();
   webLocks();
   const asked: number[] = [];
-  stub('AbortSignal', { timeout: (ms: number) => (asked.push(ms), RealAbortSignal.timeout(20)) }); // 15 s, made 20 ms
+  stub('AbortSignal', { timeout: (ms: number) => (asked.push(ms), RealAbortSignal.timeout(20)) }); // a minute, made 20 ms
   let refreshes = 0;
   stub('fetch', (url: string, init: RequestInit = {}) => {
     if (url !== '/api/v1/auth/refresh') return Promise.resolve(Response.json({ message: 'Unauthorized' }, { status: 401 }));
@@ -196,7 +196,7 @@ test('a refresh that never answers gives up after 15 s: it lets go of the lock, 
     new Promise((resolve) => setTimeout(() => resolve('both tabs still wait on the refresh'), 2_000)),
   ]);
   expect(replies).toEqual([{ status: 401, error: 'Unauthorized' }, { status: 401, error: 'Unauthorized' }]);
-  expect(asked).toEqual([15_000]);
+  expect(asked).toEqual([60_000]);
   expect(refreshes).toBe(1); // the second tab, given the lock, found the tokens gone
   expect(store.size).toBe(0);
 });

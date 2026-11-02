@@ -7,6 +7,11 @@ const API_BASE = '/api/v1';
 // The API's own limit on an announcement upload (its multipart `fileSize`), in bytes.
 const ANNOUNCEMENT_MAX_BYTES = 2 * 1024 * 1024;
 
+// How long a token refresh may take before it is given up. Long enough not to abort a slow refresh the server may
+// have carried out: this browser would keep the refresh token it rotated, and the next refresh, read as reuse, would
+// sign out every tab. Short enough that a dead connection does not hold every tab's refresh behind the lock.
+const REFRESH_TIMEOUT_MS = 60_000;
+
 // Types
 export interface ApiResponse<T> {
   data?: T;
@@ -266,7 +271,7 @@ class ApiClient {
         body: JSON.stringify({ refreshToken }),
         // Every tab's refresh waits on this one: one that hangs gives up (a sign-out) instead of holding them all. An
         // optional call: an older Safari has no AbortSignal.timeout, and its TypeError would sign every 401 out.
-        signal: AbortSignal.timeout?.(15_000),
+        signal: AbortSignal.timeout?.(REFRESH_TIMEOUT_MS),
       });
 
       if (!res.ok) return false;
