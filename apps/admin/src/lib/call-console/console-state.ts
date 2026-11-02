@@ -1,5 +1,6 @@
 // What the call console shows, as a pure function of the server's `call:*` events and the agent's own actions. The
 // provider (components/calls/calls-provider.tsx) owns the socket, the audio and the side effects.
+import { ANSWER_FAILURE_TEXT } from '@/lib/calls';
 
 /** `call:ringing`, as the server sends it. */
 export interface RingingCall {
@@ -147,7 +148,13 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       return { ...s, active: { ...a!, phase: 'active', answeredAt: e.answeredAt, announcing: undefined, problem: undefined } };
     case 'ended': {
       // A failed answer's banner stays to fade: if the call rings again, the new banner says why (a lost race says nothing).
-      const banners = s.banners.filter((b) => b.call.callId !== e.callId || b.status === 'failed');
+      // So does an answer under way, which fails with the end: the call stopped ringing (it says so), or the claim of this
+      // agent ended before it connected (its end says why).
+      const b = banner(e.callId);
+      const banners =
+        b?.status === 'answering'
+          ? swap(b, { call: b.call, status: 'failed', message: e.text ?? ANSWER_FAILURE_TEXT.not_ringing })
+          : s.banners.filter((x) => x.call.callId !== e.callId || x.status === 'failed');
       if (!live(e.callId)) return { ...s, banners };
       return { ...s, banners, active: { ...a!, phase: 'ended', endedText: e.text ?? 'Call ended', problem: undefined } };
     }

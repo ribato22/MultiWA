@@ -59,6 +59,17 @@ test('this tab’s own claim failing before its end comes fades as a failed answ
   });
 });
 
+test('a call that stops ringing while this tab answers it fails the answer: its card says why, and the refusal after it changes nothing', () => {
+  const answering: ConsoleEvent[] = [{ type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' }];
+  const gone = run(...answering, { type: 'ended', callId: 'c1', text: null });
+  expect(gone.banners).toEqual([{ call: call(), status: 'failed', message: 'The call is no longer ringing' }]);
+  expect(reduce(gone, { type: 'answerFailed', callId: 'c1', message: 'The call is no longer ringing', reason: 'not_ringing' })).toBe(gone);
+  // This agent's claim, given up before it connected (the caller hung up meanwhile): its end says why.
+  expect(run(...answering, claimed('u1', 'Ada'), { type: 'ended', callId: 'c1', text: 'The call was not connected' }).banners).toEqual([
+    { call: call(), status: 'failed', message: 'The call was not connected' },
+  ]);
+});
+
 test('a call rung again after another agent won the race rings without saying someone else answered, whether the reply or the ring came first', () => {
   // Jane's claim beat this tab's; her audio then did not connect, and the call rings again.
   const lost: ConsoleEvent = { type: 'answerFailed', callId: 'c1', message: 'Someone else answered', reason: 'already_claimed' };

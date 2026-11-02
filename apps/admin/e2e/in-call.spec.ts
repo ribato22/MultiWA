@@ -1,5 +1,6 @@
 import { test, expect, gate, rendered, ringing, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
+import { holdMics } from './support/browser';
 import type { Locator, Page } from '@playwright/test';
 
 const banner = (page: Page) => page.getByRole('region', { name: 'Incoming calls' });
@@ -137,6 +138,24 @@ test('signing out while the microphone opens closes it at once, and claims nothi
   await page.evaluate(() => (window as any).__openMic());
   await expect.poll(() => page.evaluate(() => (window as any).__mic.getAudioTracks()[0].readyState)).toBe('ended');
   expect(backend.commands('call:answer')).toEqual([]);
+});
+
+test('a call that stops ringing while Answer opens the microphone says so on its card, which keeps the focus, then fades', async ({ page, context, backend }) => {
+  await holdMics(context);
+  backend.reply('call:answer', () => ({ ok: false, reason: 'not_ringing' })); // as the server answers for a call that stopped ringing
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
+  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' }); // the caller hung up
+  const c = card(page, 'Pak Joko');
+  await expect(c.getByRole('alert')).toHaveText('The call is no longer ringing');
+  await expect(c).toBeFocused();
+  await page.evaluate(() => (window as any).__openMic());
+  await expect.poll(() => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.readyState))).toEqual(['ended']);
+  await expect(c.getByRole('alert')).toHaveText('The call is no longer ringing');
+  await expect(banner(page)).toHaveCount(0, { timeout: 6000 });
 });
 
 test('an answer the server refuses says why, and the card fades', async ({ page, backend }) => {
