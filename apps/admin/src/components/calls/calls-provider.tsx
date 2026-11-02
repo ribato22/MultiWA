@@ -612,9 +612,11 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
   useEffect(() => {
     if (!hasAudio) return;
     const timer = setInterval(async () => {
+      const media = mediaRef.current;
       try {
-        const sample = await mediaRef.current?.sample();
-        if (sample) setQuality(toQuality(sample));
+        const sample = await media?.sample();
+        // One that comes back once its audio went (the call ended, or its audio is built again) says nothing of the call.
+        if (sample && mediaRef.current === media) setQuality(toQuality(sample));
       } catch {
         // a transport closed meanwhile: the next sample, or the call's end
       }

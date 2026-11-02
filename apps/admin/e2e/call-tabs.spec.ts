@@ -295,6 +295,29 @@ test('audio that fails while the socket is down lets the microphone go at once, 
   expect(await openPeers(page)).toBe(2);
 });
 
+test('a quality sample that comes back once the audio it measured went is dropped: the audio built again shows none of it', async ({ page, backend }) => {
+  await open(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    const stats = RTCPeerConnection.prototype.getStats;
+    // The first audio's receiving side reads its stats slowly, a bad link's, until the test lets the read go.
+    RTCPeerConnection.prototype.getStats = function (this: RTCPeerConnection) {
+      if (this.getTransceivers().some((t) => t.direction === 'recvonly')) w.__slow ??= this;
+      if (this !== w.__slow) return stats.call(this);
+      return new Promise((resolve) => (w.__lateStats = () => resolve(new Map([['in', { type: 'inbound-rtp', kind: 'audio', jitter: 0.2 }]]))));
+    } as typeof stats;
+  });
+  await onCall(page, backend);
+  await expect.poll(() => page.evaluate(() => !!(window as any).__lateStats)).toBe(true); // a sample is out
+  await failTransports(page); // the audio fails, and is built again
+  await expect.poll(() => produced(backend)).toBe(2);
+  await page.evaluate(() => (window as any).__lateStats());
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 60_000).toISOString(), agentProducerId: 'agent-producer-2' });
+  await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
+  await rendered(page);
+  expect(await bar(page).textContent()).not.toContain('Network quality'); // now, not once the next sample came
+});
+
 test('a call another device of the agent took during an outage stays there: the rejoin at the reconnect is told it moved, and this tab lets go', async ({ page, backend }) => {
   await open(page);
   await onCall(page, backend);
