@@ -53,6 +53,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const uploadButton = useRef<HTMLButtonElement>(null);
   // Only the latest read shows: an older one answering after it (a slow link) is stale.
   const loadSeq = useRef(0);
+  // Aborted when the section goes: an announcement still loading is given up, not kept for nothing.
+  const gone = useRef<AbortSignal>();
 
   const load = useCallback(async () => {
     const seq = ++loadSeq.current;
@@ -72,6 +74,11 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   useEffect(() => () => {
     if (preview) URL.revokeObjectURL(preview);
   }, [preview]);
+  useEffect(() => {
+    const leaving = new AbortController();
+    gone.current = leaving.signal;
+    return () => leaving.abort();
+  }, []);
   if (!allowed) return null;
 
   const refused = (message: string | undefined, body: any) => setRefusal({ message: message ?? 'Not available', texts: reasonTexts(body?.reasons ?? []) });
@@ -108,7 +115,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   };
   const listen = async () => {
     setBusy('listen');
-    const res = await api.fetchCallsAnnouncement(profileId);
+    const signal = gone.current;
+    const res = await api.fetchCallsAnnouncement(profileId, signal);
+    if (signal?.aborted) return;
     setBusy(null);
     if (!res.blob) return toast({ title: 'Could not load the announcement', description: res.error, variant: 'destructive' });
     dropPreview();

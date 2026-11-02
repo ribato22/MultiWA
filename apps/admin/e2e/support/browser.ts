@@ -57,6 +57,20 @@ export function installBrowserFakes() {
     hidden = h;
     document.dispatchEvent(new Event('visibilitychange'));
   };
+  // Object URLs: `__liveBlobs()` lists the ones made and not revoked yet (a file the page keeps in memory).
+  const live = new Set<string>();
+  const createObjectURL = URL.createObjectURL.bind(URL);
+  const revokeObjectURL = URL.revokeObjectURL.bind(URL);
+  URL.createObjectURL = (o: Blob | MediaSource) => {
+    const url = createObjectURL(o);
+    live.add(url);
+    return url;
+  };
+  URL.revokeObjectURL = (url: string) => {
+    live.delete(url);
+    revokeObjectURL(url);
+  };
+  w.__liveBlobs = () => [...live];
   // Tones: every oscillator started (the ringer's, the speaker test's).
   w.__tones = 0;
   const start = OscillatorNode.prototype.start;

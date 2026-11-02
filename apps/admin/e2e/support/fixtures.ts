@@ -63,6 +63,18 @@ export const on = (method: string, path: string | RegExp, reply: Reply | ((req: 
     ? typeof reply === 'function' ? reply(req) : reply
     : undefined;
 export const get = (path: string | RegExp, json: unknown): Rest => on('GET', path, { json });
+/** Settles once the page's request to a URL containing `part` ends: answered, or given up by the page. */
+export const requestEnded = (page: Page, part: string) =>
+  new Promise<void>((resolve) => {
+    const ended = (r: { url(): string }) => void (r.url().includes(part) && resolve());
+    page.on('requestfinished', ended).on('requestfailed', ended);
+  });
+/** A gate for a reply to wait at: what awaits `passed` goes on once the test calls `open()`. */
+export function gate() {
+  let open!: () => void;
+  const passed = new Promise<void>((resolve) => (open = resolve));
+  return { passed, open };
+}
 
 // `/auth/me` is the `user` option's, routed by the backend fixture.
 const DEFAULT_REST: Rest[] = [

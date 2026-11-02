@@ -1,4 +1,4 @@
-import { test, expect, get, on, ME, PROFILE, STATUS, type FakeBackend, type Reply } from './support/fixtures';
+import { test, expect, gate, get, on, requestEnded, ME, PROFILE, STATUS, type FakeBackend, type Reply } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { sineWav } from './support/audio';
 import type { Page } from '@playwright/test';
@@ -9,12 +9,6 @@ const puts = (backend: FakeBackend) =>
   backend.requests.filter((r) => r.method === 'PUT' && r.path === '/profiles/p-1/calls-settings').map((r) => JSON.parse(r.body!.toString()));
 const settings = (over: Record<string, unknown> = {}) => ({ profileId: 'p-1', answerInDashboard: false, recording: false, retentionDays: 90, announcement: null, ...over });
 const ANNOUNCEMENT = { mimeType: 'audio/wav', durationSec: 2 };
-/** A gate: what awaits `gate.passed` waits until the test calls `gate.open()`. */
-function gate() {
-  let open!: () => void;
-  const passed = new Promise<void>((resolve) => (open = resolve));
-  return { passed, open };
-}
 /** Auto-reject is on for the profile until the guardrails turn it off (PUT /profiles/p-1), and the checklist says so. */
 function autoRejectOn(backend: FakeBackend) {
   const state = { on: true };
@@ -242,6 +236,24 @@ test('the announcement can be heard, and stays while recording is on', async ({ 
   await page.getByRole('alertdialog', { name: 'Remove the announcement?' }).getByRole('button', { name: 'Remove' }).click();
   await expect(s.getByRole('alert')).toContainText('Turn recording off first');
   await expect(s).toContainText('wav · 2.0 s');
+});
+
+test('leaving the page while the announcement loads gives the load up: no file is kept for nothing', async ({ page, backend }) => {
+  backend.route(get('/calls/media/status', status({ announcement: ANNOUNCEMENT })));
+  const slow = gate();
+  backend.route(on('GET', '/profiles/p-1/calls-announcement', async () => {
+    await slow.passed;
+    return { body: sineWav(2), headers: { 'content-type': 'audio/wav' } };
+  }));
+  const ended = requestEnded(page, '/calls-announcement');
+  await page.goto('/dashboard/profiles/p-1');
+  await section(page).getByRole('button', { name: 'Listen' }).click();
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Calls', exact: true }).click();
+  await expect(page).toHaveURL(/\/dashboard\/calls$/);
+  slow.open();
+  await ended;
+  await page.waitForTimeout(300); // what the page does with an answer
+  expect(await page.evaluate(() => (window as any).__liveBlobs())).toEqual([]);
 });
 
 test('removing the announcement asks first', async ({ page, backend }) => {

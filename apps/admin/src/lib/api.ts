@@ -362,10 +362,10 @@ class ApiClient {
     }
   }
 
-  /** A route that answers bytes (a recording, an announcement), on the same auth path as request(). */
-  async fetchBlob(endpoint: string): Promise<{ blob?: Blob; error?: string; status: number }> {
+  /** A route that answers bytes (a recording, an announcement), on the same auth path as request(); `signal` gives it up. */
+  async fetchBlob(endpoint: string, signal?: AbortSignal): Promise<{ blob?: Blob; error?: string; status: number }> {
     try {
-      const response = await this.send(endpoint);
+      const response = await this.send(endpoint, { signal });
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         return { error: data?.message || data?.error || `Request failed with status ${response.status}`, status: response.status };
@@ -715,8 +715,8 @@ class ApiClient {
     return { ...res, error };
   }
 
-  fetchCallsAnnouncement(profileId: string) {
-    return this.fetchBlob(`/profiles/${profileId}/calls-announcement`);
+  fetchCallsAnnouncement(profileId: string, signal?: AbortSignal) {
+    return this.fetchBlob(`/profiles/${profileId}/calls-announcement`, signal);
   }
 
   async deleteCallsAnnouncement(profileId: string) {
@@ -724,8 +724,8 @@ class ApiClient {
   }
 
   /** The recording's bytes, for a blob: URL: an <audio src> cannot send the Bearer header. Each fetch is audited. */
-  fetchCallRecording(callId: string, download = false) {
-    return this.fetchBlob(`/calls/${callId}/recording${download ? '?download=1' : ''}`);
+  fetchCallRecording(callId: string, download = false, signal?: AbortSignal) {
+    return this.fetchBlob(`/calls/${callId}/recording${download ? '?download=1' : ''}`, signal);
   }
 
   async deleteCallRecording(callId: string) {
