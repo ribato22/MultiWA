@@ -80,6 +80,7 @@ jobs:
       # (REST answered in the browser, realtime from a socket.io server on the build's NEXT_PUBLIC_API_URL port).
       - name: Admin e2e (fake backend)
         id: admin-e2e
+        timeout-minutes: 20
         run: pnpm --filter admin test:e2e
 
       - name: Upload the admin e2e traces
