@@ -44,6 +44,7 @@ import { DemoBanner } from '@/components/demo-banner';
 import { CallsProvider } from '@/components/calls/calls-provider';
 import { AvailabilityToggle } from '@/components/calls/availability-toggle';
 import { IncomingCallBanner } from '@/components/calls/incoming-call-banner';
+import { InCallBar } from '@/components/calls/in-call-bar';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
 type MenuItem = { name: string; href: string; Icon: LucideIcon };
@@ -313,6 +314,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
+            <div className="flex min-w-0 flex-1 justify-center px-4">
+              <InCallBar />
+            </div>
             <div className="flex items-center gap-4">
               <AvailabilityToggle />
               {/* Notification Bell */}

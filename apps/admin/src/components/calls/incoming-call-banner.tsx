@@ -1,14 +1,24 @@
 'use client';
 // The incoming-call banner, over every dashboard page (top right, above dialogs): one card per call ringing this agent.
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { CircleDot, MessagesSquare, PhoneIncoming, VolumeX, X } from 'lucide-react';
+import { CircleDot, Loader2, MessagesSquare, Phone, PhoneIncoming, VolumeX, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { READINESS_TEXT, ringingCallerLabel } from '@/lib/calls';
 import { useCalls } from './calls-provider';
 
 export function IncomingCallBanner() {
   const calls = useCalls();
+  const answerRef = useRef<HTMLButtonElement>(null);
   const banners = calls?.state.banners ?? [];
+  const newest = banners.filter((b) => b.status === 'ringing').at(-1)?.call.callId;
+  // Focus goes to the newest call's Answer, unless the agent is typing: an Enter meant for a field must not answer.
+  useEffect(() => {
+    if (!newest) return;
+    const el = document.activeElement as HTMLElement | null;
+    if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+    answerRef.current?.focus();
+  }, [newest]);
   if (!calls || !banners.length) return null;
   return (
     <section aria-label="Incoming calls" className="pointer-events-auto fixed right-4 top-20 z-[60] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 sm:right-6">
@@ -69,6 +79,16 @@ export function IncomingCallBanner() {
                   Click anywhere on the page to hear the ringtone
                 </p>
                 <div className="mt-3 flex gap-2">
+                  <Button
+                    ref={b.call.callId === newest ? answerRef : undefined}
+                    size="sm"
+                    className="flex-1"
+                    disabled={!!unavailable || b.status === 'answering'}
+                    onClick={() => calls.answer(b.call.callId)}
+                  >
+                    {b.status === 'answering' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <Phone className="mr-1.5 h-4 w-4" aria-hidden="true" />}
+                    {b.status === 'answering' ? 'Connecting…' : 'Answer'}
+                  </Button>
                   <Button size="sm" variant="outline" disabled={b.status === 'answering'} onClick={() => calls.dismiss(b.call.callId)}>
                     <X className="mr-1.5 h-4 w-4" aria-hidden="true" />
                     Dismiss

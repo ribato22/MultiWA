@@ -34,6 +34,7 @@ test('a ringing call shows on any page: who, on which line, the chat link, and t
   await expect(card).toContainText('+628111000111');
   await expect(card).toContainText('This call is recorded');
   await expect(card.getByRole('link', { name: 'Open the chat with Pak Joko' })).toHaveAttribute('href', '/dashboard/chat?profile=p-1&conv=conv-1');
+  await expect(card.getByRole('button', { name: 'Answer' })).toBeEnabled();
   await expect(page.locator('#calls-announcer')).toHaveText('Incoming call from Pak Joko on Line 1. This call is recorded');
   await expectAccessible(page, '[aria-label="Incoming calls"]');
 });
@@ -69,6 +70,7 @@ test('a call that cannot be answered here says why', async ({ page, backend }) =
   backend.emit('call:ringing', ringing({ answerable: false, unavailableReason: 'web_calling_disabled' }));
   await expect(banner(page)).toContainText('Answer on the phone');
   await expect(banner(page)).toContainText('WhatsApp has not enabled calling on WhatsApp Web for this number');
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeDisabled();
 });
 
 test('a muted ringer stays silent, and a call that stopped ringing closes its banner', async ({ page, backend }) => {
@@ -183,6 +185,27 @@ test('no ringtone or title flash while this agent is on a call, here or in anoth
   await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(before); // it rings again at once
 });
 
+test('no ringtone or title flash while this agent answers one of two calls, however long the microphone takes to open', async ({ page, backend }) => {
+  // The microphone opens when the test says so, as when the browser asks the agent first.
+  await page.evaluate(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = (c) => new Promise((resolve, reject) => (w.__openMic = () => gum(c).then(resolve, reject)));
+  });
+  backend.emit('call:ringing', ringing());
+  backend.emit('call:ringing', ringing(SARI));
+  await expect(banner(page).getByRole('group')).toHaveCount(2);
+  await expect.poll(() => tones(page), { timeout: 8000 }).toBeGreaterThan(0);
+  await banner(page).getByRole('group', { name: 'Call from Pak Joko' }).getByRole('button', { name: 'Answer' }).click();
+  await expect(banner(page).getByRole('button', { name: 'Connecting…' })).toBeDisabled();
+  const before = await tones(page);
+  expect(await titles(page)).not.toContain('📞 Incoming call'); // a ring cycle, Bu Sari's call still ringing
+  expect(await tones(page)).toBe(before);
+  expect(backend.commands('call:answer')).toEqual([]); // the microphone is still opening
+  await page.evaluate(() => (window as any).__openMic());
+  await expect.poll(() => backend.commands('call:answer')).toEqual([{ callId: 'call-1' }]);
+});
+
 test('a tab the browser keeps silent says so and makes no tone; a click on the page lets it ring at once; Dismiss never moves', async ({ page, backend }) => {
   await page.evaluate(() => {
     const w = window as any;
@@ -219,6 +242,22 @@ test('in a tab the browser keeps silent, the first press on Dismiss dismisses, a
   await expect(banner(page)).toHaveCount(0);
   await page.waitForTimeout(500);
   expect(await tones(page)).toBe(0);
+});
+
+test('a click on Answer lets a tab the browser keeps silent ring for a later call, even with the ringer off while it rang', async ({ page, backend }) => {
+  await page.evaluate(() => {
+    (window as any).__audioBlocked = true;
+    localStorage.setItem('multiwa:calls:u-ada:ringer', 'off'); // no ringer, so nothing else waits for a click
+  });
+  const bar = page.getByRole('group', { name: 'Current call' });
+  backend.emit('call:ringing', ringing());
+  await banner(page).getByRole('button', { name: 'Answer' }).click();
+  await expect(bar).toBeVisible();
+  backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 3 });
+  await expect(bar).toContainText('The caller hung up');
+  await page.evaluate(() => localStorage.setItem('multiwa:calls:u-ada:ringer', 'on'));
+  backend.emit('call:ringing', ringing(SARI));
+  await expect.poll(() => tones(page), { timeout: 2000 }).toBeGreaterThan(0); // no click since Answer
 });
 
 test('a page whose audio runs a moment after it was made (Firefox starts it suspended) rings without showing the hint', async ({ page, backend }) => {
