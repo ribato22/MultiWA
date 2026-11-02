@@ -12,6 +12,19 @@ let held = false;
 
 const inConsole = (el: EventTarget | null) => el instanceof Element && !!el.closest('[data-call-console]');
 
+/** The main content, made able to take the focus for settleFocus's last resort, until it no longer has it. */
+let lent: HTMLElement | null = null;
+/**
+ * The main content takes no focus but the one the console gives it: else a click beside every control (a header menu's
+ * own text) would focus it, and close that menu. A window that loses the focus blurs it too, but it keeps the focus.
+ */
+function release() {
+  if (!lent || document.activeElement === lent) return;
+  lent.removeAttribute('tabindex');
+  lent.removeEventListener('blur', release);
+  lent = null;
+}
+
 /**
  * The console moves the focus to `el` (a ring to its Answer, a call to its bar), and keeps track of it as its focus
  * event would: a page behind another tab or window gets no focus events, the focus moves there silently.
@@ -22,6 +35,7 @@ export function takeFocus(el: HTMLElement | null) {
   if (!el || document.activeElement !== el) return;
   held = true;
   if (was instanceof HTMLElement && was !== document.body && !inConsole(was)) from = was;
+  release(); // the main content may have had it: behind another tab, no blur says it went
 }
 
 /** The focus events of each part of the console: the agent moving the focus into it, or out. */
@@ -55,6 +69,13 @@ export function settleFocus() {
   }
   held = false;
   from?.focus(); // unless it went, or can no longer take the focus
-  if (!from || document.activeElement !== from) document.querySelector('main')?.focus({ preventScroll: true });
+  if (!from || document.activeElement !== from) {
+    lent = document.querySelector('main');
+    if (lent) {
+      lent.tabIndex = -1;
+      lent.addEventListener('blur', release);
+      lent.focus({ preventScroll: true });
+    }
+  }
   from = null;
 }

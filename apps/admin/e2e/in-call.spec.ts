@@ -458,7 +458,7 @@ test('a failed answer’s card keeps the focus while it says why, and gives it b
   await expect(working(page)).toBeFocused();
 });
 
-test('nothing to give the focus back to: it goes to the main content, not to the page', async ({ page, backend }) => {
+test('nothing to give the focus back to: it goes to the main content, not to the page; only then can the main content take it', async ({ page, backend }) => {
   await open(page); // nothing has the focus
   backend.emit('call:ringing', ringing());
   await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeFocused();
@@ -467,6 +467,11 @@ test('nothing to give the focus back to: it goes to the main content, not to the
   const main = page.getByRole('main');
   await expect(main).toBeFocused();
   expect(await main.evaluate((el) => getComputedStyle(el).outlineColor)).toBe('rgba(0, 0, 0, 0)'); // no ring around the page
+  // Once the focus moved on, a click beside every control (a header menu's text) focuses nothing again: the page.
+  await page.keyboard.press('Tab');
+  await expect(main).not.toHaveAttribute('tabindex');
+  await page.getByRole('heading', { name: 'Calls', exact: true }).click();
+  expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
 });
 
 test('two calls ringing: the card that goes with the focus hands it to the other call’s Answer, and the last one gives it back', async ({ page, backend }) => {
@@ -630,4 +635,28 @@ test('a call a reload rejoined behind another tab gives the focus to the main co
   await expect(bar(page)).toHaveCount(0, { timeout: 10_000 });
   await back();
   await expect(page.getByRole('main')).toBeFocused();
+});
+
+test('the main content keeps the focus it was given while the page is behind another tab, and gives it up to a ring there', async ({ page, backend }) => {
+  await open(page); // nothing has the focus
+  backend.emit('call:ringing', ringing());
+  const answerButton = banner(page).getByRole('button', { name: 'Answer' });
+  await expect(answerButton).toBeFocused();
+  await page.keyboard.press('Escape');
+  const main = page.getByRole('main');
+  await expect(main).toBeFocused();
+  let back = await behindAnotherTab(page);
+  await back();
+  await rendered(page); // Chrome moves the focus off an element that can no longer take it when it renders
+  await expect(main).toBeFocused();
+  await expect(main).toHaveAttribute('tabindex', '-1');
+  // Behind another tab again, a ring moves the focus with no event: the main content can no longer take it all the same.
+  back = await behindAnotherTab(page);
+  backend.emit('call:ringing', ringing({ callId: 'call-2' }));
+  await expect.poll(() => holds(answerButton)).toBe(true);
+  await expect(main).not.toHaveAttribute('tabindex');
+  backend.emit('call:ended', { callId: 'call-2', outcome: 'missed' });
+  await expect(banner(page)).toHaveCount(0);
+  await back();
+  await expect(main).toBeFocused();
 });

@@ -1,4 +1,4 @@
-import { test, expect, get, on, type FakeBackend } from './support/fixtures';
+import { test, expect, get, on, rendered, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 
 /** The JSON body of the first `method path` request the pages sent, if one was sent. */
@@ -115,4 +115,18 @@ test("the header's menus close on Escape and once the focus leaves them: one ope
   await expect(notifications).toBeVisible();
   await page.keyboard.press('Shift+Tab'); // out, the other way
   await expect(notifications).toHaveCount(0);
+});
+
+test("a click on a header menu's own text leaves it open: the focus goes nowhere, not out of the menu", async ({ page }) => {
+  await page.goto('/dashboard/api-keys');
+  await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+  const notifications = page.getByRole('dialog', { name: 'Notifications' });
+  await notifications.getByRole('heading', { name: 'Notifications' }).click();
+  await rendered(page);
+  await expect(notifications).toBeVisible();
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  const menu = page.getByRole('menu', { name: 'Account' });
+  await menu.getByText(ME.email).click();
+  await rendered(page);
+  await expect(menu).toBeVisible();
 });
