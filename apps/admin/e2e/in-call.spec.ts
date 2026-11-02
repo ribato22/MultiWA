@@ -721,8 +721,9 @@ test('a call a reload rejoined behind another tab gives the focus to the main co
   backend.offline = true; // the reload's socket waits, so the rejoin comes once the page is behind the other tab
   await page.reload();
   const back = await behindAnotherTab(page);
+  await expect.poll(() => holds(bar(page))).toBe(true); // the call stored here, shown at once, as after any reload
   backend.offline = false;
-  await expect.poll(() => holds(bar(page)), { timeout: 15_000 }).toBe(true); // the rejoined call, as after any reload
+  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toHaveLength(1);
   backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 7 });
   await expect(bar(page)).toHaveCount(0, { timeout: 10_000 });
   await back();

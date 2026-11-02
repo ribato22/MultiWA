@@ -62,6 +62,31 @@ test('a reload during a call rejoins it: new audio, and "Connecting…" until th
   await expect(timer(page)).toHaveText(/^1:0[1-5]$/);
 });
 
+test('a reload while the network is down shows the call stored here at once, Reconnecting…, its Hang up waiting for the server, and still asks before leaving', async ({ page, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  page.once('dialog', (d) => void d.accept()); // the reload's own leave-page warning
+  backend.offline = true;
+  await page.reload();
+  await expect(bar(page)).toContainText('Reconnecting…');
+  await expect(bar(page)).toContainText('Pak Joko');
+  const hangUp = bar(page).getByRole('button', { name: 'Hang up' });
+  await expect(hangUp).toHaveAttribute('aria-disabled', 'true');
+  await expect(hangUp).toHaveAccessibleDescription('Reconnecting…');
+  await hangUp.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('heading', { name: 'Calls', exact: true }).click(); // the browser asks before leaving only a page clicked on
+  const dialog = page.waitForEvent('dialog');
+  void page.close({ runBeforeUnload: true });
+  const d = await dialog;
+  expect(d.type()).toBe('beforeunload');
+  await d.dismiss(); // stay on the page
+  backend.offline = false;
+  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
+  await expect(hangUp).not.toHaveAttribute('aria-disabled', 'true');
+  expect(backend.commands('call:hangup')).toEqual([]);
+});
+
 test('a reload after the call ended elsewhere finds nothing to rejoin', async ({ page, backend }) => {
   backend.reply('call:rejoin', () => ({ ok: false, reason: 'not_in_call' }));
   await open(page);

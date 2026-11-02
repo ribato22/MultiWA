@@ -1,7 +1,7 @@
 'use client';
 // The call this agent is on, docked in the header on every page: who, how long, the recording, the network, and the
 // controls. Another tab of the agent may hold the call's audio: the bar says so there.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { CircleDot, Loader2, Mic, MicOff, PhoneCall, PhoneOff, Signal, SignalLow, SignalMedium, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,6 +22,7 @@ export function InCallBar() {
   const [now, setNow] = useState(() => Date.now());
   const [mics, setMics] = useState<MediaDeviceInfo[]>([]);
   const barRef = useRef<HTMLDivElement>(null);
+  const statusId = useId();
   useEffect(() => {
     if (!live) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -49,6 +50,9 @@ export function InCallBar() {
   const remaining = a.announcing ? Math.max(0, Math.ceil(a.announcing.durationSec - (now - a.announcing.since) / 1000)) : 0;
   // The socket is down: this tab's audio may still run, but nothing about the call reaches it until the socket is back.
   const reconnecting = a.local && !calls.socketUp;
+  // A call stored here before a reload shows at once, but nothing says it goes on until the socket first connects:
+  // Hang up waits for it.
+  const unconfirmed = a.local && !calls.connectedOnce;
   // The live region changes with the phase only: the notice's countdown beside it is not said every second.
   const phase =
     a.phase === 'ended' ? a.endedText
@@ -78,7 +82,7 @@ export function InCallBar() {
         </p>
         <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span>
-            <span role="status">{phase}</span>
+            <span role="status" id={statusId}>{phase}</span>
             {a.local && a.phase === 'announcing' && !reconnecting && <span aria-hidden="true" className="tabular-nums"> ({remaining} s)</span>}
           </span>
           {a.phase === 'active' && a.answeredAt && (
@@ -146,7 +150,13 @@ export function InCallBar() {
             </Button>
           )}
           {/* While it hangs up, the controls wait and keep the focus: the console takes one hang-up per call. */}
-          <Button size="sm" variant="destructive" aria-disabled={a.phase === 'hanging_up'} onClick={calls.hangUp}>
+          <Button
+            size="sm"
+            variant="destructive"
+            aria-disabled={a.phase === 'hanging_up' || unconfirmed}
+            aria-describedby={unconfirmed ? statusId : undefined}
+            onClick={() => !unconfirmed && calls.hangUp()}
+          >
             {a.phase === 'hanging_up' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <PhoneOff className="mr-1.5 h-4 w-4" aria-hidden="true" />}
             Hang up
           </Button>

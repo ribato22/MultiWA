@@ -76,6 +76,8 @@ export interface CallsConsole {
   micId: string | null;
   /** The console's socket is connected: while it is not, nothing about the call reaches this tab. */
   socketUp: boolean;
+  /** The socket connected since the page loaded: until then, nothing says whether a call stored here goes on. */
+  connectedOnce: boolean;
   setAvailable(on: boolean): void;
   dismiss(callId: string): void;
   answer(callId: string): void;
@@ -112,6 +114,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
   const [playBlocked, setPlayBlocked] = useState(false);
   const [micId, setMicId] = useState<string | null>(null);
   const [socketUp, setSocketUp] = useState(false);
+  const [connectedOnce, setConnectedOnce] = useState(false);
 
   // Calls ring only for profiles that answer in the dashboard: without one, the header shows no call controls.
   useEffect(() => {
@@ -141,6 +144,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     const confirmed = (available: boolean) => dispatch({ type: 'availability', available });
     socket.on('connect', async () => {
       setSocketUp(true);
+      setConnectedOnce(true);
       // Only a read: a choice this tab made before can be stale (another tab or device changed it since). A failed read
       // is tried once more: without one, the switch stays offline on a live socket.
       for (let tries = 0; tries < 2 && socket.connected; tries++) {
@@ -519,6 +523,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         else fail(CALL_AUDIO_TEXT.rejoinFailed);
       }
     };
+    // A reload's call shows at once, as it was stored: the connect rejoins it, or finds it over or moved.
+    const reloaded = stored();
+    if (reloaded) dispatch({ type: 'restored', call: reloaded.call, local: true, muted: reloaded.muted, answeredAt: reloaded.answeredAt });
     socket.on('connect', () => {
       const call = storedCall();
       const { banners, active } = stateRef.current;
@@ -649,6 +656,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             playBlocked,
             micId,
             socketUp,
+            connectedOnce,
             setAvailable: (on) => cmd.current.setAvailable?.(on),
             dismiss: (callId) => cmd.current.dismiss?.(callId),
             answer: (callId) => cmd.current.answer?.(callId),
@@ -660,7 +668,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             profileAnswers: () => setProfilesRing(true),
           }
         : null,
-    [agent, user, state, inUse, profilesRead, answerBlocked, soundBlocked, quality, playBlocked, micId, socketUp],
+    [agent, user, state, inUse, profilesRead, answerBlocked, soundBlocked, quality, playBlocked, micId, socketUp, connectedOnce],
   );
   return (
     <CallsContext.Provider value={value}>
