@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({
-  prisma: { profile: { count: vi.fn() } },
+  prisma: { profile: { count: vi.fn(), findMany: vi.fn() } },
 }));
 
 import { prisma } from '@multiwa/database';
@@ -26,19 +26,34 @@ describe('MetricsEventsListener', () => {
 
   beforeEach(() => {
     vi.mocked(prisma.profile.count).mockReset();
+    vi.mocked(prisma.profile.findMany).mockReset();
     metrics = makeMetrics();
     listener = new MetricsEventsListener(metrics);
   });
 
   it('resyncs the connected-profiles gauge from the DB on init', async () => {
-    vi.mocked(prisma.profile.count).mockResolvedValueOnce(3 as any);
+    vi.mocked(prisma.profile.findMany).mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }, { id: 'c' }] as any);
     await listener.onModuleInit();
-    expect(prisma.profile.count).toHaveBeenCalledWith({ where: { status: 'connected' } });
+    expect(prisma.profile.findMany).toHaveBeenCalledWith({ where: { status: 'connected' }, select: { id: true } });
     expect(metrics.connectedProfiles.set).toHaveBeenCalledWith(3);
   });
 
+  // A profile that reconnects after a transient drop (an engine recycle) becomes ready again with no
+  // disconnect event in between: counting events let the gauge climb, so "all profiles down" (== 0) went blind.
+  it('counts a profile once however often it becomes ready, and drops it on disconnect', async () => {
+    vi.mocked(prisma.profile.findMany).mockResolvedValueOnce([{ id: 'p1' }] as any);
+    await listener.onModuleInit();
+    listener.onConnectionReady({ profileId: 'p1' });
+    listener.onConnectionReady({ profileId: 'p1' });
+    expect(metrics.connectedProfiles.set).toHaveBeenLastCalledWith(1);
+    listener.onConnectionReady({ profileId: 'p2' });
+    expect(metrics.connectedProfiles.set).toHaveBeenLastCalledWith(2);
+    listener.onConnectionDisconnected({ profileId: 'p1' });
+    expect(metrics.connectedProfiles.set).toHaveBeenLastCalledWith(1);
+  });
+
   it('swallows a DB error during resync (never throws)', async () => {
-    vi.mocked(prisma.profile.count).mockRejectedValueOnce(new Error('db down'));
+    vi.mocked(prisma.profile.findMany).mockRejectedValueOnce(new Error('db down'));
     await expect(listener.onModuleInit()).resolves.toBeUndefined();
     expect(metrics.connectedProfiles.set).not.toHaveBeenCalled();
   });
@@ -53,11 +68,11 @@ describe('MetricsEventsListener', () => {
     listener.onMessageSent({}); // missing type falls back
     expect(metrics.messagesSentTotal.inc).toHaveBeenCalledWith({ type: 'unknown' });
 
-    listener.onConnectionReady();
-    expect(metrics.connectedProfiles.inc).toHaveBeenCalledOnce();
+    listener.onConnectionReady({ profileId: 'p1' });
+    expect(metrics.connectedProfiles.set).toHaveBeenLastCalledWith(1);
 
-    listener.onConnectionDisconnected();
-    expect(metrics.connectedProfiles.dec).toHaveBeenCalledOnce();
+    listener.onConnectionDisconnected({ profileId: 'p1' });
+    expect(metrics.connectedProfiles.set).toHaveBeenLastCalledWith(0);
   });
 
   it('counts a death of the call media worker', () => {

@@ -125,6 +125,7 @@ services:
       WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
       WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
       SEND_TIMEOUT_MS: ${SEND_TIMEOUT_MS:-60000}
+      WWEBJS_MEMORY_LIMIT_MB: ${WWEBJS_MEMORY_LIMIT_MB:-2500}
       # Calls answered in the dashboard (phase 2): off by default. Media is UDP+TCP straight to the api, never through
       # the HTTP proxy: switched on, add docker-compose.calls-media.yml, which publishes the media port.
       CALLS_MEDIA_ENABLED: ${CALLS_MEDIA_ENABLED:-false}
@@ -198,6 +199,7 @@ services:
       WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
       WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
       SEND_TIMEOUT_MS: ${SEND_TIMEOUT_MS:-60000}
+      WWEBJS_MEMORY_LIMIT_MB: ${WWEBJS_MEMORY_LIMIT_MB:-2500}
       # Per-attempt webhook delivery timeout (read by apps/worker's webhook processor).
       WEBHOOK_TIMEOUT_MS: ${WEBHOOK_TIMEOUT_MS:-30000}
     volumes:

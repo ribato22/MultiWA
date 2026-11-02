@@ -6,6 +6,7 @@ import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
 import { readCallLog, isCallLogWithoutOutcome, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
 import { WebJsCallMedia, CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT } from './webjs-call-media';
+import { processTreeRssAnonMb } from './process-memory';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -43,6 +44,31 @@ const MAX_WARNED_SHAPES = 20;
 // At most one line per this long about dropped call logs: a fresh link's history sync drops hundreds.
 const DROPPED_CALL_LOG_NOTE_MS = 60_000;
 
+/** Reasons the adapter reports through onDisconnected when the browser side failed, not WhatsApp. */
+export const BROWSER_LOSS_REASONS = {
+  pageCrashed: 'PAGE_CRASHED',
+  browserClosed: 'BROWSER_CLOSED',
+  memoryLimit: 'MEMORY_LIMIT',
+} as const;
+
+/** How often a ready profile's Chromium memory is measured. */
+const MEMORY_CHECK_MS = 60_000;
+// A profile restarted for memory is not restarted for memory again this soon: if its normal size is above the
+// limit, a restart every few minutes would only take it offline. A crash is still recovered meanwhile.
+const MEMORY_RECYCLE_COOLDOWN_MS = 30 * 60_000;
+/** profileId -> when it was last restarted for memory (module-wide: each restart makes a new adapter). */
+const memoryRecycledAt = new Map<string, number>();
+
+/**
+ * WWEBJS_MEMORY_LIMIT_MB: the anonymous resident memory, in MB, of a profile's Chromium (browser and renderers)
+ * above which it is recycled from its stored session. 2500 by default, 0 turns the check off, anything else
+ * falls back to the default. On a 7.3 GB host one renderer reached 4.9 GB and the OOM killer took it.
+ */
+export function memoryLimitMb(raw: string | undefined): number {
+  const n = Number(raw);
+  return raw !== undefined && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 2500;
+}
+
 export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   readonly engineType = 'whatsapp-web-js' as const;
   
@@ -68,6 +94,12 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   private warnedCallLogShapes = new Set<string>();
   // Call media: only when the server switch is on (EngineConfig.callMedia.enabled).
   callMedia?: WebJsCallMedia;
+  // Clients whose page or browser loss was already reported: a crash followed by the browser closing is one loss.
+  private lostClients = new WeakSet<object>();
+  // Clients the adapter let go of itself (destroy, logout): their browser closing is not a loss.
+  private releasedClients = new WeakSet<object>();
+  private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private warnedMemoryCooldown = false;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -201,7 +233,10 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     });
 
     // Disconnected
+    const client = this.client;
     this.client.on('disconnected', (reason: string) => {
+      // A browser loss already reported for this client is the same disconnect: report it once.
+      if (this.lostClients.has(client)) return;
       console.log(`[WhatsApp-WebJS] Disconnected for profile ${this.config?.profileId}: ${reason}`);
       this.status = {
         isConnected: false,
@@ -388,11 +423,16 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
     
     console.log(`[WhatsApp-WebJS] Connecting profile ${this.config?.profileId}...`);
-    await this.client.initialize();
+    const client = this.client;
+    await client.initialize();
+    this.watchBrowser(client);
   }
 
   async disconnect(): Promise<void> {
     if (this.client) {
+      // whatsapp-web.js logout() closes the browser: that close is ours, not a loss.
+      this.releasedClients.add(this.client);
+      this.stopMemoryWatch();
       try {
         await this.client.logout();
       } catch (e) {
@@ -403,15 +443,86 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   }
 
   async destroy(): Promise<void> {
-    if (this.client) {
-      try {
-        await this.client.destroy();
-      } catch (e) {
-        // Ignore destroy errors
-      }
-      this.client = null;
-      this.status = { isConnected: false, isAuthenticated: false };
+    const client = this.client;
+    if (!client) return;
+    // Closing the browser below fires its 'disconnected', which is not a loss. The client stays set until it is
+    // closed, so a send still in flight fails against the closing browser instead of finding no client and
+    // reading as sent.
+    this.releasedClients.add(client);
+    this.stopMemoryWatch();
+    try {
+      await client.destroy();
+    } catch (e) {
+      // Ignore destroy errors
     }
+    this.client = null;
+    this.status = { isConnected: false, isAuthenticated: false };
+  }
+
+  /**
+   * whatsapp-web.js reports WhatsApp's own disconnects, never a crashed page or a dead browser: on 2026-10-31
+   * the OOM killer took a profile's renderer and the profile read "connected" with a dead page for 21 hours.
+   * Report those as disconnects, so the engine-managers recycle the engine from its stored session, and do the
+   * same for a Chromium whose memory passes WWEBJS_MEMORY_LIMIT_MB, before the host runs out.
+   */
+  private watchBrowser(client: Client): void {
+    if (client !== this.client || this.releasedClients.has(client)) return; // destroyed while connecting
+    (client as any).pupPage?.on?.('error', () => this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.pageCrashed));
+    (client as any).pupBrowser?.on?.('disconnected', () =>
+      this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.browserClosed),
+    );
+    const limitMb = memoryLimitMb(process.env.WWEBJS_MEMORY_LIMIT_MB);
+    this.stopMemoryWatch();
+    if (limitMb > 0) {
+      this.memoryTimer = setInterval(() => this.checkMemory(client, limitMb), MEMORY_CHECK_MS);
+      this.memoryTimer.unref?.();
+    }
+  }
+
+  /** Measured only while ready: a profile still loading its chats is not a leak. */
+  private checkMemory(client: Client, limitMb: number): void {
+    if (client !== this.client || !this.isReady()) return;
+    const pid = (client as any).pupBrowser?.process?.()?.pid;
+    const mb = typeof pid === 'number' ? this.readBrowserMemoryMb(pid) : null;
+    if (mb === null || mb <= limitMb) return;
+    const profileId = this.config?.profileId ?? '';
+    const last = memoryRecycledAt.get(profileId);
+    if (last !== undefined && Date.now() - last < MEMORY_RECYCLE_COOLDOWN_MS) {
+      if (!this.warnedMemoryCooldown) {
+        this.warnedMemoryCooldown = true;
+        console.warn(
+          `[WhatsApp-WebJS] Chromium of profile ${profileId} holds ${mb} MB (limit ${limitMb} MB) within 30 minutes of its last memory restart; not restarting it again yet. Raise WWEBJS_MEMORY_LIMIT_MB if this is its normal size.`,
+        );
+      }
+      return;
+    }
+    memoryRecycledAt.set(profileId, Date.now());
+    console.warn(`[WhatsApp-WebJS] Chromium of profile ${profileId} holds ${mb} MB (limit ${limitMb} MB)`);
+    this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.memoryLimit);
+  }
+
+  /** The measurement, as a method so a test can stand in for /proc. */
+  private readBrowserMemoryMb(pid: number): number | null {
+    return processTreeRssAnonMb(pid);
+  }
+
+  private stopMemoryWatch(): void {
+    if (this.memoryTimer) clearInterval(this.memoryTimer);
+    this.memoryTimer = null;
+  }
+
+  /** Once per client, and only for the client this adapter still holds: its own destroy() is not a loss. */
+  private reportBrowserLoss(client: Client, reason: string): void {
+    if (client !== this.client || this.releasedClients.has(client) || this.lostClients.has(client)) return;
+    this.lostClients.add(client);
+    this.stopMemoryWatch();
+    console.warn(
+      `[WhatsApp-WebJS] ${reason} for profile ${this.config?.profileId}: reported as a disconnect to recycle its engine from the stored session`,
+    );
+    this.status = { isConnected: false, isAuthenticated: false };
+    this.calls.clear();
+    this.callsRungThisSession.clear();
+    this.config?.onDisconnected?.(reason);
   }
 
   getStatus(): EngineStatus {
