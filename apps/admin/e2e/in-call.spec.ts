@@ -190,6 +190,29 @@ test('the microphone can be switched mid-call, and the choice is kept for the ne
   expect(await page.evaluate(() => (window as any).__asked.at(-1))).toContain('"exact":"mic-b"');
 });
 
+test('the bar shows the network quality, which a screen reader hears as such, and follows the link as it changes', async ({ page, backend }) => {
+  await open(page);
+  // The link's stats as the browser reports them, steered by the test: the round trip and loss the server reports
+  // about the agent's voice, and the caller's packets arriving.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__link = { rtt: 0.08, received: 0 };
+    RTCPeerConnection.prototype.getStats = async () => {
+      w.__link.received += 100;
+      return new Map([
+        ['out', { type: 'remote-inbound-rtp', roundTripTime: w.__link.rtt, fractionLost: 0, jitter: 0.005 }],
+        ['in', { type: 'inbound-rtp', kind: 'audio', jitter: 0.005, packetsLost: 0, packetsReceived: w.__link.received }],
+      ]) as unknown as RTCStatsReport;
+    };
+  });
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  await expect(bar(page)).toContainText('Network quality: Good');
+  await page.evaluate(() => ((window as any).__link.rtt = 0.8)); // the round trip grows to 800 ms
+  await expect(bar(page)).toContainText('Network quality: Poor');
+  await expect(bar(page).getByText('Network quality:')).toHaveClass(/sr-only/); // the icon and the word say it on screen
+});
+
 test('Hang up waits for the server, up to half a minute on a recorded call, then says how it ended', async ({ page, backend }) => {
   await page.clock.install();
   let release!: () => void;

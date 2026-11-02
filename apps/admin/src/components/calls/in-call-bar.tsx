@@ -99,6 +99,7 @@ export function InCallBar() {
           {q && (
             <span className="inline-flex items-center gap-1" title="Network quality">
               <q.Icon className="h-3 w-3" aria-hidden="true" />
+              <span className="sr-only">Network quality: </span>
               {q.label}
             </span>
           )}
