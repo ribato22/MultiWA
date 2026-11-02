@@ -95,7 +95,7 @@ test('signing out while the microphone opens closes it at once, and claims nothi
   backend.emit('call:ringing', ringing());
   await banner(page).getByRole('button', { name: 'Answer' }).click();
   await page.getByRole('button', { name: 'Account menu' }).click();
-  await page.getByRole('menuitem', { name: 'Sign out' }).press('Enter'); // the banner floats over the menu
+  await page.getByRole('menuitem', { name: 'Sign out' }).click(); // the menu is over the banner
   await expect(page).toHaveURL(/\/auth\/login$/); // a client navigation: the console is gone, this page is not
   await page.evaluate(() => (window as any).__openMic());
   await expect.poll(() => page.evaluate(() => (window as any).__mic.getAudioTracks()[0].readyState)).toBe('ended');

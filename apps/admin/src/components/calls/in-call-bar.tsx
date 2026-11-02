@@ -119,8 +119,7 @@ export function InCallBar() {
               Take the call here
             </Button>
           )}
-          {/* A darker red than the theme's: white small text on that one fails the contrast minimum. */}
-          <Button size="sm" variant="destructive" className="bg-red-600 text-white hover:bg-red-700" disabled={a.phase === 'hanging_up'} onClick={calls.hangUp}>
+          <Button size="sm" variant="destructive" disabled={a.phase === 'hanging_up'} onClick={calls.hangUp}>
             {a.phase === 'hanging_up' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <PhoneOff className="mr-1.5 h-4 w-4" aria-hidden="true" />}
             Hang up
           </Button>

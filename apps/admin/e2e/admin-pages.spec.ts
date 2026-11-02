@@ -1,4 +1,5 @@
 import { test, expect, get, on, type FakeBackend } from './support/fixtures';
+import { expectAccessible } from './support/axe';
 
 /** The JSON body of the first `method path` request the pages sent, if one was sent. */
 const sentBody = (backend: FakeBackend, method: string, path: string) => {
@@ -21,6 +22,19 @@ test('an API key can get the recordings scopes, and the keys list names its scop
   await dialog.getByRole('button', { name: 'Create Key' }).click();
   await expect(page.getByLabel('Generated API key')).toHaveValue('mwa_live_5678'); // the reply's key, shown once
   expect(sentBody(backend, 'POST', '/api-keys')?.permissions).toEqual(['recordings:read', 'recordings:delete']);
+});
+
+test('a call ringing on the calls page can be rejected with a red button whose text is readable (WCAG AA)', async ({ page, backend }) => {
+  const call = {
+    id: 'call-9', profileId: 'p-1', waCallId: 'W9', fromJid: '628111000999@s.whatsapp.net', isVideo: false, isGroup: false, direction: 'incoming',
+    outcome: 'ringing', rejectedBy: null, startedAt: new Date().toISOString(), endedAt: null, followUp: 'open', assignedUserId: null,
+    conversationId: null, conversation: null, assignedUser: null, answeredBy: null, recording: null,
+  };
+  backend.route(on('GET', '/calls', (req) => ({ json: { calls: req.query.get('outcome') === 'ringing' ? [call] : [], nextCursor: null } })));
+  await page.goto('/dashboard/calls');
+  const ringingNow = page.getByRole('region', { name: 'Ringing now' });
+  await expect(ringingNow.getByRole('button', { name: 'Reject' })).toBeVisible();
+  await expectAccessible(page, '[aria-label="Ringing now"]');
 });
 
 test('a webhook can subscribe to the answered call and the recording events', async ({ page, backend }) => {

@@ -297,7 +297,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }`}
       >
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-md border-b border-border">
+        {/* The header is its menus' stacking context: while one is open, it goes over the incoming-call banner (z-[60]). */}
+        <header className={`sticky top-0 ${showUserMenu || showNotifDropdown ? 'z-[61]' : 'z-30'} bg-background/80 backdrop-blur-md border-b border-border`}>
           <div className="flex items-center justify-between px-6 py-4">
             <button
               type="button"

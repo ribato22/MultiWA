@@ -106,7 +106,7 @@ test('signing out while a reload rejoins the call closes the microphone at once,
   await page.reload();
   await expect(bar(page)).toContainText('Connecting…');
   await page.getByRole('button', { name: 'Account menu' }).click();
-  await page.getByRole('menuitem', { name: 'Sign out' }).press('Enter');
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
   await expect(page).toHaveURL(/\/auth\/login$/); // a client navigation: the console is gone, this page is not
   await page.evaluate(() => (window as any).__openMic());
   await expect.poll(() => page.evaluate(() => (window as any).__mic.getAudioTracks()[0].readyState)).toBe('ended');

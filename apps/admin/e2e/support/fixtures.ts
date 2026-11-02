@@ -79,6 +79,9 @@ const DEFAULT_REST: Rest[] = [
   get('/organizations/members', [{ id: ME.id, name: ME.name, email: ME.email, role: ME.role, isActive: true }]),
   get('/api-keys', []),
   get('/webhooks', []),
+  // A call no test routed is one the server does not have. Unrouted, it would read `{}`: a call that stopped ringing,
+  // and the re-read at a reconnect would end every banner.
+  on('GET', /^\/calls\/[^/]+$/, { status: 404, json: { message: 'Call not found' } }),
 ];
 
 /** `call:media` against no SFU: the captured parameters, which mediasoup-client completes against. */

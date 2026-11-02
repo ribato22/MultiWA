@@ -299,6 +299,14 @@ test('two tabs, the first one kept silent by the browser: the second rings, and 
   await expect(banner(other).getByText(HINT)).toBeHidden();
 });
 
+test("while a call rings, the header's menus open over the banner: a click reaches Sign out", async ({ page, backend }) => {
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click({ timeout: 5_000 });
+  await expect(page).toHaveURL(/\/auth\/login$/);
+});
+
 test.describe('on a phone screen', () => {
   test.use({ viewport: { width: 360, height: 740 } });
 
