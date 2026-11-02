@@ -12,7 +12,19 @@ let held = false;
 
 const inConsole = (el: EventTarget | null) => el instanceof Element && !!el.closest('[data-call-console]');
 
-/** The focus events of each part of the console. */
+/**
+ * The console moves the focus to `el` (a ring to its Answer, a call to its bar), and keeps track of it as its focus
+ * event would: a page behind another tab or window gets no focus events, the focus moves there silently.
+ */
+export function takeFocus(el: HTMLElement | null) {
+  const was = document.activeElement;
+  el?.focus();
+  if (!el || document.activeElement !== el) return;
+  held = true;
+  if (was instanceof HTMLElement && was !== document.body && !inConsole(was)) from = was;
+}
+
+/** The focus events of each part of the console: the agent moving the focus into it, or out. */
 export const consoleFocus = {
   onFocus(e: FocusEvent<HTMLElement>) {
     held = true;

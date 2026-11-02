@@ -6,7 +6,7 @@ import { CircleDot, Loader2, Mic, MicOff, PhoneCall, PhoneOff, Signal, SignalLow
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CALL_AUDIO_TEXT, formatDuration, ringingCallerLabel } from '@/lib/calls';
-import { consoleFocus, settleFocus } from '@/lib/call-console/focus';
+import { consoleFocus, settleFocus, takeFocus } from '@/lib/call-console/focus';
 import { prefs } from '@/lib/call-console/prefs';
 import { useCalls } from './calls-provider';
 
@@ -40,7 +40,7 @@ export function InCallBar() {
   // Answer went with its banner, or Take the call here with its button: the focus lands on the call, not on the page.
   // Not on Hang up either, where a second Enter would give the call up while it connects.
   useEffect(() => {
-    if (a?.local && document.activeElement === document.body) barRef.current?.focus();
+    if (a?.local && document.activeElement === document.body) takeFocus(barRef.current);
   }, [a?.call.callId, a?.local]);
   // A control that had the focus went (the call ended, or Hear the caller played), or the bar did: the focus goes on
   // (lib/call-console/focus.ts).

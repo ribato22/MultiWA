@@ -1,6 +1,6 @@
 import { test, expect, gate, rendered, ringing, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 const banner = (page: Page) => page.getByRole('region', { name: 'Incoming calls' });
 const bar = (page: Page) => page.getByRole('group', { name: 'Current call' });
@@ -571,4 +571,63 @@ test('a call the caller ends keeps the focus on its bar while it says so, and gi
   await expect(bar(page)).toBeFocused();
   await expect(bar(page)).toHaveCount(0, { timeout: 6000 });
   await expect(working(page)).toBeFocused();
+});
+
+/**
+ * Puts the page behind another tab, for real: Playwright's focus emulation goes off (a reload turns it back on), and the
+ * other tab takes the browser's focus. Chrome fires no focus event in a page without it: `.focus()` there moves the
+ * focus silently, and the page fires one only once it is back (`back()`).
+ */
+async function behindAnotherTab(page: Page) {
+  await (await page.context().newCDPSession(page)).send('Emulation.setFocusEmulationEnabled', { enabled: false });
+  await (await page.context().newPage()).bringToFront();
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
+  return async function back() {
+    await page.bringToFront();
+    await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true);
+  };
+}
+/** Whether the element has the page's focus, though the page may not have the browser's (toBeFocused needs both). */
+const holds = (l: Locator) => l.evaluate((el) => el === document.activeElement);
+
+test('a call that rings and stops behind another tab gives the focus back to where the ring took it from', async ({ page, backend }) => {
+  await open(page);
+  await working(page).focus();
+  const back = await behindAnotherTab(page);
+  backend.emit('call:ringing', ringing());
+  await expect.poll(() => holds(banner(page).getByRole('button', { name: 'Answer' }))).toBe(true);
+  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' });
+  await expect(banner(page)).toHaveCount(0);
+  await back();
+  await expect(working(page)).toBeFocused();
+});
+
+test('a call that rang behind another tab and stops once the agent is back gives the focus back to where the ring took it from', async ({ page, backend }) => {
+  await open(page);
+  await working(page).focus();
+  const back = await behindAnotherTab(page);
+  backend.emit('call:ringing', ringing());
+  const answerButton = banner(page).getByRole('button', { name: 'Answer' });
+  await expect.poll(() => holds(answerButton)).toBe(true);
+  await back(); // the page gets the focus event only now, from nowhere
+  await expect(answerButton).toBeFocused();
+  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' });
+  await expect(banner(page)).toHaveCount(0);
+  await expect(working(page)).toBeFocused();
+});
+
+test('a call a reload rejoined behind another tab gives the focus to the main content once its bar goes, not to the page', async ({ page, backend }) => {
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  page.on('dialog', (d) => void d.accept()); // the leave-page warning
+  backend.offline = true; // the reload's socket waits, so the rejoin comes once the page is behind the other tab
+  await page.reload();
+  const back = await behindAnotherTab(page);
+  backend.offline = false;
+  await expect.poll(() => holds(bar(page)), { timeout: 15_000 }).toBe(true); // the rejoined call, as after any reload
+  backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 7 });
+  await expect(bar(page)).toHaveCount(0, { timeout: 10_000 });
+  await back();
+  await expect(page.getByRole('main')).toBeFocused();
 });

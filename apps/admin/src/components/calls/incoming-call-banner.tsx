@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { CircleDot, Loader2, MessagesSquare, Phone, PhoneIncoming, VolumeX, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { READINESS_TEXT, ringingCallerLabel } from '@/lib/calls';
-import { consoleFocus, settleFocus } from '@/lib/call-console/focus';
+import { consoleFocus, settleFocus, takeFocus } from '@/lib/call-console/focus';
 import { useCalls } from './calls-provider';
 
 export function IncomingCallBanner() {
@@ -27,7 +27,7 @@ export function IncomingCallBanner() {
     if (!newest || before.includes(newest) || busy) return;
     const el = document.activeElement as HTMLElement | null;
     if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
-    answerRef.current?.focus();
+    takeFocus(answerRef.current);
   }, [ringing]);
   // A card that had the focus went, or lost the button that had it: the focus goes on (lib/call-console/focus.ts).
   useEffect(settleFocus);
