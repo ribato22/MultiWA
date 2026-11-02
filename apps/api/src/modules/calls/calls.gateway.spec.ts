@@ -11,9 +11,9 @@ import { EventsGateway, WS_GATEWAY_OPTIONS } from '../events/events.gateway';
 import { CallsGateway } from './calls.gateway';
 
 const principal = { userId: 'u1', organizationId: 'o1' };
-const socket = {} as any;
+const socket = { data: {} } as any;
 function make(auth: unknown = principal) {
-  const events = { authOf: vi.fn(async () => auth) };
+  const events = { authOf: vi.fn(async (_client: { data: Record<string, unknown> }) => auth) };
   const sessions = {
     answer: vi.fn(async () => ({ ok: true })),
     media: vi.fn(async () => ({ ok: true, result: null })),
@@ -63,5 +63,24 @@ describe('CallsGateway', () => {
     expect(await gateway.hangup(socket, { callId: 'c1' })).toEqual({ ok: false, reason: 'error' });
     await gateway.answer(socket, undefined as any);
     expect(sessions.answer).toHaveBeenCalledWith(principal, undefined);
+  });
+
+  // not_allowed is final for a client; a socket held for a retry (the database is down) is to try again once reconnected.
+  it('a socket whose credentials could not be checked is answered error, never not_allowed, on every command', async () => {
+    const { gateway, events, sessions } = make(null);
+    // As EventsGateway.authOf does when the lookup throws: it marks the socket, then gives no principal.
+    events.authOf.mockImplementation(async (client) => {
+      client.data.authUnchecked = true;
+      return null;
+    });
+    const held = { data: {} } as any;
+    expect(await Promise.all([
+      gateway.answer(held, { callId: 'c1' }),
+      gateway.media(held, { callId: 'c1', op: 'rtpCapabilities' }),
+      gateway.rejoin(held, { callId: 'c1' }),
+      gateway.hangup(held, { callId: 'c1' }),
+      gateway.availability(held, {}),
+    ])).toEqual(Array(5).fill({ ok: false, reason: 'error' }));
+    expect(Object.values(sessions).flatMap((run) => run.mock.calls)).toEqual([]);
   });
 });

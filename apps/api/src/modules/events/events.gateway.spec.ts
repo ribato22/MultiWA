@@ -212,7 +212,10 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     await expect(gateway.authOf(s)).resolves.toBeNull();
     await expect(gateway.handleConnection(s)).resolves.toBeUndefined();
     expect(s.join).not.toHaveBeenCalled();
-    await expect(gateway.handleJoin(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Forbidden' });
+    // Not Forbidden, which a client may take as final: it is to join again once it has reconnected.
+    await expect(gateway.handleJoin(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Unavailable' });
+    await expect(gateway.handleSubscribeProfile(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Unavailable' });
+    expect(s.join).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(15_000);
     expect(s.conn.close).toHaveBeenCalledTimes(1);
     expect(s.disconnect).not.toHaveBeenCalled();
@@ -251,29 +254,61 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(s.disconnect).not.toHaveBeenCalled();
   });
 
-  it('sockets whose credentials could not be checked make one warning a minute, with their count and the latest error; each one a debug line', async () => {
+  // While the database is down every socket is unchecked, and each comes back every few seconds.
+  it('the first socket whose credentials could not be checked is warned at once, its error on one line; alone, it makes no other warning', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValueOnce(new Error('connection refused\nforged line'));
+    await gateway.handleConnection(socket('s1'));
+    expect(warn.mock.calls).toEqual([[expect.stringMatching(/s1.*: connection refusedforged line$/)]]);
+    expect((gateway as any).unchecked.quiet.hasRef()).toBe(false); // the quiet minute does not hold the process open
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('more within the minute after that warning are only counted, a debug line each, and make one warning at its end: their count and the latest error', async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
     const debug = vi.spyOn((gateway as any).logger, 'debug').mockImplementation(() => undefined);
     db.user.findUnique
       .mockRejectedValueOnce(new Error('connection refused'))
-      .mockRejectedValueOnce(new Error('timed out\nforged line'))
-      .mockRejectedValueOnce(new Error('connection reset'));
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockRejectedValueOnce(new Error('timed out\nforged line'));
     await gateway.handleConnection(socket('s1'));
     await vi.advanceTimersByTimeAsync(30_000);
     await gateway.handleConnection(socket('s2'));
-    await vi.advanceTimersByTimeAsync(30_000); // a minute after the first
-    expect(warn.mock.calls).toEqual([[expect.stringMatching(/ 2 socket\(s\) .*: timed outforged line$/)]]);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(29_000);
     await gateway.handleConnection(socket('s3'));
-    await vi.advanceTimersByTimeAsync(60_000);
+    expect(warn.mock.calls).toEqual([[expect.stringMatching(/s1.*: connection refused$/)]]);
+    await vi.advanceTimersByTimeAsync(1_000); // a minute after the first
     expect(warn).toHaveBeenCalledTimes(2);
-    expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/ 1 socket\(s\) .*: connection reset$/));
+    expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/ 2 more socket\(s\) .*: timed outforged line$/));
     expect(debug.mock.calls).toEqual([
-      [expect.stringMatching(/s1.*: connection refused$/)],
-      [expect.stringMatching(/s2.*: timed outforged line$/)],
-      [expect.stringMatching(/s3.*: connection reset$/)],
+      [expect.stringMatching(/s2.*: connection reset$/)],
+      [expect.stringMatching(/s3.*: timed outforged line$/)],
     ]);
+  });
+
+  it('that warning starts the next quiet minute; a socket after a minute with none is warned at once again', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    vi.spyOn((gateway as any).logger, 'debug').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    await gateway.handleConnection(socket('s1')); // warned at once
+    await vi.advanceTimersByTimeAsync(30_000);
+    await gateway.handleConnection(socket('s2')); // counted
+    await vi.advanceTimersByTimeAsync(31_000); // 61 s: s2 was counted in a warning at 60 s
+    expect(warn).toHaveBeenCalledTimes(2);
+    await gateway.handleConnection(socket('s3')); // within the minute that warning started: only counted
+    expect(warn).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(59_000); // 120 s
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/ 1 more socket\(s\) .*: connection refused$/));
+    await vi.advanceTimersByTimeAsync(61_000); // 181 s, two minutes after s3: the minute from 120 s counted none
+    expect(warn).toHaveBeenCalledTimes(3);
+    await gateway.handleConnection(socket('s4'));
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/s4.*: connection refused$/));
   });
 
   it('bad credentials are still refused, never closed for a retry: an invalid JWT, an inactive user, a missing or expired session', async () => {
@@ -290,6 +325,7 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
       expect(s.disconnect).toHaveBeenCalledWith(true);
       expect(s.conn.close).not.toHaveBeenCalled();
       expect(s.join).not.toHaveBeenCalled();
+      expect(await gateway.handleJoin(s, { profileId: 'p1' })).toEqual({ success: false, error: 'Forbidden' });
     }
   });
 

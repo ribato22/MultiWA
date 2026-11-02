@@ -22,7 +22,7 @@ The user must be active, a JWT's login session must still be live (as on the RES
 
 A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one. Its session is checked again every minute: a JWT socket whose session was logged out, revoked or has expired, or whose user was deactivated, is disconnected the same way, so a revoked device stops receiving calls within a minute.
 
-If the server cannot check the credentials (its database is unavailable), it closes the connection after a few seconds instead: the client sees `disconnect` with the reason `transport close`, and Socket.IO then reconnects by itself. Until then the socket gets no events, and a `join` answers `Forbidden`.
+If the server cannot check the credentials (its database is unavailable), it closes the connection after a few seconds instead: the client sees `disconnect` with the reason `transport close`, and Socket.IO then reconnects by itself. Until then the socket gets no events, and a `join` answers `Unavailable`: join again after the next `connect`.
 
 ---
 
@@ -32,7 +32,7 @@ Events are sent per profile, to the sockets that joined it. After every `connect
 
 | Client emits | Body | Acknowledgement |
 |--------------|------|-----------------|
-| `join` (alias `subscribe:profile`) | `{ "profileId": "…" }` | `{ "success": true, "profileId": "…" }`, or `{ "success": false, "error": "Forbidden" }` when the profile is not in your organization |
+| `join` (alias `subscribe:profile`) | `{ "profileId": "…" }` | `{ "success": true, "profileId": "…" }`, or `{ "success": false, "error": "Forbidden" }` when the profile is not in your organization, or `{ "success": false, "error": "Unavailable" }` when the server could not check the credentials (join again after the next `connect`) |
 | `unsubscribe:profile` | `{ "profileId": "…" }` | `{ "success": true, "profileId": "…" }` |
 
 A joined socket receives every event of that profile; there is no per-event filter. Socket.IO keeps the connection alive itself, so there is no application-level ping.
@@ -110,7 +110,7 @@ The call with the same fields as the `data` of the [`call.*` webhooks](./09-webh
 
 ### Calls answered in the dashboard
 
-When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), its incoming calls ring the agents online on `/ws`: every active owner, admin and member of its organization who is available and not on a call. These events go to all of an agent's sockets, whatever profiles they subscribed to. Every command is acked `{ ok: true, … }` or `{ ok: false, reason }`; besides each command's own reasons, any command can answer `error` (it failed on the server). `not_allowed` means the login may not take calls, or not this one: an API key, a viewer, an inactive user, a session that was logged out or revoked, a call of another organization. `not_in_call` means the call is not, or no longer, yours. Calls are answered in the dashboard: only dashboard logins (JWT) are rung, count as online, and may send these commands. A socket on an API key gets none of these events, and its commands are refused.
+When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), its incoming calls ring the agents online on `/ws`: every active owner, admin and member of its organization who is available and not on a call. These events go to all of an agent's sockets, whatever profiles they subscribed to. Every command is acked `{ ok: true, … }` or `{ ok: false, reason }`; besides each command's own reasons, any command can answer `error` (it failed on the server, or the server could not check the credentials). `not_allowed` means the login may not take calls, or not this one: an API key, a viewer, an inactive user, a session that was logged out or revoked, a call of another organization. `not_in_call` means the call is not, or no longer, yours. Calls are answered in the dashboard: only dashboard logins (JWT) are rung, count as online, and may send these commands. A socket on an API key gets none of these events, and its commands are refused.
 
 | Direction | Event | Payload / ack |
 |---|---|---|

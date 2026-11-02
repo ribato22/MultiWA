@@ -38,7 +38,7 @@ const SESSION_SWEEP_MS = 60_000;
 /** A socket whose credentials could not be checked is closed after this long, plus up to the jitter (see handleConnection). */
 const UNCHECKED_HOLD_MS = 5_000;
 const UNCHECKED_HOLD_JITTER_MS = 10_000;
-/** The sockets whose credentials could not be checked make one warning at most this often. */
+/** After a warning about sockets whose credentials could not be checked, the next ones are only counted this long. */
 const UNCHECKED_WARN_MS = 60_000;
 
 /** The /ws namespace's options: every gateway on it (this one, CallsGateway) declares the same. */
@@ -65,8 +65,11 @@ export interface SocketPrincipal {
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy, RealtimeEmitter {
   private readonly logger = new Logger(EventsGateway.name);
   private sweepTimer?: NodeJS.Timeout;
-  /** The sockets whose credentials could not be checked since the last warning, and the latest error. */
-  private unchecked: { count: number; error: unknown; warning?: NodeJS.Timeout } = { count: 0, error: undefined };
+  /**
+   * The sockets whose credentials could not be checked since the last warning, the latest error, and the timer of the
+   * quiet minute after that warning (none: the next one is warned at once).
+   */
+  private unchecked: { count: number; error: unknown; quiet?: NodeJS.Timeout } = { count: 0, error: undefined };
 
   constructor(private readonly jwt: JwtService, private readonly eventEmitter: EventEmitter2) {}
 
@@ -100,7 +103,8 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       // either: socket.io-client resets its reconnect backoff whenever a connection opens, so a socket closed at once
       // is back within about a second, every tab and integration, each time with lookups against a database that is
       // trying to recover. Held open a few seconds, jittered so that they do not all come back together. Until then
-      // it has no principal: it joins no room, its joins are Forbidden and its call commands not_allowed.
+      // it has no principal and joins no room; its joins answer Unavailable and its call commands error, not the
+      // Forbidden and not_allowed of a refusal, which a client may take as final.
       setTimeout(() => {
         if (client.connected) client.conn.close();
       }, UNCHECKED_HOLD_MS + Math.random() * UNCHECKED_HOLD_JITTER_MS).unref();
@@ -155,19 +159,31 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   }
 
   /**
-   * While the database is down every socket is unchecked, and each comes back every few seconds: one debug line per
-   * socket, and a warning at most once a minute with how many there were and the latest error.
+   * While the database is down every socket is unchecked, and each comes back every few seconds. The first is warned at
+   * once, so the log shows when an outage began. Those in the minute after a warning are only counted, a debug line
+   * each, and make one warning at its end, with the latest error; that warning starts another such minute. A minute
+   * with none ends it: the next one is warned at once again.
    */
   private noteUnchecked(client: Socket, error: unknown): void {
-    this.logger.debug(`Could not check the credentials of socket ${client.id}: ${clean(error)}`);
-    this.unchecked.count++;
-    this.unchecked.error = error;
-    this.unchecked.warning ??= setTimeout(() => {
-      const { count, error: latest } = this.unchecked;
+    if (this.unchecked.quiet) {
+      this.logger.debug(`Could not check the credentials of socket ${client.id}: ${clean(error)}`);
+      this.unchecked.count++;
+      this.unchecked.error = error;
+      return;
+    }
+    this.logger.warn(`Could not check the credentials of socket ${client.id} (it is closed after a few seconds, and reconnects): ${clean(error)}`);
+    this.quietUnchecked();
+  }
+
+  private quietUnchecked(): void {
+    this.unchecked.quiet = setTimeout(() => {
+      const { count, error } = this.unchecked;
       this.unchecked = { count: 0, error: undefined };
+      if (!count) return;
       this.logger.warn(
-        `Could not check the credentials of ${count} socket(s) in the last minute (each is closed after a few seconds, and reconnects); the latest error: ${clean(latest)}`,
+        `Could not check the credentials of ${count} more socket(s) in the last minute (each is closed after a few seconds, and reconnects); the latest error: ${clean(error)}`,
       );
+      this.quietUnchecked();
     }, UNCHECKED_WARN_MS).unref();
   }
 
@@ -181,6 +197,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const auth = await this.authOf(client);
     // Left while it was being authenticated: its handleDisconnect has cleaned up already, so record nothing.
     if (!client.connected) return { success: false, error: 'Disconnected' };
+    // Its credentials could not be checked: not Forbidden, which a client may take as final. It is closed in a few
+    // seconds, and is to join again once it has reconnected.
+    if (!auth && client.data.authUnchecked) return { success: false, error: 'Unavailable' };
     const organizationId = auth?.organizationId;
 
     if (!organizationId || !profileId || !(await this.ownsProfile(profileId, organizationId))) {
