@@ -40,6 +40,8 @@ export function IncomingCallBanner() {
         const unavailable = !b.call.answerable
           ? READINESS_TEXT[b.call.unavailableReason ?? ''] ?? 'This call cannot be answered here'
           : calls.answerBlocked;
+        // Answered elsewhere, or a failed answer: the card fades in its border and icon, its words stay readable.
+        const faded = b.status === 'taken' || b.status === 'failed';
         return (
           // Each card can hold the focus, as a failed answer's does to say why: one that rings again keeps it meanwhile.
           <div
@@ -51,10 +53,13 @@ export function IncomingCallBanner() {
             onKeyDown={(e) => {
               if (e.key === 'Escape' && b.status === 'ringing') calls.dismiss(b.call.callId);
             }}
-            className={`rounded-xl border border-primary/40 bg-card p-4 shadow-2xl shadow-black/40 transition-opacity ${b.status === 'taken' || b.status === 'failed' ? 'opacity-70' : ''}`}
+            className={`rounded-xl border bg-card p-4 shadow-2xl shadow-black/40 transition-colors ${faded ? 'border-border' : 'border-primary/40'}`}
           >
             <div className="flex items-start gap-3">
-              <PhoneIncoming className={`mt-0.5 h-5 w-5 flex-shrink-0 text-primary ${b.status === 'ringing' ? 'animate-pulse' : ''}`} aria-hidden="true" />
+              <PhoneIncoming
+                className={`mt-0.5 h-5 w-5 flex-shrink-0 ${faded ? 'text-muted-foreground/60' : 'text-primary'} ${b.status === 'ringing' ? 'animate-pulse' : ''}`}
+                aria-hidden="true"
+              />
               <div className="min-w-0 flex-1">
                 <p className="text-xs text-muted-foreground">Incoming call · {b.call.profileName}</p>
                 <p className="truncate font-semibold text-foreground">{label}</p>

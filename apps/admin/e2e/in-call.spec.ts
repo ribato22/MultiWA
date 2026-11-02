@@ -28,6 +28,8 @@ const micStates = (page: Page) => page.evaluate(() => (window as any).__micTrack
 const openPeers = (page: Page) => page.evaluate(() => (window as any).__pcs.filter((pc: RTCPeerConnection) => pc.signalingState !== 'closed').length);
 /** Whether each microphone this page opened is enabled (recordMics). */
 const micEnabled = (page: Page) => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.enabled));
+/** Settles once nothing in `l` animates any more: what it shows then is what the agent reads. */
+const settled = (l: Locator) => expect.poll(() => l.evaluate((el) => el.getAnimations({ subtree: true }).length)).toBe(0);
 /** The call's audio is built: the caller plays in the console's hidden <audio>. */
 const built = (page: Page) => page.evaluate(() => !!(document.querySelector('audio[hidden]') as HTMLAudioElement | null)?.srcObject);
 /** `call:media` with each op in `ops` held until the test calls `held[op]()`, as on a slow link. */
@@ -97,12 +99,15 @@ test('Answer keeps the focus while it connects; an answer the server refuses han
   await expect(connecting).toBeDisabled();
   await rendered(page);
   await expect(connecting).toBeFocused();
+  await expectAccessible(page, '[aria-label="Incoming calls"]');
   await page.keyboard.press('Enter'); // pressed again while it connects
   refuse();
   const card = banner(page).getByRole('group', { name: 'Call from Pak Joko' });
   await expect(card.getByRole('alert')).toContainText('Someone else answered');
   await expect(card).toBeFocused();
   expect(backend.commands('call:answer')).toHaveLength(1);
+  await settled(card);
+  await expectAccessible(page, '[aria-label="Incoming calls"]'); // as it fades too
 });
 
 test('a microphone the browser refuses stops the answer before any claim', async ({ page, context, backend }) => {
@@ -530,6 +535,8 @@ test('a call another agent answers gives the focus back at once, while its card 
   backend.emit('call:claimed', { callId: 'call-1', byUserId: 'u-jane', byUserName: 'Jane' });
   await expect(banner(page)).toContainText('Answered by Jane');
   await expect(working(page)).toBeFocused();
+  await settled(banner(page));
+  await expectAccessible(page, '[aria-label="Incoming calls"]'); // as it fades too
 });
 
 test('a failed answer’s card keeps the focus while it says why, and gives it back as it fades', async ({ page, backend }) => {
