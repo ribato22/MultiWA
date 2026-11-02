@@ -481,7 +481,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
       // A rejoin before connect's own connectAgent makes this the page's first consume: its link is first read here.
       if (current()) this.updatePageLink(session, session.room!.linkUp('page'));
-      if (session.phase === 'active' && current()) this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString() });
+      if (session.phase === 'active' && current()) this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString(), agentProducerId });
     } catch (e) {
       if (current()) await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
     }
@@ -619,7 +619,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       // The page's receive transport links at its first consume, this one: until now it was never linked.
       this.updatePageLink(session, session.room!.linkUp('page'));
       if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
-      this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString() });
+      // The producer on the call: the agent's tab whose own producer it is not lets go of its audio (reconnectAgent too).
+      this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString(), agentProducerId });
     } catch (e) {
       if (session.phase === 'connecting') await this.stopConnecting(session, { failure, error: e, reRing: true });
       else if (session.phase === 'active') await this.end(session, 'server', 'media_failed', { failure, error: e });

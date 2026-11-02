@@ -293,7 +293,7 @@ describe('CallSessionService: recorded calls', () => {
     played();
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
-    expect(h.sent('call:active')).toHaveLength(1);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]); // the new page's producer
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
   });
 
@@ -557,7 +557,7 @@ describe('CallSessionService: answering', () => {
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'answered', answerSeconds: expect.any(Number) });
     expect(h.handle.attachCaller).toHaveBeenCalled();
     expect(h.handle.connectAgent).toHaveBeenCalledWith('agent-producer');
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer' } }]);
   });
 
   it('refuses a viewer, another organization, a call no longer ringing or already claimed, a call that cannot be answered here, an agent on a call', async () => {
@@ -1089,7 +1089,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]);
     expect(S.markEnded).not.toHaveBeenCalled();
     expect(h.service.activeSessionCount()).toBe(1);
   });
@@ -1131,7 +1131,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer'], ['agent-producer-2']]);
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]);
     expect(S.markEnded).not.toHaveBeenCalled();
   });
 
@@ -1153,7 +1153,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer'], ['agent-producer-2'], ['agent-producer-3']]);
-    expect(h.sent('call:active')).toHaveLength(2);
+    expect(h.sent('call:active').map((s) => s.payload.agentProducerId)).toEqual(['agent-producer', 'agent-producer-3']); // the answer's, then the last page's
     expect(S.markEnded).not.toHaveBeenCalled();
     expect(h.service.activeSessionCount()).toBe(1);
   });
