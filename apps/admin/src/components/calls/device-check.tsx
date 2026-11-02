@@ -31,7 +31,12 @@ export function DeviceCheck() {
   // The microphone a test opened: the browser picks one itself while it lists none to choose from (Firefox and Safari,
   // until the microphone is allowed).
   const [opened, setOpened] = useState<string | null>(null);
-  const [level, setLevel] = useState(0);
+  // The level meter, set at every frame of a test: straight on the element, the page does not render for it.
+  const meter = useRef<HTMLDivElement>(null);
+  const showLevel = (level: number) => {
+    meter.current?.setAttribute('aria-valuenow', String(level));
+    (meter.current?.firstElementChild as HTMLElement | null)?.style.setProperty('width', `${level}%`);
+  };
   const [testing, setTesting] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // The ringer as switched here or in another tab.
@@ -111,7 +116,7 @@ export function DeviceCheck() {
         // The meter falls back slowly, from full to nothing in about a second: a voice's peaks stay readable.
         shown = Math.max(Math.min(100, Math.round(rms * 300)), Math.round(shown - (now - last) / 10));
         last = now;
-        setLevel(shown);
+        showLevel(shown);
         frame = requestAnimationFrame(tick);
       };
       tick();
@@ -124,7 +129,7 @@ export function DeviceCheck() {
         close();
         void ctx.close();
         setTesting(false);
-        setLevel(0);
+        showLevel(0);
         stopTest.current = null;
       };
     } catch (e) {
@@ -171,8 +176,8 @@ export function DeviceCheck() {
           )}
           <div className="flex items-center gap-3">
             <Button variant="outline" onClick={test}>{testing ? 'Stop the test' : 'Test the microphone'}</Button>
-            <div role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={100} aria-valuenow={level} className="h-2 w-48 overflow-hidden rounded-full bg-secondary">
-              <div className="h-full bg-primary transition-[width] duration-75" style={{ width: `${level}%` }} />
+            <div ref={meter} role="meter" aria-label="Microphone level" aria-valuemin={0} aria-valuemax={100} aria-valuenow={0} className="h-2 w-48 overflow-hidden rounded-full bg-secondary">
+              <div className="h-full w-0 bg-primary transition-[width] duration-75" />
             </div>
           </div>
           {problem && <p role="alert" className="text-sm text-amber-300">{problem}</p>}

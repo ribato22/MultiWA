@@ -43,6 +43,43 @@ test('Settings → Calls checks the microphone with a level meter, plays a test 
   await expectAccessible(page, '[aria-label="Calls in this browser"]');
 });
 
+test('the level meter moves without rendering the page at every frame', async ({ page, context }) => {
+  // React's commits, counted through the hook its developer tools use.
+  await context.addInitScript(() => {
+    const w = window as any;
+    w.__commits = 0;
+    w.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+      supportsFiber: true,
+      renderers: new Map(),
+      inject: () => 1,
+      onCommitFiberRoot: () => w.__commits++,
+      onCommitFiberUnmount() {},
+      checkDCE() {},
+    };
+  });
+  await page.goto('/dashboard/settings?tab=calls');
+  const s = section(page);
+  await s.getByRole('button', { name: 'Test the microphone' }).click();
+  const level = s.getByRole('meter', { name: 'Microphone level' });
+  await expect.poll(async () => Number(await level.getAttribute('aria-valuenow')), { timeout: 8000 }).toBeGreaterThan(0);
+  const { commits, levels } = await level.evaluate(
+    (meter) =>
+      new Promise<{ commits: number; levels: number }>((resolve) => {
+        const w = window as any;
+        const from = w.__commits;
+        const seen = new Set<string | null>();
+        const read = () => seen.add(meter.getAttribute('aria-valuenow'));
+        const timer = setInterval(read, 50);
+        setTimeout(() => {
+          clearInterval(timer);
+          resolve({ commits: w.__commits - from, levels: seen.size });
+        }, 1000);
+      }),
+  );
+  expect(levels).toBeGreaterThan(3); // it moves
+  expect(commits).toBeLessThan(10); // a commit at every frame would be about 60
+});
+
 const tones = (page: Page) => page.evaluate(() => (window as any).__tones as number);
 const banner = (page: Page) => page.getByRole('region', { name: 'Incoming calls' });
 /** Settings → Calls with the console connected: its ringer switch. */
