@@ -406,9 +406,13 @@ test('a link to the Calls tab waits until the console knows whether a profile an
   // Meanwhile the other tabs are there, and the Calls tab keeps its place unseen: no tab moves when the answer comes.
   await expect(tab(page, 'API & Webhooks')).toBeVisible();
   await expect(tab(page, 'Calls')).toHaveCount(0);
+  // The Calls panel says it is loading, to a screen reader too: its tab, unseen, says nothing.
+  const loading = page.getByRole('status').filter({ hasText: 'Loading calls settings' });
+  await expect(loading).toBeVisible();
   const before = await tab(page, 'API & Webhooks').boundingBox();
   slow.open();
   await expect(tab(page, 'Calls')).toHaveAttribute('aria-selected', 'true');
+  await expect(loading).toHaveCount(0);
   expect(await tab(page, 'API & Webhooks').boundingBox()).toEqual(before);
   expect(await page.evaluate(() => !!(window as any).__accountShown)).toBe(false);
 });

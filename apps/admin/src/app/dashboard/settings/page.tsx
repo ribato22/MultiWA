@@ -955,7 +955,12 @@ export default function SettingsPage() {
             <DeviceCheck />
           </TabsContent>
         )}
-        {waiting && <Skeleton className="mt-2 h-[400px]" />}
+        {/* Its tab is unseen meanwhile: the placeholder says what it waits for, to a screen reader too. */}
+        {waiting && (
+          <Skeleton role="status" aria-live="polite" className="mt-2 h-[400px]">
+            <span className="sr-only">Loading calls settings</span>
+          </Skeleton>
+        )}
 
         {/* API Tab */}
         <TabsContent value="api">
