@@ -112,8 +112,9 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       // here is another tab's. Any other refusal is this tab's own claim failing (the audio did not connect), and fades
       // like any failed answer.
       if (b?.status === 'answering' && b.mine && (e.reason === undefined || LOST_RACE.includes(e.reason))) return theirs(b.call);
-      // Rung again before the reply came: it still rings, and says why this answer did not go through.
-      if (b?.status === 'ringing') return { ...s, banners: swap(b, { ...b, notice: e.message }) };
+      // Rung again before the reply came: it still rings, and says why this answer did not go through. A lost race says
+      // nothing, as when the ring comes after the reply: it rings again because the winner's answer failed.
+      if (b?.status === 'ringing') return LOST_RACE.includes(e.reason) ? s : { ...s, banners: swap(b, { ...b, notice: e.message }) };
       if (b?.status === 'answering') return { ...s, banners: swap(b, { call: b.call, status: 'failed', message: e.message, reason: e.reason }) };
       return s;
     }
@@ -142,7 +143,7 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       if (a!.phase === 'hanging_up') return { ...s, active: { ...a!, answeredAt: e.answeredAt, announcing: undefined } };
       return { ...s, active: { ...a!, phase: 'active', answeredAt: e.answeredAt, announcing: undefined, problem: undefined } };
     case 'ended': {
-      // A failed answer's banner stays to fade: if the call rings again, the new banner says why.
+      // A failed answer's banner stays to fade: if the call rings again, the new banner says why (a lost race says nothing).
       const banners = s.banners.filter((b) => b.call.callId !== e.callId || b.status === 'failed');
       if (!live(e.callId)) return { ...s, banners };
       return { ...s, banners, active: { ...a!, phase: 'ended', endedText: e.text ?? 'Call ended', problem: undefined } };
