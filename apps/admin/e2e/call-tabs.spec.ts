@@ -381,7 +381,7 @@ test('audio that cannot be built again with the socket up leaves the call to tak
   await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
 });
 
-test('Take the call here is not undone by the late call:active of the tab that had the call; a takeover after its reply is', async ({ page, backend }) => {
+test('Take the call here is not undone by the late call:active of the tab that had the call, which shows no call time either; a takeover after its reply is', async ({ page, backend }) => {
   await open(page);
   backend.emit('call:ringing', ringing());
   await expect(banner(page)).toBeVisible();
@@ -397,13 +397,35 @@ test('Take the call here is not undone by the late call:active of the tab that h
   backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'producer-other-tab' });
   rejoined();
   await expect.poll(() => produced(backend)).toBe(1);
+  // Not this tab's voice: the call is not on here until its own call:active.
+  await expect(bar(page)).toContainText('Connecting…');
+  await expect(timer(page)).toHaveCount(0);
   backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'agent-producer' });
+  await expect(timer(page)).toBeVisible();
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
   await expect.poll(() => openPeers(page)).toBe(2);
   // Taken since on the agent's phone: this tab lets go.
   backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'producer-phone' });
   await expect(bar(page)).toContainText('On a call in another tab');
   await expect.poll(() => openPeers(page)).toBe(0);
+});
+
+test('a call taken on another device while Take the call here waits for the microphone stays there: the microphone closes as it opens, and nothing is rejoined', async ({ page, context, backend }) => {
+  await holdMics(context);
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: ME.id, byUserName: ME.name }); // answered in another tab
+  const answeredAt = new Date().toISOString();
+  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'producer-other-tab' });
+  await bar(page).getByRole('button', { name: 'Take the call here' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
+  // The agent took the call on their phone while the browser asked: no rejoin of this tab's is out, so this is newer.
+  backend.emit('call:active', { callId: 'call-1', answeredAt, agentProducerId: 'producer-phone' });
+  await expect(bar(page)).toContainText('On a call in another tab');
+  await page.evaluate(() => (window as any).__openMic());
+  await expect.poll(() => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.readyState))).toEqual(['ended']);
+  expect(backend.commands('call:rejoin')).toEqual([]);
 });
 
 test('a reload that finds the call moved to another device shows it as theirs, as the call it is, to take here', async ({ page, backend }) => {
@@ -444,6 +466,18 @@ test('a microphone that stopped is still said after a reconnect: Reconnecting…
   await expect.poll(() => backend.commands('call:availability').length, { timeout: 15_000 }).toBeGreaterThan(reads);
   await expect(bar(page)).not.toContainText('Reconnecting…');
   await expect(bar(page)).toContainText(stopped);
+});
+
+test('availability reads that fail on a live socket do not say Reconnecting… during a call', async ({ page, backend }) => {
+  backend.reply('call:availability', () => ({ ok: false, reason: 'error' }));
+  await page.goto('/dashboard/calls');
+  await expect.poll(() => backend.commands('call:availability')).toHaveLength(2); // the read at connect, and its one retry
+  backend.emit('call:ringing', ringing());
+  await banner(page).getByRole('button', { name: 'Answer' }).click();
+  await expect(bar(page)).toContainText('Connecting…');
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  await expect(timer(page)).toBeVisible();
+  await expect(bar(page)).not.toContainText('Reconnecting…');
 });
 
 test('audio that fails while a hang-up is on its way is not built again; a hang-up that then fails builds it again', async ({ page, backend }) => {

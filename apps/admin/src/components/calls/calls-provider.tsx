@@ -78,6 +78,8 @@ export interface CallsConsole {
   playBlocked: boolean;
   /** The microphone this tab's call uses (its deviceId), once its audio is connected. */
   micId: string | null;
+  /** The console's socket is connected: while it is not, nothing about the call reaches this tab. */
+  socketUp: boolean;
   setAvailable(on: boolean): void;
   dismiss(callId: string): void;
   answer(callId: string): void;
@@ -110,6 +112,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
   const [quality, setQuality] = useState<Quality | null>(null);
   const [playBlocked, setPlayBlocked] = useState(false);
   const [micId, setMicId] = useState<string | null>(null);
+  const [socketUp, setSocketUp] = useState(false);
 
   // Calls ring only for profiles that answer in the dashboard: without one, the header shows no call controls.
   useEffect(() => {
@@ -137,6 +140,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     // The availability is the server's, which keeps "unavailable" through a reload: the console shows what it confirms.
     const confirmed = (available: boolean) => dispatch({ type: 'availability', available });
     socket.on('connect', async () => {
+      setSocketUp(true);
       // Only a read: a choice this tab made before can be stale (another tab or device changed it since). A failed read
       // is tried once more: without one, the switch stays offline on a live socket.
       for (let tries = 0; tries < 2 && socket.connected; tries++) {
@@ -147,6 +151,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     socket.on('disconnect', async (reason) => {
       // The call's audio can outlive the socket, but nothing about the call reaches this tab until it is back: the bar
       // says so meanwhile.
+      setSocketUp(false);
       dispatch({ type: 'offline' });
       if (reason !== 'io server disconnect') return;
       // The server drops a socket whose token expired, or whose login is gone. A request's 401 refreshes an expired
@@ -196,11 +201,17 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     let ownProducer: string | null = null;
     let muted = false; // the agent's mute, whatever media exists or is being built
     let answeredAt: string | undefined; // when the server put that call through (call:active)
-    // The microphone of the attempt building the audio, from the moment it opens until the media has it: Mute and Hang up
-    // reach it there, and a stop ends it.
+    // The microphone of the attempt building the audio, until the media has it: a rejoin's from the moment it opens, an
+    // answer's from the claim's reply. Mute and Hang up reach it there, and a stop ends it.
     let pendingMic: MediaStreamTrack | null = null;
     let hangingUp = false; // this tab's Hang up is on its way: no audio of the call is heard from here meanwhile
-    let asking = 0; // the attempt whose call:rejoin waits for its reply
+    let asking = 0; // the attempt whose call:rejoin is out: only from its emit to its reply, not while its microphone opens
+    /**
+     * A call:active naming another producer than this tab's, for the call whose rejoin this tab has out: sent before that
+     * rejoin's reply, it is older than the rejoin, which decides. This tab neither lets go nor shows the call as on.
+     */
+    const older = (p: { callId: string; agentProducerId?: string }) =>
+      !!p.agentProducerId && p.agentProducerId !== ownProducer && asking === attempt && p.callId === acquiring;
     const mineCall = () => audioCallId ?? acquiring;
     const stored = () => readStoredCall(user.id);
     const storedCall = () => stored()?.call ?? null;
@@ -276,8 +287,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     socket.on('call:announcing', (p: { callId: string; durationSec: number }) =>
       dispatch({ type: 'announcing', callId: p.callId, durationSec: p.durationSec, at: Date.now() }),
     );
-    socket.on('call:active', (p: { callId: string; answeredAt: string }) => {
-      dispatch({ type: 'active', callId: p.callId, answeredAt: p.answeredAt });
+    socket.on('call:active', (p: { callId: string; answeredAt: string; agentProducerId?: string }) => {
+      if (!older(p)) dispatch({ type: 'active', callId: p.callId, answeredAt: p.answeredAt });
       // Stored with the call: a reload that cannot take it back shows it as the call it is, to take here.
       if (storedCall()?.callId !== p.callId) return;
       answeredAt = p.answeredAt;
@@ -402,9 +413,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       dispatch({ type: 'local', callId, local: false });
     };
     socket.on('call:active', (p: { callId: string; agentProducerId?: string }) => {
-      // Another producer on the call than this tab's: another tab or browser of this agent took it. Not while this tab's
-      // rejoin of it waits for its reply: sent before that reply, this call:active is older than the rejoin, which decides.
-      if (!p.agentProducerId || p.agentProducerId === ownProducer || (asking === attempt && p.callId === acquiring)) return;
+      // Another producer on the call than this tab's: another tab or browser of this agent took it. Not an older one.
+      if (!p.agentProducerId || p.agentProducerId === ownProducer || older(p)) return;
       letGo(p.callId);
     });
     /**
@@ -415,7 +425,6 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       stopAudio();
       const mine = attempt;
       acquiring = call.callId;
-      asking = mine;
       const superseded = () => mine !== attempt || closed;
       // The mute, the producer and the answer this tab had on the call, a reload ago too; else what the bar shows.
       const own = stored();
@@ -454,6 +463,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       pendingMic = mic;
       mic.enabled = !(muted || hangingUp);
       if (!socket.connected) return waitForSocket();
+      asking = mine;
       const reply = await command(socket, 'call:rejoin', { callId: call.callId, ifProducerId }, ACK_MS.rejoin);
       if (superseded()) return mic.stop();
       asking = 0;
@@ -481,9 +491,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       const call = storedCall();
       const { banners, active } = stateRef.current;
       // This tab's call, with no audio here and none being built: a reload, or its audio lost while the socket was down.
-      // However long it was down, the rejoin's answer says whether the call is still this tab's to take back. Not one it
-      // shows as another's (it let that go), nor while it hangs the call up.
-      const rejoining = !!call && !mediaRef.current && acquiring !== call.callId && active?.local !== false && !hangingUp;
+      // However long it was down, the rejoin's answer says whether the call is still this tab's to take back; a call it
+      // let go of is no longer stored. Not while it hangs the call up.
+      const rejoining = !!call && !mediaRef.current && acquiring !== call.callId && !hangingUp;
       if (rejoining) void rejoin(call);
       // A socket that was down missed what happened meanwhile: every call this tab shows is read again.
       for (const b of banners) {
@@ -595,6 +605,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             quality,
             playBlocked,
             micId,
+            socketUp,
             setAvailable: (on) => cmd.current.setAvailable?.(on),
             dismiss: (callId) => cmd.current.dismiss?.(callId),
             answer: (callId) => cmd.current.answer?.(callId),
@@ -605,7 +616,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             takeHere: () => cmd.current.takeHere?.(),
           }
         : null,
-    [agent, user, state, profilesRing, answerBlocked, soundBlocked, quality, playBlocked, micId],
+    [agent, user, state, profilesRing, answerBlocked, soundBlocked, quality, playBlocked, micId, socketUp],
   );
   return (
     <CallsContext.Provider value={value}>

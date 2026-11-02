@@ -45,7 +45,7 @@ export function InCallBar() {
 
   const remaining = a.announcing ? Math.max(0, Math.ceil(a.announcing.durationSec - (now - a.announcing.since) / 1000)) : 0;
   // The socket is down: this tab's audio may still run, but nothing about the call reaches it until the socket is back.
-  const reconnecting = a.local && calls.state.availability === 'offline';
+  const reconnecting = a.local && !calls.socketUp;
   // The live region changes with the phase only: the notice's countdown beside it is not said every second.
   const phase =
     a.phase === 'ended' ? a.endedText
