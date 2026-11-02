@@ -1,5 +1,6 @@
 'use client';
-// The incoming-call banner, over every dashboard page (top right, above dialogs): one card per call ringing this agent.
+// The incoming-call banner, over every dashboard page (top right below the header, above dialogs): one card per call
+// ringing this agent.
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { CircleDot, Loader2, MessagesSquare, Phone, PhoneIncoming, VolumeX, X } from 'lucide-react';
@@ -33,7 +34,7 @@ export function IncomingCallBanner() {
   useEffect(settleFocus);
   if (!calls || !banners.length) return null;
   return (
-    <section data-call-console {...consoleFocus} aria-label="Incoming calls" className="pointer-events-auto fixed right-4 top-20 z-[60] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 sm:right-6">
+    <section data-call-console {...consoleFocus} aria-label="Incoming calls" className="pointer-events-auto fixed right-4 top-[calc(var(--header-height,4.25rem)+0.75rem)] z-[60] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 sm:right-6">
       {banners.map((b) => {
         const label = ringingCallerLabel(b.call.caller);
         const unavailable = !b.call.answerable

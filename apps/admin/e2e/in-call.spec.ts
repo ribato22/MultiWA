@@ -660,3 +660,62 @@ test('the main content keeps the focus it was given while the page is behind ano
   await back();
   await expect(main).toBeFocused();
 });
+
+// The header during a call, at the widths agents work at: two microphones (so the bar shows its picker) and the
+// recording notice playing, the bar's widest moment.
+const twoMics = () => {
+  if (window.origin === 'null') return; // the blank page axe finishes its run in: it has no microphones
+  const device = (deviceId: string, label: string) => ({ deviceId, kind: 'audioinput', label, groupId: deviceId, toJSON() { return this; } });
+  navigator.mediaDevices.enumerateDevices = async () => [device('mic-a', 'Desk microphone'), device('mic-b', 'Headset')] as MediaDeviceInfo[];
+};
+/** Whether each of the bar's controls shows whole, in the header, and is what a click at its centre reaches. */
+const reachable = (page: Page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll('[aria-label="Current call"] :is(button, [role="combobox"])')].map((el) => {
+      const r = el.getBoundingClientRect();
+      const header = el.closest('header')!.getBoundingClientRect();
+      const whole = r.left >= Math.max(0, header.left) && r.right <= Math.min(innerWidth, header.right) && r.top >= header.top && r.bottom <= header.bottom;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return [el.getAttribute('aria-label') ?? el.textContent, whole && !!hit && el.contains(hit)];
+    }),
+  );
+/** The header's other controls the bar covers or touches. */
+const overlapped = (page: Page) =>
+  page.evaluate(() => {
+    const barBox = document.querySelector('[aria-label="Current call"]')!.getBoundingClientRect();
+    return [...document.querySelectorAll('header :is([aria-label$="menu"], [aria-label="Calls availability"], [aria-label^="Notifications"])')]
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.left < barBox.right && barBox.left < r.right && r.top < barBox.bottom && barBox.top < r.bottom;
+      })
+      .map((el) => el.getAttribute('aria-label'));
+  });
+for (const [width, height, sidebars] of [
+  [1280, 800, ['open', 'collapsed']],
+  [1024, 768, ['open', 'collapsed']],
+  [768, 1024, ['open', 'collapsed']],
+  [360, 740, ['a drawer']],
+] as const) {
+  for (const sidebar of sidebars) {
+    test(`${width} px wide, the sidebar ${sidebar}: every control of the bar shows whole and takes its own click, clear of the rest of the header`, async ({ page, context, backend }) => {
+      await page.setViewportSize({ width, height });
+      await context.addInitScript(twoMics);
+      await open(page);
+      if (sidebar === 'collapsed') {
+        await page.getByRole('button', { name: 'Close menu' }).click();
+        await expect(page.getByRole('main')).toHaveCSS('margin-left', '80px');
+      }
+      await answer(page, backend, { recorded: true });
+      backend.emit('call:announcing', { callId: 'call-1', durationSec: 60 });
+      await expect(bar(page)).toContainText('The caller hears the recording notice');
+      await expect(bar(page).getByRole('combobox', { name: 'Microphone' })).toBeVisible();
+      expect(await reachable(page)).toEqual([['Mute', true], ['Microphone', true], ['Hang up', true]]);
+      expect(await overlapped(page)).toEqual([]);
+      if (width === 360) await expectAccessible(page, 'header');
+      // A call that rang before this one was answered keeps its banner: it floats below the header, clear of the bar.
+      backend.emit('call:ringing', ringing(SARI));
+      await expect(card(page, 'Bu Sari')).toBeVisible();
+      expect(await reachable(page)).toEqual([['Mute', true], ['Microphone', true], ['Hang up', true]]);
+    });
+  }
+}

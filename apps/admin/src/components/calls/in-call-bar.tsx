@@ -71,14 +71,15 @@ export function InCallBar() {
       {...consoleFocus}
       role="group"
       aria-label="Current call"
-      className="flex min-w-0 items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-3 py-1.5"
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-1.5"
     >
       <PhoneCall className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
-      <div className="min-w-0">
+      {/* Who, and how long: the controls go under it once less than 12rem is left for it. */}
+      <div className="min-w-0 flex-1 basis-48">
         <p className="truncate text-sm font-medium text-foreground">
           {ringingCallerLabel(a.call.caller)} <span className="text-muted-foreground">· {a.call.profileName}</span>
         </p>
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
           <span>
             <span role="status">{phase}</span>
             {a.local && a.phase === 'announcing' && !reconnecting && <span aria-hidden="true" className="tabular-nums"> ({remaining} s)</span>}
@@ -104,7 +105,7 @@ export function InCallBar() {
         {a.problem && <p role="alert" className="text-xs text-amber-300">{a.problem}</p>}
       </div>
       {live && (
-        <div className="flex flex-shrink-0 items-center gap-1.5">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
           {a.local && calls.playBlocked && (
             <Button size="sm" variant="outline" onClick={calls.resumeAudio}>
               <Volume2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
@@ -125,8 +126,12 @@ export function InCallBar() {
           )}
           {a.local && mics.length > 1 && (
             <Select value={mic} onValueChange={calls.switchMic}>
-              <SelectTrigger className="h-8 w-40 text-xs" aria-label="Microphone">
-                <SelectValue />
+              {/* A phone screen shows a microphone icon for the name, which a screen reader still hears. */}
+              <SelectTrigger className="h-8 w-auto gap-1.5 px-2 text-xs sm:w-40 sm:px-3" aria-label="Microphone">
+                <Mic className="h-4 w-4 sm:hidden" aria-hidden="true" />
+                <span className="sr-only sm:not-sr-only">
+                  <SelectValue />
+                </span>
               </SelectTrigger>
               <SelectContent data-call-console>
                 {mics.map((m, i) => (

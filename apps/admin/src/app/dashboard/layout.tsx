@@ -193,6 +193,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [showNotifDropdown, showUserMenu]);
+  // The incoming-call banner floats just below the header, which a call makes taller once its bar takes a row of its own.
+  const shellRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const resized = new ResizeObserver(() => shellRef.current?.style.setProperty('--header-height', `${header.offsetHeight}px`));
+    resized.observe(header);
+    return () => resized.disconnect();
+  }, [user]);
   // No target is the focus going nowhere (a click on the menu's own text): clicks have the outside-click handler.
   const closeOnLeave = (close: () => void) => (e: React.FocusEvent<HTMLDivElement>) => {
     if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) close();
@@ -221,7 +231,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!user) return null;
 
   const shell = (
-    <div className="min-h-screen bg-background">
+    <div ref={shellRef} className="min-h-screen bg-background">
       {/* Demo Mode Banner */}
       <DemoBanner />
 
@@ -319,8 +329,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       >
         {/* Header */}
         {/* The header is its menus' stacking context: while one is open, it goes over the incoming-call banner (z-[60]). */}
-        <header className={`sticky top-0 ${showUserMenu || showNotifDropdown ? 'z-[61]' : 'z-30'} bg-background/80 backdrop-blur-md border-b border-border`}>
-          <div className="flex items-center justify-between px-6 py-4">
+        <header ref={headerRef} className={`sticky top-0 ${showUserMenu || showNotifDropdown ? 'z-[61]' : 'z-30'} bg-background/80 backdrop-blur-md border-b border-border`}>
+          <div className="flex flex-wrap items-center justify-between gap-y-3 px-6 py-4 [container-type:inline-size]">
             <button
               type="button"
               onClick={() => {
@@ -337,7 +347,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
-            <div className="flex min-w-0 flex-1 justify-center px-4">
+            {/* The call's bar: on a row of its own under the header's controls, and between them once the header is
+                wide enough for all of it. */}
+            <div className="order-last basis-full empty:hidden [@container(min-width:68rem)]:order-none [@container(min-width:68rem)]:flex [@container(min-width:68rem)]:min-w-0 [@container(min-width:68rem)]:flex-1 [@container(min-width:68rem)]:justify-center [@container(min-width:68rem)]:px-4">
               <InCallBar />
             </div>
             <div className="flex items-center gap-4">
