@@ -190,8 +190,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       setShowNotifDropdown(false);
       setShowUserMenu(false);
     }
+    // A call that rang while the tab was behind another took the focus with no blur here: back in the tab, the menu
+    // goes, or it would hide the Answer that has the focus. Only then: Safari never focuses a menu's own button, so the
+    // focus is outside a menu opened with the mouse.
+    function onBack() {
+      if (!document.activeElement?.closest('[data-call-console]')) return;
+      setShowNotifDropdown(false);
+      setShowUserMenu(false);
+    }
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('focus', onBack);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('focus', onBack);
+    };
   }, [showNotifDropdown, showUserMenu]);
   // The incoming-call banner floats just below the header, which a call makes taller once its bar takes a row of its own.
   const shellRef = useRef<HTMLDivElement>(null);

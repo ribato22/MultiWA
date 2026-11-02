@@ -774,6 +774,27 @@ test('a call that rang behind another tab and stops once the agent is back gives
   await expect(working(page)).toBeFocused();
 });
 
+test('a header menu left open behind another tab closes once the agent is back to a call that rang there: its Answer shows', async ({ page, backend }) => {
+  await open(page);
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  const menu = page.getByRole('menu', { name: 'Account' });
+  await expect(menu).toBeVisible();
+  const back = await behindAnotherTab(page);
+  backend.emit('call:ringing', ringing());
+  const answerButton = banner(page).getByRole('button', { name: 'Answer' });
+  await expect.poll(() => holds(answerButton)).toBe(true);
+  await back();
+  await expect(menu).toHaveCount(0);
+  await expect(answerButton).toBeFocused();
+  // Nothing covers it: Enter answers a call the agent sees.
+  const reached = await answerButton.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return !!hit && el.contains(hit);
+  });
+  expect(reached).toBe(true);
+});
+
 test('a call a reload rejoined behind another tab gives the focus to the main content once its bar goes, not to the page', async ({ page, backend }) => {
   await open(page);
   await answer(page, backend);
