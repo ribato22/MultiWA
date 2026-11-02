@@ -1,4 +1,4 @@
-import { test, expect, rendered, ringing, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, rendered, ringing, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
@@ -408,4 +408,167 @@ test('the microphone list shows the one in use, and follows a microphone plugged
   await page.evaluate(() => (window as any).__plugIn());
   await picker.click();
   await expect(page.getByRole('option')).toHaveText(['Desk microphone', 'Headset', 'USB microphone']);
+});
+
+// Where the focus goes when the call console lets go of it. The agent was on a link of the page (not a field, where no
+// ring takes the focus) when the call rang.
+const working = (page: Page) => page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Chat', exact: true });
+const card = (page: Page, caller: string) => banner(page).getByRole('group', { name: `Call from ${caller}` });
+const SARI = { callId: 'call-2', caller: { name: 'Bu Sari', number: '628111000222' } };
+async function ringFrom(page: Page, backend: FakeBackend) {
+  await working(page).focus();
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeFocused();
+}
+
+test('a call that stops ringing gives the focus back to where the ring took it from', async ({ page, backend }) => {
+  await open(page);
+  await ringFrom(page, backend);
+  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' });
+  await expect(banner(page)).toHaveCount(0);
+  await expect(working(page)).toBeFocused();
+});
+
+test('Dismiss pressed with the keyboard gives the focus back to where the ring took it from', async ({ page, backend }) => {
+  await open(page);
+  await ringFrom(page, backend);
+  await page.keyboard.press('Tab');
+  await expect(banner(page).getByRole('button', { name: 'Dismiss' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(banner(page)).toHaveCount(0);
+  await expect(working(page)).toBeFocused();
+});
+
+test('a call another agent answers gives the focus back at once, while its card says who', async ({ page, backend }) => {
+  await open(page);
+  await ringFrom(page, backend);
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: 'u-jane', byUserName: 'Jane' });
+  await expect(banner(page)).toContainText('Answered by Jane');
+  await expect(working(page)).toBeFocused();
+});
+
+test('a failed answer’s card keeps the focus while it says why, and gives it back as it fades', async ({ page, backend }) => {
+  backend.reply('call:answer', () => ({ ok: false, reason: 'already_claimed' }));
+  await open(page);
+  await ringFrom(page, backend);
+  await page.keyboard.press('Enter');
+  await expect(card(page, 'Pak Joko').getByRole('alert')).toContainText('Someone else answered');
+  await expect(card(page, 'Pak Joko')).toBeFocused();
+  await expect(banner(page)).toHaveCount(0, { timeout: 6000 });
+  await expect(working(page)).toBeFocused();
+});
+
+test('nothing to give the focus back to: it goes to the main content, not to the page', async ({ page, backend }) => {
+  await open(page); // nothing has the focus
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(banner(page)).toHaveCount(0);
+  const main = page.getByRole('main');
+  await expect(main).toBeFocused();
+  expect(await main.evaluate((el) => getComputedStyle(el).outlineColor)).toBe('rgba(0, 0, 0, 0)'); // no ring around the page
+});
+
+test('two calls ringing: the card that goes with the focus hands it to the other call’s Answer, and the last one gives it back', async ({ page, backend }) => {
+  await open(page);
+  await ringFrom(page, backend);
+  backend.emit('call:ringing', ringing(SARI));
+  await expect(card(page, 'Bu Sari').getByRole('button', { name: 'Answer' })).toBeFocused();
+  await card(page, 'Pak Joko').getByRole('button', { name: 'Answer' }).focus(); // the agent goes to the older call
+  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' });
+  await expect(card(page, 'Pak Joko')).toHaveCount(0);
+  await expect(card(page, 'Bu Sari').getByRole('button', { name: 'Answer' })).toBeFocused();
+  backend.emit('call:ended', { callId: 'call-2', outcome: 'missed' });
+  await expect(banner(page)).toHaveCount(0);
+  await expect(working(page)).toBeFocused();
+});
+
+test('two calls ringing: a card that goes without the focus leaves it where the agent put it', async ({ page, backend }) => {
+  await open(page);
+  await ringFrom(page, backend);
+  backend.emit('call:ringing', ringing(SARI));
+  await expect(card(page, 'Bu Sari').getByRole('button', { name: 'Answer' })).toBeFocused();
+  const messages = page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Messages', exact: true });
+  await messages.focus(); // back to the page
+  backend.emit('call:ended', { callId: 'call-2', outcome: 'missed' });
+  await expect(card(page, 'Bu Sari')).toHaveCount(0);
+  await page.waitForTimeout(300); // the console's effects have run
+  await expect(messages).toBeFocused();
+});
+
+test('two calls ringing: Enter on the newest keeps the focus on it while it connects, then the call has it; Enter again answers nothing else', async ({ page, backend }) => {
+  const slow = gate();
+  backend.reply('call:answer', async (a) => {
+    await slow.passed;
+    return backend.defaults['call:answer'](a);
+  });
+  await open(page);
+  await ringFrom(page, backend);
+  backend.emit('call:ringing', ringing(SARI));
+  await expect(card(page, 'Bu Sari').getByRole('button', { name: 'Answer' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => backend.commands('call:answer')).toEqual([{ callId: 'call-2' }]);
+  const connecting = card(page, 'Bu Sari').getByRole('button', { name: 'Connecting…' });
+  await rendered(page);
+  await expect(connecting).toBeFocused();
+  await page.keyboard.press('Enter'); // pressed again while it connects
+  slow.open();
+  await expect(bar(page)).toContainText('Bu Sari');
+  await expect(bar(page)).toBeFocused();
+  await page.waitForTimeout(300); // a second answer would be out by now
+  expect(backend.commands('call:answer')).toEqual([{ callId: 'call-2' }]);
+  await expect(card(page, 'Pak Joko').getByRole('button', { name: 'Answer' })).toBeVisible(); // it still rings, quiet
+});
+
+test('a call that rings while this tab answers another takes no focus: the call being answered keeps it, then its bar', async ({ page, backend }) => {
+  const slow = gate();
+  backend.reply('call:answer', async (a) => {
+    await slow.passed;
+    return backend.defaults['call:answer'](a);
+  });
+  await open(page);
+  await ringFrom(page, backend);
+  await page.keyboard.press('Enter');
+  await expect.poll(() => backend.commands('call:answer')).toEqual([{ callId: 'call-1' }]);
+  backend.emit('call:ringing', ringing(SARI)); // it rang before the server had this agent's claim
+  await expect(card(page, 'Bu Sari')).toBeVisible();
+  await rendered(page);
+  await expect(card(page, 'Pak Joko').getByRole('button', { name: 'Connecting…' })).toBeFocused();
+  slow.open();
+  await expect(bar(page)).toBeFocused();
+});
+
+test('Hang up keeps the focus while it hangs up, then gives it back to where the ring took it from', async ({ page, backend }) => {
+  let release!: () => void;
+  backend.reply('call:hangup', () => new Promise((resolve) => (release = () => resolve({ ok: true }))));
+  await open(page);
+  await ringFrom(page, backend);
+  await page.keyboard.press('Enter');
+  await expect(bar(page)).toBeFocused();
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const hangUp = bar(page).getByRole('button', { name: 'Hang up' });
+  await hangUp.focus();
+  await page.keyboard.press('Enter');
+  await expect(bar(page)).toContainText('Hanging up…');
+  await expect(hangUp).toBeDisabled();
+  await rendered(page);
+  await expect(hangUp).toBeFocused();
+  await page.keyboard.press('Enter'); // pressed again meanwhile
+  await expect.poll(() => backend.commands('call:hangup')).toHaveLength(1);
+  release();
+  await expect(bar(page)).toContainText('You hung up');
+  await expect(working(page)).toBeFocused();
+});
+
+test('a call the caller ends keeps the focus on its bar while it says so, and gives it back once the bar goes', async ({ page, backend }) => {
+  await open(page);
+  await ringFrom(page, backend);
+  await page.keyboard.press('Enter');
+  await expect(bar(page)).toBeFocused();
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 7 });
+  await expect(bar(page)).toContainText('The caller hung up · 0:07');
+  await expect(bar(page)).toBeFocused();
+  await expect(bar(page)).toHaveCount(0, { timeout: 6000 });
+  await expect(working(page)).toBeFocused();
 });

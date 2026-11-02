@@ -5,40 +5,46 @@ import Link from 'next/link';
 import { CircleDot, Loader2, MessagesSquare, Phone, PhoneIncoming, VolumeX, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { READINESS_TEXT, ringingCallerLabel } from '@/lib/calls';
+import { consoleFocus, settleFocus } from '@/lib/call-console/focus';
 import { useCalls } from './calls-provider';
 
 export function IncomingCallBanner() {
   const calls = useCalls();
   const answerRef = useRef<HTMLButtonElement>(null);
-  const failedRef = useRef<HTMLDivElement>(null);
   const banners = calls?.state.banners ?? [];
-  const newest = banners.filter((b) => b.status === 'ringing').at(-1)?.call.callId;
-  const failed = banners.filter((b) => b.status === 'failed').at(-1)?.call.callId;
-  // Focus goes to the newest call's Answer, unless the agent is typing: an Enter meant for a field must not answer.
+  const a = calls?.state.active;
+  const ringingIds = banners.filter((b) => b.status === 'ringing').map((b) => b.call.callId);
+  const newest = ringingIds.at(-1);
+  const ringing = ringingIds.join(' ');
+  const rang = useRef('');
+  // While this tab answers a call or is on one, the focus stays with that call: no ring takes it.
+  const busy = banners.some((b) => b.status === 'answering') || (!!a?.local && a.phase !== 'ended');
+  // A call that starts ringing takes the focus to its Answer, unless the agent is typing: an Enter meant for a field
+  // must not answer. An older call left newest by one that stopped ringing takes nothing: the focus may be anywhere.
   useEffect(() => {
-    if (!newest) return;
+    const before = rang.current.split(' ');
+    rang.current = ringing;
+    if (!newest || before.includes(newest) || busy) return;
     const el = document.activeElement as HTMLElement | null;
     if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
     answerRef.current?.focus();
-  }, [newest]);
-  // A failed answer takes its card's buttons away, and says why there: the focus that fell with Answer goes to the card,
-  // not to the page.
-  useEffect(() => {
-    if (failed && document.activeElement === document.body) failedRef.current?.focus();
-  }, [failed]);
+  }, [ringing]);
+  // A card that had the focus went, or lost the button that had it: the focus goes on (lib/call-console/focus.ts).
+  useEffect(settleFocus);
   if (!calls || !banners.length) return null;
   return (
-    <section aria-label="Incoming calls" className="pointer-events-auto fixed right-4 top-20 z-[60] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 sm:right-6">
+    <section data-call-console {...consoleFocus} aria-label="Incoming calls" className="pointer-events-auto fixed right-4 top-20 z-[60] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2 sm:right-6">
       {banners.map((b) => {
         const label = ringingCallerLabel(b.call.caller);
         const unavailable = !b.call.answerable
           ? READINESS_TEXT[b.call.unavailableReason ?? ''] ?? 'This call cannot be answered here'
           : calls.answerBlocked;
         return (
+          // Each card can hold the focus, as a failed answer's does to say why: one that rings again keeps it meanwhile.
           <div
             key={b.call.callId}
-            ref={b.call.callId === failed ? failedRef : undefined}
-            tabIndex={b.status === 'failed' ? -1 : undefined}
+            tabIndex={-1}
+            data-call-focus={b.status === 'failed' ? 'failed' : undefined}
             role="group"
             aria-label={`Call from ${label}`}
             onKeyDown={(e) => {
@@ -88,9 +94,11 @@ export function IncomingCallBanner() {
                   Click anywhere on the page to hear the ringtone
                 </p>
                 <div className="mt-3 flex gap-2">
-                  {/* While it connects, Answer waits and keeps the focus: the console takes one answer per call. */}
+                  {/* While it connects, Answer and Dismiss wait, and Answer keeps the focus: the console takes one answer
+                      per call. */}
                   <Button
                     ref={b.call.callId === newest ? answerRef : undefined}
+                    data-call-focus={b.status}
                     size="sm"
                     className="flex-1"
                     disabled={!!unavailable}
@@ -100,7 +108,7 @@ export function IncomingCallBanner() {
                     {b.status === 'answering' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <Phone className="mr-1.5 h-4 w-4" aria-hidden="true" />}
                     {b.status === 'answering' ? 'Connecting…' : 'Answer'}
                   </Button>
-                  <Button size="sm" variant="outline" disabled={b.status === 'answering'} onClick={() => calls.dismiss(b.call.callId)}>
+                  <Button size="sm" variant="outline" aria-disabled={b.status === 'answering'} onClick={() => b.status === 'ringing' && calls.dismiss(b.call.callId)}>
                     <X className="mr-1.5 h-4 w-4" aria-hidden="true" />
                     Dismiss
                   </Button>

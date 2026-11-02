@@ -6,6 +6,7 @@ import { CircleDot, Loader2, Mic, MicOff, PhoneCall, PhoneOff, Signal, SignalLow
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CALL_AUDIO_TEXT, formatDuration, ringingCallerLabel } from '@/lib/calls';
+import { consoleFocus, settleFocus } from '@/lib/call-console/focus';
 import { prefs } from '@/lib/call-console/prefs';
 import { useCalls } from './calls-provider';
 
@@ -41,6 +42,9 @@ export function InCallBar() {
   useEffect(() => {
     if (a?.local && document.activeElement === document.body) barRef.current?.focus();
   }, [a?.call.callId, a?.local]);
+  // A control that had the focus went (the call ended, or Hear the caller played), or the bar did: the focus goes on
+  // (lib/call-console/focus.ts).
+  useEffect(settleFocus);
   if (!calls || !a) return null;
 
   const remaining = a.announcing ? Math.max(0, Math.ceil(a.announcing.durationSec - (now - a.announcing.since) / 1000)) : 0;
@@ -59,7 +63,16 @@ export function InCallBar() {
   // The microphone in use, else the one chosen in Settings → Calls, if the list has it.
   const mic = [calls.micId, prefs.mic(calls.me.id)].find((id) => mics.some((m) => m.deviceId === id)) ?? mics[0]?.deviceId;
   return (
-    <div ref={barRef} tabIndex={-1} role="group" aria-label="Current call" className="flex min-w-0 items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-3 py-1.5">
+    <div
+      ref={barRef}
+      tabIndex={-1}
+      data-call-console
+      data-call-focus={live && a.local ? 'live' : undefined}
+      {...consoleFocus}
+      role="group"
+      aria-label="Current call"
+      className="flex min-w-0 items-center gap-3 rounded-xl border border-primary/30 bg-primary/10 px-3 py-1.5"
+    >
       <PhoneCall className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
       <div className="min-w-0">
         <p className="truncate text-sm font-medium text-foreground">
@@ -99,7 +112,13 @@ export function InCallBar() {
             </Button>
           )}
           {a.local && (
-            <Button size="sm" variant={a.muted ? 'secondary' : 'outline'} aria-pressed={a.muted} disabled={a.phase === 'hanging_up'} onClick={() => calls.setMuted(!a.muted)}>
+            <Button
+              size="sm"
+              variant={a.muted ? 'secondary' : 'outline'}
+              aria-pressed={a.muted}
+              aria-disabled={a.phase === 'hanging_up'}
+              onClick={() => a.phase !== 'hanging_up' && calls.setMuted(!a.muted)}
+            >
               {a.muted ? <MicOff className="mr-1.5 h-4 w-4" aria-hidden="true" /> : <Mic className="mr-1.5 h-4 w-4" aria-hidden="true" />}
               Mute
             </Button>
@@ -109,7 +128,7 @@ export function InCallBar() {
               <SelectTrigger className="h-8 w-40 text-xs" aria-label="Microphone">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent data-call-console>
                 {mics.map((m, i) => (
                   <SelectItem key={m.deviceId} value={m.deviceId}>{m.label || `Microphone ${i + 1}`}</SelectItem>
                 ))}
@@ -122,7 +141,8 @@ export function InCallBar() {
               Take the call here
             </Button>
           )}
-          <Button size="sm" variant="destructive" disabled={a.phase === 'hanging_up'} onClick={calls.hangUp}>
+          {/* While it hangs up, the controls wait and keep the focus: the console takes one hang-up per call. */}
+          <Button size="sm" variant="destructive" aria-disabled={a.phase === 'hanging_up'} onClick={calls.hangUp}>
             {a.phase === 'hanging_up' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <PhoneOff className="mr-1.5 h-4 w-4" aria-hidden="true" />}
             Hang up
           </Button>

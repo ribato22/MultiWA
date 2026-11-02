@@ -310,9 +310,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Main Content: where the call console gives the focus back when it has nowhere better, never to the page itself
+          (lib/call-console/focus.ts). Only a script focuses it, so it shows no ring. */}
       <main
-        className={`transition-all duration-300 ${
+        tabIndex={-1}
+        className={`outline-none transition-all duration-300 ${
           sidebarOpen ? 'md:ml-64' : 'md:ml-20'
         }`}
       >
