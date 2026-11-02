@@ -281,7 +281,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
    * the microphone and its transports are closed, and the reply carries what the page needs to produce anew. Once it
    * has produced and listens, it is back on. `ifProducerId`, from a page that rejoins by itself: the producer it had.
    * Another one on the call is another tab or device of the agent, which took it meanwhile and keeps it (`moved`). None
-   * yet is a rejoin under way, the page's own one too.
+   * yet is a rejoin under way, the page's own one too. A call whose answer is still connecting is given up instead, as
+   * by Hang up (`answer_undone`): the audio it connects went with the page, and the caller would be answered into silence.
    */
   async rejoin(
     principal: SocketPrincipal,
@@ -291,8 +292,12 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     const own = await this.ownSession(principal, callId);
     if (!own.ok) return own;
     const { session } = own;
-    if (session.phase !== 'active' || !session.handle || !session.room) return { ok: false, reason: 'not_in_call' };
     if (typeof ifProducerId === 'string' && session.agentProducerId && session.agentProducerId !== ifProducerId) return { ok: false, reason: 'moved' };
+    if (session.phase === 'connecting') {
+      await this.stopConnecting(session, { reRing: true });
+      return { ok: false, reason: 'answer_undone' };
+    }
+    if (session.phase !== 'active' || !session.handle || !session.room) return { ok: false, reason: 'not_in_call' };
     session.rejoining = true;
     session.agentProducerId = null;
     session.agentListening = false;

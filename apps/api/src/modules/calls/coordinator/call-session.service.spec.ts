@@ -1290,4 +1290,64 @@ describe('CallSessionService: an agent lost, and back', () => {
     expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_failed' });
     expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
   });
+
+  // The console asks before its page is left while the answer connects: a reload then is a deliberate Leave.
+  it("a page reloaded while WhatsApp answers gives the answer up (answer_undone): hung up, again once the accept is over, never answered with the closed page's voice", async () => {
+    const h = harness();
+    let accepted!: () => void;
+    h.media.answer.mockReturnValueOnce(new Promise((r) => (accepted = () => r({ connectedAfterMs: 900 }))));
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.media.answer).toHaveBeenCalled());
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer')).toEqual({ ok: false, reason: 'answer_undone' });
+    expect(h.media.hangUp.mock.calls).toEqual([['W1']]);
+    expect(S.releaseClaim.mock.calls).toEqual([['c1', 'u1']]);
+    expect(h.sent('call:ended')).toEqual([{ to: ['u1'], payload: { callId: 'c1', endReason: 'cancelled' } }]);
+    accepted(); // the accept already under way connects after all
+    await vi.waitFor(() => expect(h.media.hangUp).toHaveBeenCalledTimes(2));
+    await flush();
+    expect(S.markAnswered).not.toHaveBeenCalled();
+    expect(h.published()).toEqual([]);
+    expect(h.handle.attachCaller).not.toHaveBeenCalled();
+    expect(h.handle.connectAgent).not.toHaveBeenCalled();
+    expect(h.sent('call:active')).toEqual([]);
+    expect(h.sent('call:ringing')).toEqual([]); // hung up: it rings nowhere
+    expect(h.counted()).toEqual([]); // given up, not a media failure
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it('a page reloaded before its audio was ready gives the answer up (answer_undone): released, and rung again for everyone before the reply', async () => {
+    const h = harness();
+    await h.service.onCallReceived({ callId: 'c1' }); // rings u1 and u2
+    await h.service.answer(as('u1'), 'c1');
+    expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'answer_undone' });
+    expect(S.releaseClaim.mock.calls).toEqual([['c1', 'u1']]);
+    expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+    expect(h.room.close).toHaveBeenCalled();
+    expect(h.sent('call:ended')).toEqual([{ to: ['u1'], payload: { callId: 'c1', endReason: 'cancelled' } }]);
+    expect(h.sent('call:ringing').map((s) => s.to)).toEqual([['u1', 'u2'], ['u1', 'u2']]);
+    expect(h.media.hangUp).not.toHaveBeenCalled(); // WhatsApp was never asked: nothing to hang up
+    // The closed page's last commands reach no call, and a second rejoin finds none.
+    await agentReady(h);
+    await flush();
+    expect(h.media.answer).not.toHaveBeenCalled();
+    expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_in_call' });
+    expect(h.published()).toEqual([]);
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it("a rejoin that is not the answering page's leaves a connecting answer alone: another agent's, a viewer's, one naming another producer (moved)", async () => {
+    const h = harness();
+    h.media.answer.mockReturnValueOnce(new Promise(() => undefined)); // WhatsApp is still answering
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.media.answer).toHaveBeenCalled());
+    expect(await h.service.rejoin(as('u2'), 'c1')).toEqual({ ok: false, reason: 'not_in_call' });
+    expect(await h.service.rejoin(as('u3'), 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer-old')).toEqual({ ok: false, reason: 'moved' });
+    expect(h.media.hangUp).not.toHaveBeenCalled();
+    expect(S.releaseClaim).not.toHaveBeenCalled();
+    expect(h.sent('call:ended')).toEqual([]);
+    expect(h.service.activeSessionCount()).toBe(1);
+  });
 });
