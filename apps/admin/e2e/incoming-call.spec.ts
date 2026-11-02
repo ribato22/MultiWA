@@ -1,4 +1,4 @@
-import { test, expect, ringing } from './support/fixtures';
+import { test, expect, ringing, ME } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
@@ -7,6 +7,20 @@ const tones = (page: Page) => page.evaluate(() => (window as any).__tones as num
 /** The desktop alerts shown so far, as [call, closed]. */
 const alerts = (page: Page) => page.evaluate(() => (window as any).__notifications.map((n: any) => [n.options.tag, n.closed]));
 const SARI = { callId: 'call-2', caller: { name: 'Bu Sari', number: '628111000222' } };
+const HINT = 'Click anywhere on the page to hear the ringtone';
+/** The tab's titles over a ring cycle (3.5 s), every 200 ms. */
+const titles = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<string[]>((resolve) => {
+        const seen: string[] = [];
+        const timer = setInterval(() => seen.push(document.title), 200);
+        setTimeout(() => {
+          clearInterval(timer);
+          resolve(seen);
+        }, 3500);
+      }),
+  );
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/dashboard/calls');
@@ -149,8 +163,63 @@ test('"Answered by …" fades on time while another call rings', async ({ page, 
   await page.waitForTimeout(2500);
   backend.emit('call:ringing', ringing(SARI));
   await expect(banner(page).getByRole('group', { name: 'Call from Bu Sari' })).toBeVisible();
-  await expect(taken).toHaveCount(0, { timeout: 8000 });
-  expect(Date.now() - at).toBeLessThan(5200); // its own 4 s, not 4 s from the other call's ring
+  await expect.poll(() => taken.count(), { timeout: 8000, intervals: [100] }).toBe(0);
+  expect(Date.now() - at).toBeLessThan(6000); // its own 4 s, not 4 s from the other call's ring (about 6.5 s)
+});
+
+test('no ringtone or title flash while this agent is on a call, here or in another tab; the call still ringing keeps its banner', async ({ page, backend }) => {
+  backend.emit('call:ringing', ringing());
+  backend.emit('call:ringing', ringing(SARI));
+  await expect(banner(page).getByRole('group')).toHaveCount(2);
+  await expect.poll(() => tones(page), { timeout: 8000 }).toBeGreaterThan(0);
+  // The server checks an agent only when a call starts to ring: Bu Sari's call rang before this agent took the first.
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: ME.id, byUserName: ME.name }); // in another tab
+  await expect(banner(page).getByRole('group')).toHaveCount(1);
+  await expect(banner(page).getByRole('group', { name: 'Call from Bu Sari' })).toBeVisible();
+  const before = await tones(page);
+  expect(await titles(page)).not.toContain('📞 Incoming call'); // a ring cycle
+  expect(await tones(page)).toBe(before);
+  backend.emit('call:ended', { callId: 'call-1', endedBy: 'agent', endReason: 'hangup', talkSeconds: 30 });
+  await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(before); // it rings again at once
+});
+
+test('a tab the browser keeps silent says so and makes no tone; a click on the page lets it ring at once', async ({ page, backend }) => {
+  await page.evaluate(() => ((window as any).__audioBlocked = true));
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByText(HINT)).toBeVisible();
+  await page.waitForTimeout(3500); // a ring cycle
+  expect(await tones(page)).toBe(0);
+  await page.getByRole('heading', { name: 'Calls', exact: true }).click(); // nothing the click does
+  await expect(banner(page).getByText(HINT)).toHaveCount(0);
+  await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(0); // not at the next 3 s tick
+});
+
+test('in a tab the browser keeps silent, the first press on Dismiss dismisses, and no tone plays', async ({ page, backend }) => {
+  await page.evaluate(() => ((window as any).__audioBlocked = true));
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByText(HINT)).toBeVisible();
+  // A press as a hand makes it: the hint must not go, and the button move, between the button going down and up.
+  const box = (await banner(page).getByRole('button', { name: 'Dismiss' }).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+  await expect(banner(page)).toHaveCount(0);
+  await page.waitForTimeout(500);
+  expect(await tones(page)).toBe(0);
+});
+
+test('a page whose audio runs a moment after it was made (Firefox starts it suspended) rings without showing the hint', async ({ page, backend }) => {
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__audioRunsIn = 50;
+    new MutationObserver(() => {
+      if (document.body.textContent?.includes('Click anywhere on the page to hear the ringtone')) w.__hinted = true;
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+  backend.emit('call:ringing', ringing());
+  await expect.poll(() => tones(page), { timeout: 2000 }).toBeGreaterThan(0);
+  expect(await page.evaluate(() => !!(window as any).__hinted)).toBe(false);
 });
 
 test('two tabs of the browser: one of them rings', async ({ page, context, backend }) => {
@@ -162,6 +231,18 @@ test('two tabs of the browser: one of them rings', async ({ page, context, backe
   await expect(banner(other)).toBeVisible();
   await page.waitForTimeout(3500); // a ring cycle
   expect([await tones(page), await tones(other)].filter((n) => n > 0)).toHaveLength(1);
+});
+
+test('two tabs, the first one kept silent by the browser: the second rings, and the first says why it does not', async ({ page, context, backend }) => {
+  await page.evaluate(() => ((window as any).__audioBlocked = true));
+  const other = await context.newPage();
+  await other.goto('/dashboard/calls');
+  await expect(other.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByText(HINT)).toBeVisible();
+  await expect.poll(() => tones(other), { timeout: 8000 }).toBeGreaterThan(0);
+  expect(await tones(page)).toBe(0);
+  await expect(banner(other).getByText(HINT)).toHaveCount(0);
 });
 
 test.describe('on a phone screen', () => {

@@ -38,6 +38,31 @@ export function installBrowserFakes() {
     w.__tones++;
     return (start as any).apply(this, args);
   };
+  // A tab the browser keeps silent (the config lets every tab sound): `__audioBlocked = true`, set before the first ring
+  // (the page makes its AudioContext then), reads `suspended` until a resume() inside a trusted click or key with the
+  // user's activation runs it, 20 ms later. Inside: Playwright's own evaluations count as a user gesture too, so the
+  // activation alone is no click. `__audioRunsIn = ms`: one that runs by itself that long after it was made, as Firefox
+  // starts one suspended.
+  const NativeAudioContext = AudioContext;
+  w.AudioContext = class extends NativeAudioContext {
+    held = !!w.__audioBlocked || w.__audioRunsIn !== undefined;
+    constructor(...args: any[]) {
+      super(...(args as [AudioContextOptions?]));
+      if (w.__audioRunsIn !== undefined) setTimeout(() => this.run(), w.__audioRunsIn);
+    }
+    get state(): AudioContextState {
+      return this.held ? 'suspended' : super.state;
+    }
+    resume() {
+      const input = window.event?.isTrusted && /^(click|key|mouse|pointer|touch)/.test(window.event.type);
+      if (this.held && input && navigator.userActivation.isActive) setTimeout(() => this.run(), 20);
+      return super.resume();
+    }
+    run() {
+      this.held = false;
+      this.dispatchEvent(new Event('statechange'));
+    }
+  };
   // Peer connections: the tests read the microphone's sender (mute, a switched microphone).
   w.__pcs = [];
   const Native = RTCPeerConnection;

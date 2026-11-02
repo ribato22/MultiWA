@@ -10,16 +10,17 @@ export function unlockAudio(): AudioContext {
 }
 
 /**
- * Two tones, like a desk phone, every 3 s, from one tab of the browser: a Web Lock picks it, and a tab already ringing
- * keeps the ringer, so the agent answering there sets no other tab ringing. A tab the browser keeps silent (no click on
- * it since it loaded) reports it through onBlocked and leaves the ringer to the others until a click lets it sound. A
- * tab closed while it rings hands the ringer to no one: the others ring from the next call. Without Web Locks (plain
- * HTTP) every tab rings.
+ * Two tones, like a desk phone, every 3 s, from one tab of the browser: the tab that gets the Web Lock rings while calls
+ * ring. The others asked for it once and do not wait in line, so answering in the ringing tab sets no other tab ringing,
+ * and a tab closed while it rings leaves no tab ringing until ringing starts again from none. A tab the browser keeps
+ * silent (no click on it since it loaded) asks only once a click or a key lets it sound, and says so through onBlocked
+ * meanwhile. Without Web Locks (plain HTTP) every tab rings.
  */
 export function startRinging(onBlocked: (blocked: boolean) => void): () => void {
   const ac = unlockAudio();
   const stop = new AbortController();
   let timer: ReturnType<typeof setInterval> | undefined;
+  let hint: ReturnType<typeof setTimeout> | undefined;
   const ring = () => {
     if (ac.state !== 'running') return;
     const t = ac.currentTime;
@@ -53,22 +54,28 @@ export function startRinging(onBlocked: (blocked: boolean) => void): () => void 
   };
   const onState = () => {
     if (ac.state !== 'running') return;
+    clearTimeout(hint);
     ac.removeEventListener('statechange', onState);
     take();
   };
   const onGesture = () => unlockAudio();
   if (ac.state === 'running') take();
   else {
-    onBlocked(true);
+    // Only a context still suspended a moment later is blocked: Firefox starts one suspended and runs it just after.
+    hint = setTimeout(() => onBlocked(true), 300);
     ac.addEventListener('statechange', onState);
-    window.addEventListener('pointerdown', onGesture);
+    // A click, not a pointerdown: once the audio runs, the hint goes and the banner's buttons move up, so a press that
+    // unlocked it on its way down would come up beside its button; a click's target is set already. A touch's
+    // pointerdown cannot unlock audio either, while the click after it can. Captured: no handler can stop it first.
+    window.addEventListener('click', onGesture, true);
     window.addEventListener('keydown', onGesture);
   }
   return () => {
     stop.abort();
     clearInterval(timer);
+    clearTimeout(hint);
     ac.removeEventListener('statechange', onState);
-    window.removeEventListener('pointerdown', onGesture);
+    window.removeEventListener('click', onGesture, true);
     window.removeEventListener('keydown', onGesture);
   };
 }

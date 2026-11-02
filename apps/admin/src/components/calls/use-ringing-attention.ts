@@ -1,7 +1,7 @@
 'use client';
 // How a ringing call gets the agent's attention in this tab: the live region says each call that rings and what became
 // of it, a desktop alert per call while the tab is in the background, and, while any call rings, the ringtone (unless
-// this browser muted it) and the title flash.
+// this browser muted it) and the title flash, but not while the agent answers or is on a call.
 import { useEffect, useRef, useState } from 'react';
 import { ringingCallerLabel } from '@/lib/calls';
 import { desktopAlert, flashTitle, startRinging } from '@/lib/call-console/attention';
@@ -49,16 +49,19 @@ export function useRingingAttention(state: ConsoleState, userId: string) {
     [],
   );
 
-  const anyRinging = ringingIds !== '';
+  // The server rings an agent only if they are free when a call starts ringing: a call that rang before they answered
+  // another keeps its banner, but goes quiet while they answer that one or are on a call (in this tab or another).
+  const onCall = state.banners.some((b) => b.status === 'answering') || (!!state.active && state.active.phase !== 'ended');
+  const ring = ringingIds !== '' && !onCall;
   useEffect(() => {
-    if (!anyRinging) return;
+    if (!ring) return;
     const stops = [flashTitle('📞 Incoming call')];
     if (!prefs.ringerMuted(userId)) stops.push(startRinging(setSoundBlocked));
     return () => {
       stops.forEach((stop) => stop());
       setSoundBlocked(false);
     };
-  }, [anyRinging, userId]);
+  }, [ring, userId]);
 
   return { soundBlocked, announcement };
 }
