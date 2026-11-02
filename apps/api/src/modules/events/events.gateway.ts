@@ -79,6 +79,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
   onModuleDestroy(): void {
     clearInterval(this.sweepTimer);
+    clearTimeout(this.unchecked.quiet);
   }
 
   // With a namespace, Nest injects the namespace (not the root Server): its adapter holds the rooms.
@@ -160,13 +161,12 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
   /**
    * While the database is down every socket is unchecked, and each comes back every few seconds. The first is warned at
-   * once, so the log shows when an outage began. Those in the minute after a warning are only counted, a debug line
-   * each, and make one warning at its end, with the latest error; that warning starts another such minute. A minute
-   * with none ends it: the next one is warned at once again.
+   * once, so the log shows when an outage began. Those in the minute after a warning are only counted (no line each:
+   * Nest's default logger prints debug lines in production too), and make one warning at its end, with the latest
+   * error; that warning starts another such minute. A minute with none ends it: the next one is warned at once again.
    */
   private noteUnchecked(client: Socket, error: unknown): void {
     if (this.unchecked.quiet) {
-      this.logger.debug(`Could not check the credentials of socket ${client.id}: ${clean(error)}`);
       this.unchecked.count++;
       this.unchecked.error = error;
       return;

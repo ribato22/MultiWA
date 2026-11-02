@@ -242,6 +242,18 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect([soonest, latest].map((s) => s.disconnect.mock.calls.length)).toEqual([0, 0]);
   });
 
+  // Real timers: a spy set on a fake setTimeout would put that fake back when the mocks are restored.
+  it('the hold does not keep the process open', async () => {
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    await gateway.handleConnection(socket('s1'));
+    const hold: NodeJS.Timeout = timers.mock.results[timers.mock.calls.findIndex(([, ms]) => ms < 60_000)].value; // not the quiet minute
+    clearTimeout(hold);
+    gateway.onModuleDestroy();
+    expect(hold.hasRef()).toBe(false);
+  });
+
   it('a socket whose credentials could not be checked and that has left meanwhile is not closed', async () => {
     vi.useFakeTimers();
     db.user.findUnique.mockRejectedValue(new Error('connection refused'));
@@ -266,9 +278,10 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it('more within the minute after that warning are only counted, a debug line each, and make one warning at its end: their count and the latest error', async () => {
+  it('more within the minute after that warning are only counted, with no line of their own, and make one warning at its end: their count and the latest error', async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    // Nest's default logger prints debug lines in production too: one per socket would flood the log in an outage.
     const debug = vi.spyOn((gateway as any).logger, 'debug').mockImplementation(() => undefined);
     db.user.findUnique
       .mockRejectedValueOnce(new Error('connection refused'))
@@ -283,16 +296,12 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     await vi.advanceTimersByTimeAsync(1_000); // a minute after the first
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/ 2 more socket\(s\) .*: timed outforged line$/));
-    expect(debug.mock.calls).toEqual([
-      [expect.stringMatching(/s2.*: connection reset$/)],
-      [expect.stringMatching(/s3.*: timed outforged line$/)],
-    ]);
+    expect(debug).not.toHaveBeenCalled();
   });
 
   it('that warning starts the next quiet minute; a socket after a minute with none is warned at once again', async () => {
     vi.useFakeTimers();
     const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
-    vi.spyOn((gateway as any).logger, 'debug').mockImplementation(() => undefined);
     db.user.findUnique.mockRejectedValue(new Error('connection refused'));
     await gateway.handleConnection(socket('s1')); // warned at once
     await vi.advanceTimersByTimeAsync(30_000);
@@ -454,5 +463,16 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     gateway.onModuleDestroy();
     await vi.advanceTimersByTimeAsync(180_000);
     expect(sweep).toHaveBeenCalledTimes(2);
+  });
+
+  it('module destroy ends a quiet minute too: its warning never comes', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    await gateway.handleConnection(socket('s1')); // warned at once
+    await gateway.handleConnection(socket('s2')); // counted, for the warning at the end of the minute
+    gateway.onModuleDestroy();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
