@@ -21,6 +21,23 @@ const senderTracks = (page: Page) =>
       .map((s: RTCRtpSender) => ({ id: s.track!.id, enabled: s.track!.enabled })),
   );
 const ops = (backend: FakeBackend) => backend.commands('call:media').map((a) => (a.op === 'createTransport' ? `createTransport:${a.direction}` : a.op));
+const produced = (backend: FakeBackend) => backend.commands('call:media').filter((a) => a.op === 'produce').length;
+/** The microphone tracks this page opened, and whether each is still live. */
+const micStates = (page: Page) => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.readyState));
+/** The peer connections still open (a closed one's signalingState is `closed`). */
+const openPeers = (page: Page) => page.evaluate(() => (window as any).__pcs.filter((pc: RTCPeerConnection) => pc.signalingState !== 'closed').length);
+/** Every microphone this page opens is recorded in `__micTracks`. */
+const recordMics = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    w.__micTracks = [];
+    navigator.mediaDevices.getUserMedia = async (c) => {
+      const stream = await gum(c);
+      w.__micTracks.push(...stream.getAudioTracks());
+      return stream;
+    };
+  });
 
 test('focus goes to Answer when a call rings, unless the agent is typing in a field', async ({ page, backend }) => {
   await open(page);
@@ -52,7 +69,7 @@ test('Answer opens the microphone, claims the call, connects its audio in the or
   await expect(bar(page).getByRole('timer', { name: 'Call time' })).toHaveText(/^0:0[5-8]$/);
   await expect(bar(page)).toContainText('Recording');
   await expect(page.getByRole('group', { name: 'Calls availability' })).toContainText('On a call');
-  await expect(bar(page).getByRole('button', { name: 'Hang up' })).toBeFocused(); // the Answer it replaced had the focus
+  await expect(bar(page)).toBeFocused(); // the Answer it replaced had the focus: the call has it, not Hang up
   await expectAccessible(page, '[aria-label="Current call"]');
 });
 
@@ -164,7 +181,7 @@ test('the caller hanging up ends the call here and closes its audio', async ({ p
   backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 7 });
   await expect(bar(page)).toContainText('The caller hung up · 0:07');
   await expect.poll(() => page.evaluate(() => (window as any).__pcs.every((pc: RTCPeerConnection) => pc.connectionState === 'closed'))).toBe(true);
-  expect(await page.evaluate(() => sessionStorage.getItem('multiwa:call'))).toBeNull();
+  expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('multiwa:call')))).toEqual([]);
 });
 
 test('audio this browser cannot connect gives the call back, so it rings for the others', async ({ page, backend }) => {
@@ -182,4 +199,109 @@ test('an answer whose audio did not connect in time says so', async ({ page, bac
   await answer(page, backend);
   backend.emit('call:ended', { callId: 'call-1', endReason: 'media_failed' });
   await expect(bar(page)).toContainText('Could not connect audio');
+});
+
+test('Mute pressed while the audio connects holds once it is connected', async ({ page, backend }) => {
+  // The agent's voice is produced when the test says so, as on a slow link.
+  let release!: () => void;
+  backend.reply('call:media', (a) =>
+    a.op === 'produce' ? new Promise((resolve) => (release = () => resolve(backend.defaults['call:media'](a)))) : backend.defaults['call:media'](a),
+  );
+  await open(page);
+  await answer(page, backend);
+  await expect.poll(() => produced(backend)).toBe(1);
+  await expect(bar(page)).toContainText('Connecting…');
+  const mute = bar(page).getByRole('button', { name: 'Mute' });
+  await mute.click();
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+  release();
+  await expect.poll(async () => (await senderTracks(page)).map((t) => t.enabled)).toEqual([false]);
+  await expect(mute).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('a call:active naming another producer means another tab or browser of the agent took the call: this tab lets go, of audio still connecting too; its own keeps the audio', async ({ page, backend }) => {
+  // The first voice is produced when the test says so: the call moves while this tab's audio still connects.
+  let release: (() => void) | undefined;
+  backend.reply('call:media', (a) => {
+    if (a.op !== 'produce' || release) return backend.defaults['call:media'](a);
+    return new Promise((resolve) => (release = () => resolve(backend.defaults['call:media'](a))));
+  });
+  await open(page);
+  await recordMics(page);
+  await answer(page, backend, { recorded: true });
+  await expect.poll(() => produced(backend)).toBe(1);
+  // The agent took the call in another browser during the announcement: the server connects that browser's voice.
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString(), agentProducerId: 'producer-elsewhere' });
+  await expect(bar(page)).toContainText('On a call in another tab');
+  release!();
+  await expect.poll(() => micStates(page)).toEqual(['ended']);
+  await expect.poll(() => openPeers(page)).toBe(0);
+  // And back here: this tab's own call:active keeps the audio it built.
+  await bar(page).getByRole('button', { name: 'Take the call here' }).click();
+  await expect.poll(() => produced(backend)).toBe(2);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString(), agentProducerId: 'agent-producer' });
+  await expect(bar(page).getByRole('timer', { name: 'Call time' })).toBeVisible();
+  await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
+  await expect.poll(() => openPeers(page)).toBe(2);
+  expect(await micStates(page)).toEqual(['ended', 'live']);
+  await expect(bar(page)).not.toContainText('On a call in another tab');
+});
+
+test('Enter on Answer, then Enter again, does not hang up: the focus goes to the call, not to Hang up', async ({ page, backend }) => {
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(bar(page)).toContainText('Connecting…');
+  await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('[aria-label="Current call"]'))).toBe(true);
+  await page.keyboard.press('Enter'); // the agent pressed it twice
+  await expect(bar(page)).toBeFocused();
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  await expect(bar(page).getByRole('timer', { name: 'Call time' })).toBeVisible();
+  expect(backend.commands('call:hangup')).toEqual([]);
+});
+
+test('the recording notice counts down on the bar, but the live region does not say every second', async ({ page, backend }) => {
+  await page.clock.install();
+  await open(page);
+  await answer(page, backend, { recorded: true });
+  backend.emit('call:announcing', { callId: 'call-1', durationSec: 6.2 });
+  const status = bar(page).getByRole('status');
+  await expect(status).toContainText('The caller hears the recording notice');
+  const said = await status.textContent();
+  const shown = await bar(page).textContent();
+  await page.clock.runFor(2_000);
+  await expect.poll(() => bar(page).textContent()).not.toBe(shown); // the seconds go down
+  expect(await status.textContent()).toBe(said);
+  await expectAccessible(page, '[aria-label="Current call"]');
+});
+
+test('the microphone list shows the one in use, and follows a microphone plugged in', async ({ page, context, backend }) => {
+  await context.addInitScript(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    // The browser opened the headset, with no choice stored (its default microphone).
+    navigator.mediaDevices.getUserMedia = async () => {
+      const stream = await gum({ audio: true });
+      const track = stream.getAudioTracks()[0];
+      const settings = track.getSettings.bind(track);
+      track.getSettings = () => ({ ...settings(), deviceId: 'mic-b' });
+      return stream;
+    };
+    const device = (deviceId: string, label: string) => ({ deviceId, kind: 'audioinput', label, groupId: deviceId, toJSON() { return this; } });
+    w.__devices = [device('mic-a', 'Desk microphone'), device('mic-b', 'Headset')];
+    w.__plugIn = () => {
+      w.__devices.push(device('mic-c', 'USB microphone'));
+      navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+    };
+    navigator.mediaDevices.enumerateDevices = async () => w.__devices as MediaDeviceInfo[];
+  });
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('Headset');
+  await page.evaluate(() => (window as any).__plugIn());
+  await picker.click();
+  await expect(page.getByRole('option')).toHaveText(['Desk microphone', 'Headset', 'USB microphone']);
 });

@@ -54,7 +54,7 @@ export type ConsoleEvent =
   | { type: 'answering'; callId: string }
   | { type: 'answerFailed'; callId: string; message: string; reason?: string } // reason: the call:answer reply's
   | { type: 'answered'; call: RingingCall }
-  | { type: 'restored'; call: RingingCall; local: boolean }
+  | { type: 'restored'; call: RingingCall; local: boolean; muted?: boolean } // muted: the mute stored with the call (a reload)
   | { type: 'announcing'; callId: string; durationSec: number; at: number }
   | { type: 'active'; callId: string; answeredAt: string }
   | { type: 'ended'; callId: string; text: string | null }
@@ -62,7 +62,7 @@ export type ConsoleEvent =
   | { type: 'hangUpFailed'; callId: string; text: string }
   | { type: 'local'; callId: string; local: boolean }
   | { type: 'muted'; muted: boolean }
-  | { type: 'problem'; callId: string; text: string }
+  | { type: 'problem'; callId: string; text: string | null } // null: it is over
   | { type: 'dismiss'; callId: string }
   | { type: 'drop'; callId: string }
   | { type: 'availability'; available: boolean }
@@ -122,6 +122,7 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       return { ...s, banners: without(e.call.callId), active: { call: e.call, phase: 'connecting', local: true, muted: false } };
     case 'restored':
       // A reload, the audio taken here from another tab, or rebuilt after it failed: "Connecting…" until call:active.
+      // What the server said of the call stays, for when this tab gives the audio up again (local).
       return {
         ...s,
         banners: without(e.call.callId),
@@ -129,8 +130,9 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
           call: e.call,
           phase: 'connecting',
           local: e.local,
-          muted: live(e.call.callId) && a!.muted,
+          muted: e.muted ?? (live(e.call.callId) && a!.muted),
           answeredAt: isActive(e.call.callId) ? a!.answeredAt : undefined,
+          announcing: isActive(e.call.callId) ? a!.announcing : undefined,
         },
       };
     case 'announcing':
@@ -155,9 +157,14 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       if (!isActive(e.callId) || a!.phase !== 'hanging_up') return s;
       return { ...s, active: { ...a!, phase: a!.answeredAt ? 'active' : a!.announcing ? 'announcing' : 'connecting', problem: e.text } };
     case 'problem':
-      return live(e.callId) ? { ...s, active: { ...a!, problem: e.text } } : s;
-    case 'local':
-      return isActive(e.callId) ? { ...s, active: { ...a!, local: e.local } } : s;
+      return live(e.callId) ? { ...s, active: { ...a!, problem: e.text ?? undefined } } : s;
+    case 'local': {
+      if (!isActive(e.callId)) return s;
+      // Audio this tab was building, given up (it failed, or another tab took it): the call is back in the phase the
+      // server last said, so it can be taken here again.
+      const phase = !e.local && a!.phase === 'connecting' ? (a!.answeredAt ? 'active' : a!.announcing ? 'announcing' : 'connecting') : a!.phase;
+      return { ...s, active: { ...a!, local: e.local, phase } };
+    }
     case 'muted':
       return a ? { ...s, active: { ...a, muted: e.muted } } : s;
     case 'dismiss':

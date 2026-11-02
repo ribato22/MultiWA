@@ -103,7 +103,7 @@ export const SETTINGS_REASON_TEXT: Record<string, string> = {
 /** A refusal's reasons as texts, each once (several reasons share a text); an unknown reason shows as it came. */
 export const reasonTexts = (reasons: string[], texts: Record<string, string> = SETTINGS_REASON_TEXT) => [...new Set(reasons.map((r) => texts[r] ?? r))];
 
-const NO_AUDIO = 'Could not connect audio';
+export const NO_AUDIO = 'Could not connect audio';
 
 /** Why an answer did not go through (the `call:answer` reply's reason, or no reply). */
 export const ANSWER_FAILURE_TEXT: Record<string, string> = {
@@ -116,6 +116,13 @@ export const ANSWER_FAILURE_TEXT: Record<string, string> = {
   timeout: 'The server did not answer: try again',
   error: 'Something went wrong: try again',
 };
+
+/** The in-call bar's word on this tab's audio for the call: coming back, or gone. */
+export const CALL_AUDIO_TEXT = {
+  reconnecting: 'Reconnecting…',
+  rejoinFailed: 'The call’s audio could not be reconnected: try again',
+  droppedOffline: 'Your audio dropped while you were offline: take the call here to go on',
+} as const;
 
 // Addressed to the agent who took the call ("You hung up"): only endedText shows these.
 const END_REASON_TEXT: Record<CallEndReason, string> = {

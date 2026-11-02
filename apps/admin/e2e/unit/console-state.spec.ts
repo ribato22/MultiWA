@@ -176,3 +176,22 @@ test('the call rebuilt here keeps its mute; another call, or one that ended, sta
   expect(reduce(s, { type: 'restored', call: call('c2'), local: true }).active).toMatchObject({ muted: false });
   expect(run({ type: 'answered', call: call() }, { type: 'muted', muted: true }, { type: 'ended', callId: 'c1', text: null }, { type: 'restored', call: call(), local: true }).active).toMatchObject({ muted: false });
 });
+
+test('a reload restores the mute this tab stored with the call, over what the bar had', () => {
+  expect(run({ type: 'restored', call: call(), local: true, muted: true }).active).toMatchObject({ phase: 'connecting', local: true, muted: true });
+  const s = run({ type: 'answered', call: call() }, { type: 'muted', muted: true });
+  expect(reduce(s, { type: 'restored', call: call(), local: true, muted: false }).active).toMatchObject({ muted: false });
+});
+
+test('audio this tab rebuilt and gave up (it failed, or another tab took it) gives the call back its phase, so it can be taken here again', () => {
+  const rebuilding = (...before: ConsoleEvent[]) => run({ type: 'answered', call: call() }, ...before, { type: 'restored', call: call(), local: true });
+  const active = rebuilding({ type: 'active', callId: 'c1', answeredAt: 'T1' });
+  expect(active.active).toMatchObject({ phase: 'connecting', local: true });
+  expect(reduce(active, { type: 'local', callId: 'c1', local: false }).active).toMatchObject({ phase: 'active', local: false, answeredAt: 'T1' });
+  const announcing = rebuilding({ type: 'announcing', callId: 'c1', durationSec: 6, at: 1000 });
+  expect(reduce(announcing, { type: 'local', callId: 'c1', local: false }).active).toMatchObject({
+    phase: 'announcing', local: false, announcing: { durationSec: 6, since: 1000 },
+  });
+  // The server had not put it through: it still connects.
+  expect(reduce(rebuilding(), { type: 'local', callId: 'c1', local: false }).active).toMatchObject({ phase: 'connecting', local: false });
+});

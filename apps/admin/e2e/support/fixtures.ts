@@ -95,6 +95,8 @@ export class FakeBackend {
   readonly joined: string[] = [];
   /** The server's availability of the agent: kept through a reload, as within the agent grace; a test resets it. */
   available = true;
+  /** While set, the server refuses new connections: a page whose socket dropped keeps trying (its network is down). */
+  offline = false;
   private readonly rest: Rest[] = [];
   private readonly replies: Record<string, Command> = {};
   /** The server's normal replies; a test's `reply` can delegate to them. */
@@ -134,6 +136,10 @@ export class FakeBackend {
   /** The server closes every socket (`io server disconnect`), as a revoked login does. */
   dropSockets() {
     this.io.of('/ws').disconnectSockets(true);
+  }
+  /** Every socket's connection drops, as when the network goes: the pages reconnect by themselves (see `offline`). */
+  blip() {
+    for (const socket of this.io.of('/ws').sockets.values()) socket.conn.close();
   }
 
   async command(event: string, args: any) {
@@ -191,7 +197,7 @@ export const test = base.extend<{ backend: FakeBackend; user: typeof ME }, { fak
       }
       // Plain HTTP answers 404: a page's request here outside /socket.io/ fails at once instead of holding up its load.
       const http = createServer((_req, res) => res.writeHead(404).end());
-      const io = new Server(http, { cors: { origin: true, credentials: true } });
+      const io = new Server(http, { cors: { origin: true, credentials: true }, allowRequest: (_req, ok) => ok(null, !current?.offline) });
       io.of('/ws').on('connection', (socket: Socket) => {
         socket.join(`user:${ME.id}`);
         socket.on('join', (p: { profileId: string }, ack?: (r: unknown) => void) => {

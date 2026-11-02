@@ -63,6 +63,17 @@ export function installBrowserFakes() {
       this.dispatchEvent(new Event('statechange'));
     }
   };
+  // The console's socket: `__socketOpen()` is false once the page has seen its connection drop (the close event has run),
+  // and true again once it reconnected.
+  const NativeWebSocket = WebSocket;
+  const sockets: WebSocket[] = [];
+  w.WebSocket = class extends NativeWebSocket {
+    constructor(...args: any[]) {
+      super(...(args as [string | URL, (string | string[])?]));
+      if (String(args[0]).includes('/socket.io/')) sockets.push(this);
+    }
+  };
+  w.__socketOpen = () => sockets.some((s) => s.readyState === NativeWebSocket.OPEN || s.readyState === NativeWebSocket.CLOSING);
   // Peer connections: the tests read the microphone's sender (mute, a switched microphone).
   w.__pcs = [];
   const Native = RTCPeerConnection;
