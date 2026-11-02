@@ -1,7 +1,7 @@
 'use client';
 // Settings → Calls: this browser's microphone and speaker, checked before a call, and how a call gets attention here
 // (the ringer, desktop alerts). The choices belong to this browser, per user.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Bell, Mic, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -34,7 +34,8 @@ export function DeviceCheck() {
   const [level, setLevel] = useState(0);
   const [testing, setTesting] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [ringerMuted, setRingerMuted] = useState(() => (me ? prefs.ringerMuted(me.id) : false));
+  // The ringer as switched here or in another tab.
+  const ringerMuted = useSyncExternalStore(prefs.watchRinger, () => !!me && prefs.ringerMuted(me.id), () => false);
   const [alerts, setAlerts] = useState<string>(() => (typeof Notification === 'undefined' ? 'unsupported' : Notification.permission));
   const stopTest = useRef<(() => void) | null>(null);
   // A test whose microphone is still opening (the browser may be asking the agent): a second click starts no second one.
@@ -193,15 +194,12 @@ export function DeviceCheck() {
       <div className="flex items-center justify-between gap-3">
         <div>
           <Label htmlFor="calls-ringer" className="text-sm text-foreground">Ring for incoming calls</Label>
-          <p className="text-xs text-muted-foreground">Off: the banner still shows, without a sound. A call that started ringing while it was off stays silent.</p>
+          <p className="text-xs text-muted-foreground">Off: a call still shows its banner, without a sound, even one already ringing.</p>
         </div>
         <Switch
           id="calls-ringer"
           checked={!ringerMuted}
-          onCheckedChange={(on) => {
-            setRingerMuted(!on);
-            prefs.setRingerMuted(me.id, !on);
-          }}
+          onCheckedChange={(on) => prefs.setRingerMuted(me.id, !on)}
         />
       </div>
 

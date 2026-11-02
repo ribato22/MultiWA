@@ -43,31 +43,70 @@ test('Settings → Calls checks the microphone with a level meter, plays a test 
   await expectAccessible(page, '[aria-label="Calls in this browser"]');
 });
 
-test('turning the ringer off silences a call that is ringing, and on again rings it; a call that started while it was off stays silent', async ({ page, backend }) => {
-  const tones = () => page.evaluate(() => (window as any).__tones as number);
-  const banner = page.getByRole('region', { name: 'Incoming calls' });
+const tones = (page: Page) => page.evaluate(() => (window as any).__tones as number);
+const banner = (page: Page) => page.getByRole('region', { name: 'Incoming calls' });
+/** Settings → Calls with the console connected: its ringer switch. */
+async function ringerSwitch(page: Page) {
   await page.goto('/dashboard/settings?tab=calls');
-  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled(); // the console is connected
-  const ringer = section(page).getByRole('switch', { name: 'Ring for incoming calls' });
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+  return section(page).getByRole('switch', { name: 'Ring for incoming calls' });
+}
+
+test('the ringer follows its switch at once: off, a ringing call goes quiet; on again, it rings', async ({ page, backend }) => {
+  const ringer = await ringerSwitch(page);
   backend.emit('call:ringing', ringing());
-  await expect.poll(tones, { timeout: 8000 }).toBeGreaterThan(0);
+  await expect.poll(() => tones(page), { timeout: 8000 }).toBeGreaterThan(0);
   await ringer.click();
-  let after = await tones();
+  const after = await tones(page);
   await page.waitForTimeout(RING_INTERVAL_MS + 500); // a ring cycle
-  expect(await tones()).toBe(after);
-  await expect(banner).toBeVisible(); // still ringing, without a sound
+  expect(await tones(page)).toBe(after);
+  await expect(banner(page)).toBeVisible(); // still ringing, without a sound
   await ringer.click();
-  await expect.poll(tones, { timeout: RING_INTERVAL_MS + 2000 }).toBeGreaterThan(after); // at its next ring
-  backend.emit('call:ended', { callId: 'call-1', outcome: 'missed' });
-  await expect(banner).toHaveCount(0);
+  await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(after); // at once, not at its next ring
+  await expect(section(page)).toContainText('Off: a call still shows its banner, without a sound, even one already ringing.');
+});
+
+test('a call that started ringing with the ringer off rings once it is turned on', async ({ page, backend }) => {
+  const ringer = await ringerSwitch(page);
   await ringer.click();
-  backend.emit('call:ringing', ringing({ callId: 'call-2' }));
-  await expect(banner).toBeVisible();
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  await page.waitForTimeout(1000);
+  expect(await tones(page)).toBe(0);
   await ringer.click();
-  after = await tones();
-  await page.waitForTimeout(RING_INTERVAL_MS + 500);
-  expect(await tones()).toBe(after);
-  await expect(section(page)).toContainText('Off: the banner still shows, without a sound. A call that started ringing while it was off stays silent.');
+  await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(0);
+});
+
+test('a second call rings once the ringer was turned on while the first rang unheard', async ({ page, backend }) => {
+  const ringer = await ringerSwitch(page);
+  await ringer.click();
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  await ringer.click();
+  backend.emit('call:ringing', ringing({ callId: 'call-2', caller: { name: 'Bu Sari', number: '628111000222' } }));
+  await expect(banner(page).getByRole('group')).toHaveCount(2);
+  const before = await tones(page);
+  await expect.poll(() => tones(page), { timeout: RING_INTERVAL_MS + 2000 }).toBeGreaterThan(before);
+});
+
+test('the ringer switched in another tab of this browser is followed here at once', async ({ page, context, backend }) => {
+  await page.goto('/dashboard/calls');
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+  // Another tab of the site, with no console of its own, switches the ringer: it stores the choice, which this tab hears of.
+  const other = await context.newPage();
+  await other.goto('/auth/login');
+  const ringerTo = (value: 'on' | 'off') => other.evaluate((v) => localStorage.setItem('multiwa:calls:u-ada:ringer', v), value);
+  await ringerTo('off');
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  await page.waitForTimeout(1000);
+  expect(await tones(page)).toBe(0);
+  await ringerTo('on');
+  await expect.poll(() => tones(page), { timeout: 1000 }).toBeGreaterThan(0);
+  await ringerTo('off');
+  const after = await tones(page);
+  await page.waitForTimeout(RING_INTERVAL_MS + 500); // a ring cycle
+  expect(await tones(page)).toBe(after);
 });
 
 test('desktop alerts can be turned on from Settings → Calls', async ({ page, context }) => {

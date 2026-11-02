@@ -17,16 +17,15 @@ export const RING_INTERVAL_MS = 3000;
  * ring. The others asked for it once and do not wait in line, so answering in the ringing tab sets no other tab ringing,
  * and a tab closed while it rings leaves no tab ringing until ringing starts again from none. A tab the browser keeps
  * silent (no click on it since it loaded) asks only once a click or a key lets it sound, and says so through onBlocked
- * meanwhile. Without Web Locks (plain HTTP) every tab rings. `muted` is asked at every ring, so a ringer turned off
- * while a call rings (Settings → Calls, in any tab) silences that call too.
+ * meanwhile. Without Web Locks (plain HTTP) every tab rings.
  */
-export function startRinging(onBlocked: (blocked: boolean) => void, muted: () => boolean = () => false): () => void {
+export function startRinging(onBlocked: (blocked: boolean) => void): () => void {
   const ac = unlockAudio();
   const stop = new AbortController();
   let timer: ReturnType<typeof setInterval> | undefined;
   let hint: ReturnType<typeof setTimeout> | undefined;
   const ring = () => {
-    if (ac.state !== 'running' || muted()) return;
+    if (ac.state !== 'running') return;
     const t = ac.currentTime;
     const gain = ac.createGain();
     gain.gain.setValueAtTime(0, t);

@@ -1,8 +1,8 @@
 'use client';
 // How a ringing call gets the agent's attention in this tab: the live region says each call that rings and what became
 // of it, a desktop alert per call while the tab is in the background, and, while any call rings, the ringtone (unless
-// this browser muted it) and the title flash, but not while the agent answers or is on a call.
-import { useEffect, useRef, useState } from 'react';
+// this browser's ringer is off) and the title flash, but not while the agent answers or is on a call.
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { ringingCallerLabel } from '@/lib/calls';
 import { desktopAlert, flashTitle, startRinging } from '@/lib/call-console/attention';
 import type { ConsoleState, RingingCall } from '@/lib/call-console/console-state';
@@ -54,14 +54,18 @@ export function useRingingAttention(state: ConsoleState, userId: string) {
   const onCall = state.banners.some((b) => b.status === 'answering') || (!!state.active && state.active.phase !== 'ended');
   const ring = ringingIds !== '' && !onCall;
   useEffect(() => {
-    if (!ring) return;
-    const stops = [flashTitle('📞 Incoming call')];
-    if (!prefs.ringerMuted(userId)) stops.push(startRinging(setSoundBlocked, () => prefs.ringerMuted(userId)));
+    if (ring) return flashTitle('📞 Incoming call');
+  }, [ring]);
+  // The ringer follows its switch at once, like a phone's silent switch: off, a ringing call goes quiet; on, it rings.
+  const muted = useSyncExternalStore(prefs.watchRinger, () => prefs.ringerMuted(userId), () => false);
+  useEffect(() => {
+    if (!ring || muted) return;
+    const stop = startRinging(setSoundBlocked);
     return () => {
-      stops.forEach((stop) => stop());
+      stop();
       setSoundBlocked(false);
     };
-  }, [ring, userId]);
+  }, [ring, muted]);
 
   return { soundBlocked, announcement };
 }
