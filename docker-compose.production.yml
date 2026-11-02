@@ -98,6 +98,8 @@ services:
       # Must match the API upstream port in docker/nginx/nginx.conf (api:3333).
       API_PORT: 3333
       API_HOST: 0.0.0.0
+      # Only nginx reaches the API, from this file's Docker network.
+      TRUST_PROXY: ${TRUST_PROXY:-172.16.0.0/12}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
@@ -122,6 +124,8 @@ services:
       # Defaults preserve the historical 5 attempts x 30s exponential backoff.
       WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
       WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
+      SEND_TIMEOUT_MS: ${SEND_TIMEOUT_MS:-60000}
+      WWEBJS_MEMORY_LIMIT_MB: ${WWEBJS_MEMORY_LIMIT_MB:-2500}
       # Calls answered in the dashboard (phase 2): off by default. Media is UDP+TCP straight to the api, never through
       # the HTTP proxy: switched on, add docker-compose.calls-media.yml, which publishes the media port.
       CALLS_MEDIA_ENABLED: ${CALLS_MEDIA_ENABLED:-false}
@@ -194,6 +198,8 @@ services:
       # Defaults preserve the historical 5 attempts x 30s exponential backoff.
       WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
       WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
+      SEND_TIMEOUT_MS: ${SEND_TIMEOUT_MS:-60000}
+      WWEBJS_MEMORY_LIMIT_MB: ${WWEBJS_MEMORY_LIMIT_MB:-2500}
       # Per-attempt webhook delivery timeout (read by apps/worker's webhook processor).
       WEBHOOK_TIMEOUT_MS: ${WEBHOOK_TIMEOUT_MS:-30000}
     volumes:

@@ -20,11 +20,14 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `API_HOST` | ❌ | `0.0.0.0` | API bind address |
 | `NODE_ENV` | ❌ | `development` | Environment mode |
 | `CORS_ORIGINS` | ❌ | `http://localhost:3001,http://localhost:3333` (Docker) | Comma-separated allowed origins |
+| `TRUST_PROXY` | ❌ | - (`172.16.0.0/12` in `docker-compose.production.yml`) | Address of the reverse proxy in front of the API, so rate limits and logins see the client's address |
 | `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:3333` (Docker) | URL the browser uses to reach the API. **Build-time** in the admin image. |
 | `DEFAULT_ENGINE` | ❌ | `whatsapp-web-js` | WhatsApp engine (`whatsapp-web-js` or `baileys`) |
 | `ENGINE_HOST` | ❌ | `api` | Where the engine runs: `api` or `worker` |
 | `DURABLE_SEND` | ❌ | `false` | Enqueue outbound sends in Redis (BullMQ) with retry |
 | `OUTBOUND_SEND_CONCURRENCY` | ❌ | `10` | Max concurrent durable send deliveries |
+| `SEND_TIMEOUT_MS` | ❌ | `60000` | The longest one WhatsApp send may take before it fails with `504 SEND_TIMEOUT` |
+| `WWEBJS_MEMORY_LIMIT_MB` | ❌ | `2500` | Memory (MB) above which a profile's Chromium is restarted from its session; `0` = off |
 | `WEBHOOK_TIMEOUT_MS` | ❌ | `30000` | Webhook delivery timeout |
 | `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
 | `QUIET_ALARM_ACTIVE_HOURS` | ❌ | `07:00-22:00` | Daily window in which a connected profile's silence counts toward its quiet-profile alarm |
@@ -137,6 +140,18 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:3001
 CORS_ORIGINS=https://admin.yourdomain.com,https://app.yourdomain.com
 ```
 
+### `TRUST_PROXY`
+**Optional** | String (comma-separated IP addresses or CIDRs) | Default: unset (`172.16.0.0/12` in `docker-compose.production.yml`)
+
+The address of the reverse proxy in front of the API. Without it, behind nginx every request comes from nginx's address: every client shares one rate limit, and logins record nginx's address. With it, the API takes the client address that proxy appended to `X-Forwarded-For`.
+
+Only the hop that connects to the API is trusted, and only from a listed address, so a client cannot choose its address by sending its own `X-Forwarded-For`. Keep client networks out of the list: a client that connects to the API port directly from a listed address is taken for the proxy. A value that is not an address list, such as `1` or `true`, stops the API at boot.
+
+```env
+# nginx on a Docker network of the stock compose files
+TRUST_PROXY=172.16.0.0/12
+```
+
 ---
 
 ## WhatsApp Sessions
@@ -160,23 +175,10 @@ SESSIONS_DIR=/data/sessions
 
 ## Rate Limiting
 
-### `RATE_LIMIT_TTL`
-**Optional** | Number | Default: `60`
-
-Time window in seconds for rate limiting.
-
-### `RATE_LIMIT_MAX`
-**Optional** | Number | Default: `100`
-
-Maximum requests per time window.
-
-### Advanced Rate Limiting (Production)
-
-```env
-RATE_LIMIT_SHORT=10/1s    # 10 requests per second
-RATE_LIMIT_MEDIUM=100/1m  # 100 requests per minute
-RATE_LIMIT_LONG=1000/1h   # 1000 requests per hour
-```
+The API allows **120 requests per minute per route and client address** (the global
+`ThrottlerGuard`; some routes, such as `POST /auth/register`, allow fewer). The limit
+is not set by an environment variable. Behind a reverse proxy, set
+[`TRUST_PROXY`](#trust_proxy) so the client address is the caller's, not the proxy's.
 
 ---
 
@@ -215,6 +217,46 @@ worker give both services the one in `.env`.
 
 ```env
 ENGINE_HOST=api
+```
+
+---
+
+## WhatsApp Web Engine
+
+A profile on the `whatsapp-web-js` engine runs its own headless Chromium. When that page crashes or the
+browser dies (for example when the host runs out of memory and the kernel kills it), the profile's engine is
+restarted from its stored session automatically, without a QR, and the other profiles are not touched.
+
+### `WWEBJS_MEMORY_LIMIT_MB`
+**Optional** | Number (MB) | Default: `2500`
+
+The memory a profile's Chromium (the browser and its pages) may hold before that profile's engine is restarted
+from its session, checked every minute while the profile is online. A WhatsApp Web page grows over days; on a
+small host one page can take enough memory for the kernel to kill processes. `0` turns the check off. It is
+measured on Linux only. The restart briefly takes that profile offline (up to a few minutes). A profile
+restarted for memory is not restarted for memory again within 30 minutes, so a limit below its normal size
+cannot keep it offline; raise the limit if the log says so. A crash is still recovered in that time.
+
+```env
+WWEBJS_MEMORY_LIMIT_MB=2500
+```
+
+---
+
+## Send Timeout
+
+### `SEND_TIMEOUT_MS`
+**Optional** | Number (ms) | Default: `60000`
+
+The longest one WhatsApp send may take. A profile's sends go out one after another,
+so a send that hangs would hold every later send of that profile.
+Past this bound the send fails with `504 SEND_TIMEOUT` and the next one goes. The
+message is stored as `failed`, but WhatsApp may still deliver it, so the gateway
+never retries a timed-out send. A normal send takes seconds; raise this for large
+media over a slow link.
+
+```env
+SEND_TIMEOUT_MS=60000
 ```
 
 ---

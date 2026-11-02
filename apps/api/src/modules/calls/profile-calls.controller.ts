@@ -87,7 +87,7 @@ export class ProfileCallsController {
   }
 
   @Post(':id/calls-announcement')
-  // No throttle of its own: the global ThrottlerGuard keys on req.ip, which behind a proxy (no trustProxy) is the proxy's
+  // No throttle of its own: the global ThrottlerGuard keys on req.ip, which behind a proxy without TRUST_PROXY is the proxy's
   // for every organization. The two-readers limit of announcement-audio.ts bounds the cost.
   @Roles('owner', 'admin')
   @RequireScope('profiles:write')

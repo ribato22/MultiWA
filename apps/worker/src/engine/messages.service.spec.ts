@@ -9,15 +9,16 @@
 //     throw: client not ready, a stale group id): the row was kept as it was and
 //     the answer was { success: true, status: 'sent' } with a message.sent event.
 // Mirrors the API's queueMessage (send-disconnected-profile.spec.ts).
+// Also: a queued send that timed out is failed, not retried (it may still be delivered).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Logger } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => {
   const prisma = {
     profile: { findUnique: vi.fn() },
     conversation: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-    message: { create: vi.fn(), update: vi.fn() },
+    message: { create: vi.fn(), update: vi.fn(), findUnique: vi.fn() },
   };
   return { prisma, createPrismaClient: () => prisma };
 });
@@ -133,6 +134,38 @@ describe('WorkerMessagesService: an engine that answers { success: false }', () 
       type: 'text',
       error: 'Client not ready',
     });
+    expect(eventEmitter.emit).not.toHaveBeenCalledWith(AppEvents.MESSAGE.SENT, expect.anything());
+  });
+});
+
+describe('WorkerMessagesService.deliverQueued: a send that timed out', () => {
+  it('marks it failed instead of letting BullMQ retry it, as the engine may still deliver it', async () => {
+    vi.mocked(prisma.message.findUnique).mockReset().mockResolvedValue({ lane: null } as any);
+    const sendGate = {
+      executeWithGate: vi.fn().mockRejectedValue(new HttpException({ error: 'SEND_TIMEOUT' }, HttpStatus.GATEWAY_TIMEOUT)),
+    };
+    const eventEmitter = { emit: vi.fn() };
+    const svc = new WorkerMessagesService({ getEngine: () => ({}) } as any, sendGate as any, eventEmitter as any);
+    const job = { messageDbId: 'm1', profileId: 'p1', to: '628123456789@s.whatsapp.net', type: 'text', content: { text: 'x' } };
+
+    await expect(svc.deliverQueued(job, false)).resolves.toBeUndefined(); // not the last attempt, still no retry
+
+    expect(prisma.message.update).toHaveBeenCalledWith({ where: { id: 'm1' }, data: { status: 'failed' } });
+    expect(eventEmitter.emit).toHaveBeenCalledWith(AppEvents.MESSAGE.FAILED, expect.objectContaining({ messageId: 'm1', error: 'SEND_TIMEOUT' }));
+  });
+});
+
+describe('WorkerMessagesService.deliverQueued: an engine that answers { success: false }', () => {
+  it('marks the row failed and emits message.failed, never message.sent', async () => {
+    vi.mocked(prisma.message.findUnique).mockReset().mockResolvedValue({ lane: null } as any);
+    const engine = { sendText: vi.fn().mockResolvedValue({ success: false, error: 'Client not ready' }) };
+    const { svc, eventEmitter } = makeService(engine);
+    const job = { messageDbId: 'm1', profileId: 'p1', to: '628123456789@s.whatsapp.net', type: 'text', content: { text: 'x' } };
+
+    await expect(svc.deliverQueued(job, false)).resolves.toBeUndefined();
+
+    expect(prisma.message.update).toHaveBeenCalledWith({ where: { id: 'm1' }, data: { status: 'failed' } });
+    expect(eventEmitter.emit).toHaveBeenCalledWith(AppEvents.MESSAGE.FAILED, expect.objectContaining({ messageId: 'm1', error: 'Client not ready' }));
     expect(eventEmitter.emit).not.toHaveBeenCalledWith(AppEvents.MESSAGE.SENT, expect.anything());
   });
 });

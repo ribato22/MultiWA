@@ -4,6 +4,7 @@
 export * from './adapters/whatsapp-webjs.adapter';
 export * from './adapters/baileys.adapter';
 export * from './adapters/mock.adapter';
+export * from './adapters/process-memory';
 export * from './factory/engine-factory';
 export * from './call-events';
 export * from './adapters/webjs-call-media';

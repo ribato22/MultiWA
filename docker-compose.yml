@@ -77,6 +77,8 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://localhost:3333}
+      # The API port is published, so no proxy is trusted unless set (behind nginx: 172.16.0.0/12).
+      TRUST_PROXY: ${TRUST_PROXY:-}
       # Where the WhatsApp engines run. The api and the worker must agree: with 'worker' the api hands its engine work
       # to the worker, and must not open the sessions itself (each profile would run twice, on the same sessions volume).
       ENGINE_HOST: ${ENGINE_HOST:-api}
@@ -88,6 +90,8 @@ services:
       # Defaults preserve the historical 5 attempts x 30s exponential backoff.
       WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
       WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
+      SEND_TIMEOUT_MS: ${SEND_TIMEOUT_MS:-60000}
+      WWEBJS_MEMORY_LIMIT_MB: ${WWEBJS_MEMORY_LIMIT_MB:-2500}
       # S3/MinIO (optional, for media storage)
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
@@ -166,6 +170,8 @@ services:
       # Defaults preserve the historical 5 attempts x 30s exponential backoff.
       WEBHOOK_RETRY_ATTEMPTS: ${WEBHOOK_RETRY_ATTEMPTS:-5}
       WEBHOOK_RETRY_DELAY_MS: ${WEBHOOK_RETRY_DELAY_MS:-30000}
+      SEND_TIMEOUT_MS: ${SEND_TIMEOUT_MS:-60000}
+      WWEBJS_MEMORY_LIMIT_MB: ${WWEBJS_MEMORY_LIMIT_MB:-2500}
       # Per-attempt webhook delivery timeout (read by apps/worker's webhook processor).
       WEBHOOK_TIMEOUT_MS: ${WEBHOOK_TIMEOUT_MS:-30000}
     volumes:

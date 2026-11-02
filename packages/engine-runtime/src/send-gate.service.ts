@@ -14,6 +14,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { withTimeout } from './with-timeout';
 
 /** WIB (Asia/Jakarta) is a fixed UTC+7 offset with no DST. */
 const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
@@ -88,6 +89,24 @@ export function nextMidnightWIB(from: Date): Date {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The longest one engine send may take before the gate fails it (ms).
+ *
+ * A profile's sends run one after another, so a send that hangs holds every
+ * later send of that profile. On 2026-11-01 one profile's sends sat `pending` for 18
+ * hours, until the api was restarted, while its status read connected. Past this
+ * bound the send fails with 504 SEND_TIMEOUT and the next one goes. It is far above
+ * a normal send (seconds); raise it for large media over a slow link.
+ */
+const sendTimeoutEnv = Number(process.env.SEND_TIMEOUT_MS);
+// Past 2^31-1 ms (or below 1) Node fires a timer at once, which would fail every send.
+export const SEND_TIMEOUT_MS = sendTimeoutEnv >= 1 && sendTimeoutEnv <= 2_147_483_647 ? sendTimeoutEnv : 60_000;
+
+/** Engine sends report most failures by returning { success: false }, not by throwing. */
+function wentOut(result: unknown): boolean {
+  return (result as { success?: unknown } | null | undefined)?.success !== false;
 }
 
 /** Default cold-lane daily cap when neither coldDailyLimit nor dailyMessageLimit is set. */
@@ -319,9 +338,10 @@ export class SendGateService {
 
   /**
    * Serialize the send for this profile, apply the inter-message delay, enforce
-   * the daily limit (429 when reached), run sendFn, and increment the daily
-   * counter on success. Returns sendFn's result, or rejects with the send error
-   * / a 429 HttpException.
+   * the daily limit (429 when reached), run sendFn for at most SEND_TIMEOUT_MS
+   * (504 past it), and increment the daily counter when the send went out.
+   * Returns sendFn's result, or rejects with the send error / a 429 or 504
+   * HttpException.
    *
    * `dedupeText` opts this send into the repeat-reply suppressor. Pass the plain
    * message text for text sends; omit it (media, or any send that must always go
@@ -470,20 +490,51 @@ export class SendGateService {
       );
     }
 
-    // 4. Send, then increment counters only on a real successful send. Cold sends
-    // advance both the total and the cold counter; replies advance only the total.
-    const result = await sendFn();
-    // Arm the repeat window only on a send that actually went out. Arming before
-    // sendFn would let one engine failure suppress the legitimate retry of a
-    // message the customer never received.
-    if (repeatKey) this.lastRepeatAt.set(repeatKey, Date.now());
-    await prisma.profile.update({
-      where: { id: profileId },
-      data: {
-        dailyMessageCount: { increment: 1 },
-        ...(isCold ? { coldMessageCount: { increment: 1 } } : {}),
-      },
-    });
+    // 4. Send, then count it only if it went out. Cold sends advance both the total
+    // and the cold counter; replies advance only the total.
+    const countSent = async () => {
+      // Arm the repeat window only on a send that actually went out. Arming before
+      // sendFn would let one engine failure suppress the legitimate retry of a
+      // message the customer never received.
+      if (repeatKey) this.lastRepeatAt.set(repeatKey, Date.now());
+      await prisma.profile.update({
+        where: { id: profileId },
+        data: {
+          dailyMessageCount: { increment: 1 },
+          ...(isCold ? { coldMessageCount: { increment: 1 } } : {}),
+        },
+      });
+    };
+    const sending = Promise.resolve(sendFn());
+    const result = await withTimeout(sending, SEND_TIMEOUT_MS, () => this.sendTimedOut(profileId, sending, countSent));
+    if (wentOut(result)) await countSent();
     return result;
+  }
+
+  /**
+   * The 504 for a send still running after SEND_TIMEOUT_MS. The engine call cannot be
+   * cancelled: if it still goes out, it is counted then and logged, as its caller was
+   * told it failed and a retry would send it twice.
+   */
+  private sendTimedOut(profileId: string, sending: Promise<unknown>, countLate: () => Promise<void>): HttpException {
+    const profile = profileId.replace(/[\r\n]/g, '');
+    const failedAt = Date.now();
+    this.logger.warn(`Send on profile ${profile} did not finish within ${SEND_TIMEOUT_MS}ms; failed it so the next sends can go`);
+    sending.then(
+      (late) => {
+        if (!wentOut(late)) return;
+        this.logger.warn(`Send on profile ${profile} went out ${Date.now() - failedAt}ms after it was failed as SEND_TIMEOUT`);
+        countLate().catch(() => undefined); // best effort: the counter is a cap, not a ledger
+      },
+      () => undefined,
+    );
+    return new HttpException(
+      {
+        error: 'SEND_TIMEOUT',
+        message: `The WhatsApp engine did not finish this send within ${SEND_TIMEOUT_MS} ms. It may still be delivered, so a retry can send it twice.`,
+        timeoutMs: SEND_TIMEOUT_MS,
+      },
+      HttpStatus.GATEWAY_TIMEOUT,
+    );
   }
 }
