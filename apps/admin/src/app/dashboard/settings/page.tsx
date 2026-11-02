@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import {
   X,
   CheckCircle2,
@@ -88,30 +88,24 @@ export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  // The tab a link asks for (`?tab=calls`), also when it is followed on this page (the bell's Notification Settings).
-  const asked = useSearchParams().get('tab');
-  const router = useRouter();
-  const [tab, setTab] = useState(asked ?? 'account');
-  useEffect(() => {
-    if (asked) setTab(asked);
-  }, [asked]);
-  // The URL names the tab shown: a reload or Back opens it again, and a link to another tab always switches to it.
-  const select = (v: string) => {
-    setTab(v);
-    router.replace(`/dashboard/settings?tab=${v}`, { scroll: false });
-  };
+  // The URL names the tab shown (`?tab=calls`, none for Account): a reload or Back opens it again, and a link to a tab,
+  // followed on this page too (the bell's Notification Settings, the sidebar's Settings), switches to it. A click
+  // changes the URL in place, without asking the server for the page again: a request that failed would reload it.
+  const tab = useSearchParams().get('tab') ?? 'account';
+  const select = (v: string) => window.history.replaceState(null, '', `/dashboard/settings?tab=${v}`);
   // The Calls tab is there when the header's call controls are: a profile answers calls in the dashboard, or a call is
   // here. Never for a role that takes no calls (it has no console), nor in an organization that does not use them.
   const calls = useCalls();
   const callsTab = !!calls?.inUse;
   // A link to the Calls tab waits until the console knows whether there is one: it must not show Account, then switch.
+  // Meanwhile the other tabs can be opened, and the Calls tab only keeps its place, unseen.
   const waiting = tab === 'calls' && !!calls && !calls.inUseKnown;
   // A tab this page does not have, or not for this user, opens Account, and the URL says so: a later ring then leaves
   // the tab as it is.
-  const shown = TABS.includes(tab) && (tab !== 'calls' || callsTab) ? tab : 'account';
+  const shown = waiting || (TABS.includes(tab) && (tab !== 'calls' || callsTab)) ? tab : 'account';
   useEffect(() => {
-    if (!waiting && shown !== tab) select(shown);
-  }, [waiting, shown, tab]);
+    if (shown !== tab) select(shown);
+  }, [shown, tab]);
 
   // Team state
   const [members, setMembers] = useState<Member[]>([]);
@@ -479,7 +473,7 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading || waiting) {
+  if (loading) {
     return (
       <div className="space-y-6">
         <div>
@@ -508,7 +502,11 @@ export default function SettingsPage() {
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          {callsTab && <TabsTrigger value="calls">Calls</TabsTrigger>}
+          {(callsTab || waiting) && (
+            <TabsTrigger value="calls" disabled={!callsTab} className={callsTab ? undefined : 'invisible'}>
+              Calls
+            </TabsTrigger>
+          )}
           <TabsTrigger value="api">API & Webhooks</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="storage">Storage</TabsTrigger>
@@ -957,6 +955,7 @@ export default function SettingsPage() {
             <DeviceCheck />
           </TabsContent>
         )}
+        {waiting && <Skeleton className="mt-2 h-[400px]" />}
 
         {/* API Tab */}
         <TabsContent value="api">

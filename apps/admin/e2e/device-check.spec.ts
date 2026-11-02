@@ -1,4 +1,4 @@
-import { test, expect, gate, get, on, requestEnded, ringing, ME, PROFILE } from './support/fixtures';
+import { test, expect, gate, get, on, requestEnded, ringing, ME, PROFILE, type Reply } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { holdMics } from './support/browser';
 import { RING_INTERVAL_MS } from '@/lib/call-console/attention';
@@ -275,6 +275,56 @@ test('the bell’s Notification Settings opens that tab, from Settings too, what
   await expect(tab(page, 'Notifications')).toHaveAttribute('aria-selected', 'true');
 });
 
+test('a tab click changes the URL in place, with no request to the server', async ({ page }) => {
+  await page.goto('/dashboard/settings');
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  // A request for the page's server components (RSC) carries this header, or `_rsc=` in its URL.
+  const asked: string[] = [];
+  page.on('request', (r) => void ((r.headers().rsc === '1' || r.url().includes('_rsc=')) && asked.push(r.url())));
+  await tab(page, 'Team').click();
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=team$/);
+  await tab(page, 'Security').click();
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=security$/);
+  await expect(tab(page, 'Security')).toHaveAttribute('aria-selected', 'true');
+  await page.waitForTimeout(500); // a request would be out by now
+  expect(asked).toEqual([]);
+});
+
+test('the bell’s Notification Settings opens that tab after a click on another, while the server is slow to answer', async ({ page, backend }) => {
+  backend.route(get('/notifications', { notifications: [{ id: 'n-1', type: 'info', title: 'Hello', body: 'A notification', isRead: true, createdAt: '2026-11-01T03:00:00.000Z' }], total: 1 }));
+  await page.goto('/dashboard/settings?tab=notifications');
+  await expect(tab(page, 'Notifications')).toHaveAttribute('aria-selected', 'true');
+  // The page's server answers its navigations two seconds late, as on a slow link.
+  await page.route((url) => url.port === '3901', async (route) => {
+    if (route.request().headers().rsc === '1') await new Promise((resolve) => setTimeout(resolve, 2000));
+    await route.fallback();
+  });
+  await tab(page, 'Team').click();
+  await expect(tab(page, 'Team')).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('button', { name: 'Notifications', exact: true }).click();
+  await page.getByRole('link', { name: 'Notification Settings' }).click();
+  await expect(tab(page, 'Notifications')).toHaveAttribute('aria-selected', 'true', { timeout: 10_000 });
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=notifications$/);
+  await page.waitForTimeout(2500); // whatever the server still had to answer
+  await expect(tab(page, 'Notifications')).toHaveAttribute('aria-selected', 'true');
+});
+
+test('the Settings links of the sidebar and the account menu open Account, whatever tab was shown', async ({ page }) => {
+  await page.goto('/dashboard/settings');
+  await tab(page, 'Team').click();
+  await expect(tab(page, 'Team')).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await expect(page).toHaveURL(/\/dashboard\/settings$/);
+  await tab(page, 'Security').click();
+  await expect(tab(page, 'Security')).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('menuitem', { name: 'Settings' }).click();
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await page.reload();
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+});
+
 test('the tab clicked is in the URL: a reload keeps it, and so does Back from another page', async ({ page }) => {
   await page.goto('/dashboard/settings');
   await tab(page, 'Security').click();
@@ -302,9 +352,32 @@ test('a link to the Calls tab waits until the console knows whether a profile an
   await page.goto('/dashboard/settings?tab=calls');
   await me;
   await page.waitForTimeout(500); // the page would show a tab by now
+  // Meanwhile the other tabs are there, and the Calls tab keeps its place unseen: no tab moves when the answer comes.
+  await expect(tab(page, 'API & Webhooks')).toBeVisible();
+  await expect(tab(page, 'Calls')).toHaveCount(0);
+  const before = await tab(page, 'API & Webhooks').boundingBox();
   slow.open();
   await expect(tab(page, 'Calls')).toHaveAttribute('aria-selected', 'true');
+  expect(await tab(page, 'API & Webhooks').boundingBox()).toEqual(before);
   expect(await page.evaluate(() => !!(window as any).__accountShown)).toBe(false);
+});
+
+test('a link to the Calls tab while the profiles are still being read leaves the other tabs to open', async ({ page, backend }) => {
+  backend.route(on('GET', '/profiles', () => new Promise<Reply>(() => undefined))); // the read never answers
+  await page.goto('/dashboard/settings?tab=calls');
+  await tab(page, 'Team').click();
+  await expect(tab(page, 'Team')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tabpanel')).toContainText('Team Members');
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=team$/);
+  await expect(tab(page, 'Calls')).toHaveCount(0);
+});
+
+test('a link to the Calls tab when the profiles cannot be read opens Account, and the URL says so', async ({ page, backend }) => {
+  backend.route(on('GET', '/profiles', { status: 500, json: { message: 'Internal server error' } }));
+  await page.goto('/dashboard/settings?tab=calls');
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=account$/);
+  await expect(tab(page, 'Calls')).toHaveCount(0);
 });
 
 test('Settings has a Calls tab once a profile answers calls in the dashboard, as the header has its call controls; a ring then leaves the tab shown', async ({ page, backend }) => {
