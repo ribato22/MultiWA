@@ -18,11 +18,6 @@ const command = (socket: Socket, event: string, args: object, ms: number): Promi
   socket.timeout(ms).emitWithAck(event, args).catch(() => ({ ok: false as const, reason: 'timeout' }));
 
 const ACK_MS = { availability: 5_000 };
-/**
- * sessionStorage, per user: the availability the server last confirmed to this tab, whichever tab chose it. The server
- * forgets "unavailable" when the agent's last tab goes, a reload included; a new session starts available.
- */
-const availableKey = (userId: string) => `multiwa:calls:${userId}:available`;
 const FADE_MS = 4_000; // "Answered by …" and a call's end stay this long
 
 export interface CallsConsole {
@@ -79,17 +74,13 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     });
 
     // ── connection ──
-    const availableAt = availableKey(user.id);
-    const confirmed = (available: boolean) => {
-      sessionStorage.setItem(availableAt, available ? 'on' : 'off');
-      dispatch({ type: 'availability', available });
-    };
+    // The availability is the server's, which keeps "unavailable" through a reload: the console shows what it confirms.
+    const confirmed = (available: boolean) => dispatch({ type: 'availability', available });
     socket.on('connect', async () => {
-      // The server forgot "unavailable" if this was the agent's last tab (a reload): the state it last confirmed here
-      // stands. A failed read is tried once more: without one, the switch stays offline on a live socket.
-      const off = sessionStorage.getItem(availableAt) === 'off';
+      // Only a read: a choice this tab made before can be stale (another tab or device changed it since). A failed read
+      // is tried once more: without one, the switch stays offline on a live socket.
       for (let tries = 0; tries < 2 && socket.connected; tries++) {
-        const reply = await command(socket, 'call:availability', off ? { available: false } : {}, ACK_MS.availability);
+        const reply = await command(socket, 'call:availability', {}, ACK_MS.availability);
         if (reply.ok) return confirmed(reply.available);
       }
     });

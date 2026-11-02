@@ -18,15 +18,27 @@ test('an agent is online and available on every page once the console connects, 
   await expectAccessible(page, '[aria-label="Calls availability"]');
 });
 
-test('a reload keeps the agent unavailable, though the server forgot it with the tab', async ({ page, backend }) => {
+test('a reload keeps the agent unavailable: the server kept it, and the console only reads it', async ({ page, backend }) => {
   await page.goto('/dashboard/calls');
   await toggle(page).click();
   await expect.poll(() => backend.commands('call:availability').at(-1)).toEqual({ available: false });
-  backend.available = true; // the agent's last socket went: the server is back to available
+  const sent = backend.commands('call:availability').length;
   await page.reload();
   await expect(toggle(page)).toBeEnabled(); // connected: an offline switch reads unchecked too
   await expect(toggle(page)).toHaveAttribute('aria-checked', 'false');
-  expect(backend.commands('call:availability').at(-1)).toEqual({ available: false });
+  expect(backend.commands('call:availability').slice(sent)).toEqual([{}]);
+});
+
+test('after the server forgot it (no socket for the grace), a reload reads available', async ({ page, backend }) => {
+  await page.goto('/dashboard/calls');
+  await toggle(page).click();
+  await expect.poll(() => backend.commands('call:availability').at(-1)).toEqual({ available: false });
+  const sent = backend.commands('call:availability').length;
+  backend.available = true; // the grace passed: the server is back to available
+  await page.reload();
+  await expect(toggle(page)).toBeEnabled();
+  await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+  expect(backend.commands('call:availability').slice(sent)).toEqual([{}]); // a read, not this tab's old "off"
 });
 
 test('a socket the server closed stays offline with the same login', async ({ page, backend }) => {
@@ -59,9 +71,9 @@ test("another tab's newer choice wins at a reload", async ({ page, backend }) =>
   await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
   const sent = backend.commands('call:availability').length;
   await page.reload();
-  await expect.poll(() => backend.commands('call:availability').length).toBeGreaterThan(sent);
-  expect(backend.commands('call:availability')[sent]).toEqual({}); // a read, not this tab's old "off"
+  await expect(toggle(page)).toBeEnabled();
   await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+  expect(backend.commands('call:availability').slice(sent)).toEqual([{}]); // a read, not this tab's old "off"
 });
 
 test('a refused toggle changes nothing, and says so', async ({ page, backend }) => {
@@ -73,9 +85,9 @@ test('a refused toggle changes nothing, and says so', async ({ page, backend }) 
   await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
   const sent = backend.commands('call:availability').length;
   await page.reload();
-  await expect.poll(() => backend.commands('call:availability').length).toBeGreaterThan(sent);
-  expect(backend.commands('call:availability')[sent]).toEqual({}); // the refused "off" was not kept for the next connect
+  await expect(toggle(page)).toBeEnabled();
   await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
+  expect(backend.commands('call:availability').slice(sent)).toEqual([{}]); // the refused "off" is not sent again
 });
 
 test('a failed read at connect is tried once more', async ({ page, backend }) => {

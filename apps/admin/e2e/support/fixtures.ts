@@ -93,7 +93,7 @@ export class FakeBackend {
   readonly sent: Array<{ event: string; args: any }> = [];
   readonly requests: Req[] = [];
   readonly joined: string[] = [];
-  /** The server's availability of the agent. */
+  /** The server's availability of the agent: kept through a reload, as within the agent grace; a test resets it. */
   available = true;
   private readonly rest: Rest[] = [];
   private readonly replies: Record<string, Command> = {};

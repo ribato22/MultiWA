@@ -392,7 +392,7 @@ From an agent's Answer to its audio connected. Past it the answer is undone and 
 ### `CALLS_AGENT_GRACE_MS`
 **Optional** | Number (milliseconds) | Default: `15000`
 
-An agent whose browser has no connection to the API, or whose audio link is down, for this long is hung up (`endReason: agent_lost`). A reloaded agent page rejoins its call within it. The WhatsApp Web page's own audio link down for as long ends the call too (`endReason: media_failed`).
+An agent whose browser has no connection to the API, or whose audio link is down, for this long is hung up (`endReason: agent_lost`). A reloaded agent page rejoins its call within it. The WhatsApp Web page's own audio link down for as long ends the call too (`endReason: media_failed`). It is also how long an agent's "unavailable" outlives their last socket: a reload keeps it, and closing the dashboard ends it.
 
 ```env
 CALLS_MEDIA_ENABLED=true

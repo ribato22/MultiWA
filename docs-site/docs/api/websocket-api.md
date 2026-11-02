@@ -133,6 +133,8 @@ When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), 
 
 The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`).
 
+An agent who turned calls off stays unavailable until they turn them back on, or until they have had no socket for `CALLS_AGENT_GRACE_MS`: a reload keeps it, and closing the dashboard ends it.
+
 ---
 
 ## 8.4 Example (Node.js)

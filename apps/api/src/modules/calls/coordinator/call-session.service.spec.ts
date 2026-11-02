@@ -385,15 +385,67 @@ describe('CallSessionService: recorded calls', () => {
 });
 
 describe('CallSessionService: availability', () => {
-  it("an unavailable agent is not rung; their tabs are told; going offline makes them available again", async () => {
+  it("an unavailable agent is not rung; their tabs are told; no socket for the agent grace makes them available again", async () => {
+    vi.useFakeTimers();
     const h = harness();
     expect(await h.service.setAvailability(as('u2'), false)).toEqual({ ok: true, available: false });
     expect(h.sent('call:availability')).toEqual([{ to: ['u2'], payload: { available: false } }]);
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing')[0].to).toEqual(['u1']);
     h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(15_000);
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing')[1].to).toEqual(['u1', 'u2']);
+  });
+
+  it('"unavailable" outlives a reload: an agent back within the agent grace is still unavailable', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' }); // the reload: the agent's last tab went
+    await vi.advanceTimersByTimeAsync(14_000);
+    h.service.onUserOnline({ userId: 'u2' }); // and is back
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: false });
+    await h.service.onCallReceived({ callId: 'c1' });
+    expect(h.sent('call:ringing')[0].to).toEqual(['u1']);
+  });
+
+  it('no socket for the whole agent grace (the dashboard closed) makes the agent available again', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: false });
+    await vi.advanceTimersByTimeAsync(1);
+    h.service.onUserOnline({ userId: 'u2' }); // a new session
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: true });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('offline, online, offline: the grace starts over from the last offline', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(10_000);
+    h.service.onUserOnline({ userId: 'u2' });
+    h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(10_000); // 20 s from the first offline, 10 s from the last
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: false });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: true });
+  });
+
+  it('shutdown clears the resets still pending', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' });
+    expect(vi.getTimerCount()).toBe(1);
+    await h.service.onModuleDestroy();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('a viewer, an inactive user, any API-key socket (calls are answered in the dashboard) may not; a value that is not a boolean is refused', async () => {

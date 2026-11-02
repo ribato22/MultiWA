@@ -120,8 +120,13 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   private readonly sessions = new Map<string, Session>();
   /** The users each ringing call rang: they hear when it is claimed or stops ringing. */
   private readonly rung = new Map<string, Set<string>>();
-  /** Users who turned themselves unavailable. They are available again once their last socket goes. */
+  /**
+   * Users who turned themselves unavailable. They are available again once they have had no socket for the agent grace:
+   * a reload keeps it, closing the dashboard ends it.
+   */
   private readonly unavailable = new Set<string>();
+  /** That reset, per user whose last socket went: cancelled when a socket of theirs comes back. */
+  private readonly availableAgain = new Map<string, NodeJS.Timeout>();
   /** Users whose Answer is claiming a call: busy before their session exists. */
   private readonly claiming = new Set<string>();
 
@@ -156,6 +161,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
 
   /** Shutdown: the engines and the media server go with the process. Answered calls are stored as ended, claims given back. */
   async onModuleDestroy(): Promise<void> {
+    for (const timer of this.availableAgain.values()) clearTimeout(timer);
+    this.availableAgain.clear();
     await Promise.all(
       [...this.sessions.values()].map((s) =>
         s.phase === 'connecting' ? this.stopConnecting(s, { reRing: false, hangUp: false }) : this.end(s, 'server', 'server_restart'),
@@ -325,12 +332,20 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
 
   @OnEvent(InternalEvents.WS_USER_OFFLINE)
   onUserOffline(payload: WsUserPayload): void {
-    this.unavailable.delete(payload.userId); // available again at their next connect
-    this.setSocketsLost(payload.userId, true);
+    const { userId } = payload;
+    clearTimeout(this.availableAgain.get(userId)); // a second offline starts the grace over
+    const reset = setTimeout(() => {
+      this.availableAgain.delete(userId);
+      this.unavailable.delete(userId);
+    }, this.timing.agentGraceMs);
+    this.availableAgain.set(userId, reset);
+    this.setSocketsLost(userId, true);
   }
 
   @OnEvent(InternalEvents.WS_USER_ONLINE)
   onUserOnline(payload: WsUserPayload): void {
+    clearTimeout(this.availableAgain.get(payload.userId));
+    this.availableAgain.delete(payload.userId);
     this.setSocketsLost(payload.userId, false);
   }
 
