@@ -86,6 +86,13 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     // Left while it was being authenticated: its handleDisconnect has run already and socket.io ignores a closed
     // socket's join, so it must not touch presence.
     if (!client.connected) return;
+    if (!auth && client.data.authUnchecked) {
+      // Not refused: its credentials could not be checked. A closed transport is one the client reconnects by itself,
+      // with its own backoff, and the next handshake checks them again; a refusal would leave it off until a reload.
+      this.logger.warn(`Closed socket ${client.id}: its credentials could not be checked`);
+      client.conn.close();
+      return;
+    }
     if (!auth) {
       this.logger.warn(`Rejected unauthenticated socket: ${client.id}`);
       client.disconnect(true);
@@ -122,11 +129,13 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   /**
    * The socket's principal, authenticated ONCE per socket: the promise is kept on the socket and shared by every
    * gateway on /ws, since Nest runs their connection hooks in no set order and dispatches messages before they end.
-   * A lookup that throws (the database is down) refuses the socket like a bad credential: Nest drops the hooks'
-   * promises, so a rejection would reach the process's rejection guard, which rethrows it and the api exits.
+   * A lookup that throws (the database is down) gives no principal either, and marks the socket `authUnchecked`, so
+   * that handleConnection closes it instead of refusing it. It never rejects: Nest drops the hooks' promises, so a
+   * rejection would reach the process's rejection guard, which rethrows it and the api exits.
    */
   authOf(client: Socket): Promise<SocketPrincipal | null> {
     return (client.data.auth ??= this.authenticate(client).catch((e) => {
+      client.data.authUnchecked = true;
       this.logger.warn(`Could not authenticate socket ${client.id}: ${clean((e as Error)?.message ?? e)}`);
       return null;
     }));
@@ -203,8 +212,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       handshake.auth?.apiKey || handshake.headers?.['x-api-key'] || handshake.query?.apiKey;
 
     if (token && typeof token === 'string') {
+      let payload: any = null;
       try {
-        const payload: any = await this.jwt.verifyAsync(token, { secret: process.env.JWT_SECRET });
+        payload = await this.jwt.verifyAsync(token, { secret: process.env.JWT_SECRET });
+      } catch {
+        /* an invalid or expired token: fall through to API key */
+      }
+      // Outside that try: a lookup that throws is no bad token, and reaches authOf.
+      if (payload) {
         // As on the HTTP API (JwtStrategy), the token needs a live session: a login that was logged out or revoked
         // keeps a valid token for days, and must not open a socket that is rung and answers calls.
         const tokenHash = sessionTokenHash(token);
@@ -215,8 +230,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         if (user && user.isActive && session && session.expiresAt > new Date()) {
           return { userId: user.id, organizationId: user.organizationId, sessionTokenHash: tokenHash };
         }
-      } catch {
-        /* fall through to API key */
       }
     }
 

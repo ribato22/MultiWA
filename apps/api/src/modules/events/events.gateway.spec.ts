@@ -24,7 +24,7 @@ const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 const liveSession = () => ({ expiresAt: new Date(Date.now() + 7 * 24 * 3_600_000) });
 
 const fakeClient = () =>
-  ({ id: 's1', handshake: { auth: { token: 't' } }, data: {}, connected: true, join: vi.fn(), disconnect: vi.fn() }) as any;
+  ({ id: 's1', handshake: { auth: { token: 't' } }, data: {}, connected: true, join: vi.fn(), disconnect: vi.fn(), conn: { close: vi.fn() } }) as any;
 
 describe('EventsGateway join during the handshake', () => {
   let gateway: EventsGateway;
@@ -95,6 +95,7 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
       connected: true,
       join: vi.fn((room: string) => s.connected && (rooms.get(room) ?? rooms.set(room, new Set()).get(room)!).add(id)),
       disconnect: vi.fn(),
+      conn: { close: vi.fn() }, // the transport: closing it, the client reconnects by itself
     };
     sockets.set(id, s);
     return s;
@@ -199,16 +200,39 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(bus.emit).not.toHaveBeenCalled();
   });
 
-  it('a socket whose authentication throws (the database is down) is refused like an unauthenticated one; nothing rejects', async () => {
-    db.apiKey.findUnique.mockRejectedValue(new Error('connection refused\nforged line'));
+  it.each([
+    ['user', { token: 't' }],
+    ['session', { token: 't' }],
+    ['apiKey', { apiKey: 'k' }],
+  ])("a socket whose %s lookup throws (the database is down) is closed, not refused, so it reconnects by itself; nothing rejects", async (table, auth) => {
+    db[table].findUnique.mockRejectedValue(new Error('connection refused\nforged line'));
     const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
-    const s = socket('s7', { apiKey: 'k' });
+    const s = socket('s7', auth);
     await expect(gateway.authOf(s)).resolves.toBeNull();
     await expect(gateway.handleConnection(s)).resolves.toBeUndefined();
-    expect(s.disconnect).toHaveBeenCalledWith(true);
+    expect(s.conn.close).toHaveBeenCalledTimes(1);
+    expect(s.disconnect).not.toHaveBeenCalled();
     expect(s.join).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection refusedforged line'));
     await expect(gateway.handleJoin(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Forbidden' });
+    expect(bus.emit).not.toHaveBeenCalled();
+  });
+
+  it('bad credentials are still refused, never closed for a retry: an invalid JWT, an inactive user, a missing or expired session', async () => {
+    const refusals = [
+      () => verify.mockRejectedValueOnce(new Error('jwt expired')),
+      () => db.user.findUnique.mockResolvedValueOnce({ id: 'u1', organizationId: 'o1', isActive: false }),
+      () => db.session.findUnique.mockResolvedValueOnce(null),
+      () => db.session.findUnique.mockResolvedValueOnce({ expiresAt: new Date(Date.now() - 1_000) }),
+    ];
+    for (const [i, refuse] of refusals.entries()) {
+      refuse();
+      const s = socket(`s2${i}`);
+      await gateway.handleConnection(s);
+      expect(s.disconnect).toHaveBeenCalledWith(true);
+      expect(s.conn.close).not.toHaveBeenCalled();
+      expect(s.join).not.toHaveBeenCalled();
+    }
   });
 
   it("an API-key socket (an integration) joins no user room and keeps no one online; the same user's dashboard login does", async () => {
