@@ -25,9 +25,6 @@ const command = (socket: Socket, event: string, args: object, ms: number): Promi
 // media closes (up to about 27 s); a rejoin closes the old audio first (up to 8 s).
 const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_000, rejoin: 15_000 };
 const FADE_MS = 4_000; // "Answered by …" and a call's end stay this long
-// The server's default CALLS_AGENT_GRACE_MS. After a longer outage, the server has hung up a call whose audio was here,
-// or another device of the agent has it: a rejoin would only fail, or take the call back from there.
-const AGENT_GRACE_MS = 15_000;
 
 /**
  * sessionStorage, per user: the call whose audio this tab holds, with the agent's mute and this tab's producer on it,
@@ -126,7 +123,6 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     if (!agent) return;
     let sentToken: string | null = null;
     let closed = false;
-    let downSince: number | null = null; // when the socket last went down
     const socket = io(`${getSocketUrl()}/ws`, {
       transports: ['websocket', 'polling'],
       // Read at every (re)connect, so a refreshed token is the one sent.
@@ -149,7 +145,6 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     });
     socket.on('disconnect', async (reason) => {
       dispatch({ type: 'offline' });
-      downSince ??= Date.now();
       // The call's audio can outlive the socket, but nothing about the call reaches this tab until it is back.
       const a = stateRef.current.active;
       if (a?.local && a.phase !== 'ended') dispatch({ type: 'problem', callId: a.call.callId, text: CALL_AUDIO_TEXT.reconnecting });
@@ -380,8 +375,17 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       keep(null);
       dispatch({ type: 'local', callId: p.callId, local: false });
     });
-    /** This tab takes the call's audio: after a reload, from another tab, or when its own audio failed. */
-    const rejoin = async (call: RingingCall) => {
+    /** Another tab or device of the agent has the call: this tab lets go of its audio, of what it was building, and of the call it stored. */
+    const letGo = (callId: string) => {
+      if (callId === mineCall()) stopAudio();
+      if (storedCall()?.callId === callId) keep(null);
+      dispatch({ type: 'local', callId, local: false });
+    };
+    /**
+     * This tab takes the call's audio: after a reload, when its own audio failed, or from another tab or device (`take`:
+     * Take the call here). Unless taken, it names the producer it had: one that moved meanwhile stays where it is.
+     */
+    const rejoin = async (call: RingingCall, take = false) => {
       stopAudio();
       const mine = attempt;
       acquiring = call.callId;
@@ -396,6 +400,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         muted = a?.call.callId === call.callId && a.phase !== 'ended' ? a.muted : false;
         ownProducer = null;
       }
+      const ifProducerId = take ? undefined : (ownProducer ?? undefined);
       dispatch({ type: 'restored', call, local: true, muted });
       const fail = (text: string) => {
         acquiring = null;
@@ -422,11 +427,12 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         mic.stop();
         return waitForSocket();
       }
-      const reply = await command(socket, 'call:rejoin', { callId: call.callId }, ACK_MS.rejoin);
+      const reply = await command(socket, 'call:rejoin', { callId: call.callId, ifProducerId }, ACK_MS.rejoin);
       if (superseded()) return mic.stop();
       if (!reply.ok) {
         mic.stop();
         if (!socket.connected) return waitForSocket();
+        if (reply.reason === 'moved') return letGo(call.callId); // it stays there, and shows here as theirs
         if (reply.reason !== 'not_in_call' && reply.reason !== 'not_allowed') return fail(CALL_AUDIO_TEXT.rejoinFailed);
         acquiring = null;
         keep(null);
@@ -445,20 +451,13 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       }
     };
     socket.on('connect', () => {
-      const outage = downSince === null ? 0 : Date.now() - downSince;
-      downSince = null;
       const call = storedCall();
       const { banners, active } = stateRef.current;
       // This tab's call, with no audio here and none being built: a reload, or its audio lost while the socket was down.
-      const audioless = !!call && !mediaRef.current && acquiring !== call.callId;
-      const rejoining = audioless && outage < AGENT_GRACE_MS;
+      // However long it was down, the rejoin's answer says whether the call is still this tab's to take back.
+      const rejoining = !!call && !mediaRef.current && acquiring !== call.callId;
       if (rejoining) void rejoin(call);
-      else if (audioless) {
-        // Down longer than the agent grace: the call is over (the re-read below ends it), or another device has it.
-        keep(null);
-        dispatch({ type: 'local', callId: call.callId, local: false });
-        dispatch({ type: 'problem', callId: call.callId, text: CALL_AUDIO_TEXT.droppedOffline });
-      } else if (active?.problem === CALL_AUDIO_TEXT.reconnecting) dispatch({ type: 'problem', callId: active.call.callId, text: null });
+      else if (active?.problem === CALL_AUDIO_TEXT.reconnecting) dispatch({ type: 'problem', callId: active.call.callId, text: null });
       // A socket that was down missed what happened meanwhile: every call this tab shows is read again.
       for (const b of banners) {
         void api.getCall(b.call.callId).then(({ data }) => {
@@ -485,7 +484,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     const takeHere = () => {
       const a = stateRef.current.active;
       // Not while it connects: the server rejoins only a call it put through (announcing, then active).
-      if (a && !a.local && (a.phase === 'announcing' || a.phase === 'active')) void rejoin(a.call);
+      if (a && !a.local && (a.phase === 'announcing' || a.phase === 'active')) void rejoin(a.call, true);
     };
 
     cmd.current = { setAvailable, dismiss, answer, hangUp, setMuted, switchMic, resumeAudio, takeHere };

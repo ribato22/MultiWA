@@ -121,7 +121,6 @@ export const ANSWER_FAILURE_TEXT: Record<string, string> = {
 export const CALL_AUDIO_TEXT = {
   reconnecting: 'Reconnecting…',
   rejoinFailed: 'The call’s audio could not be reconnected: try again',
-  droppedOffline: 'Your audio dropped while you were offline: take the call here to go on',
 } as const;
 
 // Addressed to the agent who took the call ("You hung up"): only endedText shows these.

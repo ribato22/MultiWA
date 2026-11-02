@@ -1261,6 +1261,25 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
   });
 
+  it("a rejoin naming the producer its page had never takes a call another tab or device now has (moved); its own, or one with no producer yet, it does", async () => {
+    const h = harness();
+    await answered(h); // agent-producer
+    // Taken into another tab or device: a rejoin without a producer takes it, whoever has it.
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true });
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
+    // The first page's own rejoin, its audio failed meanwhile: the call stays where it is now.
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer')).toEqual({ ok: false, reason: 'moved' });
+    expect(h.handle.disconnectAgent).toHaveBeenCalledTimes(1);
+    expect(h.room.closePeer).toHaveBeenCalledTimes(1);
+    expect((h.service as any).sessions.get('c1')).toMatchObject({ agentProducerId: 'agent-producer-2', rejoining: false });
+    // The page that has the call can rejoin it; while its new producer is not there yet, any page can.
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer-2')).toMatchObject({ ok: true });
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer')).toMatchObject({ ok: true });
+    expect(S.markEnded).not.toHaveBeenCalled();
+  });
+
   it("rejoin: a page that already let its bridge go is fine; another failure ends the call; only one's own call", async () => {
     const h = harness();
     await answered(h);

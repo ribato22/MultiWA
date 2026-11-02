@@ -44,12 +44,12 @@ describe('CallsGateway', () => {
     const { gateway, sessions } = make();
     await gateway.answer(socket, { callId: 'c1' });
     await gateway.media(socket, { callId: 'c1', op: 'produce', kind: 'audio' });
-    await gateway.rejoin(socket, { callId: 'c1' });
+    await gateway.rejoin(socket, { callId: 'c1', ifProducerId: 'producer-1' });
     await gateway.hangup(socket, { callId: 'c1' });
     await gateway.availability(socket, { available: false });
     expect(sessions.answer).toHaveBeenCalledWith(principal, 'c1');
     expect(sessions.media).toHaveBeenCalledWith(principal, 'c1', 'produce', { callId: 'c1', op: 'produce', kind: 'audio' });
-    expect(sessions.rejoin).toHaveBeenCalledWith(principal, 'c1');
+    expect(sessions.rejoin).toHaveBeenCalledWith(principal, 'c1', 'producer-1');
     expect(sessions.hangup).toHaveBeenCalledWith(principal, 'c1');
     expect(sessions.setAvailability).toHaveBeenCalledWith(principal, false);
   });

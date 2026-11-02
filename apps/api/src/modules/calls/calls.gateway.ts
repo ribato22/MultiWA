@@ -36,7 +36,7 @@ export class CallsGateway {
 
   @SubscribeMessage('call:rejoin')
   rejoin(@ConnectedSocket() client: Socket, @MessageBody() body: Body) {
-    return this.as(client, 'call:rejoin', (p) => this.sessions.rejoin(p, body?.callId));
+    return this.as(client, 'call:rejoin', (p) => this.sessions.rejoin(p, body?.callId, body?.ifProducerId));
   }
 
   @SubscribeMessage('call:hangup')

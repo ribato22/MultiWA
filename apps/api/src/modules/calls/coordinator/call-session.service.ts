@@ -277,14 +277,22 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   }
 
   /**
-   * A reloaded agent page joins its call again: the old agent goes off the microphone and its transports are closed,
-   * and the reply carries what the page needs to produce anew. Once it has produced and listens, it is back on.
+   * An agent page joins its call again (reloaded, its audio failed, or the call taken into it): the old agent goes off
+   * the microphone and its transports are closed, and the reply carries what the page needs to produce anew. Once it
+   * has produced and listens, it is back on. `ifProducerId`, from a page that rejoins by itself: the producer it had.
+   * Another one on the call is another tab or device of the agent, which took it meanwhile and keeps it (`moved`). None
+   * yet is a rejoin under way, the page's own one too.
    */
-  async rejoin(principal: SocketPrincipal, callId: unknown): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
+  async rejoin(
+    principal: SocketPrincipal,
+    callId: unknown,
+    ifProducerId?: unknown,
+  ): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
     const own = await this.ownSession(principal, callId);
     if (!own.ok) return own;
     const { session } = own;
     if (session.phase !== 'active' || !session.handle || !session.room) return { ok: false, reason: 'not_in_call' };
+    if (typeof ifProducerId === 'string' && session.agentProducerId && session.agentProducerId !== ifProducerId) return { ok: false, reason: 'moved' };
     session.rejoining = true;
     session.agentProducerId = null;
     session.agentListening = false;

@@ -76,7 +76,7 @@ test('a reload during a call rejoins it: new audio, and "Connecting…" until th
   await onCall(page, backend);
   page.on('dialog', (d) => void d.accept()); // the leave-page warning
   await page.reload();
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
   await expect(bar(page)).toContainText('Connecting…');
   await expect.poll(() => backend.commands('call:media').filter((a) => a.op === 'produce').length).toBe(2);
   backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 61_000).toISOString() });
@@ -210,7 +210,7 @@ test('a socket that drops and comes back while a reload waits for the microphone
   await expect.poll(() => backend.commands('call:availability').length, { timeout: 10_000 }).toBeGreaterThan(reads); // connected again
   await page.evaluate(() => (window as any).__openMic());
   await expect.poll(() => produced(backend)).toBeGreaterThanOrEqual(2); // the first page's, then this page's
-  expect(backend.commands('call:rejoin')).toEqual([{ callId: 'call-1' }]);
+  expect(backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
   backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 70 });
   await expect(bar(page)).toContainText('The caller hung up');
   await expect
@@ -232,7 +232,7 @@ test('audio that fails while the socket is down lets the microphone go at once, 
   await expect(bar(page)).toContainText('Reconnecting…');
   expect(await openPeers(page)).toBe(0);
   backend.offline = false; // back within the agent grace: the call goes on, its audio built again
-  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1' }]);
+  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
   await expect.poll(() => produced(backend)).toBe(2);
   backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 70_000).toISOString(), agentProducerId: 'agent-producer' });
   await expect(timer(page)).toBeVisible();
@@ -241,26 +241,29 @@ test('audio that fails while the socket is down lets the microphone go at once, 
   expect(await openPeers(page)).toBe(2);
 });
 
-test('audio lost while offline longer than the agent grace is not taken back by itself: the call shows as elsewhere, to take here', async ({ page, backend }) => {
-  await page.clock.install();
+test('a call another device of the agent took during an outage stays there: the rejoin at the reconnect is told it moved, and this tab lets go', async ({ page, backend }) => {
   await open(page);
   await onCall(page, backend);
   await expect.poll(() => openPeers(page)).toBe(2);
+  await keepMic(page);
   backend.offline = true;
   backend.blip();
   await expect.poll(() => socketOpen(page)).toBe(false);
+  // The agent took the call on their phone meanwhile: the server closed this tab's peer, and its call:active, naming
+  // the phone's producer, reached no socket of this tab.
   await failTransports(page);
   await expect(bar(page)).toContainText('Reconnecting…');
-  // Past the agent grace: the server hung the call up, or another device of the agent has it.
-  await page.clock.runFor(16_000);
+  backend.reply('call:rejoin', (a) =>
+    typeof a.ifProducerId === 'string' && a.ifProducerId !== 'producer-phone' ? { ok: false, reason: 'moved' } : backend.defaults['call:rejoin'](a),
+  );
   backend.offline = false;
-  const reads = backend.commands('call:availability').length;
-  await page.clock.runFor(6_000); // the socket's next try
-  await expect.poll(() => backend.commands('call:availability').length, { timeout: 10_000 }).toBeGreaterThan(reads);
-  await expect(bar(page)).toContainText('Your audio dropped while you were offline: take the call here to go on');
+  await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
   await expect(bar(page)).toContainText('On a call in another tab');
   await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
-  expect(backend.commands('call:rejoin')).toEqual([]);
+  await expect(bar(page).getByRole('alert')).toHaveCount(0); // nothing went wrong
+  expect(produced(backend)).toBe(1);
+  expect(await page.evaluate(() => (window as any).__mic.readyState)).toBe('ended');
+  expect(await openPeers(page)).toBe(0);
   expect(await storedCalls(page)).toEqual([]);
   await expectAccessible(page, '[aria-label="Current call"]');
 });
@@ -272,7 +275,7 @@ test('a reload keeps the mute: the audio rebuilt here is still muted', async ({ 
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toHaveAttribute('aria-pressed', 'true');
   page.on('dialog', (d) => void d.accept());
   await page.reload();
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
   await expect.poll(() => produced(backend)).toBe(2);
   await expect.poll(() => senderEnabled(page)).toEqual([false]);
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toHaveAttribute('aria-pressed', 'true');
@@ -333,7 +336,7 @@ test("a reload rejoining the call is not put off by the late call:active of its 
   backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 61_000).toISOString(), agentProducerId: 'agent-producer' });
   await expect(timer(page)).toBeVisible();
   await page.evaluate(() => (window as any).__openMic());
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1' }]);
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer' }]);
   await expect.poll(() => produced(backend)).toBe(2);
   await expect(bar(page)).not.toContainText('On a call in another tab');
   expect(await openPeers(page)).toBe(2);
