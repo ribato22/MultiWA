@@ -178,6 +178,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  // Raised over the incoming-call banner while open, a menu left open would sit over a dialog too: Escape closes it (the
+  // focus in it goes back to its button), and so does the focus moving out of it (closeOnLeave).
+  useEffect(() => {
+    if (!showNotifDropdown && !showUserMenu) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      for (const ref of [notifRef, userRef]) {
+        if (ref.current?.contains(document.activeElement)) ref.current.querySelector('button')?.focus();
+      }
+      setShowNotifDropdown(false);
+      setShowUserMenu(false);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showNotifDropdown, showUserMenu]);
+  // No target is the focus going nowhere (a click on the menu's own text): clicks have the outside-click handler.
+  const closeOnLeave = (close: () => void) => (e: React.FocusEvent<HTMLDivElement>) => {
+    if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) close();
+  };
+
   const handleMarkAllRead = async () => {
     await api.markAllNotificationsRead();
     setUnreadCount(0);
@@ -322,7 +342,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div className="flex items-center gap-4">
               <AvailabilityToggle />
               {/* Notification Bell */}
-              <div className="relative" ref={notifRef}>
+              <div className="relative" ref={notifRef} onBlur={closeOnLeave(() => setShowNotifDropdown(false))}>
                 <button
                   type="button"
                   className="inline-flex items-center justify-center min-h-[44px] min-w-[44px] md:min-h-9 md:min-w-9 p-2 rounded-lg hover:bg-secondary/60 text-muted-foreground hover:text-foreground relative transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
@@ -424,7 +444,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {/* Account menu */}
-              <div className="relative" ref={userRef}>
+              <div className="relative" ref={userRef} onBlur={closeOnLeave(() => setShowUserMenu(false))}>
                 <button
                   type="button"
                   onClick={() => setShowUserMenu((v) => !v)}

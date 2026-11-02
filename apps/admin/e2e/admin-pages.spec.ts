@@ -70,3 +70,49 @@ test('the bell shows a call alert, a call notice and other system alerts each wi
   await expect(row('Callback due').locator('svg.lucide-wrench')).toBeVisible();
   await expect(row('Call on line 2').locator('svg.lucide-phone-missed')).toBeVisible();
 });
+
+test('revoking an API key and deleting a webhook are confirmed with a red button whose text is readable (WCAG AA)', async ({ page, backend }) => {
+  backend.route(get('/api-keys', [{ id: 'k1', name: 'Recorder', key: 'mwa_live_1234', permissions: ['recordings:read'], createdAt: '2026-11-01T00:00:00.000Z' }]));
+  backend.route(get('/webhooks', [{ id: 'w1', profileId: 'p-1', url: 'https://example.com/hook', events: ['call.answered'], enabled: true, createdAt: '2026-11-01T00:00:00.000Z' }]));
+  /** The confirmation is open and done fading in: axe reads the colours as they are. */
+  const confirm = async (name: string, action: string) => {
+    await expect(page.getByRole('alertdialog', { name }).getByRole('button', { name: action })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.getAnimations().filter((a) => a.playState === 'running').length)).toBe(0);
+    await expectAccessible(page, '[role="alertdialog"]');
+  };
+  await page.goto('/dashboard/api-keys');
+  await page.getByRole('button', { name: 'Revoke', exact: true }).filter({ visible: true }).first().click();
+  await confirm('Revoke API Key?', 'Revoke Key');
+  await page.goto('/dashboard/webhooks');
+  await page.getByRole('button', { name: 'Delete', exact: true }).filter({ visible: true }).first().click();
+  await confirm('Delete Webhook?', 'Delete Webhook');
+});
+
+test("the header's menus close on Escape and once the focus leaves them: one opened from the keyboard is never left over the page", async ({ page }) => {
+  await page.goto('/dashboard/api-keys');
+  const account = page.getByRole('button', { name: 'Account menu' });
+  const menu = page.getByRole('menu', { name: 'Account' });
+  await account.focus();
+  await page.keyboard.press('Enter');
+  await expect(menu).toBeVisible();
+  await page.keyboard.press('Tab'); // into the menu: Settings
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+  await expect(account).toBeFocused(); // back where it opened
+  await page.keyboard.press('Enter');
+  await expect(menu).toBeVisible();
+  for (const _ of ['Settings', 'Sign out', 'out of the header']) await page.keyboard.press('Tab');
+  await expect(menu).toHaveCount(0);
+  const bell = page.getByRole('button', { name: 'Notifications', exact: true });
+  const notifications = page.getByRole('dialog', { name: 'Notifications' });
+  await bell.focus();
+  await page.keyboard.press('Enter');
+  await expect(notifications).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(notifications).toHaveCount(0);
+  await expect(bell).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(notifications).toBeVisible();
+  await page.keyboard.press('Shift+Tab'); // out, the other way
+  await expect(notifications).toHaveCount(0);
+});

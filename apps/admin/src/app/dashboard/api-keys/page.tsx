@@ -546,7 +546,7 @@ export default function ApiKeysPage() {
             <AlertDialogCancel className="cursor-pointer">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
+              className="bg-red-600 text-white hover:bg-red-700 cursor-pointer"
             >
               Revoke Key
             </AlertDialogAction>

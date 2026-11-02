@@ -74,13 +74,19 @@ export function installBrowserFakes() {
     }
   };
   w.__socketOpen = () => sockets.some((s) => s.readyState === NativeWebSocket.OPEN || s.readyState === NativeWebSocket.CLOSING);
-  // Peer connections: the tests read the microphone's sender (mute, a switched microphone).
+  // Peer connections: the tests read the microphone's sender (mute, a switched microphone). Against the fake backend's
+  // replayed ICE candidates a call's transports fail some 15 s after they were built, and the console would then rejoin
+  // by itself: they read `connecting` instead. A test fails them on purpose with a `connectionState` of their own.
   w.__pcs = [];
   const Native = RTCPeerConnection;
   w.RTCPeerConnection = class extends Native {
     constructor(...args: any[]) {
       super(...(args as [RTCConfiguration?]));
       w.__pcs.push(this);
+    }
+    get connectionState(): RTCPeerConnectionState {
+      const state = super.connectionState;
+      return state === 'failed' ? 'connecting' : state;
     }
   };
 }
