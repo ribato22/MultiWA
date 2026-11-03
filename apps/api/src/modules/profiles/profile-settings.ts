@@ -70,14 +70,14 @@ export function announcementOf(settings: unknown): CallAnnouncement | null {
 export const recordingOn = (settings: unknown): boolean => field(settings, 'callsRecording') === true;
 
 /**
- * A profile's settings as the API answers with them: the announcement without its storage key. The key says where the
- * file is kept, which stays inside the server; the announcement's type and length are shown.
+ * A profile's settings as the API answers with them: of the announcement, its type and length only, as the calls
+ * routes show it (null when it is not whole). Where its file is kept stays inside the server, as would any key the
+ * announcement held besides these two.
  */
 export function publicSettings(settings: unknown): unknown {
-  const announcement = field(settings, 'callsAnnouncement');
-  if (!announcement || typeof announcement !== 'object' || !('storageKey' in announcement)) return settings;
-  const { storageKey: _key, ...shown } = announcement as Record<string, unknown>;
-  return { ...(settings as ProfileSettings), callsAnnouncement: shown };
+  if (field(settings, 'callsAnnouncement') === undefined) return settings;
+  const announcement = announcementOf(settings);
+  return { ...(settings as ProfileSettings), callsAnnouncement: announcement && { mimeType: announcement.mimeType, durationSec: announcement.durationSec } };
 }
 
 /** A profile row as the API answers with it: its settings through publicSettings. */

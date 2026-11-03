@@ -87,26 +87,35 @@ describe('call settings readers', () => {
 });
 
 // Where an announcement's file is kept stays inside the server: a profile's routes answer with its type and length only.
+// The settings handed in are frozen all the way down, so a change in place to the row the API read throws.
 describe('the settings the API answers with', () => {
-  const ANNOUNCEMENT = { storageKey: 'announcements/o/p/a.mp3', mimeType: 'audio/mpeg', durationSec: 4.2 };
+  const frozen = <T>(value: T): T => {
+    if (value && typeof value === 'object') Object.values(value).forEach(frozen);
+    return Object.freeze(value);
+  };
+  const ANNOUNCEMENT = frozen({ storageKey: 'announcements/o/p/a.mp3', mimeType: 'audio/mpeg', durationSec: 4.2 });
+  const SHOWN = { mimeType: 'audio/mpeg', durationSec: 4.2 };
 
-  it("leave out the announcement's storage key, and keep its type, its length and every other setting", () => {
-    const settings = { callsRecording: true, callsAnnouncement: ANNOUNCEMENT, autoRejectCalls: false };
-    expect(publicSettings(settings)).toEqual({ callsRecording: true, callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 4.2 }, autoRejectCalls: false });
-    expect(settings.callsAnnouncement).toBe(ANNOUNCEMENT); // the row it was read from is left as it is
+  it("show the announcement's type and length, none of its other keys, and every other setting", () => {
+    const settings = frozen({ callsRecording: true, callsAnnouncement: { ...ANNOUNCEMENT, storageLocation: 's3:bucket/prefix' }, autoRejectCalls: false });
+    expect(publicSettings(settings)).toEqual({ callsRecording: true, callsAnnouncement: SHOWN, autoRejectCalls: false });
   });
 
-  it('are the settings themselves when they hold no storage key', () => {
-    for (const settings of [null, undefined, 'x', {}, { callsAnnouncement: null }, { callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 1 } }]) {
-      expect(publicSettings(settings)).toBe(settings);
+  it('show an announcement that is not whole as null, as the calls routes do', () => {
+    for (const announcement of [null, 'announcements/o/p/a.mp3', { mimeType: 'audio/mpeg', durationSec: 1 }, { ...ANNOUNCEMENT, durationSec: '4.2' }]) {
+      expect(publicSettings(frozen({ callsAnnouncement: announcement, autoRejectCalls: true }))).toEqual({ callsAnnouncement: null, autoRejectCalls: true });
     }
   });
 
+  it('are the settings themselves when they hold no announcement', () => {
+    for (const settings of [null, undefined, 'x', {}, { autoRejectCalls: true }].map(frozen)) expect(publicSettings(settings)).toBe(settings);
+  });
+
   it('a profile row keeps every other field', () => {
-    expect(publicProfile({ id: 'p1', displayName: 'Line 1', settings: { callsAnnouncement: ANNOUNCEMENT } })).toEqual({
+    expect(publicProfile(frozen({ id: 'p1', displayName: 'Line 1', settings: { callsAnnouncement: ANNOUNCEMENT } }))).toEqual({
       id: 'p1',
       displayName: 'Line 1',
-      settings: { callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 4.2 } },
+      settings: { callsAnnouncement: SHOWN },
     });
   });
 });
