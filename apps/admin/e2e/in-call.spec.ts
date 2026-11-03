@@ -1150,7 +1150,7 @@ for (const [width, height, sidebars] of [
 }
 
 // A caller and a profile with long names: the name line is cut, not the controls.
-const LONG_NAMES = { caller: { name: 'Pak Joko Widodo Santoso Hadiningrat', number: '628111000111' }, profileName: 'Customer Service Line 1' };
+const LONG_NAMES = { caller: { name: 'Bu Sekar Ayuningtyas Wiryawan Putri', number: '628111000111' }, profileName: 'Customer Service Line 1' };
 for (const [width, height] of [[360, 740], [390, 844], [1440, 900]] as const) {
   test(`${width} px wide, long names: the name line is cut, and every control of the bar shows whole and takes its own click`, async ({ page, context, backend }) => {
     await page.setViewportSize({ width, height });
@@ -1162,7 +1162,7 @@ for (const [width, height] of [[360, 740], [390, 844], [1440, 900]] as const) {
     await expect(bar(page).getByRole('combobox', { name: 'Microphone' })).toBeVisible();
     expect(await reachable(page)).toEqual([['Mute', true], ['Microphone', true], ['Hang up', true]]);
     expect(await overlapped(page)).toEqual([]);
-    const name = bar(page).getByText('Pak Joko Widodo Santoso Hadiningrat');
+    const name = bar(page).getByText('Bu Sekar Ayuningtyas Wiryawan Putri');
     expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
   });
 }
