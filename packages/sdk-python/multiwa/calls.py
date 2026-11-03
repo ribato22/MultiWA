@@ -87,7 +87,8 @@ class CallsClient(SyncResource):
         limit: int | None = None,
         cursor: str | None = None,
     ) -> CallPage:
-        """A page of a profile's calls, newest first.
+        """A page of a profile's calls, newest first (any role; an API key needs
+        no scope).
 
         ``from_`` is the caller (a phone number or a JID), ``since`` an ISO 8601
         date, ``limit`` 1 to 100 (default 50). Pass ``next_cursor`` of a page as
@@ -104,11 +105,12 @@ class CallsClient(SyncResource):
         )
 
     def open_count(self) -> int:
-        """How many calls of the organization have their follow-up open"""
+        """How many calls of the organization have their follow-up open (any
+        role; an API key needs no scope)"""
         return int(self._request("GET", "/calls/open-count")["count"])
 
     def get(self, call_id: str) -> Call:
-        """Get a call by ID"""
+        """Get a call by ID (any role; an API key needs no scope)"""
         return Call.model_validate(self._request("GET", f"/calls/{call_id}"))
 
     def update(
@@ -118,21 +120,26 @@ class CallsClient(SyncResource):
         assigned_user_id: str | None = None,
         unassign: bool = False,
     ) -> Call:
-        """Change the follow-up (``open``, ``in_progress``, ``done``) or the
-        assignee (an active user of the organization); ``unassign=True`` removes
-        the assignee."""
+        """Change the follow-up or the assignee (any role; an API key needs no
+        scope).
+
+        ``follow_up`` is ``open``, ``in_progress`` or ``done``; the assignee is an
+        active user of the organization, and ``unassign=True`` removes it.
+        """
         body = _update_body(follow_up, assigned_user_id, unassign)
         return Call.model_validate(
             self._raw("PATCH", f"/calls/{call_id}", json=body).json()
         )
 
     def reject(self, call_id: str) -> Call:
-        """Reject a call that is still ringing"""
+        """Reject a call that is still ringing (any role; an API key needs no
+        scope)"""
         return Call.model_validate(self._request("POST", f"/calls/{call_id}/reject"))
 
     def reply(self, call_id: str, text: str | None = None) -> CallReplyResult:
-        """Send a text to the caller, through the send gate; without ``text``,
-        the profile's default call reply."""
+        """Send a text to the caller, through the send gate (any role; an API
+        key with a scope list needs ``messages:write``); without ``text``, the
+        profile's default call reply."""
         return CallReplyResult.model_validate(
             self._request("POST", f"/calls/{call_id}/reply", json={"text": text})
         )
@@ -141,7 +148,8 @@ class CallsClient(SyncResource):
         self, call_id: str, link_type: str, text: str | None = None
     ) -> CallLinkResult:
         """Create a WhatsApp call link (``voice`` or ``video``) and send it to
-        the caller, with an optional text above it."""
+        the caller, with an optional text above it (any role; an API key with a
+        scope list needs ``messages:write``)."""
         return CallLinkResult.model_validate(
             self._request(
                 "POST",
@@ -153,7 +161,7 @@ class CallsClient(SyncResource):
     def media_status(self) -> CallsMediaStatus:
         """Readiness of answering calls in the dashboard: the server, its
         recordings storage, and every profile with its call settings (owner or
-        admin)."""
+        admin; an API key needs no scope)."""
         return CallsMediaStatus.model_validate(
             self._request("GET", "/calls/media/status")
         )
@@ -171,8 +179,9 @@ class CallsClient(SyncResource):
         )
 
     def delete_recording(self, call_id: str) -> DeletedRecording:
-        """Delete the call's recording (``recordings:delete``): the file goes,
-        its row stays as evidence."""
+        """Delete the call's recording: the file goes, its row stays as
+        evidence (owner or admin; an API key with a scope list needs
+        ``recordings:delete``)."""
         return DeletedRecording.model_validate(
             self._request("DELETE", f"/calls/{call_id}/recording")
         )
@@ -199,9 +208,10 @@ class CallsClient(SyncResource):
     def upload_announcement(
         self, profile_id: str, file: bytes | IO[bytes], filename: str = "announcement"
     ) -> AnnouncementResult:
-        """Upload the announcement callers hear before a recorded call: mp3,
-        wav, ogg, webm or m4a, at most 2 MB and 30 seconds (the server reads the
-        type and the length from the file)."""
+        """Upload the announcement callers hear before a recorded call (owner or
+        admin; an API key with a scope list needs ``profiles:write``): mp3, wav,
+        ogg, webm or m4a, at most 2 MB and 30 seconds (the server reads the type
+        and the length from the file)."""
         return AnnouncementResult.model_validate(
             self._raw(
                 "POST",
@@ -211,11 +221,13 @@ class CallsClient(SyncResource):
         )
 
     def get_announcement(self, profile_id: str) -> AudioFile:
-        """The profile's announcement, to listen to"""
+        """The profile's announcement, to listen to (owner or admin; an API key
+        with a scope list needs ``profiles:write``)"""
         return _audio(self._raw("GET", f"/profiles/{profile_id}/calls-announcement"))
 
     def delete_announcement(self, profile_id: str) -> AnnouncementResult:
-        """Remove the announcement; refused with 409 (``recording_on``) while
+        """Remove the announcement (owner or admin; an API key with a scope list
+        needs ``profiles:write``); refused with 409 (``recording_on``) while
         recording is on."""
         return AnnouncementResult.model_validate(
             self._request("DELETE", f"/profiles/{profile_id}/calls-announcement")
@@ -247,11 +259,12 @@ class AsyncCallsClient(AsyncResource):
         )
 
     async def open_count(self) -> int:
-        """How many calls of the organization have their follow-up open"""
+        """How many calls of the organization have their follow-up open; see
+        ``CallsClient.open_count``"""
         return int((await self._request("GET", "/calls/open-count"))["count"])
 
     async def get(self, call_id: str) -> Call:
-        """Get a call by ID"""
+        """Get a call by ID; see ``CallsClient.get``"""
         return Call.model_validate(await self._request("GET", f"/calls/{call_id}"))
 
     async def update(
@@ -268,7 +281,7 @@ class AsyncCallsClient(AsyncResource):
         )
 
     async def reject(self, call_id: str) -> Call:
-        """Reject a call that is still ringing"""
+        """Reject a call that is still ringing; see ``CallsClient.reject``"""
         return Call.model_validate(
             await self._request("POST", f"/calls/{call_id}/reject")
         )
@@ -282,7 +295,8 @@ class AsyncCallsClient(AsyncResource):
     async def send_call_link(
         self, call_id: str, link_type: str, text: str | None = None
     ) -> CallLinkResult:
-        """Create a WhatsApp call link and send it to the caller"""
+        """Create a WhatsApp call link and send it to the caller; see
+        ``CallsClient.send_call_link``"""
         return CallLinkResult.model_validate(
             await self._request(
                 "POST",
@@ -292,7 +306,8 @@ class AsyncCallsClient(AsyncResource):
         )
 
     async def media_status(self) -> CallsMediaStatus:
-        """Readiness of answering calls in the dashboard (owner or admin)"""
+        """Readiness of answering calls in the dashboard; see
+        ``CallsClient.media_status``"""
         return CallsMediaStatus.model_validate(
             await self._request("GET", "/calls/media/status")
         )
@@ -344,7 +359,8 @@ class AsyncCallsClient(AsyncResource):
         )
 
     async def get_announcement(self, profile_id: str) -> AudioFile:
-        """The profile's announcement, to listen to"""
+        """The profile's announcement, to listen to; see
+        ``CallsClient.get_announcement``"""
         return _audio(
             await self._raw("GET", f"/profiles/{profile_id}/calls-announcement")
         )
