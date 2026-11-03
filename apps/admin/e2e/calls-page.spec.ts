@@ -386,6 +386,41 @@ test('a call not listed yet whose recording is stored is read once, for its chat
   expect(backend.requests.filter((r) => r.path === '/calls/call-9').map((r) => r.method)).toEqual(['GET']);
 });
 
+const { hasRecording: _, ...CALL_UPDATE } = RECORDING_STORED;
+/** The call:update of call-9 while it rings: it has no answer yet, and no recording. */
+const RINGING_UPDATE = { ...CALL_UPDATE, outcome: 'ringing', followUp: 'open', endedAt: null, answeredByUserId: null, answeredAt: null, endedBy: null, endReason: null, talkSeconds: null };
+
+test('a call answered live on the Answered tab keeps the chat its ringing read brought: its name, and Open chat', async ({ page, backend }) => {
+  listing(backend, () => []);
+  backend.route(on('GET', '/calls/call-9', { json: { ...ANSWERED, ...RINGING_UPDATE, id: 'call-9', recording: null, answeredBy: null } }));
+  const listed = requestEnded(page, 'outcome=answered');
+  await openAnswered(page);
+  await listed;
+  await expect.poll(() => backend.joined).toContain(PROFILE.id);
+  backend.emitToProfile(PROFILE.id, 'call:update', RINGING_UPDATE);
+  const strip = page.getByRole('region', { name: 'Ringing now' });
+  await expect(strip).toContainText('Pak Joko'); // read once: a call not shown yet
+  backend.emitToProfile(PROFILE.id, 'call:update', { ...CALL_UPDATE, endedAt: null, endedBy: null, endReason: null, talkSeconds: null });
+  await expect(strip).toHaveCount(0);
+  const row = page.getByRole('list', { name: 'Calls', exact: true }).getByRole('listitem');
+  await expect(row).toContainText('Answered by');
+  await expect(row).toContainText('Pak Joko'); // not the number
+  await expect(row.getByRole('link', { name: 'Open chat with Pak Joko' })).toHaveAttribute('href', '/dashboard/chat?profile=p-1&conv=conv-1');
+  expect(backend.requests.filter((r) => r.path === '/calls/call-9').map((r) => r.method)).toEqual(['GET']);
+});
+
+test('a call not shown yet, read for its chat, takes the recording stored for it too', async ({ page, backend }) => {
+  listing(backend, () => []);
+  backend.route(on('GET', '/calls/call-9', { json: ANSWERED }));
+  const listed = requestEnded(page, 'outcome=answered');
+  await openAnswered(page);
+  await listed;
+  await expect.poll(() => backend.joined).toContain(PROFILE.id);
+  backend.emitToProfile(PROFILE.id, 'call:update', { ...CALL_UPDATE, assignedUserId: null }); // a change of an older call, not its recording
+  await expect(rowOf(page)).toBeVisible(); // named after its chat: the read is in
+  await expect(rowOf(page)).toContainText('Recording 3:10');
+});
+
 test.describe('a member', () => {
   test.use({ user: { ...ME, role: 'member' } });
 

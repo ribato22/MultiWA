@@ -228,11 +228,12 @@ export function fromPayload(p: CallUpdatePayload, previous?: CallRecord): CallRe
 /**
  * Apply a realtime update to the list of one profile (newest `startedAt` first, like the API): replace the row,
  * add a new one at its place, drop one that left the filter. The caller passes only the updates of that profile.
+ * `shown`: the call's row shown elsewhere (the ringing strip), whose relations a row new to the list takes.
  */
-export function upsertCall(list: CallRecord[], p: CallUpdatePayload, f: CallFilter): CallRecord[] {
+export function upsertCall(list: CallRecord[], p: CallUpdatePayload, f: CallFilter, shown?: CallRecord): CallRecord[] {
   if (!p?.callId) return list;
   const i = list.findIndex((c) => c.id === p.callId);
-  const row = fromPayload(p, i >= 0 ? list[i] : undefined);
+  const row = fromPayload(p, i >= 0 ? list[i] : shown);
   const keep = matchesFilter(row, f);
   if (i >= 0) {
     if (!keep) return list.filter((_, j) => j !== i);
