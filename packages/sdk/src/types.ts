@@ -375,11 +375,13 @@ export interface CallMessage {
   waMessageId?: string;
 }
 
+/** The call and the message sent: an `open` follow-up is now `in_progress`, any other is left as it was. */
 export interface CallReplyResult {
   call: Call;
   message: CallMessage;
 }
 
+/** The call, the message sent and the link: an `open` follow-up is now `in_progress`, any other is left as it was. */
 export interface CallLinkResult extends CallReplyResult {
   link: string;
 }

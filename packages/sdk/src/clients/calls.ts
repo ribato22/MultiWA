@@ -62,7 +62,8 @@ export class CallClient {
 
   /**
    * Send a text to the caller, through the send gate (any role; an API key with a scope list needs `messages:write`).
-   * Without one, the profile's default call reply.
+   * Without one, the profile's default call reply. Resolves to the call and the message sent: an `open` follow-up is
+   * now `in_progress`, any other is left as it was.
    */
   async reply(id: string, text?: string): Promise<CallReplyResult> {
     return this.client.post(`/calls/${id}/reply`, { text });
@@ -70,7 +71,8 @@ export class CallClient {
 
   /**
    * Create a WhatsApp call link and send it to the caller, with an optional text above it (any role; an API key with
-   * a scope list needs `messages:write`)
+   * a scope list needs `messages:write`). Resolves to the call, the message sent and the link: an `open` follow-up is
+   * now `in_progress`, any other is left as it was.
    */
   async sendCallLink(id: string, type: 'voice' | 'video', text?: string): Promise<CallLinkResult> {
     return this.client.post(`/calls/${id}/call-link`, { type, text });
