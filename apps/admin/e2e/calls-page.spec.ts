@@ -8,14 +8,29 @@ const REC = { id: 'rec-9', durationSec: 190, bytes: 95_000, partial: true, annou
 const ANSWERED = {
   id: 'call-9', profileId: PROFILE.id, waCallId: 'W9', fromJid: '628111000111@s.whatsapp.net', isVideo: false, isGroup: false,
   direction: 'incoming', outcome: 'answered', rejectedBy: null, startedAt: '2026-11-01T03:00:00.000Z', endedAt: '2026-11-01T03:03:18.000Z',
-  followUp: 'open', assignedUserId: null, conversationId: 'conv-1', answeredByUserId: 'u-jane', answeredAt: '2026-11-01T03:00:06.000Z',
+  // A call answered needs no follow-up: the server marks it done.
+  followUp: 'done', assignedUserId: null, conversationId: 'conv-1', answeredByUserId: 'u-jane', answeredAt: '2026-11-01T03:00:06.000Z',
   endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 192, assignedUser: null, answeredBy: { id: 'u-jane', name: 'Jane' },
   conversation: { id: 'conv-1', name: 'Pak Joko' }, recording: REC as Record<string, unknown> | null,
 };
-/** The calls list (the ringing strip asks for `outcome=ringing`: none), and the row that `GET /calls/:id` reads. */
-function listing(backend: FakeBackend, row: () => typeof ANSWERED) {
-  backend.route((r) => (r.method === 'GET' && r.path === '/calls' ? { json: { calls: r.query.get('outcome') === 'ringing' ? [] : [row()], nextCursor: null } } : undefined));
-  backend.route(on('GET', '/calls/call-9', () => ({ json: row() })));
+type Row = typeof ANSWERED;
+/** The calls list, filtered as the server does (the ringing strip asks for `outcome=ringing`), and the rows `GET /calls/:id` reads. */
+function listing(backend: FakeBackend, rows: () => Row | Row[]) {
+  const all = () => [rows()].flat();
+  backend.route((r) => {
+    if (r.method !== 'GET' || r.path !== '/calls') return undefined;
+    const [outcome, followUp] = [r.query.get('outcome'), r.query.get('followUp')];
+    return { json: { calls: all().filter((c) => (!outcome || c.outcome === outcome) && (!followUp || c.followUp === followUp)), nextCursor: null } };
+  });
+  backend.route((r) => {
+    const row = r.method === 'GET' ? all().find((c) => r.path === `/calls/${c.id}`) : undefined;
+    return row && { json: row };
+  });
+}
+/** The Calls page on its Answered tab: the Open tab leaves an answered call out, as it is done. */
+async function openAnswered(page: Page) {
+  await page.goto('/dashboard/calls');
+  await page.getByRole('tab', { name: 'Answered' }).click();
 }
 const rowOf = (page: Page, caller = 'Pak Joko') => page.getByRole('list', { name: 'Calls', exact: true }).getByRole('listitem').filter({ hasText: caller });
 const WAV = { body: sineWav(2), headers: { 'content-type': 'audio/wav' } };
@@ -31,7 +46,7 @@ const playing = (player: Locator) => player.evaluate((a: HTMLAudioElement) => !a
 test('an answered call shows who answered, how fast, the talk time and its recording, with a player for an admin', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
   backend.route(on('GET', '/calls/call-9/recording', { body: sineWav(2), headers: { 'content-type': 'audio/wav' } }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   const row = rowOf(page);
   await expect(row.getByText('Answered', { exact: true })).toBeVisible();
   await expect(row).toContainText('Answered by Jane · 6 s to answer · Talk 3:12');
@@ -51,10 +66,19 @@ test('an answered call shows who answered, how fast, the talk time and its recor
   await expectAccessible(page, 'ul[aria-label="Calls"]');
 });
 
+test('an answered call is done, so the Open tab leaves it out: the Answered tab lists it, as the server filters it', async ({ page, backend }) => {
+  listing(backend, () => ANSWERED);
+  await page.goto('/dashboard/calls');
+  await expect(page.getByText('No calls here')).toBeVisible();
+  await page.getByRole('tab', { name: 'Answered' }).click();
+  await expect(rowOf(page)).toContainText('Answered by Jane');
+  expect(backend.requests.filter((r) => r.path === '/calls').map((r) => r.query.toString())).toContain('profileId=p-1&outcome=answered');
+});
+
 test('an admin downloads a recording as a file', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
   backend.route(on('GET', '/calls/call-9/recording', { body: sineWav(1), headers: { 'content-type': 'audio/webm' } }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   const button = rowOf(page).getByRole('button', { name: 'Download the recording of the call from Pak Joko' });
   const [download] = await Promise.all([page.waitForEvent('download'), button.click()]);
   expect(download.suggestedFilename()).toBe('call-call-9.webm');
@@ -69,7 +93,7 @@ test('Download keeps the focus while its file comes, and after', async ({ page, 
     await slow.passed;
     return { body: sineWav(1), headers: { 'content-type': 'audio/webm' } };
   }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   const download = rowOf(page).getByRole('button', { name: 'Download the recording of the call from Pak Joko' });
   await download.focus();
   await page.keyboard.press('Enter');
@@ -90,7 +114,7 @@ test('one action at a time in a row: Play while its file downloads, or Download 
     return WAV;
   }));
   const asked = () => backend.requests.filter((r) => r.path === '/calls/call-9/recording').length;
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   const row = rowOf(page);
   const play = row.getByRole('button', { name: /^Play/ });
   const download = row.getByRole('button', { name: 'Download the recording of the call from Pak Joko' });
@@ -127,7 +151,7 @@ test('an admin deletes a recording after confirming; the row then says it was de
     deleted = true;
     return { json: { callId: 'call-9', recordingId: 'rec-9', deletedAt: NOW } };
   }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await rowOf(page).getByRole('button', { name: 'Delete the recording of the call from Pak Joko' }).click();
   const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
   await expect(confirm).toContainText('The recording of the call from Pak Joko is deleted for good');
@@ -144,7 +168,7 @@ test('after a delete the focus stays on the row, and a toast says the recording 
     deleted = true;
     return { json: { callId: 'call-9', recordingId: 'rec-9', deletedAt: NOW } };
   }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await deleteRecording(page);
   await expect(rowOf(page)).toContainText('Recording deleted by an admin');
   await expect.poll(() => focused(page)).toBe('Recording deleted by an admin');
@@ -159,7 +183,7 @@ test('closed without a delete, the dialog gives the focus back to Delete: Cancel
     await slow.passed;
     return { status: 500, json: { message: 'Internal server error' } };
   }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   const del = rowOf(page).getByRole('button', { name: 'Delete the recording of the call from Pak Joko' });
   const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
   await del.click();
@@ -192,7 +216,7 @@ test('Escape while the delete runs leaves the dialog open: once deleted, the foc
     deleted = true;
     return { json: { callId: 'call-9', recordingId: 'rec-9', deletedAt: NOW } };
   }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await deleteRecording(page);
   const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
   await expect(confirm.getByRole('button', { name: 'Deleting…' })).toBeFocused();
@@ -208,7 +232,7 @@ test('Escape while the delete runs leaves the dialog open: once deleted, the foc
 test('a delete that went through says so, even when the row cannot be read again', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
   backend.route(on('DELETE', '/calls/call-9/recording', { json: { callId: 'call-9', recordingId: 'rec-9', deletedAt: NOW } }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await expect(rowOf(page)).toContainText('Recording 3:10');
   backend.route(on('GET', '/calls/call-9', { status: 500, json: { message: 'Internal server error' } }));
   await deleteRecording(page);
@@ -219,10 +243,10 @@ test('a delete that went through says so, even when the row cannot be read again
 
 for (const [done, button] of [['played', 'Play'], ['downloaded', 'Download the recording']] as const) {
   test(`a recording its retention removed since the list was read says so once ${done}`, async ({ page, backend }) => {
-    backend.route((r) => (r.method === 'GET' && r.path === '/calls' ? { json: { calls: r.query.get('outcome') === 'ringing' ? [] : [ANSWERED], nextCursor: null } } : undefined));
+    listing(backend, () => ANSWERED);
     backend.route(on('GET', '/calls/call-9', { json: { ...ANSWERED, recording: { ...REC, deletedAt: NOW, deleteReason: 'retention' } } }));
     backend.route(on('GET', '/calls/call-9/recording', { status: 404, json: { message: 'Recording not found' } }));
-    await page.goto('/dashboard/calls');
+    await openAnswered(page);
     await rowOf(page).getByRole('button', { name: button }).click();
     await expect(rowOf(page)).toContainText('Recording deleted after its retention period');
     await expect(rowOf(page).getByRole('button', { name: button })).toHaveCount(0);
@@ -236,7 +260,7 @@ test('Play keeps the focus while its file loads, then hands it to the player tha
     await slow.passed;
     return WAV;
   }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await rowOf(page).getByRole('button', { name: /^Play/ }).click();
   await rendered(page);
   await expect(rowOf(page).getByRole('button', { name: /^Loading/ })).toBeFocused();
@@ -249,9 +273,9 @@ test('one recording plays at a time: playing another pauses the first', async ({
     ...ANSWERED, id: 'call-8', waCallId: 'W8', fromJid: '628222000222@s.whatsapp.net', startedAt: '2026-11-01T02:00:00.000Z', endedAt: '2026-11-01T02:03:18.000Z',
     answeredAt: '2026-11-01T02:00:06.000Z', conversationId: 'conv-2', conversation: { id: 'conv-2', name: 'Bu Sari' }, recording: { ...REC, id: 'rec-8' },
   };
-  backend.route((r) => (r.method === 'GET' && r.path === '/calls' ? { json: { calls: r.query.get('outcome') === 'ringing' ? [] : [ANSWERED, SARI], nextCursor: null } } : undefined));
+  listing(backend, () => [ANSWERED, SARI]);
   backend.route(on('GET', /^\/calls\/call-[89]\/recording$/, { body: sineWav(20), headers: { 'content-type': 'audio/wav' } }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await rowOf(page).getByRole('button', { name: 'Play the recording of the call from Pak Joko' }).click();
   const first = rowOf(page).getByLabel('Recording of the call from Pak Joko', { exact: true });
   await expect.poll(() => playing(first)).toBe(true);
@@ -267,7 +291,7 @@ test('a recording under 0.1 MB says so while it loads', async ({ page, backend }
     await slow.passed;
     return WAV;
   }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await rowOf(page).getByRole('button', { name: 'Play' }).click();
   await expect(rowOf(page).getByRole('button', { name: 'Loading < 0.1 MB…' })).toBeDisabled();
   slow.open();
@@ -282,7 +306,7 @@ test('leaving the page while a recording loads gives the load up: no file is kep
     return WAV;
   }));
   const ended = requestEnded(page, '/calls/call-9/recording');
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await rowOf(page).getByRole('button', { name: 'Play' }).click();
   await expect(rowOf(page).getByRole('button', { name: /^Loading/ })).toBeVisible();
   await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Settings' }).click();
@@ -295,14 +319,14 @@ test('leaving the page while a recording loads gives the load up: no file is kep
 
 test('a recording the retention removed says so', async ({ page, backend }) => {
   listing(backend, () => ({ ...ANSWERED, recording: { ...REC, deletedAt: NOW, deleteReason: 'retention' } }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   await expect(rowOf(page)).toContainText('Recording deleted after its retention period');
 });
 
 test('a recording stored after the call shows up without a reload', async ({ page, backend }) => {
   let stored = false;
   listing(backend, () => (stored ? ANSWERED : { ...ANSWERED, recording: null }));
-  await page.goto('/dashboard/calls');
+  await openAnswered(page);
   const row = rowOf(page);
   await expect(row).toContainText('Answered by Jane');
   await expect(row).not.toContainText('Recording');
@@ -310,7 +334,7 @@ test('a recording stored after the call shows up without a reload', async ({ pag
   stored = true;
   backend.emitToProfile(PROFILE.id, 'call:update', {
     profileId: PROFILE.id, callId: 'call-9', waCallId: 'W9', from: ANSWERED.fromJid, isVideo: false, isGroup: false, direction: 'incoming',
-    outcome: 'answered', rejectedBy: null, startedAt: ANSWERED.startedAt, endedAt: ANSWERED.endedAt, followUp: 'open', assignedUserId: null,
+    outcome: 'answered', rejectedBy: null, startedAt: ANSWERED.startedAt, endedAt: ANSWERED.endedAt, followUp: 'done', assignedUserId: null,
     answeredByUserId: 'u-jane', answeredAt: ANSWERED.answeredAt, endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 192, hasRecording: true,
   });
   await expect(row).toContainText('Recording 3:10');
@@ -321,7 +345,7 @@ test.describe('a member', () => {
 
   test('sees the recording facts, but no player, download or delete', async ({ page, backend }) => {
     listing(backend, () => ANSWERED);
-    await page.goto('/dashboard/calls');
+    await openAnswered(page);
     const row = rowOf(page);
     await expect(row).toContainText('Recording 3:10');
     for (const name of ['Play', 'Download the recording', 'Delete the recording']) await expect(row.getByRole('button', { name })).toHaveCount(0);

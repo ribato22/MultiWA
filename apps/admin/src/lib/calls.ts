@@ -22,9 +22,11 @@ export const FOLLOW_UP_LABEL: Record<CallFollowUp, string> = {
   done: 'Done',
 };
 
-export type CallFilter = 'open' | 'missed' | 'rejected' | 'all';
+// A call answered needs no follow-up (the server marks it done): Open never lists one, Answered does.
+export type CallFilter = 'open' | 'answered' | 'missed' | 'rejected' | 'all';
 export const CALL_FILTERS: { value: CallFilter; label: string }[] = [
   { value: 'open', label: 'Open' },
+  { value: 'answered', label: 'Answered' },
   { value: 'missed', label: 'Missed' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'all', label: 'All' },
@@ -32,16 +34,12 @@ export const CALL_FILTERS: { value: CallFilter; label: string }[] = [
 
 export function filterQuery(f: CallFilter): { followUp?: CallFollowUp; outcome?: CallOutcome } {
   if (f === 'open') return { followUp: 'open' };
-  if (f === 'missed') return { outcome: 'missed' };
-  if (f === 'rejected') return { outcome: 'rejected' };
-  return {};
+  return f === 'all' ? {} : { outcome: f };
 }
 
 export function matchesFilter(c: CallRecord, f: CallFilter): boolean {
   if (f === 'open') return c.followUp === 'open';
-  if (f === 'missed') return c.outcome === 'missed';
-  if (f === 'rejected') return c.outcome === 'rejected';
-  return true;
+  return f === 'all' || c.outcome === f;
 }
 
 /** The chat name when known, else the number of the JID. Only a phone JID gets the `+`: an unresolved @lid or a group id is no number. */
