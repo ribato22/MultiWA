@@ -113,6 +113,7 @@ function render(p) {
 }
 
 let failures = 0;
+let imageFailures = 0;
 let synced = 0;
 
 for (const p of PAGES) {
@@ -150,13 +151,13 @@ for (const file of images) {
   const dst = path.join(IMAGE_DST, file);
   if (!fs.existsSync(src)) {
     console.error(`✗ image missing: docs/screenshots/${file}`);
-    failures++;
+    imageFailures++;
     continue;
   }
   if (fs.existsSync(dst) && fs.readFileSync(dst).equals(fs.readFileSync(src))) continue;
   if (CHECK) {
     console.error(`✗ out of sync: docs-site/static/img/screenshots/${file} — run \`pnpm sync:docsite\``);
-    failures++;
+    imageFailures++;
   } else {
     fs.mkdirSync(path.dirname(dst), { recursive: true });
     fs.copyFileSync(src, dst);
@@ -164,12 +165,18 @@ for (const file of images) {
   }
 }
 
+// A page or an image the docs-site needs and cannot get: both modes fail, so a deploy never ships it broken.
+const problems = [failures && `${failures} page(s)`, imageFailures && `${imageFailures} image(s)`].filter(Boolean).join(' and ');
 if (CHECK) {
-  if (failures > 0) {
-    console.error(`Docs-site sync check FAILED (${failures} page(s) drifted).`);
+  if (problems) {
+    console.error(`Docs-site sync check FAILED (${problems} drifted or missing).`);
     process.exit(1);
   }
   console.log('Docs-site sync check PASSED — all pages match docs/.');
 } else {
-  console.log(`Docs-site sync complete (${synced} page(s) updated, ${PAGES.length - synced} already in sync).`);
+  console.log(`Docs-site sync complete (${synced} page(s) updated, ${PAGES.length - synced - failures} already in sync).`);
+  if (problems) {
+    console.error(`Docs-site sync FAILED (${problems} missing in docs/).`);
+    process.exit(1);
+  }
 }
