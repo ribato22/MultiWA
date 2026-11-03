@@ -179,11 +179,7 @@ final class ClientTest extends TestCase
         if ($multipart !== null) {
             // A file upload is multipart, with the boundary Guzzle chose.
             self::assertStringStartsWith('multipart/form-data; boundary=', $request->getHeaderLine('Content-Type'));
-            $sent = (string) $request->getBody();
-            foreach ($multipart as $name => [$filename, $contents]) {
-                self::assertStringContainsString("name=\"{$name}\"; filename=\"{$filename}\"", $sent);
-                self::assertStringContainsString($contents, $sent);
-            }
+            self::assertSame($multipart, self::parts($request));
         } elseif ($body === null) {
             self::assertSame('', (string) $request->getBody());
             // The API answers 400 to a bodiless POST that declares a JSON body.
@@ -765,6 +761,29 @@ final class ClientTest extends TestCase
         ksort($query);
 
         return [$call, $method, $path, $query, $body, $response, $check, $reply, $multipart];
+    }
+
+    /**
+     * A multipart body's parts: name => [filename, the exact bytes sent].
+     *
+     * @return array<string, array{string|null, string}>
+     */
+    private static function parts(RequestInterface $request): array
+    {
+        $boundary = explode('boundary=', $request->getHeaderLine('Content-Type'), 2)[1] ?? '';
+        $chunks = explode("--{$boundary}", (string) $request->getBody());
+        // Nothing before the first boundary, and nothing after the last.
+        self::assertSame('', array_shift($chunks));
+        self::assertSame("--\r\n", array_pop($chunks));
+        $parts = [];
+        foreach ($chunks as $chunk) {
+            [$head, $content] = explode("\r\n\r\n", $chunk, 2) + ['', ''];
+            self::assertSame(1, preg_match('/^Content-Disposition: form-data; name="([^"]*)"(?:; filename="([^"]*)")?\r?$/m', $head, $disposition));
+            self::assertStringEndsWith("\r\n", $content);
+            $parts[$disposition[1]] = [$disposition[2] ?? null, substr($content, 0, -2)];
+        }
+
+        return $parts;
     }
 
     /**
