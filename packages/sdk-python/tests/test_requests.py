@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import io
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -57,7 +58,7 @@ class Sent(NamedTuple):
     path: str
     params: list[tuple[str, str]]
     body: dict[str, Any] | None
-    # A multipart upload: field name -> (filename, bytes).
+    # A multipart upload: field name -> (filename, the exact bytes).
     files: dict[str, tuple[str, bytes]] | None = None
 
 
@@ -107,6 +108,22 @@ def run(
             return await result
 
     return asyncio.run(main()), requests
+
+
+def sent_files(request: httpx.Request) -> dict[str, tuple[str | None, bytes]]:
+    """A multipart body's parts: field name -> (filename, the exact bytes sent)."""
+    boundary = request.headers["content-type"].partition("boundary=")[2]
+    first, *parts, last = request.content.split(f"--{boundary}".encode())
+    assert (first, last) == (b"", b"--\r\n")
+    files: dict[str, tuple[str | None, bytes]] = {}
+    for part in parts:
+        head, _, content = part.partition(b"\r\n\r\n")
+        disposition = re.search(
+            'form-data; name="([^"]*)"(?:; filename="([^"]*)")?', head.decode()
+        )
+        assert disposition and content.endswith(b"\r\n")
+        files[disposition[1]] = (disposition[2], content[:-2])
+    return files
 
 
 V1 = "/api/v1"
@@ -869,11 +886,7 @@ def test_request(case: Case, kind: str):
         if want.files is not None:
             # A file upload is multipart, with the boundary httpx chose.
             assert request.headers["content-type"].startswith("multipart/form-data")
-            for name, (filename, content) in want.files.items():
-                assert (
-                    f'name="{name}"; filename="{filename}"'.encode() in request.content
-                )
-                assert content in request.content
+            assert sent_files(request) == want.files
         elif want.body is None:
             # A bodyless POST/DELETE with Content-Type: application/json gets a 400.
             assert request.content == b""
@@ -1051,3 +1064,26 @@ def test_a_refused_call_setting_says_why():
         client.calls.update_settings("p-1", recording=True)
     assert refusal.value.response.status_code == 409
     assert refusal.value.response.json()["reasons"] == ["no_announcement"]
+
+
+# ---------------- what an announcement upload sends ----------------
+
+# (the file, the options, the filename it goes out under); its bytes are ID3\x04.
+UPLOADS = [
+    pytest.param(lambda: io.BytesIO(b"ID3\x04"), {}, "announcement", id="file object"),
+]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(("file", "options", "sent_as"), UPLOADS)
+def test_an_announcement_goes_out_as_exactly_its_bytes(
+    file: Callable[[], Any], options: dict[str, Any], sent_as: str, kind: str
+):
+    _, requests = run(
+        kind,
+        lambda c: c.calls.upload_announcement("p-1", file(), **options),
+        [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+    )
+    assert [sent_files(request) for request in requests] == [
+        {"file": (sent_as, b"ID3\x04")}
+    ]
