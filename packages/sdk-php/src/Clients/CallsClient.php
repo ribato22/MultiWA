@@ -12,6 +12,7 @@ use MultiWA\Models\CallPage;
 use MultiWA\Models\CallsSettings;
 use MultiWA\Models\MessageResult;
 use MultiWA\MultiWA;
+use Psr\Http\Message\StreamInterface;
 
 /**
  * Calls API: incoming WhatsApp calls, their follow-up queue, the readiness of answering them in the dashboard, the
@@ -198,8 +199,8 @@ class CallsClient
      * the length from the file itself, not from its name, which is $filename, else the name of the file a stream
      * reads, else `announcement`.
      *
-     * @param string|resource $file The file's bytes, or an open stream such as fopen('notice.mp3', 'r'), left open
-     *                              for the caller to close
+     * @param string|resource|StreamInterface $file The file's bytes, an open stream such as fopen('notice.mp3', 'r'),
+     *                                              or a PSR-7 stream; a stream is left open, for the caller to close
      *
      * @return array{profileId: string, announcement: array{mimeType: string, durationSec: float|int}|null}
      */

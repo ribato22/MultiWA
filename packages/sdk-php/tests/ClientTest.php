@@ -7,6 +7,7 @@ namespace MultiWA\Tests;
 use DateTimeImmutable;
 use GuzzleHttp\Psr7\Query;
 use GuzzleHttp\Psr7\Response;
+use GuzzleHttp\Psr7\Utils;
 use MultiWA\Clients\BroadcastsClient;
 use MultiWA\Clients\CallsClient;
 use MultiWA\Clients\ContactsClient;
@@ -28,6 +29,7 @@ use MultiWA\MultiWA;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamInterface;
 
 /**
  * Every public client method: the request it sends (method, path, query, JSON
@@ -763,6 +765,7 @@ final class ClientTest extends TestCase
     {
         $bytes = static fn (string $path): string => self::AUDIO;
         $file = static fn (string $path): mixed => fopen($path, 'rb');
+        $psr7 = static fn (string $path): StreamInterface => Utils::streamFor(fopen($path, 'rb'));
         $memory = static function (string $path): mixed {
             $stream = fopen('php://memory', 'w+b');
             self::assertIsResource($stream);
@@ -778,6 +781,7 @@ final class ClientTest extends TestCase
         yield "a file's stream keeps the file's name" => [$file, null, 'notice.mp3'];
         yield "a file's stream, named: the name given wins" => [$file, 'greeting.mp3', 'greeting.mp3'];
         yield "a file's stream, an empty name counts as none" => [$file, '', 'notice.mp3'];
+        yield "a PSR-7 stream of a file keeps the file's name" => [$psr7, null, 'notice.mp3'];
         yield 'a stream of no file' => [$memory, null, 'announcement'];
     }
 
