@@ -96,7 +96,7 @@ export class CallsController {
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Send a text to the caller (send-gated)' })
-  @ApiResponse({ status: 201, description: 'The call (its follow-up in progress) and the message sent', type: CallReplyResultDto })
+  @ApiResponse({ status: 201, description: 'The call and the message sent: an `open` follow-up is now `in_progress`, any other is left as it was', type: CallReplyResultDto })
   @ApiNotFound('Call')
   @ApiValidationError()
   reply(@Param('id') id: string, @Body() dto: ReplyCallDto) {

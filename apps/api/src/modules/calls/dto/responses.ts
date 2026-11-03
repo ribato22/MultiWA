@@ -225,7 +225,11 @@ export class CallsStorageCheckDto {
   @ApiProperty({ type: Boolean })
   ok: boolean;
 
-  @ApiProperty({ type: String, required: false, description: '`storage_not_private` or `storage_check_failed`.' })
+  @ApiProperty({
+    type: String,
+    required: false,
+    description: '`recordings_storage_unset` (the nightly check, while no storage is configured), `storage_not_private` or `storage_check_failed`.',
+  })
   reason?: string;
 }
 

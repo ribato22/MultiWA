@@ -50,10 +50,12 @@ describe('the calls routes in the OpenAPI document', () => {
     expect(json(method, path, status)).toEqual({ $ref: `#/components/schemas/${dto}` });
   });
 
-  it('the recording and the announcement answer their audio; the recording takes ?download', () => {
+  it('the recording and the announcement answer their audio; the recording takes ?download, once', () => {
     const recording = operation('get', '/calls/{id}/recording');
     expect(recording.responses['200'].content['audio/webm'].schema).toEqual({ type: 'string', format: 'binary' });
-    expect(recording.parameters).toContainEqual(expect.objectContaining({ name: 'download', in: 'query', required: false }));
+    expect(recording.parameters.filter((p: { name: string }) => p.name === 'download')).toEqual([
+      expect.objectContaining({ in: 'query', required: false, schema: { type: 'string', enum: ['1', 'true'] } }),
+    ]);
     const announcement = operation('get', '/profiles/{id}/calls-announcement').responses['200'].content;
     expect(Object.keys(announcement)).toEqual(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4']);
     for (const type of Object.keys(announcement)) expect(announcement[type].schema).toEqual({ type: 'string', format: 'binary' });
