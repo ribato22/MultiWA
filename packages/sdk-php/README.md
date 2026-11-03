@@ -195,6 +195,37 @@ $ok = WebhooksClient::verifySignature(
 `create()` and `update()` also take `headers`, extra headers sent with every
 delivery (`['X-Tenant' => 'acme']`).
 
+## Calls
+
+Incoming WhatsApp calls: the follow-up queue, the readiness of answering them in
+the dashboard, the recordings and the announcement
+([Calls answered in the dashboard](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md)).
+
+```php
+$calls = $client->calls();
+
+$page = $calls->list($profileId, outcome: 'answered');    // CallPage: ->calls, ->nextCursor
+$calls->update($callId, followUp: 'done');                // unassign() removes the assignee
+$calls->reply($callId, 'We will call you back');
+
+// Owners and admins
+$file = fopen('notice.mp3', 'r');                         // recording needs the announcement first
+$calls->uploadAnnouncement($profileId, $file);            // the SDK leaves your stream open
+fclose($file);
+$calls->updateSettings($profileId, answerInDashboard: true, recording: true);
+$audio = $calls->getRecording($callId);                   // AudioFile: ->content, ->contentType
+$calls->deleteRecording($callId);
+```
+
+Every calls method is in the [PHP SDK guide](https://github.com/ribato22/MultiWA/blob/main/docs/14-sdk-php.md#calls).
+An API key acts with its user's role, and a key with a scope list needs the
+scopes in [API keys](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md#api-keys).
+With Guzzle's cURL handler, the default, the client's `timeout` covers a whole
+download: a long recording may need a larger one. A refused setting throws an
+`ApiException` (409); `getResponseBody()['reasons']` says why. Answering is for
+people signed in to the dashboard: follow calls with the `call.*` webhooks, or
+the WebSocket `call:update` event.
+
 ## Other routes
 
 `request()` calls any route of the [REST API](https://github.com/ribato22/MultiWA/blob/main/docs/07-api-specification.md)

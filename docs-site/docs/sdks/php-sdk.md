@@ -203,6 +203,63 @@ $ok = WebhooksClient::verifySignature(
 
 `create()` and `update()` also take `headers`, extra headers sent with every delivery (`['X-Tenant' => 'acme']`). See [Webhook Events](<../api/webhook-events.md>) for the events and payloads.
 
+### Calls
+
+Incoming WhatsApp calls: the follow-up queue, the readiness of answering them in the dashboard, the recordings and the announcement ([Calls answered in the dashboard](<../features/calls.md>)).
+
+```php
+$calls = $client->calls();
+
+$page = $calls->list($profileId, outcome: 'answered', limit: 50); // CallPage: ->calls (Call[]), ->nextCursor
+foreach ($page->calls as $call) {
+    echo $call->fromJid, ' ', $call->answeredBy['name'] ?? '', ' ', $call->talkSeconds, "\n";
+}
+if ($page->nextCursor !== null) {
+    $page = $calls->list($profileId, outcome: 'answered', cursor: $page->nextCursor);
+}
+
+$calls->openCount();                                      // the number of open follow-ups in the organization
+$call = $calls->get($callId);                             // $call->recording: null, or a CallRecording
+$calls->update($callId, followUp: 'done');                // or assignedUserId: '…'
+$calls->unassign($callId);                                // removes the assignee
+$calls->reject($callId);                                  // a call that still rings
+$calls->reply($callId, 'We will call you back');          // ['call' => Call, 'message' => MessageResult]; no text: the profile's default reply
+$calls->sendCallLink($callId, 'voice', 'Tap to call us'); // also 'link' => 'https://call.whatsapp.com/…'
+
+// Owners and admins
+$status = $calls->mediaStatus();                          // ['server' => […], 'profiles' => [['profileId' => …, 'ready' => true, 'reasons' => []], …]]
+$file = fopen('notice.mp3', 'r');                         // recording needs the announcement first
+$calls->uploadAnnouncement($profileId, $file);            // also bytes; a stream goes under its file's name
+fclose($file);                                            // the SDK leaves your stream open
+$calls->updateSettings($profileId, answerInDashboard: true, recording: true, retentionDays: 30); // CallsSettings
+$notice = $calls->getAnnouncement($profileId);            // AudioFile: ->content, ->contentType
+
+$audio = $calls->getRecording($callId, download: true);   // audio/webm
+file_put_contents("call-{$callId}.webm", $audio->content);
+$calls->deleteRecording($callId);                         // ['callId' => …, 'recordingId' => …, 'deletedAt' => …]
+
+$calls->updateSettings($profileId, recording: false);
+$calls->deleteAnnouncement($profileId);                   // refused with 409 while recording is on
+```
+
+Everything above `// Owners and admins` is open to every user of the organization; the rest is for owners and admins. An API key acts with its user's role, and a key with a scope list also needs `messages:write` for `reply()` and `sendCallLink()`, `recordings:read` to fetch a recording, `recordings:delete` to delete one, and `profiles:write` for the settings and the announcement, with `recordings:delete` too for `retentionDays` ([API keys](<../features/calls.md#api-keys>)). With Guzzle's cURL handler, the default, the client's `timeout` covers a whole download: a long recording may need a larger one.
+
+A setting that cannot be turned on throws an `ApiException` with status 409, whose body says why:
+
+```php
+use MultiWA\Exceptions\ApiException;
+
+try {
+    $calls->updateSettings($profileId, recording: true);
+} catch (ApiException $e) {
+    if ($e->getStatusCode() === 409) {
+        print_r($e->getResponseBody()['reasons']); // e.g. ['no_announcement']
+    }
+}
+```
+
+The SDK has no realtime events for calls: answering is for people signed in to the dashboard, and an API key never gets the agents' events. Follow calls with the `call.*` [webhooks](<../api/webhook-events.md#call-events>), or the [WebSocket](<../api/websocket-api.md#callupdate>) `call:update` event.
+
 ### Other routes
 
 `request()` calls any route of the [REST API](<../api/api-specification.md>) with the same authentication and error handling, and returns the decoded JSON:

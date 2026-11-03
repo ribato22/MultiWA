@@ -177,6 +177,32 @@ from multiwa import verify_webhook_signature
 ok = verify_webhook_signature(raw_body, request.headers["X-MultiWA-Signature"], webhook.secret)
 ```
 
+### Calls
+
+Incoming WhatsApp calls: the follow-up queue, the readiness of answering them in
+the dashboard, the recordings and the announcement
+([Calls answered in the dashboard](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md)).
+
+```python
+page = client.calls.list(profile_id, outcome="answered")   # newest first; page.next_cursor
+client.calls.update(call_id, follow_up="done")              # unassign=True removes the assignee
+client.calls.reply(call_id, "We will call you back")
+
+# Owners and admins
+with open("notice.mp3", "rb") as f:                         # recording needs the announcement first
+    client.calls.upload_announcement(profile_id, f)
+client.calls.update_settings(profile_id, answer_in_dashboard=True, recording=True)
+audio = client.calls.get_recording(call_id)                 # AudioFile: content, content_type
+client.calls.delete_recording(call_id)
+```
+
+Every calls method is in the [Python SDK guide](https://github.com/ribato22/MultiWA/blob/main/docs/13-sdk-python.md#calls).
+An API key acts with its user's role, and a key with a scope list needs the
+scopes in [API keys](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md#api-keys).
+A refused setting raises `httpx.HTTPStatusError` (409); `e.response.json()["reasons"]`
+says why. Answering is for people signed in to the dashboard: follow calls with the
+`call.*` webhooks, or the WebSocket `call:update` event.
+
 ## Async Support
 
 `AsyncMultiWA` has the same resources and methods; await each call.
