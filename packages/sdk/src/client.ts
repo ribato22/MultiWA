@@ -9,6 +9,10 @@ import { BroadcastClient } from './clients/broadcast';
 import { WebhookClient } from './clients/webhooks';
 import { AutomationClient } from './clients/automation';
 import { CallClient } from './clients/calls';
+import type { BinaryResponse } from './types';
+
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+type RequestOptions = { body?: any; query?: Record<string, any> };
 
 export interface MultiWAClientOptions {
   /**
@@ -93,17 +97,15 @@ export class MultiWAClient {
     this.calls = new CallClient(this);
   }
 
-  // HTTP request wrapper
+  /** HTTP request wrapper, resolving to the bytes the API answered with and their Content-Type. */
+  request(method: HttpMethod, path: string, options: RequestOptions & { binary: true }): Promise<BinaryResponse>;
+  /** HTTP request wrapper, resolving to the parsed JSON. */
+  request<T>(method: HttpMethod, path: string, options?: RequestOptions & { binary?: false }): Promise<T>;
   async request<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+    method: HttpMethod,
     path: string,
-    options?: {
-      body?: any;
-      query?: Record<string, any>;
-      /** Resolve to the bytes and their Content-Type (a BinaryResponse) instead of parsed JSON. */
-      binary?: boolean;
-    }
-  ): Promise<T> {
+    options?: RequestOptions & { binary?: boolean }
+  ): Promise<T | BinaryResponse> {
     // Use joinApiUrl so the base path (e.g. /api/v1) is preserved even when
     // the endpoint path starts with a leading slash.
     const url = new URL(joinApiUrl(this.options.baseUrl, path));
@@ -152,7 +154,7 @@ export class MultiWAClient {
 
       if (options?.binary) {
         const data = new Uint8Array(await response.arrayBuffer());
-        return { data, contentType: response.headers.get('content-type') ?? 'application/octet-stream' } as T;
+        return { data, contentType: response.headers.get('content-type') ?? 'application/octet-stream' };
       }
       // Awaited, so the timeout still runs while the body is read and its abort is caught below.
       return await response.json();
