@@ -696,15 +696,19 @@ test('a retention out of the server’s range says why, and Enter in the field s
   const s = section(page);
   const days = s.getByLabel('Keep recordings for (days)');
   const save = s.getByRole('button', { name: 'Save retention' });
+  const border = () => days.evaluate((el) => getComputedStyle(el).borderTopColor);
   await expect(days).toHaveAttribute('aria-invalid', 'false');
+  const valid = await border();
   for (const value of ['0', '3651', '1.5']) {
     await days.fill(value);
     await expect(days).toHaveAttribute('aria-invalid', 'true');
     await expect(days).toHaveAccessibleDescription('A whole number of days from 1 to 3650');
     await expect(save).toBeDisabled();
+    await expect.poll(border).toBe('rgb(251, 191, 36)'); // the field itself says so too: amber, as its help
   }
   await days.fill('3650');
   await expect(days).toHaveAttribute('aria-invalid', 'false');
+  await expect.poll(border).toBe(valid);
   await days.press('Enter');
   await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 3650 }]);
 });

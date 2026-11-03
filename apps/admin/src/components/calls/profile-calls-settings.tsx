@@ -360,7 +360,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                 aria-invalid={!retentionValid}
                 aria-describedby="calls-retention-help"
                 onChange={(e) => setRetentionDraft(e.target.value)}
-                className="w-32 border-slate-800 bg-slate-950/40 text-slate-100"
+                className="w-32 border-slate-800 bg-slate-950/40 text-slate-100 aria-[invalid=true]:border-amber-400"
               />
               <p id="calls-retention-help" className={`text-[11px] ${retentionValid ? 'text-slate-400' : 'text-amber-300'}`}>
                 {retentionValid ? '1 to 3650. Older recordings are deleted every night.' : 'A whole number of days from 1 to 3650'}
