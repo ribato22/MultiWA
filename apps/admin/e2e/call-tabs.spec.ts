@@ -146,6 +146,20 @@ test('a reload while the answer still connects, whose end and new ring did not r
   await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeVisible();
 });
 
+test('a rejoin waits for the server to give the answer up: hanging up a call WhatsApp was answering, then closing its media, takes up to about 17 s', async ({ page, backend }) => {
+  await page.clock.install();
+  await open(page);
+  await answerConnecting(page, backend);
+  let undo!: () => void;
+  backend.reply('call:rejoin', (a) => new Promise((resolve) => (undo = () => resolve(backend.undoAnswer(a.callId, true)))));
+  page.on('dialog', (d) => void d.accept());
+  await page.reload();
+  await expect.poll(() => backend.commands('call:rejoin')).toHaveLength(1);
+  await page.clock.fastForward(20_000);
+  undo();
+  await expect(bar(page)).toContainText('The call was not connected');
+});
+
 test('signing out while a reload rejoins the call closes the microphone at once, and rejoins nothing', async ({ page, context, backend }) => {
   await open(page);
   await onCall(page, backend);

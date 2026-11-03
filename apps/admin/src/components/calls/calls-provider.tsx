@@ -22,8 +22,9 @@ const command = (socket: Socket, event: string, args: object, ms: number): Promi
   socket.timeout(ms).emitWithAck(event, args).catch(() => ({ ok: false as const, reason: 'timeout' }));
 
 // The server's own budgets: an answer connects within 10 s; a recorded call's hang-up stops the recorder before the
-// media closes (up to about 27 s); a rejoin closes the old audio first (up to 8 s).
-const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_000, rejoin: 15_000 };
+// media closes (up to about 27 s); a rejoin closes the old audio first (up to 8 s), or gives up an answer still
+// connecting: it hangs up a call WhatsApp was answering (up to 12 s), then closes its media (up to 5 s).
+const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_000, rejoin: 25_000 };
 const FADE_MS = 4_000; // "Answered by …" and a call's end stay this long
 
 /**
