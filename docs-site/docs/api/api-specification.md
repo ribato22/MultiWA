@@ -57,9 +57,10 @@ A response is the JSON of what was asked for, with no envelope around it: an obj
 An error has its HTTP status, and a body with the status, a message and the status's name:
 
 ```json
-{ "statusCode": 404, "message": "Call not found", "error": "Not Found" }
+{ "statusCode": 403, "message": "Resource not found in your organization", "error": "Forbidden" }
 ```
 
+- On the routes of your workspaces' resources (profiles, contacts, conversations, calls and the like), an id outside your organization, or of nothing at all, is this `403`: the API does not say which.
 - A validation error (`400`) lists every problem in `message`.
 - Some errors carry a code of their own in `error`: a send through a disconnected profile is `409` `PROFILE_DISCONNECTED`, and the send gate's `429` is `{ "error": "DAILY_LIMIT_REACHED", … }` without `statusCode` (see [Messaging](<../features/messaging.md>)).
 - A refusal with reasons is `409` `{ "message": "…", "reasons": ["…"] }`, from the call settings and the announcement (see [Calls](#calls-calls)).
@@ -337,7 +338,7 @@ A call:
 }
 ```
 
-- `server.enabled` is `CALLS_MEDIA_ENABLED`; `worker` is `up` or `down`; `port` is `null` while disabled; `engineHost` must be `api` for answering in the dashboard; `activeSessions` counts the organization's calls connecting or connected in the dashboard.
+- `server.enabled` is `true` when `CALLS_MEDIA_ENABLED=true` and the engines run in the API (`ENGINE_HOST` is not `worker`); `worker` is `up` or `down`; `port` is `null` while disabled; `engineHost` must be `api` for answering in the dashboard; `activeSessions` counts the organization's calls connecting or connected in the dashboard.
 - `server.recordings`: `storage` is `local` or `s3`; `configured: false` with `problem` naming the missing or refused setting; `lastCheck` is the last check that the storage refuses reads without credentials (its `reason` when it failed: `storage_not_private`, `storage_check_failed`, or `recordings_storage_unset` from the nightly check while no storage is configured).
 - Each profile has its call settings, `ready`, and the `reasons` it is not ready.
 
