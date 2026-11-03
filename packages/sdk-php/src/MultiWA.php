@@ -8,12 +8,14 @@ use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Promise\PromiseInterface;
 use MultiWA\Clients\BroadcastsClient;
+use MultiWA\Clients\CallsClient;
 use MultiWA\Clients\ContactsClient;
 use MultiWA\Clients\MessagesClient;
 use MultiWA\Clients\ProfilesClient;
 use MultiWA\Clients\WebhooksClient;
 use MultiWA\Exceptions\ApiException;
 use MultiWA\Exceptions\MultiWAException;
+use MultiWA\Models\AudioFile;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -36,6 +38,7 @@ class MultiWA
     private BroadcastsClient $broadcasts;
     private ProfilesClient $profiles;
     private WebhooksClient $webhooks;
+    private CallsClient $calls;
 
     /**
      * @param string        $baseUrl API base URL including the /api/v1 prefix,
@@ -74,6 +77,7 @@ class MultiWA
         $this->broadcasts = new BroadcastsClient($this);
         $this->profiles = new ProfilesClient($this);
         $this->webhooks = new WebhooksClient($this);
+        $this->calls = new CallsClient($this);
     }
 
     public function messages(): MessagesClient
@@ -99,6 +103,11 @@ class MultiWA
     public function webhooks(): WebhooksClient
     {
         return $this->webhooks;
+    }
+
+    public function calls(): CallsClient
+    {
+        return $this->calls;
     }
 
     /**
@@ -127,6 +136,22 @@ class MultiWA
         }
 
         return $data;
+    }
+
+    /**
+     * Calls a route that answers audio, such as a call's recording, and returns its bytes and Content-Type.
+     *
+     * @param string               $path    Route below the base URL, e.g. 'calls/{id}/recording'
+     * @param array<string, mixed> $options Guzzle request options, e.g. ['query' => [...]]
+     *
+     * @throws ApiException     The API answered with an error status
+     * @throws MultiWAException The request failed without a response
+     */
+    public function requestAudio(string $method, string $path, array $options = []): AudioFile
+    {
+        $response = $this->http->request($method, ltrim($path, '/'), $options);
+
+        return new AudioFile((string) $response->getBody(), $response->getHeaderLine('Content-Type'));
     }
 
     /**

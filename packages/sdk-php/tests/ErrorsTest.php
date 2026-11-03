@@ -159,6 +159,30 @@ final class ErrorsTest extends TestCase
         }
     }
 
+    public function testRefusedCallSettingKeepsItsReasons(): void
+    {
+        $client = $this->client([self::json(409, ['message' => 'Recording calls is not available for this profile', 'reasons' => ['no_announcement']])]);
+
+        try {
+            $client->calls()->updateSettings('prof-1', recording: true);
+            self::fail('No exception was thrown');
+        } catch (ApiException $e) {
+            self::assertSame(ApiException::class, $e::class);
+            self::assertSame(409, $e->getStatusCode());
+            self::assertSame('Recording calls is not available for this profile', $e->getMessage());
+            self::assertSame(['no_announcement'], $e->getResponseBody()['reasons']);
+        }
+    }
+
+    public function testRecordingThatIsNotThere(): void
+    {
+        $client = $this->client([self::json(404, ['statusCode' => 404, 'message' => 'This call has no recording', 'error' => 'Not Found'])]);
+
+        $this->expectException(NotFoundException::class);
+        $this->expectExceptionMessage('This call has no recording');
+        $client->calls()->getRecording('call-1');
+    }
+
     public function testErrorPageThatIsNotJson(): void
     {
         $e = $this->send(new Response(502, ['Content-Type' => 'text/html'], '<html><body>502 Bad Gateway</body></html>'));
