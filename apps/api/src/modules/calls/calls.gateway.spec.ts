@@ -65,8 +65,9 @@ describe('CallsGateway', () => {
     expect(sessions.answer).toHaveBeenCalledWith(principal, undefined);
   });
 
-  // not_allowed is final for a client; a socket held for a retry (the database is down) is to try again once reconnected.
-  it('a socket whose credentials could not be checked is answered error, never not_allowed, on every command', async () => {
+  // not_allowed is final for a client, and error is a command that failed on a checked socket, where no reconnect
+  // comes; a socket held for a retry (the database is down) is to try again once reconnected.
+  it('a socket whose credentials could not be checked is answered unavailable, never not_allowed or error, on every command', async () => {
     const { gateway, events, sessions } = make(null);
     // As EventsGateway.authOf does when the lookup throws: it marks the socket, then gives no principal.
     events.authOf.mockImplementation(async (client) => {
@@ -80,7 +81,7 @@ describe('CallsGateway', () => {
       gateway.rejoin(held, { callId: 'c1' }),
       gateway.hangup(held, { callId: 'c1' }),
       gateway.availability(held, {}),
-    ])).toEqual(Array(5).fill({ ok: false, reason: 'error' }));
+    ])).toEqual(Array(5).fill({ ok: false, reason: 'unavailable' }));
     expect(Object.values(sessions).flatMap((run) => run.mock.calls)).toEqual([]);
   });
 });

@@ -104,7 +104,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       // either: socket.io-client resets its reconnect backoff whenever a connection opens, so a socket closed at once
       // is back within about a second, every tab and integration, each time with lookups against a database that is
       // trying to recover. Held open a few seconds, jittered so that they do not all come back together. Until then
-      // it has no principal and joins no room; its joins answer Unavailable and its call commands error, not the
+      // it has no principal and joins no room; its joins answer Unavailable and its call commands unavailable, not the
       // Forbidden and not_allowed of a refusal, which a client may take as final.
       setTimeout(() => {
         if (client.connected) client.conn.close();
