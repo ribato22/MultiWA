@@ -54,7 +54,10 @@ describe('the calls routes in the OpenAPI document', () => {
     const recording = operation('get', '/calls/{id}/recording');
     expect(recording.responses['200'].content['audio/webm'].schema).toEqual({ type: 'string', format: 'binary' });
     expect(recording.parameters).toContainEqual(expect.objectContaining({ name: 'download', in: 'query', required: false }));
-    expect(operation('get', '/profiles/{id}/calls-announcement').responses['200'].content['audio/mpeg'].schema).toEqual({ type: 'string', format: 'binary' });
+    const announcement = operation('get', '/profiles/{id}/calls-announcement').responses['200'].content;
+    expect(Object.keys(announcement)).toEqual(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4']);
+    for (const type of Object.keys(announcement)) expect(announcement[type].schema).toEqual({ type: 'string', format: 'binary' });
+    expect(schema('CallAnnouncementDto').properties.mimeType.enum).toEqual(Object.keys(announcement));
   });
 
   it('a refusal (409) is { message, reasons }', () => {

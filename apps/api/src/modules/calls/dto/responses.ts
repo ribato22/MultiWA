@@ -5,10 +5,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { CALL_FOLLOW_UPS, CALL_OUTCOMES } from '@multiwa/engine-runtime';
 import { DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS } from '../../profiles/profile-settings';
+import { ANNOUNCEMENT_TYPES } from '../recordings/announcement-audio';
 
 const DATE = { type: String, format: 'date-time' } as const;
 const DATE_OR_NULL = { ...DATE, nullable: true } as const;
-const AUDIO_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4'];
 
 export class CallPersonDto {
   @ApiProperty({ type: String })
@@ -183,7 +183,7 @@ export class CallLinkResultDto extends CallReplyResultDto {
 }
 
 export class CallAnnouncementDto {
-  @ApiProperty({ type: String, enum: AUDIO_TYPES })
+  @ApiProperty({ type: String, enum: ANNOUNCEMENT_TYPES })
   mimeType: string;
 
   @ApiProperty({ type: Number, example: 6.2, description: 'Seconds.' })

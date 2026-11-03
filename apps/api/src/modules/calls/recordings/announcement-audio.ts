@@ -44,6 +44,9 @@ const FORMATS: Array<{ container: RegExp; codec: RegExp; bitsPerSample?: number;
   { container: /^(?!EBML\/|ASF\/|AIFF)./, codec: /^MPEG-4\/AAC$/, mimeType: 'audio/mp4', ext: 'm4a' },
 ];
 
+/** The types an announcement is stored and served with: those of the formats above, without repeats. */
+export const ANNOUNCEMENT_TYPES = [...new Set(FORMATS.map((f) => f.mimeType))];
+
 // music-metadata runs in a worker thread with a time and a memory limit. A malformed file can keep a parser busy for
 // seconds (2 MB of 0xFF: 1.8 s and 170 MB of resyncing) or for ever (file-type's ASF loop, now patched), and on this
 // thread that would hold every request and timer of the api. Its memory cap is about 224 MB: 128 MB of old space plus

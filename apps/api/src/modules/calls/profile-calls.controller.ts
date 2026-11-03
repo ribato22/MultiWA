@@ -10,7 +10,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { PassThrough } from 'stream';
 import { CallsService } from './calls.service';
 import { CallAnnouncementService } from './recordings/call-announcement.service';
-import { ANNOUNCEMENT_MAX_BYTES } from './recordings/announcement-audio';
+import { ANNOUNCEMENT_MAX_BYTES, ANNOUNCEMENT_TYPES } from './recordings/announcement-audio';
 import { UpdateCallSettingsDto } from './dto';
 import { CallAnnouncementResultDto, CallsRefusalDto, CallsSettingsDto } from './dto/responses';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
@@ -114,7 +114,7 @@ export class ProfileCallsController {
   @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: "The profile's announcement, to listen to" })
-  @ApiProduces('audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4')
+  @ApiProduces(...ANNOUNCEMENT_TYPES)
   @ApiResponse({ status: 200, description: 'The announcement, with its stored Content-Type', schema: { type: 'string', format: 'binary' } })
   @ApiResponse({ status: 503, description: 'The recordings storage did not answer: try again' })
   @ApiNotFound('Announcement')
