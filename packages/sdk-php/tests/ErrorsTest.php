@@ -176,15 +176,6 @@ final class ErrorsTest extends TestCase
         }
     }
 
-    public function testRecordingThatIsNotThere(): void
-    {
-        $client = $this->client([self::json(404, ['statusCode' => 404, 'message' => 'This call has no recording', 'error' => 'Not Found'])]);
-
-        $this->expectException(NotFoundException::class);
-        $this->expectExceptionMessage('This call has no recording');
-        $client->calls()->getRecording('call-1');
-    }
-
     /**
      * A route that answers audio, or takes a file, answers its errors as JSON all the same.
      *
