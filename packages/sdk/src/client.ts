@@ -8,6 +8,7 @@ import { TemplateClient } from './clients/templates';
 import { BroadcastClient } from './clients/broadcast';
 import { WebhookClient } from './clients/webhooks';
 import { AutomationClient } from './clients/automation';
+import { CallClient } from './clients/calls';
 
 export interface MultiWAClientOptions {
   /**
@@ -68,6 +69,7 @@ export class MultiWAClient {
   public broadcasts: BroadcastClient;
   public webhooks: WebhookClient;
   public automations: AutomationClient;
+  public calls: CallClient;
 
   constructor(options: MultiWAClientOptions) {
     this.options = {
@@ -85,15 +87,18 @@ export class MultiWAClient {
     this.broadcasts = new BroadcastClient(this);
     this.webhooks = new WebhookClient(this);
     this.automations = new AutomationClient(this);
+    this.calls = new CallClient(this);
   }
 
   // HTTP request wrapper
   async request<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     path: string,
     options?: {
       body?: any;
       query?: Record<string, any>;
+      /** Resolve to the bytes and their Content-Type (a BinaryResponse) instead of parsed JSON. */
+      binary?: boolean;
     }
   ): Promise<T> {
     // Use joinApiUrl so the base path (e.g. /api/v1) is preserved even when
@@ -111,7 +116,9 @@ export class MultiWAClient {
       });
     }
 
-    const body = options?.body ? JSON.stringify(options.body) : undefined;
+    // A FormData body (a file upload) is sent as it is: fetch sets its multipart Content-Type, with the boundary.
+    const form = options?.body instanceof FormData;
+    const body = form ? options.body : options?.body ? JSON.stringify(options.body) : undefined;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.options.timeout);
@@ -123,7 +130,7 @@ export class MultiWAClient {
           // Only a request with a body is labelled JSON: the API (Fastify) answers
           // 400 FST_ERR_CTP_EMPTY_JSON_BODY to an empty application/json body,
           // which failed every bodyless POST, PUT and DELETE.
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(body && !form ? { 'Content-Type': 'application/json' } : {}),
           'X-API-Key': this.options.apiKey,
           ...this.options.headers,
         },
@@ -142,6 +149,10 @@ export class MultiWAClient {
         );
       }
 
+      if (options?.binary) {
+        const data = new Uint8Array(await response.arrayBuffer());
+        return { data, contentType: response.headers.get('content-type') ?? 'application/octet-stream' } as T;
+      }
       return response.json();
     } catch (error: any) {
       clearTimeout(timeoutId);
@@ -163,6 +174,10 @@ export class MultiWAClient {
 
   put<T>(path: string, body?: any, query?: Record<string, any>): Promise<T> {
     return this.request('PUT', path, { body, query });
+  }
+
+  patch<T>(path: string, body?: any, query?: Record<string, any>): Promise<T> {
+    return this.request('PATCH', path, { body, query });
   }
 
   delete<T>(path: string, query?: Record<string, any>): Promise<T> {
