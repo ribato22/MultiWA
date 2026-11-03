@@ -151,7 +151,7 @@ class MultiWA
     {
         $response = $this->http->request($method, ltrim($path, '/'), $options);
 
-        return new AudioFile((string) $response->getBody(), $response->getHeaderLine('Content-Type'));
+        return new AudioFile((string) $response->getBody(), $response->getHeaderLine('Content-Type') ?: 'application/octet-stream');
     }
 
     /**

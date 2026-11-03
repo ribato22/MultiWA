@@ -704,6 +704,13 @@ final class ClientTest extends TestCase
         self::assertRouteExists('POST', '/api/v1/messages/otp');
     }
 
+    public function testAudioWithoutAContentTypeIsOctetStream(): void
+    {
+        $client = $this->client([new Response(200, [], self::AUDIO)]);
+
+        self::assertEquals(new AudioFile(self::AUDIO, 'application/octet-stream'), $client->calls()->getAnnouncement('prof-1'));
+    }
+
     public function testBaseUrlWithATrailingSlash(): void
     {
         $client = $this->client([new Response(200, [], '{"status":"disconnected"}')], self::BASE_URL . '/');
