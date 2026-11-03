@@ -721,6 +721,15 @@ final class ClientTest extends TestCase
         self::assertRouteExists('GET', '/api/v1/calls/call-1/recording');
     }
 
+    public function testRequestAudioKeepsAnAcceptGivenInAnyLetterCase(): void
+    {
+        $client = $this->client([new Response(200, ['Content-Type' => 'audio/webm'], "\x1aE\xdf\xa3")]);
+
+        $client->requestAudio('GET', 'calls/call-1/recording', ['headers' => ['accept' => 'audio/webm']]);
+
+        self::assertSame(['audio/webm'], $this->onlyRequest()->getHeader('Accept')); // alone, not with */* beside it
+    }
+
     public function testAudioWithoutAContentTypeIsOctetStream(): void
     {
         $client = $this->client([new Response(200, [], self::AUDIO)]);

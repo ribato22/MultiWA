@@ -155,8 +155,13 @@ class MultiWA
      */
     public function requestAudio(string $method, string $path, array $options = []): AudioFile
     {
-        // Any type: the client-wide Accept, application/json, is for the routes that answer JSON.
-        $options['headers'] = ($options['headers'] ?? []) + ['Accept' => '*/*'];
+        // Any type: the client-wide Accept, application/json, is for the routes that answer JSON. Not beside an Accept
+        // the caller gave, in whatever letter case: Guzzle would send both, as one header.
+        $headers = $options['headers'] ?? [];
+        if (!array_key_exists('accept', array_change_key_case($headers))) {
+            $headers['Accept'] = '*/*';
+        }
+        $options['headers'] = $headers;
         $response = $this->http->request($method, ltrim($path, '/'), $options);
 
         return new AudioFile((string) $response->getBody(), $response->getHeaderLine('Content-Type') ?: 'application/octet-stream');
