@@ -181,6 +181,8 @@ final class ClientTest extends TestCase
         self::assertSame($path, $request->getUri()->getPath());
         self::assertSame($query, self::query($request));
         self::assertSame('test-key', $request->getHeaderLine('X-API-Key'));
+        // A route that answers audio accepts any type; the others answer JSON.
+        self::assertSame($result instanceof AudioFile ? '*/*' : 'application/json', $request->getHeaderLine('Accept'));
         if ($multipart !== null) {
             // A file upload is multipart, with the boundary Guzzle chose.
             self::assertStringStartsWith('multipart/form-data; boundary=', $request->getHeaderLine('Content-Type'));

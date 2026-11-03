@@ -142,13 +142,16 @@ class MultiWA
      * Calls a route that answers audio, such as a call's recording, and returns its bytes and Content-Type.
      *
      * @param string               $path    Route below the base URL, e.g. 'calls/{id}/recording'
-     * @param array<string, mixed> $options Guzzle request options, e.g. ['query' => [...]]
+     * @param array<string, mixed> $options Guzzle request options, e.g. ['query' => [...]]; the Accept header is any
+     *                                      type unless they set one
      *
      * @throws ApiException     The API answered with an error status
      * @throws MultiWAException The request failed without a response
      */
     public function requestAudio(string $method, string $path, array $options = []): AudioFile
     {
+        // Any type: the client-wide Accept, application/json, is for the routes that answer JSON.
+        $options['headers'] = ($options['headers'] ?? []) + ['Accept' => '*/*'];
         $response = $this->http->request($method, ltrim($path, '/'), $options);
 
         return new AudioFile((string) $response->getBody(), $response->getHeaderLine('Content-Type') ?: 'application/octet-stream');
