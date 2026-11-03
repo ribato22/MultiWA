@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-03
+
 ### Added
 
 - **Calls answered in the dashboard** (off by default) — agents answer a profile's incoming WhatsApp voice calls in the browser: a banner with a ringtone and desktop alerts, a bar in the header with mute, the microphone and the network quality, availability, and a device check in Settings → Calls. Calls can also be recorded, and the caller then always hears an announcement first: recordings go to private storage with a privacy check, a retention period per profile, and audited playback, download and delete. New: `GET /calls/media/status`, the calls settings, announcement and recording routes, the `recordings:read` and `recordings:delete` API-key scopes, and the `call.answered`, `call.recording.ready` and `call.recording.deleted` webhooks. whatsapp-web.js with `ENGINE_HOST=api` only; see `docs/23-calls.md`. (#279, #280, #284, #285, #289, #294, #295)
@@ -33,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A profile's routes (`GET /profiles`, `GET /profiles/:id`, `PUT /profiles/:id`, the account-scoped profile routes and `GET /workspaces/:id`) no longer show where its call announcement is stored (`settings.callsAnnouncement.storageKey`); its type and length remain.
 - A `.env` file of the build context is no longer copied into a Docker image. (#278)
+
+Full list of changes: [v1.3.0...v1.4.0](https://github.com/ribato22/MultiWA/compare/v1.3.0...v1.4.0)
 
 ## [1.3.0] - 2026-10-29
 
