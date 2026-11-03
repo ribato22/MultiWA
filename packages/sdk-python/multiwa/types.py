@@ -187,6 +187,213 @@ class Webhook(BaseModel):
     created_at: datetime = Field(alias="createdAt")
 
 
+# ============ Calls ============
+
+
+class CallPerson(BaseModel):
+    """The user a call is assigned to, or the agent who answered it."""
+
+    id: str
+    name: str
+
+
+class CallConversation(BaseModel):
+    """The caller's chat."""
+
+    id: str
+    name: Optional[str] = None
+
+
+class CallRecording(BaseModel):
+    """A call's recording: its facts. The audio is ``calls.get_recording()``.
+
+    ``partial``: it may end before its call did (a restart, a recorder that did
+    not stop cleanly, or a write that failed). Once its file is deleted,
+    ``deleted_at`` and ``delete_reason`` (``admin`` or ``retention``) are set.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    duration_sec: int = Field(alias="durationSec")
+    bytes: int
+    partial: bool
+    announcement_played: bool = Field(alias="announcementPlayed")
+    created_at: datetime = Field(alias="createdAt")
+    deleted_at: Optional[datetime] = Field(None, alias="deletedAt")
+    delete_reason: Optional[str] = Field(None, alias="deleteReason")
+
+
+class Call(BaseModel):
+    """An incoming WhatsApp call.
+
+    ``outcome`` is ``ringing``, ``answered`` (in the dashboard), ``missed``,
+    ``rejected``, ``answered_elsewhere`` or ``unknown``; ``follow_up`` is
+    ``open``, ``in_progress`` or ``done``. A call answered in the dashboard also
+    has ``answered_by_user_id``, ``answered_at``, ``ended_by``, ``end_reason`` and
+    ``talk_seconds``.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    profile_id: str = Field(alias="profileId")
+    wa_call_id: str = Field(alias="waCallId")
+    from_jid: str = Field(alias="fromJid")
+    is_video: bool = Field(alias="isVideo")
+    is_group: bool = Field(alias="isGroup")
+    direction: str
+    outcome: str
+    rejected_by: Optional[str] = Field(None, alias="rejectedBy")
+    started_at: datetime = Field(alias="startedAt")
+    ended_at: Optional[datetime] = Field(None, alias="endedAt")
+    follow_up: str = Field(alias="followUp")
+    assigned_user_id: Optional[str] = Field(None, alias="assignedUserId")
+    answered_by_user_id: Optional[str] = Field(None, alias="answeredByUserId")
+    answered_at: Optional[datetime] = Field(None, alias="answeredAt")
+    ended_by: Optional[str] = Field(None, alias="endedBy")
+    end_reason: Optional[str] = Field(None, alias="endReason")
+    talk_seconds: Optional[int] = Field(None, alias="talkSeconds")
+    auto_reply_sent_at: Optional[datetime] = Field(None, alias="autoReplySentAt")
+    conversation_id: Optional[str] = Field(None, alias="conversationId")
+    metadata: dict[str, Any] = {}
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+    assigned_user: Optional[CallPerson] = Field(None, alias="assignedUser")
+    answered_by: Optional[CallPerson] = Field(None, alias="answeredBy")
+    conversation: Optional[CallConversation] = None
+    recording: Optional[CallRecording] = None
+
+
+class CallPage(BaseModel):
+    """A page of calls, newest first.
+
+    Pass ``next_cursor`` as ``cursor`` for the next page; it is ``None`` on the
+    last one.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    calls: list[Call]
+    next_cursor: Optional[str] = Field(None, alias="nextCursor")
+
+
+class CallReplyResult(BaseModel):
+    """The call (its follow-up now in progress) and the message sent to the caller."""
+
+    call: Call
+    message: MessageResult
+
+
+class CallLinkResult(CallReplyResult):
+    """``CallReplyResult`` with the WhatsApp call link that was sent."""
+
+    link: str
+
+
+class CallAnnouncement(BaseModel):
+    """The announcement callers hear before a recorded call.
+
+    ``mime_type`` and ``duration_sec`` (seconds) are read from the file itself.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    mime_type: str = Field(alias="mimeType")
+    duration_sec: float = Field(alias="durationSec")
+
+
+class CallsSettings(BaseModel):
+    """A profile's call settings."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    profile_id: str = Field(alias="profileId")
+    answer_in_dashboard: bool = Field(alias="answerInDashboard")
+    recording: bool
+    retention_days: int = Field(alias="retentionDays")
+    announcement: Optional[CallAnnouncement] = None
+
+
+class CallsProfileStatus(CallsSettings):
+    """A profile of the media status: its call settings, and whether its calls
+    can be answered in the dashboard now (``reasons`` says why not)."""
+
+    name: str
+    ready: bool
+    reasons: list[str] = []
+
+
+class StorageCheck(BaseModel):
+    """The last check that the recordings storage refuses reads without credentials."""
+
+    at: datetime
+    ok: bool
+    reason: Optional[str] = None
+
+
+class RecordingsStorage(BaseModel):
+    """Where recordings go (``local`` or ``s3``), and whether that works.
+
+    ``problem`` names the missing or refused setting.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    storage: str
+    configured: bool
+    problem: Optional[str] = None
+    last_check: Optional[StorageCheck] = Field(None, alias="lastCheck")
+
+
+class CallsMediaServer(BaseModel):
+    """The media server: ``enabled`` is CALLS_MEDIA_ENABLED, ``engine_host`` is
+    ENGINE_HOST (calls are answered in the dashboard only with ``api``)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool
+    worker: str
+    port: Optional[int] = None
+    engine_host: str = Field(alias="engineHost")
+    active_sessions: int = Field(alias="activeSessions")
+    recordings: RecordingsStorage
+
+
+class CallsMediaStatus(BaseModel):
+    """``GET /calls/media/status`` (owner or admin)."""
+
+    server: CallsMediaServer
+    profiles: list[CallsProfileStatus]
+
+
+class DeletedRecording(BaseModel):
+    """A recording deleted: its file is gone, its row stays as evidence."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    call_id: str = Field(alias="callId")
+    recording_id: str = Field(alias="recordingId")
+    deleted_at: datetime = Field(alias="deletedAt")
+
+
+class AnnouncementResult(BaseModel):
+    """A profile's announcement after an upload, or ``None`` once removed."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    profile_id: str = Field(alias="profileId")
+    announcement: Optional[CallAnnouncement] = None
+
+
+class AudioFile(BaseModel):
+    """Audio the API answered with: the bytes and their Content-Type
+    (``audio/webm`` for a recording)."""
+
+    content: bytes
+    content_type: str
+
+
 class PaginatedResponse(BaseModel):
     """Paginated list response"""
 

@@ -29,6 +29,12 @@ class SyncResource:
     def __init__(self, http: httpx.Client):
         self._http = http
 
+    def _raw(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Send the request as given (no ``None`` dropped); raise on an error status."""
+        response = self._http.request(method, path, **kwargs)
+        response.raise_for_status()
+        return response
+
     def _request(
         self,
         method: str,
@@ -37,9 +43,7 @@ class SyncResource:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
     ) -> Any:
-        response = self._http.request(method, path, **_options(params, json))
-        response.raise_for_status()
-        return response.json()
+        return self._raw(method, path, **_options(params, json)).json()
 
 
 class AsyncResource:
@@ -47,6 +51,12 @@ class AsyncResource:
 
     def __init__(self, http: httpx.AsyncClient):
         self._http = http
+
+    async def _raw(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        """Send the request as given (no ``None`` dropped); raise on an error status."""
+        response = await self._http.request(method, path, **kwargs)
+        response.raise_for_status()
+        return response
 
     async def _request(
         self,
@@ -56,6 +66,4 @@ class AsyncResource:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
     ) -> Any:
-        response = await self._http.request(method, path, **_options(params, json))
-        response.raise_for_status()
-        return response.json()
+        return (await self._raw(method, path, **_options(params, json))).json()

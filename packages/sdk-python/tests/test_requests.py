@@ -2,8 +2,8 @@
 
 Each case runs against both the sync and the async client through
 ``httpx.MockTransport`` and checks the method, the path (with the base path),
-the query parameters, the JSON body, and that the route exists in
-``scripts/api-routes.snapshot.json``.
+the query parameters, the JSON body or the multipart files, and that the route
+exists in ``scripts/api-routes.snapshot.json``.
 """
 
 from __future__ import annotations
@@ -57,6 +57,8 @@ class Sent(NamedTuple):
     path: str
     params: list[tuple[str, str]]
     body: dict[str, Any] | None
+    # A multipart upload: field name -> (filename, bytes).
+    files: dict[str, tuple[str, bytes]] | None = None
 
 
 class Case(NamedTuple):
@@ -79,7 +81,13 @@ def run(
     """
     requests = [] if requests is None else requests
     queue = [
-        r if isinstance(r, httpx.Response) else httpx.Response(200, json=r)
+        # A copy for each run: a response read by the sync client cannot be read
+        # again by the async one.
+        (
+            httpx.Response(r.status_code, headers=r.headers, content=r.content)
+            if isinstance(r, httpx.Response)
+            else httpx.Response(200, json=r)
+        )
         for r in responses
     ]
 
@@ -640,6 +648,202 @@ CASES = [
         [Sent("GET", f"{V1}/webhooks", [("profileId", "p-1")], None)],
         lambda r: [w.id for w in r] == ["wh-1"],
     ),
+    # ---------------- calls ----------------
+    Case(
+        "calls.list",
+        lambda c: c.calls.list(
+            "p-1",
+            outcome="answered",
+            follow_up="done",
+            from_="628111",
+            since="2026-11-01T00:00:00Z",
+            limit=20,
+            cursor="c-9",
+        ),
+        [{"calls": [rows.CALL_ROW], "nextCursor": "c-1"}],
+        [
+            Sent(
+                "GET",
+                f"{V1}/calls",
+                [
+                    ("profileId", "p-1"),
+                    ("outcome", "answered"),
+                    ("followUp", "done"),
+                    ("from", "628111"),
+                    ("since", "2026-11-01T00:00:00Z"),
+                    ("limit", "20"),
+                    ("cursor", "c-9"),
+                ],
+                None,
+            )
+        ],
+        lambda r: r.next_cursor == "c-1"
+        and r.calls[0].answered_by.name == "Jane"
+        and r.calls[0].recording.duration_sec == 190,
+    ),
+    Case(
+        "calls.open_count",
+        lambda c: c.calls.open_count(),
+        [{"count": 3}],
+        [Sent("GET", f"{V1}/calls/open-count", [], None)],
+        lambda r: r == 3,
+    ),
+    Case(
+        "calls.get",
+        lambda c: c.calls.get("c-1"),
+        [rows.CALL_ROW],
+        [Sent("GET", f"{V1}/calls/c-1", [], None)],
+        lambda r: r.outcome == "answered" and r.talk_seconds == 192,
+    ),
+    Case(
+        "calls.update",
+        lambda c: c.calls.update(
+            "c-1", follow_up="in_progress", assigned_user_id="u-2"
+        ),
+        [{**rows.CALL_ROW, "followUp": "in_progress", "assignedUserId": "u-2"}],
+        [
+            Sent(
+                "PATCH",
+                f"{V1}/calls/c-1",
+                [],
+                {"followUp": "in_progress", "assignedUserId": "u-2"},
+            )
+        ],
+        lambda r: r.assigned_user_id == "u-2",
+    ),
+    Case(
+        "calls.update unassign",
+        lambda c: c.calls.update("c-1", unassign=True),
+        [rows.CALL_ROW],
+        [Sent("PATCH", f"{V1}/calls/c-1", [], {"assignedUserId": None})],
+        lambda r: r.assigned_user_id is None,
+    ),
+    Case(
+        "calls.reject",
+        lambda c: c.calls.reject("c-1"),
+        [{**rows.CALL_ROW, "outcome": "rejected", "rejectedBy": "agent"}],
+        [Sent("POST", f"{V1}/calls/c-1/reject", [], None)],
+        lambda r: r.rejected_by == "agent",
+    ),
+    Case(
+        "calls.reply",
+        lambda c: c.calls.reply("c-1", "We will call you back"),
+        [{"call": rows.CALL_ROW, "message": rows.SEND_RESULT}],
+        [Sent("POST", f"{V1}/calls/c-1/reply", [], {"text": "We will call you back"})],
+        lambda r: r.message.wa_message_id is not None,
+    ),
+    Case(
+        "calls.reply with the profile's default",
+        lambda c: c.calls.reply("c-1"),
+        [{"call": rows.CALL_ROW, "message": rows.SEND_RESULT}],
+        [Sent("POST", f"{V1}/calls/c-1/reply", [], {})],
+    ),
+    Case(
+        "calls.send_call_link",
+        lambda c: c.calls.send_call_link("c-1", "voice", text="Tap to call us"),
+        [
+            {
+                "call": rows.CALL_ROW,
+                "message": rows.SEND_RESULT,
+                "link": "https://call.whatsapp.com/voice/x",
+            }
+        ],
+        [
+            Sent(
+                "POST",
+                f"{V1}/calls/c-1/call-link",
+                [],
+                {"type": "voice", "text": "Tap to call us"},
+            )
+        ],
+        lambda r: r.link.endswith("/voice/x"),
+    ),
+    Case(
+        "calls.media_status",
+        lambda c: c.calls.media_status(),
+        [rows.MEDIA_STATUS],
+        [Sent("GET", f"{V1}/calls/media/status", [], None)],
+        lambda r: r.server.engine_host == "api"
+        and r.server.recordings.last_check.ok is True
+        and r.profiles[0].reasons == ["auto_reject_on"],
+    ),
+    Case(
+        "calls.get_recording",
+        lambda c: c.calls.get_recording("c-1", download=True),
+        [
+            httpx.Response(
+                200, content=b"\x1aE\xdf\xa3", headers={"content-type": "audio/webm"}
+            )
+        ],
+        [Sent("GET", f"{V1}/calls/c-1/recording", [("download", "1")], None)],
+        lambda r: r.content == b"\x1aE\xdf\xa3" and r.content_type == "audio/webm",
+    ),
+    Case(
+        "calls.get_recording to play",
+        lambda c: c.calls.get_recording("c-1"),
+        [
+            httpx.Response(
+                200, content=b"\x1aE\xdf\xa3", headers={"content-type": "audio/webm"}
+            )
+        ],
+        [Sent("GET", f"{V1}/calls/c-1/recording", [], None)],
+    ),
+    Case(
+        "calls.delete_recording",
+        lambda c: c.calls.delete_recording("c-1"),
+        [{"callId": "c-1", "recordingId": "rec-1", "deletedAt": rows.AT}],
+        [Sent("DELETE", f"{V1}/calls/c-1/recording", [], None)],
+        lambda r: r.recording_id == "rec-1",
+    ),
+    Case(
+        "calls.update_settings",
+        lambda c: c.calls.update_settings(
+            "p-1", answer_in_dashboard=True, recording=True, retention_days=30
+        ),
+        [rows.CALLS_SETTINGS],
+        [
+            Sent(
+                "PUT",
+                f"{V1}/profiles/p-1/calls-settings",
+                [],
+                {"answerInDashboard": True, "recording": True, "retentionDays": 30},
+            )
+        ],
+        lambda r: r.retention_days == 30 and r.announcement.duration_sec == 6.2,
+    ),
+    Case(
+        "calls.upload_announcement",
+        lambda c: c.calls.upload_announcement("p-1", b"ID3\x04", filename="notice.mp3"),
+        [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+        [
+            Sent(
+                "POST",
+                f"{V1}/profiles/p-1/calls-announcement",
+                [],
+                None,
+                files={"file": ("notice.mp3", b"ID3\x04")},
+            )
+        ],
+        lambda r: r.announcement.mime_type == "audio/mpeg",
+    ),
+    Case(
+        "calls.get_announcement",
+        lambda c: c.calls.get_announcement("p-1"),
+        [
+            httpx.Response(
+                200, content=b"ID3\x04", headers={"content-type": "audio/mpeg"}
+            )
+        ],
+        [Sent("GET", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.content == b"ID3\x04" and r.content_type == "audio/mpeg",
+    ),
+    Case(
+        "calls.delete_announcement",
+        lambda c: c.calls.delete_announcement("p-1"),
+        [{"profileId": "p-1", "announcement": None}],
+        [Sent("DELETE", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.announcement is None,
+    ),
     # ---------------- raw request ----------------
     Case(
         "client.request",
@@ -662,7 +866,15 @@ def test_request(case: Case, kind: str):
         assert request.url.path == want.path
         assert request.url.params.multi_items() == want.params
         assert request.headers["x-api-key"] == "test-key"
-        if want.body is None:
+        if want.files is not None:
+            # A file upload is multipart, with the boundary httpx chose.
+            assert request.headers["content-type"].startswith("multipart/form-data")
+            for name, (filename, content) in want.files.items():
+                assert (
+                    f'name="{name}"; filename="{filename}"'.encode() in request.content
+                )
+                assert content in request.content
+        elif want.body is None:
             # A bodyless POST/DELETE with Content-Type: application/json gets a 400.
             assert request.content == b""
             assert "content-type" not in request.headers
@@ -686,7 +898,14 @@ def test_every_public_method_has_a_case(kind: str):
     client_cls = MultiWA if kind == "sync" else AsyncMultiWA
     client = client_cls(BASE_URL, "test-key")
     covered = {case.name.split(" ")[0] for case in CASES}
-    for resource in ("messages", "contacts", "broadcasts", "profiles", "webhooks"):
+    for resource in (
+        "messages",
+        "contacts",
+        "broadcasts",
+        "profiles",
+        "webhooks",
+        "calls",
+    ):
         for name in _public_methods(type(getattr(client, resource))):
             if (resource, name) != (
                 "profiles",
@@ -697,7 +916,14 @@ def test_every_public_method_has_a_case(kind: str):
 
 def test_sync_and_async_clients_have_the_same_methods():
     sync, aio = MultiWA(BASE_URL, "k"), AsyncMultiWA(BASE_URL, "k")
-    for resource in ("messages", "contacts", "broadcasts", "profiles", "webhooks"):
+    for resource in (
+        "messages",
+        "contacts",
+        "broadcasts",
+        "profiles",
+        "webhooks",
+        "calls",
+    ):
         assert _public_methods(type(getattr(sync, resource))) == _public_methods(
             type(getattr(aio, resource))
         )
@@ -743,6 +969,10 @@ REFUSED = [
     ),
     (lambda c: c.webhooks.update("wh-1", secret="s"), "secret"),
     (lambda c: c.profiles.update("p-1", is_active=False), "active"),
+    (
+        lambda c: c.calls.update("c-1", assigned_user_id="u-2", unassign=True),
+        "not both",
+    ),
 ]
 
 
@@ -806,3 +1036,18 @@ def test_base_url_with_trailing_slash_keeps_the_prefix():
         "p-1"
     )
     assert seen == [f"{V1}/profiles/p-1"]
+
+
+def test_a_refused_call_setting_says_why():
+    refused = httpx.Response(
+        409,
+        json={
+            "message": "Recording calls is not available for this profile",
+            "reasons": ["no_announcement"],
+        },
+    )
+    client = MultiWA(BASE_URL, "k", transport=httpx.MockTransport(lambda r: refused))
+    with pytest.raises(httpx.HTTPStatusError) as refusal:
+        client.calls.update_settings("p-1", recording=True)
+    assert refusal.value.response.status_code == 409
+    assert refusal.value.response.json()["reasons"] == ["no_announcement"]
