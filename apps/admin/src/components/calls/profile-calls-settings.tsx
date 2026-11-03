@@ -2,7 +2,7 @@
 // A profile's calls settings (owner and admin): answering its calls in the dashboard, with what that still needs;
 // recording them; the announcement the caller hears first; how long recordings are kept.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, Loader2, Play, Trash2, Upload, XCircle } from 'lucide-react';
+import { CheckCircle2, Loader2, PhoneIncoming, Play, Trash2, Upload, XCircle } from 'lucide-react';
 import { ANNOUNCEMENT_MAX_BYTES, api, type CallsMediaStatus } from '@/lib/api';
 import { READINESS_TEXT, reasonTexts } from '@/lib/calls';
 import { canManageCalls, currentUser } from '@/lib/current-user';
@@ -196,10 +196,13 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
       : [];
 
   return (
-    <section aria-label="Calls" className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-6">
+    <section aria-label="Calls" className="space-y-4 rounded-xl border border-slate-800 bg-slate-900/50 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-slate-100">Calls</h2>
+          <div className="flex items-center gap-2">
+            <PhoneIncoming className="h-4 w-4 text-slate-400" aria-hidden="true" />
+            <h2 className="text-sm font-semibold text-slate-100">Calls</h2>
+          </div>
           <p className="mt-0.5 text-xs text-slate-400">Answer this profile’s WhatsApp voice calls in the dashboard, and record them.</p>
         </div>
         {/* What changed elsewhere (the server, WhatsApp) shows once the checklist is read again. */}
