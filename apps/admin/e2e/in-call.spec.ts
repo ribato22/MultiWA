@@ -755,6 +755,62 @@ test('a microphone picked while another one opens in place of an unplugged one i
   await expect(picker).toHaveText('USB microphone');
 });
 
+test('a microphone picked in place of an unplugged one that does not open leaves the call to the one that opens by itself', async ({ page, context, backend }) => {
+  await context.addInitScript(pluggable, [['mic-a', 'Desk microphone'], ['mic-b', 'Headset'], ['mic-c', 'USB microphone']]);
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('Desk microphone');
+  // The USB microphone is listed but does not open (another app holds it); any other one opens with `__release()`.
+  await page.evaluate(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const held: Array<() => void> = [];
+    w.__micsHeld = () => held.length;
+    w.__release = () => held.splice(0).forEach((open) => open());
+    navigator.mediaDevices.getUserMedia = (c) => {
+      const asked = ((c?.audio as MediaTrackConstraints | undefined)?.deviceId ?? {}) as ConstrainDOMStringParameters;
+      if (asked.exact === 'mic-c' || asked.ideal === 'mic-c') return Promise.reject(new DOMException('Could not start audio source', 'NotReadableError'));
+      return new Promise((resolve, reject) => held.push(() => gum(c).then(resolve, reject)));
+    };
+  });
+  await page.evaluate(() => (window as any).__unplug('mic-a'));
+  await expect.poll(() => page.evaluate(() => (window as any).__micsHeld())).toBe(1); // the one in its place: Headset
+  await picker.click();
+  await page.getByRole('option', { name: 'USB microphone' }).click();
+  await expect(bar(page).getByRole('alert')).toHaveText(/could not be (used|opened)/);
+  await page.evaluate(() => (window as any).__release());
+  await expect.poll(() => sending(page)).toEqual({ label: 'Headset', state: 'live' });
+  await expect(picker).toHaveText('Headset');
+  await expect(bar(page).getByRole('alert')).toHaveText('The microphone stopped: the call now uses Headset');
+});
+
+test('a microphone picked while the call waits for one to be plugged in, which does not open either, goes back to waiting: one wait, which the call’s end stops', async ({ page, context, backend }) => {
+  await context.addInitScript(pluggable, [['mic-a', 'Desk microphone'], ['mic-b', 'Headset']]);
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('Desk microphone');
+  // From now on no microphone opens (another app holds them); `__asked` counts the tries.
+  await page.evaluate(() => {
+    const w = window as any;
+    w.__asked = 0;
+    navigator.mediaDevices.getUserMedia = () => (w.__asked++, Promise.reject(new DOMException('Could not start audio source', 'NotReadableError')));
+  });
+  await page.evaluate(() => (window as any).__unplug('mic-a'));
+  await expect(bar(page).getByRole('alert')).toHaveText('The microphone could not be opened');
+  await picker.click();
+  await page.getByRole('option', { name: 'Headset' }).click();
+  // The one that stopped, the pick, then another one by itself, as when the microphone stopped.
+  await expect.poll(() => page.evaluate(() => (window as any).__asked)).toBe(3);
+  await expect(bar(page).getByRole('alert')).toHaveText('The microphone could not be opened');
+  backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 9 });
+  await expect(bar(page)).toContainText('The caller hung up');
+  expect(await deviceChangeListeners(page)).toBe(0);
+});
+
 // Where the focus goes when the call console lets go of it. The agent was on a link of the page (not a field, where no
 // ring takes the focus) when the call rang.
 const working = (page: Page) => page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Chat', exact: true });

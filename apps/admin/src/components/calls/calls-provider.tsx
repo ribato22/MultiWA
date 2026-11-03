@@ -313,6 +313,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         if (micGone !== media) return;
         dispatch({ type: 'problem', callId, text: (micSaid = micProblem(e)) });
         const plugged = () => micGone === media && void reopenMic(media, callId);
+        stopWaitingForMic(); // one wait at a time: a failed pick tries again, maybe while an earlier try waits already
         navigator.mediaDevices.addEventListener('devicechange', plugged, { once: true });
         stopWaitingForMic = () => navigator.mediaDevices.removeEventListener('devicechange', plugged);
         return;
@@ -423,7 +424,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       const media = mediaRef.current;
       const callId = audioCallId;
       if (!media || !callId) return;
-      micGone = null; // the agent's pick: one still opening in place of a microphone that stopped gives way to it
+      // The agent's pick: one still opening in place of a microphone that stopped gives way to it, unless the pick fails.
+      const gone = micGone;
+      micGone = null;
       let next: MediaStreamTrack | undefined;
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -437,6 +440,11 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       } catch {
         next?.stop();
         dispatch({ type: 'problem', callId, text: 'That microphone could not be used' });
+        // The microphone that stopped still has none in its place: another one opens by itself, as when it stopped.
+        if (gone === media && mediaRef.current === media) {
+          micGone = media;
+          void reopenMic(media, callId);
+        }
       }
     };
     const resumeAudio = () => {
