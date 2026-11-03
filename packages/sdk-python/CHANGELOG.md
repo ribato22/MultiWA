@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the scope an API key with a scope list needs.
 - `upload_announcement` takes bytes, a `bytearray`, a `memoryview` or a binary
   file object, sent under `filename`, else the file object's own name, else
-  `announcement`.
+  `announcement`; a path raises `TypeError`.
 - A recording and an announcement come back as an `AudioFile` (`content`,
   `content_type`).
 - Models: `Call`, `CallPage`, `CallsMediaStatus`, `CallsSettings` and

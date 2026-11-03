@@ -1183,3 +1183,13 @@ def test_an_uploaded_file_object_is_left_open_to_send_again(kind: str):
         )
         assert not file.closed
         assert sent_files(requests[0]) == {"file": ("greeting.mp3", b"ID3\x04")}
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize("path", [GREETING, Path(GREETING)], ids=["str", "Path"])
+def test_an_announcement_given_as_a_path_raises_before_any_request(
+    path: object, kind: str
+):
+    # A str would go out as the file's content: the path's own text.
+    with pytest.raises(TypeError, match=r"open\(path, \"rb\"\)"):
+        run(kind, lambda c: c.calls.upload_announcement("p-1", path), [])

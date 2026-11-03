@@ -72,6 +72,12 @@ def _settings_body(
 def _announcement(
     file: bytes | bytearray | memoryview | IO[bytes], filename: str | None
 ) -> tuple[str, bytes | IO[bytes]]:
+    # httpx would send a str as the file's content: a path's own text.
+    if isinstance(file, (str, os.PathLike)):
+        raise TypeError(
+            "upload_announcement takes the file's bytes or a binary file object, "
+            'not its path: pass open(path, "rb")'
+        )
     # Never an empty filename: httpx would leave it out, and the server would
     # find no file in the request (400).
     own = getattr(file, "name", None)
@@ -229,8 +235,9 @@ class CallsClient(SyncResource):
     ) -> AnnouncementResult:
         """Upload the announcement callers hear before a recorded call (owner or
         admin; an API key with a scope list needs ``profiles:write``): mp3, wav,
-        ogg, webm or m4a, at most 2 MB and 30 seconds. The server reads the type
-        and the length from the file itself, not from its name, which is
+        ogg, webm or m4a, at most 2 MB and 30 seconds. ``file`` is its bytes or
+        a binary file object; a path raises ``TypeError``. The server reads the
+        type and the length from the file itself, not from its name, which is
         ``filename``, else the base name of a file object's own ``name``, else
         ``announcement``."""
         return AnnouncementResult.model_validate(
