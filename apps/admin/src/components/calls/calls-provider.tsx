@@ -212,6 +212,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     let hangingUp = false; // this tab's Hang up is on its way: no audio of the call is heard from here meanwhile
     let micGone: AgentMedia | null = null; // the audio whose microphone stopped, until another one is open
     let micSaid: string | null = null; // what the bar last said of the microphone
+    let stopWaitingForMic = () => {}; // with none to open: the wait for the next microphone plugged in
     let asking = 0; // the attempt whose call:rejoin is out: only from its emit to its reply, not while its microphone opens
     /**
      * A call:active naming another producer than this tab's, for the call whose rejoin this tab has out: sent before that
@@ -231,6 +232,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     const stopAudio = () => {
       attempt++;
       micGone = null;
+      stopWaitingForMic();
       acquiring = null;
       pendingMic?.stop(); // the browser's microphone light goes off now, not once the attempt notices
       pendingMic = null;
@@ -310,7 +312,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         mic?.stop();
         if (micGone !== media) return;
         dispatch({ type: 'problem', callId, text: (micSaid = micProblem(e)) });
-        navigator.mediaDevices.addEventListener('devicechange', () => micGone === media && void reopenMic(media, callId), { once: true });
+        const plugged = () => micGone === media && void reopenMic(media, callId);
+        navigator.mediaDevices.addEventListener('devicechange', plugged, { once: true });
+        stopWaitingForMic = () => navigator.mediaDevices.removeEventListener('devicechange', plugged);
         return;
       }
       if (micGone !== media) return; // the audio went meanwhile, and its close stops this microphone too
@@ -547,6 +551,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     // A reload's call shows at once, as it was stored: the connect rejoins it, or finds it over or moved.
     const reloaded = stored();
     if (reloaded) dispatch({ type: 'restored', call: reloaded.call, local: true, muted: reloaded.muted, answeredAt: reloaded.answeredAt });
+    let reread: ReturnType<typeof setTimeout> | undefined; // a call another tab may still connect, read again in a while
     socket.on('connect', () => {
       const call = storedCall();
       const { banners, active } = stateRef.current;
@@ -571,7 +576,11 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             if (!data.endedAt && (shown.local || (data.outcome === 'answered' && data.answeredByUserId === user.id))) return;
             // Ringing: another tab's answer may still be connecting (the read hides who claimed a call). That answer
             // connects or is given back within the server's time for it, and this tab hears which: it is read again then.
-            if (!data.endedAt && data.outcome === 'ringing' && !again) return void setTimeout(() => read(true), ACK_MS.answer);
+            if (!data.endedAt && data.outcome === 'ringing' && !again) {
+              clearTimeout(reread);
+              reread = setTimeout(() => read(true), ACK_MS.answer);
+              return;
+            }
             // Over, or no tab of this agent has it: another agent's, or ringing for everyone again.
             if (mineCall() === callId) stopAudio();
             if (storedCall()?.callId === callId) keep(null);
@@ -594,6 +603,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     return () => {
       cmd.current = {};
       closed = true;
+      clearTimeout(reread);
       channel?.close();
       socket.disconnect();
       stopAudio(); // an attempt still connecting sees it, and closes its own

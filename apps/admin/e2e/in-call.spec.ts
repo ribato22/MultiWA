@@ -618,6 +618,29 @@ test('the only microphone unplugged mid-call says why the caller hears nothing, 
   await expect(picker).toHaveText('Desk microphone');
 });
 
+/** The listeners the page has on `devicechange` (Chrome's own list, however they were added). */
+async function deviceChangeListeners(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
+  const { result } = await cdp.send('Runtime.evaluate', { expression: 'navigator.mediaDevices' });
+  const { listeners } = await cdp.send('DOMDebugger.getEventListeners', { objectId: result.objectId! });
+  await cdp.detach();
+  return listeners.filter((l) => l.type === 'devicechange').length;
+}
+
+test('a call that ends while it waits for a microphone to be plugged in stops waiting', async ({ page, context, backend }) => {
+  await context.addInitScript(pluggable, [['mic-a', 'Desk microphone']]);
+  await open(page);
+  expect(await deviceChangeListeners(page)).toBe(0);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  await expect(bar(page).getByRole('combobox', { name: 'Microphone' })).toHaveText('Desk microphone');
+  await page.evaluate(() => (window as any).__unplug('mic-a'));
+  await expect(bar(page).getByRole('alert')).toHaveText('No microphone found: plug one in and try again');
+  backend.emit('call:ended', { callId: 'call-1', endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 9 });
+  await expect(bar(page)).toContainText('The caller hung up');
+  expect(await deviceChangeListeners(page)).toBe(0);
+});
+
 /**
  * From now on the microphones the page opens wait for `__release()`, as when the browser asks the agent first; the last
  * one opened is `__opened`. `__replaced` counts the microphones swapped into a call's sender.

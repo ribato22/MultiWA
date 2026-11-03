@@ -336,6 +336,27 @@ test("a call another tab's answer gave back while this tab's socket was down end
   await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeVisible(); // no longer on a call
 });
 
+test('a sign-out while the console waits to read a call again reads nothing more', async ({ page, backend }) => {
+  await page.clock.install();
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: ME.id, byUserName: ME.name }); // answered in another tab
+  await expect(bar(page)).toContainText('On a call in another tab');
+  backend.route(get('/calls/call-1', STILL_CONNECTING)); // that answer may still connect: it is read again in 15 s
+  const reads = () => backend.requests.filter((r) => r.path === '/calls/call-1').length;
+  backend.blip();
+  await expect.poll(async () => (await page.clock.runFor(1_000), reads())).toBe(1);
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  await page.getByRole('menuitem', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/auth\/login$/);
+  await page.clock.runFor(20_000);
+  // A request sent after that time: one the read had sent is in by the time it is.
+  await page.evaluate(() => fetch('/api/v1/after-the-wait').catch(() => undefined));
+  await expect.poll(() => backend.requests.some((r) => r.path === '/after-the-wait')).toBe(true);
+  expect(reads()).toBe(1);
+});
+
 test('a socket that drops and comes back while a reload waits for the microphone rejoins once, and the end of the call closes all of it', async ({ page, context, backend }) => {
   await open(page);
   await onCall(page, backend);
