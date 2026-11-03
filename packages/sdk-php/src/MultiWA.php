@@ -44,7 +44,12 @@ class MultiWA
      * @param string        $baseUrl API base URL including the /api/v1 prefix,
      *                               e.g. https://your-instance.com/api/v1
      * @param string        $apiKey  API key, sent as the X-API-Key header
-     * @param float         $timeout Request timeout in seconds
+     * @param float         $timeout Request timeout in seconds. With Guzzle's
+     *                               cURL handler, the default, it covers the
+     *                               whole request, the response's body too (a
+     *                               recording's download); with its stream
+     *                               handler (PHP without cURL), each read from
+     *                               the connection
      * @param callable|null $handler Guzzle handler that sends the requests;
      *                               tests pass a MockHandler
      */

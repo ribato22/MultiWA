@@ -152,8 +152,9 @@ class CallsClient
 
     /**
      * The call's recording, audio/webm (owner or admin; an API key with a scope list needs `recordings:read`).
-     * Every read is audited, a download as a download. The client's $timeout (30 s by default) covers the whole
-     * download, not only the wait for the answer: a long recording may need a larger one.
+     * Every read is audited, a download as a download. With Guzzle's cURL handler, the default, the client's $timeout
+     * (30 s by default) covers the whole download, not only the wait for the answer: a long recording may need a
+     * larger one. With its stream handler (PHP without cURL), $timeout bounds each read from the connection instead.
      */
     public function getRecording(string $callId, bool $download = false): AudioFile
     {
@@ -228,7 +229,9 @@ class CallsClient
 
     /**
      * The profile's announcement, to listen to (owner or admin; an API key with a scope list needs
-     * `profiles:write`).
+     * `profiles:write`). With Guzzle's cURL handler, the default, the client's $timeout covers the whole download (up
+     * to 2 MB): a slow link may need a larger one. With its stream handler (PHP without cURL), $timeout bounds each
+     * read from the connection instead.
      */
     public function getAnnouncement(string $profileId): AudioFile
     {
