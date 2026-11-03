@@ -6,6 +6,28 @@ this file. Its version follows the MultiWA release (tag `sdk-python-v<version>`)
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - Unreleased
+
+### Added
+
+- `client.calls`, sync and async, for every calls route: `list` (with its
+  filters and cursor; `from_` is the caller, `since` an ISO 8601 string or a
+  timezone-aware `datetime`), `open_count`, `get`, `update`
+  (`unassign=True` removes the assignee; with `assigned_user_id` too it raises
+  `ValueError`), `reject`, `reply`, `send_call_link` (`link_type` is `voice` or
+  `video`), `media_status`, `get_recording`, `delete_recording`,
+  `update_settings`, `upload_announcement`, `get_announcement` and
+  `delete_announcement`. Each method's docstring names the role it needs and
+  the scope an API key with a scope list needs.
+- `upload_announcement` takes bytes, a `bytearray`, a `memoryview` or a binary
+  file object, sent under `filename`, else the file object's own name, else
+  `announcement`; a path raises `TypeError`.
+- A recording and an announcement come back as an `AudioFile` (`content`,
+  `content_type`).
+- Models: `Call`, `CallPage`, `CallsMediaStatus`, `CallsSettings` and
+  `AudioFile`, exported from `multiwa`; `CallRecording`, `CallAnnouncement` and
+  the results of the call actions in `multiwa.types`.
+
 ## [1.3.0] - 2026-10-29
 
 ### Fixed

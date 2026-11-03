@@ -5,12 +5,15 @@ import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ValidationPipe } from '@nestjs/common';
 
-vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), update: vi.fn(), delete: vi.fn() } } }));
+vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() }, workspace: { findMany: vi.fn() } } }));
 vi.mock('./engine-manager.service', () => ({ EngineManagerService: class {} }));
-vi.mock('./profile-settings', () => ({ mergeProfileSettings: vi.fn() }));
+vi.mock('./profile-settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./profile-settings')>()),
+  mergeProfileSettings: vi.fn(),
+}));
 
 import { prisma } from '@multiwa/database';
-import { UpdateProfileDto } from './dto';
+import { EngineType, UpdateProfileDto } from './dto';
 import { ProfilesService } from './profiles.service';
 import { mergeProfileSettings } from './profile-settings';
 
@@ -95,5 +98,33 @@ describe('ProfilesService.delete', () => {
     db.profile.delete.mockReset();
     await expect(make(vi.fn().mockRejectedValue(new Error('db down'))).delete('p1')).rejects.toThrow('db down');
     expect(db.profile.delete).not.toHaveBeenCalled();
+  });
+});
+
+// The announcement's storage key says where its file is kept: GET /profiles, GET /profiles/:id and PUT /profiles/:id
+// answer with its type and length only.
+describe('ProfilesService answers without the announcement storage key', () => {
+  const STORED = { callsRecording: true, callsAnnouncement: { storageKey: 'announcements/o1/p1/a.mp3', mimeType: 'audio/mpeg', durationSec: 4.2 } };
+  const SHOWN = { callsRecording: true, callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 4.2 } };
+  const service = () => new ProfilesService({} as any, {} as any, {} as any);
+
+  beforeEach(() => {
+    db.workspace.findMany.mockReset().mockResolvedValue([{ id: 'w1' }]);
+    db.profile.findMany.mockReset().mockResolvedValue([{ id: 'p1', displayName: 'Line 1', phoneNumber: null, sessionData: null, settings: STORED, _count: { messages: 3 } }]);
+    db.profile.findUnique.mockReset().mockResolvedValue({ id: 'p1', displayName: 'Line 1', engine: 'whatsapp-web-js', settings: STORED, workspace: {} });
+    db.profile.update.mockReset().mockImplementation(async ({ data }: any) => ({ id: 'p1', engine: 'whatsapp-web-js', settings: STORED, ...data }));
+  });
+
+  it('the list', async () => {
+    expect((await service().findAll('o1')).map((p) => p.settings)).toEqual([SHOWN]);
+  });
+
+  it('one profile', async () => {
+    expect((await service().findOne('p1')).settings).toEqual(SHOWN);
+  });
+
+  it('an update, and one that changes the engine', async () => {
+    expect((await service().update('p1', { name: 'Renamed' })).settings).toEqual(SHOWN);
+    expect((await service().update('p1', { engine: EngineType.BAILEYS })).settings).toEqual(SHOWN);
   });
 });

@@ -8,12 +8,14 @@ use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Promise\PromiseInterface;
 use MultiWA\Clients\BroadcastsClient;
+use MultiWA\Clients\CallsClient;
 use MultiWA\Clients\ContactsClient;
 use MultiWA\Clients\MessagesClient;
 use MultiWA\Clients\ProfilesClient;
 use MultiWA\Clients\WebhooksClient;
 use MultiWA\Exceptions\ApiException;
 use MultiWA\Exceptions\MultiWAException;
+use MultiWA\Models\AudioFile;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -36,12 +38,18 @@ class MultiWA
     private BroadcastsClient $broadcasts;
     private ProfilesClient $profiles;
     private WebhooksClient $webhooks;
+    private CallsClient $calls;
 
     /**
      * @param string        $baseUrl API base URL including the /api/v1 prefix,
      *                               e.g. https://your-instance.com/api/v1
      * @param string        $apiKey  API key, sent as the X-API-Key header
-     * @param float         $timeout Request timeout in seconds
+     * @param float         $timeout Request timeout in seconds. With Guzzle's
+     *                               cURL handler, the default, it covers the
+     *                               whole request, the response's body too (a
+     *                               recording's download); with its stream
+     *                               handler (PHP without cURL), each read from
+     *                               the connection
      * @param callable|null $handler Guzzle handler that sends the requests;
      *                               tests pass a MockHandler
      */
@@ -74,6 +82,7 @@ class MultiWA
         $this->broadcasts = new BroadcastsClient($this);
         $this->profiles = new ProfilesClient($this);
         $this->webhooks = new WebhooksClient($this);
+        $this->calls = new CallsClient($this);
     }
 
     public function messages(): MessagesClient
@@ -99,6 +108,11 @@ class MultiWA
     public function webhooks(): WebhooksClient
     {
         return $this->webhooks;
+    }
+
+    public function calls(): CallsClient
+    {
+        return $this->calls;
     }
 
     /**
@@ -127,6 +141,30 @@ class MultiWA
         }
 
         return $data;
+    }
+
+    /**
+     * Calls a route that answers audio, such as a call's recording, and returns its bytes and Content-Type.
+     *
+     * @param string               $path    Route below the base URL, e.g. 'calls/{id}/recording'
+     * @param array<string, mixed> $options Guzzle request options, e.g. ['query' => [...]]; the Accept header is any
+     *                                      type unless they set one
+     *
+     * @throws ApiException     The API answered with an error status
+     * @throws MultiWAException The request failed without a response
+     */
+    public function requestAudio(string $method, string $path, array $options = []): AudioFile
+    {
+        // Any type: the client-wide Accept, application/json, is for the routes that answer JSON. Not beside an Accept
+        // the caller gave, in whatever letter case: Guzzle would send both, as one header.
+        $headers = $options['headers'] ?? [];
+        if (!array_key_exists('accept', array_change_key_case($headers))) {
+            $headers['Accept'] = '*/*';
+        }
+        $options['headers'] = $headers;
+        $response = $this->http->request($method, ltrim($path, '/'), $options);
+
+        return new AudioFile((string) $response->getBody(), $response->getHeaderLine('Content-Type') ?: 'application/octet-stream');
     }
 
     /**

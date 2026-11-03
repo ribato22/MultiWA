@@ -7,7 +7,7 @@ import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { EngineManagerService } from './engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
-import { mergeProfileSettings } from './profile-settings';
+import { mergeProfileSettings, publicProfile } from './profile-settings';
 import { CallRecordingsService } from '../calls/recordings/call-recordings.service';
 
 /** The keys of the settings JSON a profile update sets (the call recording keys have routes of their own). */
@@ -56,13 +56,13 @@ export class ProfilesService {
         }
       } catch {}
 
-      return {
+      return publicProfile({
         ...profile,
         name: profile.displayName,
         phone: profile.phoneNumber,
         sessionData: parsedSessionData,
         messageCount: _count?.messages || 0,
-      };
+      });
     });
   }
 
@@ -76,7 +76,7 @@ export class ProfilesService {
       throw new NotFoundException('Profile not found');
     }
 
-    return profile;
+    return publicProfile(profile);
   }
 
   async create(dto: CreateProfileDto, user: any) {
@@ -141,13 +141,13 @@ export class ProfilesService {
     // An engine change only takes effect on the next reconnect (we do not force a
     // disconnect here — that would risk corrupting a live session).
     if (dto.engine !== undefined && dto.engine !== (existing as any).engine) {
-      return {
+      return publicProfile({
         ...updated,
         warning:
           'Engine change will take effect on next reconnect. Clear the engine-specific session directory before reconnecting.',
-      };
+      });
     }
-    return updated;
+    return publicProfile(updated);
   }
 
   async delete(id: string) {

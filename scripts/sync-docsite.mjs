@@ -17,6 +17,9 @@
  * Docs-site pages that have NO source in docs/ (e.g. operations/demo-mode.md)
  * are left untouched. The mapping below must be kept in sync with the docs-site
  * sidebar (docs-site/sidebars.ts).
+ *
+ * Images a page shows from docs/screenshots/ are copied to
+ * docs-site/static/img/screenshots/, and --check compares those copies too.
  */
 
 import fs from 'node:fs';
@@ -27,6 +30,13 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_ROOT = path.join(ROOT, 'docs');
 const DST_ROOT = path.join(ROOT, 'docs-site', 'docs');
 const CHECK = process.argv.includes('--check');
+// ![…](./screenshots/<file>): Docusaurus serves docs-site/static/ at the site root and resolves an absolute image path
+// there, under the site's baseUrl.
+const IMAGE = /\]\(\.\/screenshots\/([A-Za-z0-9/_.-]+\.(?:png|jpe?g|gif|webp))\)/g;
+const IMAGE_SRC = path.join(SRC_ROOT, 'screenshots');
+const IMAGE_DST = path.join(ROOT, 'docs-site', 'static', 'img', 'screenshots');
+/** The images the pages show, as paths under docs/screenshots/. */
+const images = new Set();
 
 // docs/<src> → docs-site/docs/<dst> + Docusaurus frontmatter
 const PAGES = [
@@ -43,6 +53,7 @@ const PAGES = [
   { src: '10-messaging.md', dst: 'features/messaging.md', title: 'Messaging', pos: 1 },
   { src: '11-groups.md', dst: 'features/groups.md', title: 'Groups', pos: 2 },
   { src: '12-automation.md', dst: 'features/automation.md', title: 'Automation', pos: 3 },
+  { src: '23-calls.md', dst: 'features/calls.md', title: 'Calls', pos: 4 },
   { src: '13-sdk-python.md', dst: 'sdks/python-sdk.md', title: 'Python SDK', pos: 1 },
   { src: '14-sdk-php.md', dst: 'sdks/php-sdk.md', title: 'PHP SDK', pos: 2 },
   { src: '15-n8n-integration.md', dst: 'sdks/n8n-integration.md', title: 'n8n Integration', pos: 3 },
@@ -82,6 +93,12 @@ function rewriteLinks(body, currentDst) {
     return `](https://github.com/ribato22/MultiWA/blob/main/${file})`;
   });
 
+  // ./screenshots/<file> → the copy the site serves (copied below)
+  body = body.replace(IMAGE, (m, file) => {
+    images.add(file);
+    return `](/img/screenshots/${file})`;
+  });
+
   return body;
 }
 
@@ -96,6 +113,7 @@ function render(p) {
 }
 
 let failures = 0;
+let imageFailures = 0;
 let synced = 0;
 
 for (const p of PAGES) {
@@ -128,12 +146,37 @@ for (const p of PAGES) {
   }
 }
 
+for (const file of images) {
+  const src = path.join(IMAGE_SRC, file);
+  const dst = path.join(IMAGE_DST, file);
+  if (!fs.existsSync(src)) {
+    console.error(`✗ image missing: docs/screenshots/${file}`);
+    imageFailures++;
+    continue;
+  }
+  if (fs.existsSync(dst) && fs.readFileSync(dst).equals(fs.readFileSync(src))) continue;
+  if (CHECK) {
+    console.error(`✗ out of sync: docs-site/static/img/screenshots/${file} — run \`pnpm sync:docsite\``);
+    imageFailures++;
+  } else {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+    console.log(`✓ copied docs/screenshots/${file} → docs-site/static/img/screenshots/${file}`);
+  }
+}
+
+// A page or an image the docs-site needs and cannot get: both modes fail, so a deploy never ships it broken.
+const problems = [failures && `${failures} page(s)`, imageFailures && `${imageFailures} image(s)`].filter(Boolean).join(' and ');
 if (CHECK) {
-  if (failures > 0) {
-    console.error(`Docs-site sync check FAILED (${failures} page(s) drifted).`);
+  if (problems) {
+    console.error(`Docs-site sync check FAILED (${problems} drifted or missing).`);
     process.exit(1);
   }
   console.log('Docs-site sync check PASSED — all pages match docs/.');
 } else {
-  console.log(`Docs-site sync complete (${synced} page(s) updated, ${PAGES.length - synced} already in sync).`);
+  console.log(`Docs-site sync complete (${synced} page(s) updated, ${PAGES.length - synced - failures} already in sync).`);
+  if (problems) {
+    console.error(`Docs-site sync FAILED (${problems} missing in docs/).`);
+    process.exit(1);
+  }
 }

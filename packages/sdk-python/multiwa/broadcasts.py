@@ -12,7 +12,7 @@ from typing import Any, Union, cast
 
 import httpx
 
-from ._base import AsyncResource, SyncResource
+from ._base import AsyncResource, SyncResource, iso
 from .types import Broadcast
 
 # {"type": "tags" | "contacts" | "all", "value": [...]}, or a plain list of
@@ -52,16 +52,6 @@ def _create_body(
     }
 
 
-def _iso(when: str | datetime) -> str:
-    if isinstance(when, str):
-        return when
-    if when.tzinfo is None:
-        raise ValueError(
-            "A schedule datetime must be timezone-aware (or pass ISO 8601)"
-        )
-    return when.isoformat()
-
-
 class BroadcastsClient(SyncResource):
     """Synchronous Broadcasts API client"""
 
@@ -90,7 +80,7 @@ class BroadcastsClient(SyncResource):
         body = _create_body(
             profile_id, name, recipients, template_id, message, settings
         )
-        scheduled_at = None if schedule_at is None else _iso(schedule_at)
+        scheduled_at = None if schedule_at is None else iso(schedule_at)
         broadcast = Broadcast.model_validate(
             self._request("POST", "/broadcast", json=body)
         )
@@ -115,7 +105,7 @@ class BroadcastsClient(SyncResource):
             self._request(
                 "POST",
                 f"/broadcast/{broadcast_id}/schedule",
-                json={"scheduledAt": _iso(scheduled_at)},
+                json={"scheduledAt": iso(scheduled_at)},
             )
         )
 
@@ -187,7 +177,7 @@ class AsyncBroadcastsClient(AsyncResource):
         body = _create_body(
             profile_id, name, recipients, template_id, message, settings
         )
-        scheduled_at = None if schedule_at is None else _iso(schedule_at)
+        scheduled_at = None if schedule_at is None else iso(schedule_at)
         broadcast = Broadcast.model_validate(
             await self._request("POST", "/broadcast", json=body)
         )
@@ -214,7 +204,7 @@ class AsyncBroadcastsClient(AsyncResource):
             await self._request(
                 "POST",
                 f"/broadcast/{broadcast_id}/schedule",
-                json={"scheduledAt": _iso(scheduled_at)},
+                json={"scheduledAt": iso(scheduled_at)},
             )
         )
 

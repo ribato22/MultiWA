@@ -74,12 +74,12 @@ describe('CallsController routes', () => {
     }
   });
 
-  // What a client must handle besides the 200: a range, a range past the end, a storage this server cannot use or a
-  // read it cannot audit, a recording stored where this server cannot delete it.
-  it('the recording routes document their other answers', () => {
+  // What a client must handle: the 200, a range, a range past the end, a storage this server cannot use or a read it
+  // cannot audit, a recording stored where this server cannot delete it.
+  it('the recording routes document their answers', () => {
     const documented = (name: string) => Object.keys(Reflect.getMetadata('swagger/apiResponse', proto[name]) ?? {}).sort();
-    expect(documented('recording')).toEqual(['206', '404', '416', '503']);
-    expect(documented('deleteRecording')).toEqual(['404', '409', '503']);
+    expect(documented('recording')).toEqual(['200', '206', '404', '416', '503']);
+    expect(documented('deleteRecording')).toEqual(['200', '404', '409', '503']);
   });
 
   // The service audits it (resourceType call, the recording's id), as it audits a play and retention's deletes: the

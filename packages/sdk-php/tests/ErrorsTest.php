@@ -14,6 +14,8 @@ use MultiWA\Exceptions\MultiWAException;
 use MultiWA\Exceptions\NotFoundException;
 use MultiWA\Exceptions\RateLimitException;
 use MultiWA\Exceptions\ValidationException;
+use MultiWA\MultiWA;
+use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
  * Error responses become typed exceptions, with the bodies the API really sends.
@@ -156,6 +158,63 @@ final class ErrorsTest extends TestCase
             self::assertSame(502, $e->getStatusCode());
             self::assertSame('OTP_DELIVERY_FAILED', $e->getErrorCode());
             self::assertSame('ACK_TIMEOUT', $e->getResponseBody()['reason']);
+        }
+    }
+
+    public function testRefusedCallSettingKeepsItsReasons(): void
+    {
+        $client = $this->client([self::json(409, ['message' => 'Recording calls is not available for this profile', 'reasons' => ['no_announcement']])]);
+
+        try {
+            $client->calls()->updateSettings('prof-1', recording: true);
+            self::fail('No exception was thrown');
+        } catch (ApiException $e) {
+            self::assertSame(ApiException::class, $e::class);
+            self::assertSame(409, $e->getStatusCode());
+            self::assertSame('Recording calls is not available for this profile', $e->getMessage());
+            self::assertSame(['no_announcement'], $e->getResponseBody()['reasons']);
+        }
+    }
+
+    /**
+     * A route that answers audio, or takes a file, answers its errors as JSON all the same.
+     *
+     * @return iterable<string, array{\Closure(MultiWA): mixed, int, array<mixed>, class-string<ApiException>}>
+     */
+    public static function audioAndUploadErrors(): iterable
+    {
+        yield 'a recording that is not there' => [
+            static fn (MultiWA $c) => $c->calls()->getRecording('call-1', download: true),
+            404, ['statusCode' => 404, 'message' => 'This call has no recording', 'error' => 'Not Found'], NotFoundException::class,
+        ];
+        yield 'an announcement that is not there' => [
+            static fn (MultiWA $c) => $c->calls()->getAnnouncement('prof-1'),
+            404, ['statusCode' => 404, 'message' => 'This profile has no announcement', 'error' => 'Not Found'], NotFoundException::class,
+        ];
+        yield 'an upload refused with its reasons' => [
+            static fn (MultiWA $c) => $c->calls()->uploadAnnouncement('prof-1', "ID3\x04", 'notice.mp3'),
+            409, ['message' => 'The call recordings storage is not configured on this server', 'reasons' => ['recordings_storage_unset']], ApiException::class,
+        ];
+    }
+
+    /**
+     * @param \Closure(MultiWA): mixed     $call
+     * @param array<mixed>               $body
+     * @param class-string<ApiException> $class
+     */
+    #[DataProvider('audioAndUploadErrors')]
+    public function testErrorOfAnAudioOrUploadRouteKeepsItsBody(\Closure $call, int $status, array $body, string $class): void
+    {
+        $client = $this->client([self::json($status, $body)]);
+
+        try {
+            $call($client);
+            self::fail('No exception was thrown');
+        } catch (ApiException $e) {
+            self::assertSame($class, $e::class);
+            self::assertSame($status, $e->getStatusCode());
+            self::assertSame($body['message'], $e->getMessage());
+            self::assertSame($body, $e->getResponseBody());
         }
     }
 

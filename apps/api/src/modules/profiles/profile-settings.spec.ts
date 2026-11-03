@@ -7,8 +7,8 @@ vi.mock('@multiwa/database', () => ({ prisma: { $queryRaw: vi.fn() } }));
 
 import { prisma } from '@multiwa/database';
 import {
-  announcementOf, mergeProfileSettings, mergeProfileSettingsIfAnnounced, recordingOn, removeAnnouncementUnlessRecording,
-  retentionDaysOf, turnRecordingOffEverywhere,
+  announcementOf, mergeProfileSettings, mergeProfileSettingsIfAnnounced, publicProfile, publicSettings, recordingOn,
+  removeAnnouncementUnlessRecording, retentionDaysOf, turnRecordingOffEverywhere,
 } from './profile-settings';
 
 const db = prisma as any;
@@ -83,5 +83,39 @@ describe('call settings readers', () => {
     expect(retentionDaysOf({ callsRecordingRetentionDays: 3650 })).toBe(3650);
     for (const days of [undefined, null, 0, -5, 3651, 7.5, '30']) expect(retentionDaysOf({ callsRecordingRetentionDays: days })).toBe(90);
     expect(retentionDaysOf(null)).toBe(90);
+  });
+});
+
+// Where an announcement's file is kept stays inside the server: a profile's routes answer with its type and length only.
+// The settings handed in are frozen all the way down, so a change in place to the row the API read throws.
+describe('the settings the API answers with', () => {
+  const frozen = <T>(value: T): T => {
+    if (value && typeof value === 'object') Object.values(value).forEach(frozen);
+    return Object.freeze(value);
+  };
+  const ANNOUNCEMENT = frozen({ storageKey: 'announcements/o/p/a.mp3', mimeType: 'audio/mpeg', durationSec: 4.2 });
+  const SHOWN = { mimeType: 'audio/mpeg', durationSec: 4.2 };
+
+  it("show the announcement's type and length, none of its other keys, and every other setting", () => {
+    const settings = frozen({ callsRecording: true, callsAnnouncement: { ...ANNOUNCEMENT, storageLocation: 's3:bucket/prefix' }, autoRejectCalls: false });
+    expect(publicSettings(settings)).toEqual({ callsRecording: true, callsAnnouncement: SHOWN, autoRejectCalls: false });
+  });
+
+  it('show an announcement that is not whole as null, as the calls routes do', () => {
+    for (const announcement of [null, 'announcements/o/p/a.mp3', { mimeType: 'audio/mpeg', durationSec: 1 }, { ...ANNOUNCEMENT, durationSec: '4.2' }]) {
+      expect(publicSettings(frozen({ callsAnnouncement: announcement, autoRejectCalls: true }))).toEqual({ callsAnnouncement: null, autoRejectCalls: true });
+    }
+  });
+
+  it('are the settings themselves when they hold no announcement', () => {
+    for (const settings of [null, undefined, 'x', {}, { autoRejectCalls: true }].map(frozen)) expect(publicSettings(settings)).toBe(settings);
+  });
+
+  it('a profile row keeps every other field', () => {
+    expect(publicProfile(frozen({ id: 'p1', displayName: 'Line 1', settings: { callsAnnouncement: ANNOUNCEMENT } }))).toEqual({
+      id: 'p1',
+      displayName: 'Line 1',
+      settings: { callsAnnouncement: SHOWN },
+    });
   });
 });

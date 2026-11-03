@@ -2,14 +2,15 @@
 
 Each case runs against both the sync and the async client through
 ``httpx.MockTransport`` and checks the method, the path (with the base path),
-the query parameters, the JSON body, and that the route exists in
-``scripts/api-routes.snapshot.json``.
+the query parameters, the JSON body or the multipart files, and that the route
+exists in ``scripts/api-routes.snapshot.json``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+import io
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -57,6 +58,8 @@ class Sent(NamedTuple):
     path: str
     params: list[tuple[str, str]]
     body: dict[str, Any] | None
+    # A multipart upload: field name -> (filename, the exact bytes).
+    files: dict[str, tuple[str, bytes]] | None = None
 
 
 class Case(NamedTuple):
@@ -79,7 +82,13 @@ def run(
     """
     requests = [] if requests is None else requests
     queue = [
-        r if isinstance(r, httpx.Response) else httpx.Response(200, json=r)
+        # A copy for each run: a response read by the sync client cannot be read
+        # again by the async one.
+        (
+            httpx.Response(r.status_code, headers=r.headers, content=r.content)
+            if isinstance(r, httpx.Response)
+            else httpx.Response(200, json=r)
+        )
         for r in responses
     ]
 
@@ -99,6 +108,22 @@ def run(
             return await result
 
     return asyncio.run(main()), requests
+
+
+def sent_files(request: httpx.Request) -> dict[str, tuple[str | None, bytes]]:
+    """A multipart body's parts: field name -> (filename, the exact bytes sent)."""
+    boundary = request.headers["content-type"].partition("boundary=")[2]
+    first, *parts, last = request.content.split(f"--{boundary}".encode())
+    assert (first, last) == (b"", b"--\r\n")
+    files: dict[str, tuple[str | None, bytes]] = {}
+    for part in parts:
+        head, _, content = part.partition(b"\r\n\r\n")
+        disposition = re.search(
+            'form-data; name="([^"]*)"(?:; filename="([^"]*)")?', head.decode()
+        )
+        assert disposition and content.endswith(b"\r\n")
+        files[disposition[1]] = (disposition[2], content[:-2])
+    return files
 
 
 V1 = "/api/v1"
@@ -640,6 +665,227 @@ CASES = [
         [Sent("GET", f"{V1}/webhooks", [("profileId", "p-1")], None)],
         lambda r: [w.id for w in r] == ["wh-1"],
     ),
+    # ---------------- calls ----------------
+    Case(
+        "calls.list",
+        lambda c: c.calls.list(
+            "p-1",
+            outcome="answered",
+            follow_up="done",
+            from_="628111",
+            since="2026-11-01T00:00:00Z",
+            limit=20,
+            cursor="c-9",
+        ),
+        [{"calls": [rows.CALL_ROW], "nextCursor": "c-1"}],
+        [
+            Sent(
+                "GET",
+                f"{V1}/calls",
+                [
+                    ("profileId", "p-1"),
+                    ("outcome", "answered"),
+                    ("followUp", "done"),
+                    ("from", "628111"),
+                    ("since", "2026-11-01T00:00:00Z"),
+                    ("limit", "20"),
+                    ("cursor", "c-9"),
+                ],
+                None,
+            )
+        ],
+        lambda r: r.next_cursor == "c-1"
+        and r.calls[0].answered_by.name == "Jane"
+        and r.calls[0].recording.duration_sec == 190,
+    ),
+    Case(
+        "calls.list since a timezone-aware datetime",
+        lambda c: c.calls.list(
+            "p-1", since=datetime(2026, 11, 1, 7, tzinfo=timezone(timedelta(hours=7)))
+        ),
+        [{"calls": [], "nextCursor": None}],
+        [
+            Sent(
+                "GET",
+                f"{V1}/calls",
+                [("profileId", "p-1"), ("since", "2026-11-01T07:00:00+07:00")],
+                None,
+            )
+        ],
+    ),
+    Case(
+        "calls.open_count",
+        lambda c: c.calls.open_count(),
+        [{"count": 3}],
+        [Sent("GET", f"{V1}/calls/open-count", [], None)],
+        lambda r: r == 3,
+    ),
+    Case(
+        "calls.get",
+        lambda c: c.calls.get("c-1"),
+        [rows.CALL_ROW],
+        [Sent("GET", f"{V1}/calls/c-1", [], None)],
+        lambda r: r.outcome == "answered" and r.talk_seconds == 192
+        # Tz-aware: a naive datetime is never equal to an aware one.
+        and r.started_at == datetime(2026, 10, 28, 10, tzinfo=timezone.utc),
+    ),
+    Case(
+        "calls.update",
+        lambda c: c.calls.update(
+            "c-1", follow_up="in_progress", assigned_user_id="u-2"
+        ),
+        [{**rows.CALL_ROW, "followUp": "in_progress", "assignedUserId": "u-2"}],
+        [
+            Sent(
+                "PATCH",
+                f"{V1}/calls/c-1",
+                [],
+                {"followUp": "in_progress", "assignedUserId": "u-2"},
+            )
+        ],
+        lambda r: r.assigned_user_id == "u-2",
+    ),
+    Case(
+        "calls.update unassign",
+        lambda c: c.calls.update("c-1", unassign=True),
+        [rows.CALL_ROW],
+        [Sent("PATCH", f"{V1}/calls/c-1", [], {"assignedUserId": None})],
+        lambda r: r.assigned_user_id is None,
+    ),
+    Case(
+        "calls.reject",
+        lambda c: c.calls.reject("c-1"),
+        [{**rows.CALL_ROW, "outcome": "rejected", "rejectedBy": "agent"}],
+        [Sent("POST", f"{V1}/calls/c-1/reject", [], None)],
+        lambda r: r.rejected_by == "agent",
+    ),
+    Case(
+        "calls.reply",
+        lambda c: c.calls.reply("c-1", "We will call you back"),
+        [{"call": rows.CALL_ROW, "message": rows.SEND_RESULT}],
+        [Sent("POST", f"{V1}/calls/c-1/reply", [], {"text": "We will call you back"})],
+        lambda r: r.message.wa_message_id is not None,
+    ),
+    Case(
+        "calls.reply with the profile's default",
+        lambda c: c.calls.reply("c-1"),
+        [{"call": rows.CALL_ROW, "message": rows.SEND_RESULT}],
+        [Sent("POST", f"{V1}/calls/c-1/reply", [], {})],
+    ),
+    Case(
+        "calls.send_call_link",
+        lambda c: c.calls.send_call_link("c-1", "voice", text="Tap to call us"),
+        [
+            {
+                "call": rows.CALL_ROW,
+                "message": rows.SEND_RESULT,
+                "link": "https://call.whatsapp.com/voice/x",
+            }
+        ],
+        [
+            Sent(
+                "POST",
+                f"{V1}/calls/c-1/call-link",
+                [],
+                {"type": "voice", "text": "Tap to call us"},
+            )
+        ],
+        lambda r: r.link.endswith("/voice/x"),
+    ),
+    Case(
+        "calls.media_status",
+        lambda c: c.calls.media_status(),
+        [rows.MEDIA_STATUS],
+        [Sent("GET", f"{V1}/calls/media/status", [], None)],
+        lambda r: r.server.engine_host == "api"
+        and r.server.recordings.last_check.ok is True
+        and r.profiles[0].reasons == ["auto_reject_on"],
+    ),
+    Case(
+        "calls.get_recording",
+        lambda c: c.calls.get_recording("c-1", download=True),
+        [
+            httpx.Response(
+                200, content=b"\x1aE\xdf\xa3", headers={"content-type": "audio/webm"}
+            )
+        ],
+        [Sent("GET", f"{V1}/calls/c-1/recording", [("download", "1")], None)],
+        lambda r: r.content == b"\x1aE\xdf\xa3" and r.content_type == "audio/webm",
+    ),
+    Case(
+        "calls.get_recording to play",
+        lambda c: c.calls.get_recording("c-1"),
+        [
+            httpx.Response(
+                200, content=b"\x1aE\xdf\xa3", headers={"content-type": "audio/webm"}
+            )
+        ],
+        [Sent("GET", f"{V1}/calls/c-1/recording", [], None)],
+    ),
+    Case(
+        "calls.delete_recording",
+        lambda c: c.calls.delete_recording("c-1"),
+        [{"callId": "c-1", "recordingId": "rec-1", "deletedAt": rows.AT}],
+        [Sent("DELETE", f"{V1}/calls/c-1/recording", [], None)],
+        lambda r: r.recording_id == "rec-1",
+    ),
+    Case(
+        "calls.update_settings",
+        lambda c: c.calls.update_settings(
+            "p-1", answer_in_dashboard=True, recording=True, retention_days=30
+        ),
+        [rows.CALLS_SETTINGS],
+        [
+            Sent(
+                "PUT",
+                f"{V1}/profiles/p-1/calls-settings",
+                [],
+                {"answerInDashboard": True, "recording": True, "retentionDays": 30},
+            )
+        ],
+        lambda r: r.retention_days == 30 and r.announcement.duration_sec == 6.2,
+    ),
+    Case(
+        "calls.upload_announcement",
+        lambda c: c.calls.upload_announcement("p-1", b"ID3\x04", filename="notice.mp3"),
+        [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+        [
+            Sent(
+                "POST",
+                f"{V1}/profiles/p-1/calls-announcement",
+                [],
+                None,
+                files={"file": ("notice.mp3", b"ID3\x04")},
+            )
+        ],
+        lambda r: r.announcement.mime_type == "audio/mpeg",
+    ),
+    Case(
+        "calls.get_announcement",
+        lambda c: c.calls.get_announcement("p-1"),
+        [
+            httpx.Response(
+                200, content=b"ID3\x04", headers={"content-type": "audio/mpeg"}
+            )
+        ],
+        [Sent("GET", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.content == b"ID3\x04" and r.content_type == "audio/mpeg",
+    ),
+    Case(
+        "calls.get_announcement without a Content-Type",
+        lambda c: c.calls.get_announcement("p-1"),
+        [httpx.Response(200, content=b"ID3\x04")],
+        [Sent("GET", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.content == b"ID3\x04"
+        and r.content_type == "application/octet-stream",
+    ),
+    Case(
+        "calls.delete_announcement",
+        lambda c: c.calls.delete_announcement("p-1"),
+        [{"profileId": "p-1", "announcement": None}],
+        [Sent("DELETE", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.announcement is None,
+    ),
     # ---------------- raw request ----------------
     Case(
         "client.request",
@@ -662,7 +908,11 @@ def test_request(case: Case, kind: str):
         assert request.url.path == want.path
         assert request.url.params.multi_items() == want.params
         assert request.headers["x-api-key"] == "test-key"
-        if want.body is None:
+        if want.files is not None:
+            # A file upload is multipart, with the boundary httpx chose.
+            assert request.headers["content-type"].startswith("multipart/form-data")
+            assert sent_files(request) == want.files
+        elif want.body is None:
             # A bodyless POST/DELETE with Content-Type: application/json gets a 400.
             assert request.content == b""
             assert "content-type" not in request.headers
@@ -686,7 +936,14 @@ def test_every_public_method_has_a_case(kind: str):
     client_cls = MultiWA if kind == "sync" else AsyncMultiWA
     client = client_cls(BASE_URL, "test-key")
     covered = {case.name.split(" ")[0] for case in CASES}
-    for resource in ("messages", "contacts", "broadcasts", "profiles", "webhooks"):
+    for resource in (
+        "messages",
+        "contacts",
+        "broadcasts",
+        "profiles",
+        "webhooks",
+        "calls",
+    ):
         for name in _public_methods(type(getattr(client, resource))):
             if (resource, name) != (
                 "profiles",
@@ -697,7 +954,14 @@ def test_every_public_method_has_a_case(kind: str):
 
 def test_sync_and_async_clients_have_the_same_methods():
     sync, aio = MultiWA(BASE_URL, "k"), AsyncMultiWA(BASE_URL, "k")
-    for resource in ("messages", "contacts", "broadcasts", "profiles", "webhooks"):
+    for resource in (
+        "messages",
+        "contacts",
+        "broadcasts",
+        "profiles",
+        "webhooks",
+        "calls",
+    ):
         assert _public_methods(type(getattr(sync, resource))) == _public_methods(
             type(getattr(aio, resource))
         )
@@ -733,6 +997,8 @@ REFUSED = [
         "timezone-aware",
     ),
     (lambda c: c.broadcasts.schedule("b-1", datetime(2030, 1, 1)), "timezone-aware"),
+    # Sent without a zone, it would be read in the server's own.
+    (lambda c: c.calls.list("p-1", since=datetime(2026, 11, 1)), "timezone-aware"),
     (lambda c: c.contacts.create("p-1", "628111", email="a@b.test"), "email"),
     (lambda c: c.contacts.update("c-1", email="a@b.test"), "email"),
     (
@@ -743,6 +1009,10 @@ REFUSED = [
     ),
     (lambda c: c.webhooks.update("wh-1", secret="s"), "secret"),
     (lambda c: c.profiles.update("p-1", is_active=False), "active"),
+    (
+        lambda c: c.calls.update("c-1", assigned_user_id="u-2", unassign=True),
+        "not both",
+    ),
 ]
 
 
@@ -806,3 +1076,120 @@ def test_base_url_with_trailing_slash_keeps_the_prefix():
         "p-1"
     )
     assert seen == [f"{V1}/profiles/p-1"]
+
+
+def test_a_refused_call_setting_says_why():
+    refused = httpx.Response(
+        409,
+        json={
+            "message": "Recording calls is not available for this profile",
+            "reasons": ["no_announcement"],
+        },
+    )
+    client = MultiWA(BASE_URL, "k", transport=httpx.MockTransport(lambda r: refused))
+    with pytest.raises(httpx.HTTPStatusError) as refusal:
+        client.calls.update_settings("p-1", recording=True)
+    assert refusal.value.response.status_code == 409
+    assert refusal.value.response.json()["reasons"] == ["no_announcement"]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (lambda c: c.calls.get_recording("c-1"), "This call has no recording"),
+        (
+            lambda c: c.calls.get_announcement("p-1"),
+            "This profile has no announcement",
+        ),
+    ],
+    ids=["get_recording", "get_announcement"],
+)
+def test_an_error_of_an_audio_route_raises_with_its_json(call, message: str, kind: str):
+    missing = httpx.Response(
+        404, json={"statusCode": 404, "message": message, "error": "Not Found"}
+    )
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        run(kind, call, [missing])
+    assert error.value.response.status_code == 404
+    assert error.value.response.json()["message"] == message
+
+
+# ---------------- what an announcement upload sends ----------------
+
+
+def named(name: object) -> io.BytesIO:
+    """A file object with a ``name``, as ``open()`` returns one."""
+    file = io.BytesIO(b"ID3\x04")
+    file.name = name
+    return file
+
+
+GREETING = "/srv/audio/greeting.mp3"
+
+# (the file, the options, the filename it goes out under); its bytes are ID3\x04.
+UPLOADS = [
+    pytest.param(lambda: b"ID3\x04", {}, "announcement", id="bytes"),
+    pytest.param(lambda: bytearray(b"ID3\x04"), {}, "announcement", id="bytearray"),
+    pytest.param(
+        lambda: memoryview(b"<ID3\x04>")[1:5],
+        {},
+        "announcement",
+        id="only a memoryview's bytes",
+    ),
+    pytest.param(lambda: io.BytesIO(b"ID3\x04"), {}, "announcement", id="file object"),
+    pytest.param(lambda: named(GREETING), {}, "greeting.mp3", id="its own base name"),
+    pytest.param(
+        lambda: named(GREETING),
+        {"filename": "notice.mp3"},
+        "notice.mp3",
+        id="the name given wins",
+    ),
+    pytest.param(
+        lambda: named(GREETING),
+        {"filename": ""},
+        "greeting.mp3",
+        id="an empty name given counts as none",
+    ),
+    pytest.param(lambda: named(""), {}, "announcement", id="an empty own name"),
+    pytest.param(lambda: named(3), {}, "announcement", id="a descriptor for a name"),
+]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(("file", "options", "sent_as"), UPLOADS)
+def test_an_announcement_goes_out_as_exactly_its_bytes(
+    file: Callable[[], Any], options: dict[str, Any], sent_as: str, kind: str
+):
+    _, requests = run(
+        kind,
+        lambda c: c.calls.upload_announcement("p-1", file(), **options),
+        [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+    )
+    assert [sent_files(request) for request in requests] == [
+        {"file": (sent_as, b"ID3\x04")}
+    ]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_an_uploaded_file_object_is_left_open_to_send_again(kind: str):
+    file = named(GREETING)
+    # The second time, a retry say, it is read again from its start.
+    for _ in range(2):
+        _, requests = run(
+            kind,
+            lambda c: c.calls.upload_announcement("p-1", file),
+            [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+        )
+        assert not file.closed
+        assert sent_files(requests[0]) == {"file": ("greeting.mp3", b"ID3\x04")}
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize("path", [GREETING, Path(GREETING)], ids=["str", "Path"])
+def test_an_announcement_given_as_a_path_raises_before_any_request(
+    path: object, kind: str
+):
+    # A str would go out as the file's content: the path's own text.
+    with pytest.raises(TypeError, match=r"open\(path, \"rb\"\)"):
+        run(kind, lambda c: c.calls.upload_announcement("p-1", path), [])

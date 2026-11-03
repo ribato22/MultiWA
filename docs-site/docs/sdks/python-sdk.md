@@ -210,6 +210,60 @@ from multiwa import verify_webhook_signature
 ok = verify_webhook_signature(raw_body, headers["X-MultiWA-Signature"], webhook.secret)
 ```
 
+### Calls
+
+> `client.calls` is in SDK 1.4.0 and later.
+
+Incoming WhatsApp calls: the follow-up queue, the readiness of answering them in the dashboard, the recordings and the announcement ([Calls answered in the dashboard](<../features/calls.md>)).
+
+```python
+# A page of a profile's calls, newest first; pass next_cursor back for the next page
+page = client.calls.list(profile_id, outcome="answered", limit=50)
+for call in page.calls:
+    print(call.from_jid, call.answered_by and call.answered_by.name, call.talk_seconds)
+if page.next_cursor:
+    page = client.calls.list(profile_id, outcome="answered", cursor=page.next_cursor)
+
+client.calls.open_count()                        # the number of open follow-ups in the organization
+call = client.calls.get(call_id)                 # call.recording: None, or its facts
+client.calls.update(call_id, follow_up="done")   # or assigned_user_id="..."
+client.calls.update(call_id, unassign=True)      # removes the assignee
+client.calls.reject(call_id)                     # a call that still rings
+client.calls.reply(call_id, "We will call you back")  # no text: the profile's default reply
+client.calls.send_call_link(call_id, "voice", text="Tap to call us")
+
+# Owners and admins
+status = client.calls.media_status()             # the server, its recordings storage, each profile
+with open("notice.mp3", "rb") as f:              # recording needs the announcement first
+    client.calls.upload_announcement(profile_id, f)  # also bytes; a file object keeps its own name
+client.calls.update_settings(profile_id, answer_in_dashboard=True, recording=True, retention_days=30)
+notice = client.calls.get_announcement(profile_id)  # AudioFile: content, content_type
+
+audio = client.calls.get_recording(call_id, download=True)  # audio/webm
+with open(f"call-{call_id}.webm", "wb") as f:
+    f.write(audio.content)
+client.calls.delete_recording(call_id)
+
+client.calls.update_settings(profile_id, recording=False)
+client.calls.delete_announcement(profile_id)     # refused with 409 while recording is on
+```
+
+Everything above `# Owners and admins` is open to every user of the organization; the rest is for owners and admins. An API key acts with its user's role, and a key with a scope list also needs `messages:write` for `reply` and `send_call_link`, `recordings:read` to fetch a recording, `recordings:delete` to delete one, and `profiles:write` for the settings and the announcement, with `recordings:delete` too for `retention_days` ([API keys](<../features/calls.md#api-keys>)). The client's `timeout` is httpx's: it bounds each connect, read and write, not the whole download of a recording.
+
+A setting that cannot be turned on is refused with 409, and the response says why:
+
+```python
+import httpx
+
+try:
+    client.calls.update_settings(profile_id, recording=True)
+except httpx.HTTPStatusError as e:
+    if e.response.status_code == 409:
+        print(e.response.json()["reasons"])  # e.g. ["no_announcement"]
+```
+
+The SDK has no realtime events for calls: answering is for people signed in to the dashboard, and an API key never gets the agents' events. Follow calls with the `call.*` [webhooks](<../api/webhook-events.md#call-events>), or the [WebSocket](<../api/websocket-api.md#83-events>) `call:update` event.
+
 ### Other endpoints
 
 ```python

@@ -1,7 +1,7 @@
 # MultiWA Testing Guide
 
 Testing checklist and status for all features.
-**Last Updated**: Feb 14, 2026
+**Last Updated**: Nov 3, 2026
 
 ---
 
@@ -205,6 +205,24 @@ Testing checklist and status for all features.
 |------|--------|-------|
 | View audit logs | ✅ Pass | |
 | Filter by action | ✅ Pass | |
+
+---
+
+## 17. Calls answered in the dashboard
+
+Live checks before agents rely on it: a test number on a profile with **Answer calls in the dashboard** on, a second phone as the caller, and the admin on HTTPS ([setup](./23-calls.md)). For the recording checks, **Record calls** is on, with an announcement.
+
+| Test | Status | Notes |
+|------|--------|-------|
+| Answer | ⚠️ Untested | Call the profile: every available agent's banner rings. **Answer** connects within a few seconds, both sides hear each other, and the other agents' banners say "Answered by …". The Calls page then lists the call as answered, with the agent and the talk time |
+| Hang up, both ways | ⚠️ Untested | **Hang up** ends the call for the caller. The caller hanging up ends it in the dashboard: "The caller hung up" |
+| Reload during a call | ⚠️ Untested | Reload the agent's tab: the bar shows Connecting…, then the audio comes back, within 15 seconds |
+| Take the call here | ⚠️ Untested | A second tab shows "On a call in another tab". **Take the call here** moves the audio to it, and the first tab lets go |
+| Recording with the announcement | ⚠️ Untested | The caller hears the announcement, then the agent; the bar shows **Recording** and counts the notice down, then starts the timer. After the call, the Calls page (Answered tab) has the recording: the caller on the left, the announcement then the agent on the right |
+| Retention | ⚠️ Untested | Set **Keep recordings for** to 1 day: after the next nightly cleanup (02:30 server time), a recording older than a day reads "Recording deleted after its retention period" |
+| Delete a recording | ⚠️ Untested | **Delete** asks first. The row then reads "Recording deleted by an admin", and the audit log has `call.recording.delete` |
+| A second call during a call | ⚠️ Untested | Call from a third phone during a call: it reaches the dashboard only once the first call ends. Note what the second caller heard |
+| Agent lost | ⚠️ Untested | Close the agent's browser during a call: the call ends 15 seconds later, and `GET /calls/:id` has `endReason: "agent_lost"` |
 
 ---
 

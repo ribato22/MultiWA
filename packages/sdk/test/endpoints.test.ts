@@ -2,8 +2,9 @@
 // sub-client, checked against the request it actually puts on the wire.
 //
 // Each method's requests are asserted in full: HTTP method, origin and full path
-// (API base included), query, JSON body keys, and a Content-Type only when there
-// is a body (the API rejects an empty application/json body with 400). Every
+// (API base included), query, JSON body keys or multipart fields, and a JSON
+// Content-Type only with a JSON body (the API rejects an empty application/json
+// body with 400; a multipart body carries its own, which fetch sets). Every
 // asserted (method, path) pair must also exist in scripts/api-routes.snapshot.json,
 // the route table generated from the API controllers, so a call that drifts from
 // the API fails here instead of in a user's app.
@@ -12,7 +13,7 @@
 
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MultiWAClient } from '../src';
+import { MultiWAClient, MultiWAError } from '../src';
 
 const ORIGIN = 'https://gw.example.com';
 
@@ -23,8 +24,10 @@ const PHONE = '628123456789';
 const PATH_VALUES = new Set([ID, PROFILE, PHONE]);
 
 type Query = Record<string, string | string[]>;
-/** [method, full path, query, JSON body keys]. No body keys = no body. */
-type Req = [method: string, path: string, query?: Query, bodyKeys?: string[]];
+/** A multipart body's fields: a file as "<file name> <type> <bytes>", a text as it is. */
+type Form = Record<string, string>;
+/** [method, full path, query, JSON body keys, multipart fields]. Neither = no body. */
+type Req = [method: string, path: string, query?: Query, bodyKeys?: string[], form?: Form];
 type Case = [call: (c: MultiWAClient) => Promise<unknown>, ...requests: Req[]];
 
 const snapshot: { routes: { method: string; path: string }[] } = JSON.parse(
@@ -238,16 +241,63 @@ const CASES: Record<string, Case> = {
     (c) => c.automations.reorder(PROFILE, [ID]),
     ['POST', '/api/v1/automation/reorder', {}, ['profileId', 'order']],
   ],
+
+  'calls.list': [
+    (c) =>
+      c.calls.list(PROFILE, { outcome: 'answered', followUp: 'done', from: PHONE, since: '2026-11-01T00:00:00Z', limit: 20, cursor: 'c-9' }),
+    [
+      'GET',
+      '/api/v1/calls',
+      { profileId: PROFILE, outcome: 'answered', followUp: 'done', from: PHONE, since: '2026-11-01T00:00:00Z', limit: '20', cursor: 'c-9' },
+    ],
+  ],
+  'calls.openCount': [(c) => c.calls.openCount(), ['GET', '/api/v1/calls/open-count']],
+  'calls.get': [(c) => c.calls.get(ID), ['GET', '/api/v1/calls/ID']],
+  'calls.update': [
+    (c) => c.calls.update(ID, { followUp: 'in_progress', assignedUserId: 'u-1' }),
+    ['PATCH', '/api/v1/calls/ID', {}, ['followUp', 'assignedUserId']],
+  ],
+  'calls.reject': [(c) => c.calls.reject(ID), ['POST', '/api/v1/calls/ID/reject']],
+  'calls.reply': [(c) => c.calls.reply(ID, 'We will call you back'), ['POST', '/api/v1/calls/ID/reply', {}, ['text']]],
+  'calls.sendCallLink': [
+    (c) => c.calls.sendCallLink(ID, 'voice', 'Tap to call us'),
+    ['POST', '/api/v1/calls/ID/call-link', {}, ['type', 'text']],
+  ],
+  'calls.mediaStatus': [(c) => c.calls.mediaStatus(), ['GET', '/api/v1/calls/media/status']],
+  'calls.getRecording': [
+    (c) => c.calls.getRecording(ID, { download: true }),
+    ['GET', '/api/v1/calls/ID/recording', { download: '1' }],
+  ],
+  'calls.deleteRecording': [(c) => c.calls.deleteRecording(ID), ['DELETE', '/api/v1/calls/ID/recording']],
+  'calls.updateSettings': [
+    (c) => c.calls.updateSettings(PROFILE, { answerInDashboard: true, recording: true, retentionDays: 30 }),
+    ['PUT', '/api/v1/profiles/PROFILE/calls-settings', {}, ['answerInDashboard', 'recording', 'retentionDays']],
+  ],
+  'calls.uploadAnnouncement': [
+    (c) => c.calls.uploadAnnouncement(PROFILE, new Blob([new Uint8Array(3)], { type: 'audio/mpeg' }), 'notice.mp3'),
+    ['POST', '/api/v1/profiles/PROFILE/calls-announcement', {}, undefined, { file: 'notice.mp3 audio/mpeg 3' }],
+  ],
+  'calls.getAnnouncement': [
+    (c) => c.calls.getAnnouncement(PROFILE),
+    ['GET', '/api/v1/profiles/PROFILE/calls-announcement'],
+  ],
+  'calls.deleteAnnouncement': [
+    (c) => c.calls.deleteAnnouncement(PROFILE),
+    ['DELETE', '/api/v1/profiles/PROFILE/calls-announcement'],
+  ],
 };
 
 // Methods that must not send a request at all.
 const NO_REQUEST = ['webhooks.getLogs'];
 
-type Sent = { method: string; origin: string; path: string; query: Query; bodyKeys?: string[]; contentType?: string };
+type Sent = { method: string; origin: string; path: string; query: Query; bodyKeys?: string[]; contentType?: string; form?: Form };
 let sent: Sent[];
+/** The response of the next requests; by default each request is echoed as JSON. */
+let reply: ((init: RequestInit) => Response) | undefined;
 
 beforeEach(() => {
   sent = [];
+  reply = undefined;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: string, init: RequestInit) => {
@@ -257,16 +307,23 @@ beforeEach(() => {
         const values = url.searchParams.getAll(key);
         query[key] = values.length > 1 ? values : values[0];
       }
+      const form = init.body instanceof FormData ? init.body : undefined;
       sent.push({
         method: String(init.method),
         origin: url.origin,
         path: url.pathname,
         query,
-        bodyKeys: init.body === undefined ? undefined : Object.keys(JSON.parse(String(init.body))).sort(),
+        bodyKeys:
+          init.body === undefined ? undefined : form ? [...new Set(form.keys())].sort() : Object.keys(JSON.parse(String(init.body))).sort(),
         contentType: (init.headers as Record<string, string>)['Content-Type'],
+        form:
+          form &&
+          Object.fromEntries(
+            [...form].map(([key, value]) => [key, typeof value === 'string' ? value : `${value.name} ${value.type} ${value.size}`]),
+          ),
       });
       // Echo the request, so a method's return value shows which response it used.
-      return new Response(JSON.stringify({ method: init.method, path: url.pathname }));
+      return reply?.(init) ?? new Response(JSON.stringify({ method: init.method, path: url.pathname }));
     }),
   );
 });
@@ -282,13 +339,14 @@ describe('SDK endpoints', () => {
     await call(client);
 
     expect(sent).toEqual(
-      expected.map(([method, path, query = {}, bodyKeys]) => ({
+      expected.map(([method, path, query = {}, bodyKeys, form]) => ({
         method,
         origin: ORIGIN,
         path,
         query,
-        bodyKeys: bodyKeys && [...bodyKeys].sort(),
+        bodyKeys: form ? Object.keys(form).sort() : bodyKeys && [...bodyKeys].sort(),
         contentType: bodyKeys ? 'application/json' : undefined,
+        form,
       })),
     );
     for (const [method, path] of expected) {
@@ -307,6 +365,92 @@ describe('SDK endpoints', () => {
   it('webhooks.getLogs rejects without a request: the API exposes no webhook delivery log', async () => {
     await expect(client.webhooks.getLogs(ID)).rejects.toThrow(/exposes no webhook delivery log/);
     expect(sent).toEqual([]);
+  });
+
+  it('calls.update sends a null assignee, which unassigns; calls.reply without a text sends none (the profile default)', async () => {
+    await client.calls.update(ID, { assignedUserId: null });
+    await client.calls.reply(ID);
+    expect(vi.mocked(fetch).mock.calls.map(([, init]) => init?.body)).toEqual(['{"assignedUserId":null}', '{}']);
+  });
+
+  it('calls.list sends a Date since as ISO 8601 in UTC, and a string one as it is', async () => {
+    await client.calls.list(PROFILE, { since: new Date('2026-11-01T07:00:00+07:00') });
+    await client.calls.list(PROFILE, { since: '2026-11-01T07:00:00+07:00' });
+    expect(sent.map((s) => s.query)).toEqual([
+      { profileId: PROFILE, since: '2026-11-01T00:00:00.000Z' },
+      { profileId: PROFILE, since: '2026-11-01T07:00:00+07:00' },
+    ]);
+  });
+
+  it('a recording and an announcement resolve to their bytes and Content-Type', async () => {
+    reply = () => new Response(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]), { headers: { 'content-type': 'audio/webm' } });
+    const recording = await client.calls.getRecording(ID);
+    expect(recording.contentType).toBe('audio/webm');
+    expect([...recording.data]).toEqual([0x1a, 0x45, 0xdf, 0xa3]);
+    expect(sent[0].query).toEqual({}); // no download: the read is audited as a play
+    reply = () => new Response(new Uint8Array([0x49, 0x44, 0x33]), { headers: { 'content-type': 'audio/mpeg' } });
+    expect(await client.calls.getAnnouncement(PROFILE)).toEqual({ data: new Uint8Array([0x49, 0x44, 0x33]), contentType: 'audio/mpeg' });
+  });
+
+  it('bytes answered without a Content-Type are application/octet-stream', async () => {
+    reply = () => new Response(new Uint8Array([0x49, 0x44, 0x33])); // a byte body gets no Content-Type of its own
+    expect(await client.calls.getAnnouncement(PROFILE)).toEqual({ data: new Uint8Array([0x49, 0x44, 0x33]), contentType: 'application/octet-stream' });
+  });
+
+  // The body stalls after a 200 until the request's signal aborts it, as fetch's does. The test's own 1 s limit is the
+  // guard: a body read the timeout does not cover would hang there.
+  it.each([
+    ['bytes', (c: MultiWAClient) => c.calls.getRecording(ID)],
+    ['JSON', (c: MultiWAClient) => c.calls.get(ID)],
+  ])('the timeout covers reading the body (%s): one that stalls after the headers rejects as a timeout', async (_kind, call) => {
+    reply = ({ signal }) =>
+      new Response(new ReadableStream({ start: (body) => signal!.addEventListener('abort', () => body.error(signal!.reason)) }));
+    const quick = new MultiWAClient({ apiKey: 'test-key', baseUrl: `${ORIGIN}/api/v1`, timeout: 50 });
+    await expect(call(quick)).rejects.toMatchObject({ statusCode: 408, message: 'Request timeout' });
+  }, 1000);
+
+  it('an announcement given as bytes goes as a file of exactly those bytes', async () => {
+    // A view into a larger buffer, as a Buffer from Node's pool is: only the view's own bytes go, not the buffer's.
+    await client.calls.uploadAnnouncement(PROFILE, new Uint8Array([9, 9, 1, 2, 3, 4, 9, 9]).subarray(2, 6));
+    expect(sent[0].form).toEqual({ file: 'announcement  4' }); // a file without a type
+    const file = (vi.mocked(fetch).mock.calls[0][1]?.body as FormData).get('file') as Blob;
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a File goes under its own name unless another is given, and one without a name as announcement', async () => {
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], 'greeting.mp3', { type: 'audio/mpeg' }));
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], 'greeting.mp3', { type: 'audio/mpeg' }), 'notice.mp3');
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], ''));
+    expect(sent.map((s) => s.form)).toEqual([
+      { file: 'greeting.mp3 audio/mpeg 3' },
+      { file: 'notice.mp3 audio/mpeg 3' },
+      { file: 'announcement  3' },
+    ]);
+  });
+
+  it('an empty filename counts as none: a File goes under its own name, bytes as announcement', async () => {
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], 'greeting.mp3', { type: 'audio/mpeg' }), '');
+    await client.calls.uploadAnnouncement(PROFILE, new Uint8Array(3), '');
+    expect(sent.map((s) => s.form)).toEqual([{ file: 'greeting.mp3 audio/mpeg 3' }, { file: 'announcement  3' }]);
+  });
+
+  it('a refusal rejects with a MultiWAError carrying the reasons', async () => {
+    reply = () =>
+      new Response(JSON.stringify({ message: 'Recording calls is not available for this profile', reasons: ['no_announcement'] }), {
+        status: 409,
+      });
+    const error = await client.calls.updateSettings(PROFILE, { recording: true }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MultiWAError);
+    expect(error).toMatchObject({
+      statusCode: 409,
+      message: 'Recording calls is not available for this profile',
+      details: { reasons: ['no_announcement'] },
+    });
+  });
+
+  it('a recording that is not there rejects like any other route', async () => {
+    reply = () => new Response(JSON.stringify({ statusCode: 404, message: 'This call has no recording', error: 'Not Found' }), { status: 404 });
+    await expect(client.calls.getRecording(ID)).rejects.toMatchObject({ statusCode: 404, message: 'This call has no recording' });
   });
 
   it('covers every public method of every client', () => {

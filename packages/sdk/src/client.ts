@@ -8,6 +8,11 @@ import { TemplateClient } from './clients/templates';
 import { BroadcastClient } from './clients/broadcast';
 import { WebhookClient } from './clients/webhooks';
 import { AutomationClient } from './clients/automation';
+import { CallClient } from './clients/calls';
+import type { BinaryResponse } from './types';
+
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+type RequestOptions = { body?: any; query?: Record<string, any> };
 
 export interface MultiWAClientOptions {
   /**
@@ -20,7 +25,10 @@ export interface MultiWAClientOptions {
   baseUrl?: string;
   /** API key for authentication */
   apiKey: string;
-  /** Request timeout in milliseconds (default: 30000) */
+  /**
+   * Request timeout in milliseconds (default: 30000). It covers the whole request, reading the response body included:
+   * a large download, such as a long call recording, may need a larger one.
+   */
   timeout?: number;
   /** Custom headers to include in all requests */
   headers?: Record<string, string>;
@@ -68,6 +76,7 @@ export class MultiWAClient {
   public broadcasts: BroadcastClient;
   public webhooks: WebhookClient;
   public automations: AutomationClient;
+  public calls: CallClient;
 
   constructor(options: MultiWAClientOptions) {
     this.options = {
@@ -85,17 +94,18 @@ export class MultiWAClient {
     this.broadcasts = new BroadcastClient(this);
     this.webhooks = new WebhookClient(this);
     this.automations = new AutomationClient(this);
+    this.calls = new CallClient(this);
   }
 
-  // HTTP request wrapper
+  /** HTTP request wrapper, resolving to the bytes the API answered with and their Content-Type. */
+  request(method: HttpMethod, path: string, options: RequestOptions & { binary: true }): Promise<BinaryResponse>;
+  /** HTTP request wrapper, resolving to the parsed JSON. */
+  request<T>(method: HttpMethod, path: string, options?: RequestOptions & { binary?: false }): Promise<T>;
   async request<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: HttpMethod,
     path: string,
-    options?: {
-      body?: any;
-      query?: Record<string, any>;
-    }
-  ): Promise<T> {
+    options?: RequestOptions & { binary?: boolean }
+  ): Promise<T | BinaryResponse> {
     // Use joinApiUrl so the base path (e.g. /api/v1) is preserved even when
     // the endpoint path starts with a leading slash.
     const url = new URL(joinApiUrl(this.options.baseUrl, path));
@@ -111,7 +121,9 @@ export class MultiWAClient {
       });
     }
 
-    const body = options?.body ? JSON.stringify(options.body) : undefined;
+    // A FormData body (a file upload) is sent as it is: fetch sets its multipart Content-Type, with the boundary.
+    const form = options?.body instanceof FormData;
+    const body = form ? options.body : options?.body ? JSON.stringify(options.body) : undefined;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.options.timeout);
@@ -123,15 +135,13 @@ export class MultiWAClient {
           // Only a request with a body is labelled JSON: the API (Fastify) answers
           // 400 FST_ERR_CTP_EMPTY_JSON_BODY to an empty application/json body,
           // which failed every bodyless POST, PUT and DELETE.
-          ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...(body && !form ? { 'Content-Type': 'application/json' } : {}),
           'X-API-Key': this.options.apiKey,
           ...this.options.headers,
         },
         body,
         signal: controller.signal,
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
@@ -142,13 +152,20 @@ export class MultiWAClient {
         );
       }
 
-      return response.json();
+      if (options?.binary) {
+        const data = new Uint8Array(await response.arrayBuffer());
+        return { data, contentType: response.headers.get('content-type') ?? 'application/octet-stream' };
+      }
+      // Awaited, so the timeout still runs while the body is read and its abort is caught below.
+      return await response.json();
     } catch (error: any) {
-      clearTimeout(timeoutId);
+      // The timeout's abort rejects fetch itself, or the read of a body that stalled after the headers.
       if (error.name === 'AbortError') {
         throw new MultiWAError('Request timeout', 408);
       }
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -163,6 +180,10 @@ export class MultiWAClient {
 
   put<T>(path: string, body?: any, query?: Record<string, any>): Promise<T> {
     return this.request('PUT', path, { body, query });
+  }
+
+  patch<T>(path: string, body?: any, query?: Record<string, any>): Promise<T> {
+    return this.request('PATCH', path, { body, query });
   }
 
   delete<T>(path: string, query?: Record<string, any>): Promise<T> {

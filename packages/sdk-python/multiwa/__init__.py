@@ -6,7 +6,12 @@ Official Python SDK for MultiWA - WhatsApp Business API Gateway.
 
 from .client import AsyncMultiWA, MultiWA
 from .types import (
+    AudioFile,
     Broadcast,
+    Call,
+    CallPage,
+    CallsMediaStatus,
+    CallsSettings,
     Contact,
     Message,
     MessageResult,
@@ -16,10 +21,15 @@ from .types import (
 )
 from .webhooks import verify_webhook_signature
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __all__ = [
     "AsyncMultiWA",
+    "AudioFile",
     "Broadcast",
+    "Call",
+    "CallPage",
+    "CallsMediaStatus",
+    "CallsSettings",
     "Contact",
     "Message",
     "MessageResult",

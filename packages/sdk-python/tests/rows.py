@@ -122,3 +122,79 @@ WEBHOOK_LIST_ROW: dict[str, Any] = {
 }
 
 OK: dict[str, Any] = {"success": True}
+
+RECORDING_ROW: dict[str, Any] = {
+    "id": "rec-1",
+    "durationSec": 190,
+    "bytes": 95000,
+    "partial": False,
+    "announcementPlayed": True,
+    "createdAt": AT,
+    "deletedAt": None,
+    "deleteReason": None,
+}
+
+# GET /calls/:id: a call answered in the dashboard, with its relations and recording.
+CALL_ROW: dict[str, Any] = {
+    "id": "c-1",
+    "profileId": "p-1",
+    "waCallId": "W1",
+    "fromJid": "628111@s.whatsapp.net",
+    "isVideo": False,
+    "isGroup": False,
+    "direction": "incoming",
+    "outcome": "answered",
+    "rejectedBy": None,
+    "startedAt": AT,
+    "endedAt": AT,
+    "followUp": "done",
+    "assignedUserId": None,
+    "answeredByUserId": "u-1",
+    "answeredAt": AT,
+    "endedBy": "caller",
+    "endReason": "caller_hangup",
+    "talkSeconds": 192,
+    "autoReplySentAt": None,
+    "conversationId": "cv-1",
+    "metadata": {},
+    "createdAt": AT,
+    "updatedAt": AT,
+    "assignedUser": None,
+    "answeredBy": {"id": "u-1", "name": "Jane"},
+    "conversation": {"id": "cv-1", "name": "Ann"},
+    "recording": RECORDING_ROW,
+}
+
+ANNOUNCEMENT: dict[str, Any] = {"mimeType": "audio/mpeg", "durationSec": 6.2}
+
+CALLS_SETTINGS: dict[str, Any] = {
+    "profileId": "p-1",
+    "answerInDashboard": True,
+    "recording": True,
+    "retentionDays": 30,
+    "announcement": ANNOUNCEMENT,
+}
+
+MEDIA_STATUS: dict[str, Any] = {
+    "server": {
+        "enabled": True,
+        "worker": "up",
+        "port": 40000,
+        "engineHost": "api",
+        "activeSessions": 0,
+        "recordings": {
+            "storage": "local",
+            "configured": True,
+            "problem": None,
+            "lastCheck": {"at": AT, "ok": True},
+        },
+    },
+    "profiles": [
+        {
+            **CALLS_SETTINGS,
+            "name": "Main",
+            "ready": False,
+            "reasons": ["auto_reject_on"],
+        }
+    ],
+}

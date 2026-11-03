@@ -69,6 +69,20 @@ export function announcementOf(settings: unknown): CallAnnouncement | null {
 
 export const recordingOn = (settings: unknown): boolean => field(settings, 'callsRecording') === true;
 
+/**
+ * A profile's settings as the API answers with them: of the announcement, its type and length only, as the calls
+ * routes show it (null when it is not whole). Where its file is kept stays inside the server, as would any key the
+ * announcement held besides these two.
+ */
+export function publicSettings(settings: unknown): unknown {
+  if (field(settings, 'callsAnnouncement') === undefined) return settings;
+  const announcement = announcementOf(settings);
+  return { ...(settings as ProfileSettings), callsAnnouncement: announcement && { mimeType: announcement.mimeType, durationSec: announcement.durationSec } };
+}
+
+/** A profile row as the API answers with it: its settings through publicSettings. */
+export const publicProfile = <T extends { settings?: unknown }>(profile: T): T => ({ ...profile, settings: publicSettings(profile.settings) });
+
 /** Days a recording of the profile is kept. */
 export function retentionDaysOf(settings: unknown): number {
   const days = field(settings, 'callsRecordingRetentionDays');

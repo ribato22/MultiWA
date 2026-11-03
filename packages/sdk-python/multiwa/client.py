@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from .broadcasts import AsyncBroadcastsClient, BroadcastsClient
+from .calls import AsyncCallsClient, CallsClient
 from .contacts import AsyncContactsClient, ContactsClient
 from .messages import AsyncMessagesClient, MessagesClient
 from .profiles import AsyncProfilesClient, ProfilesClient
@@ -102,6 +103,7 @@ class MultiWA:
         self.broadcasts = BroadcastsClient(self._http)
         self.profiles = ProfilesClient(self._http)
         self.webhooks = WebhooksClient(self._http)
+        self.calls = CallsClient(self._http)
 
     def close(self) -> None:
         """Close the HTTP client"""
@@ -156,6 +158,7 @@ class AsyncMultiWA:
         self.broadcasts = AsyncBroadcastsClient(self._http)
         self.profiles = AsyncProfilesClient(self._http)
         self.webhooks = AsyncWebhooksClient(self._http)
+        self.calls = AsyncCallsClient(self._http)
 
     async def close(self) -> None:
         """Close the HTTP client"""

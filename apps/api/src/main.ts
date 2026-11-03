@@ -117,6 +117,7 @@ async function bootstrap() {
       .addTag('Templates', 'Reusable message templates')
       .addTag('Broadcast', 'Bulk/broadcast campaigns')
       .addTag('Automation', 'No-code automation flows')
+      .addTag('Calls', 'Incoming WhatsApp calls: the follow-up queue, answering in the dashboard, recordings and their announcement')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);

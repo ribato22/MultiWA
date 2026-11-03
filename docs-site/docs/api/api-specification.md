@@ -5,7 +5,7 @@ title: "API Specification"
 
 # 07 - API Specification
 
-> This document is source-verified against the controllers in `apps/api/src/**/*.controller.ts` as of MultiWA `1.0.0` (2026-05-24). For interactive exploration, use Swagger UI at `<API base host>:<API port>/api/docs`.
+> The tables below follow the controllers in `apps/api/src/**/*.controller.ts`: `pnpm check:api-contract` fails when a route is missing from them. For interactive exploration, use Swagger UI at `<API base host>:<API port>/api/docs`.
 
 ## 7.1 Overview
 
@@ -46,25 +46,24 @@ The Swagger UI registers the API key under the `api-key` security scheme; the he
 
 ### Success Response
 
+A response is the JSON of what was asked for, with no envelope around it: an object, or a list.
+
 ```json
-{
-  "success": true,
-  "data": { ... },
-  "meta": { "timestamp": "2026-02-05T10:00:00Z" }
-}
+{ "id": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "displayName": "Sales", "status": "connected" }
 ```
 
 ### Error Response
 
+An error has its HTTP status, and a body with the status, a message and the status's name:
+
 ```json
-{
-  "success": false,
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Phone number is required"
-  }
-}
+{ "statusCode": 403, "message": "Resource not found in your organization", "error": "Forbidden" }
 ```
+
+- On the routes of your workspaces' resources (profiles, contacts, conversations, calls and the like), an id outside your organization, or of nothing at all, is this `403`: the API does not say which.
+- A validation error (`400`) lists every problem in `message`.
+- Some errors carry a code of their own in `error`: a send through a disconnected profile is `409` `PROFILE_DISCONNECTED`, and the send gate's `429` is `{ "error": "DAILY_LIMIT_REACHED", … }` without `statusCode` (see [Messaging](<../features/messaging.md>)).
+- A refusal with reasons is `409` `{ "message": "…", "reasons": ["…"] }`, from the call settings and the announcement (see [Calls](#calls-calls)).
 
 ---
 
@@ -283,6 +282,68 @@ The audio itself:
 - **`DELETE /calls/:id/recording`** deletes the file and answers `{ callId, recordingId, deletedAt }`. It is audited as `call.recording.delete` and sends the `call.recording.deleted` webhook. A recording already deleted is `404`, and one stored in another location `409`; while the recordings storage is not configured, the answer is `503`.
 - **A browser player** cannot point an `<audio>` element at this route: the route needs the `Authorization` (or `x-api-key`) header. Fetch the file with the header, then play what was fetched.
 
+**The answers.** Dates are ISO 8601 strings.
+
+| Route | Answer |
+|-------|--------|
+| `GET /calls` | `{ calls, nextCursor }`: a page of calls, newest first. Pass `nextCursor` as `cursor` for the next page; it is `null` on the last one |
+| `GET /calls/open-count` | `{ count }` |
+| `GET /calls/:id`, `PATCH /calls/:id`, `POST /calls/:id/reject` | the call |
+| `POST /calls/:id/reply` | `{ call, message }`: the call, and the message sent (`success`, `messageId`, `conversationId`, `status`, and `waMessageId` once it went out) |
+| `POST /calls/:id/call-link` | `{ call, message, link }` |
+| `GET /calls/media/status` | the readiness (below) |
+| `GET /calls/:id/recording` | the audio (above) |
+| `DELETE /calls/:id/recording` | `{ callId, recordingId, deletedAt }` |
+| `PUT /profiles/:id/calls-settings` | `{ profileId, answerInDashboard, recording, retentionDays, announcement }`, the settings as stored |
+| `POST /profiles/:id/calls-announcement` | `{ profileId, announcement: { mimeType, durationSec } }` |
+| `GET /profiles/:id/calls-announcement` | the audio, with its stored `Content-Type` |
+| `DELETE /profiles/:id/calls-announcement` | `{ profileId, announcement: null }` |
+
+A call:
+
+| Field | Meaning |
+|-------|---------|
+| `id`, `profileId`, `waCallId` | MultiWA's id of the call, its profile, and WhatsApp's id of the call |
+| `fromJid` | The caller: `628111000111@s.whatsapp.net`, or an `@lid` id when WhatsApp hides the number |
+| `isVideo`, `isGroup`, `direction` | `direction` is `incoming` |
+| `outcome` | `ringing`, `answered` (in the dashboard), `missed`, `rejected`, `answered_elsewhere` or `unknown` |
+| `rejectedBy` | `auto`, `agent` or `device`, for a rejected call |
+| `startedAt`, `endedAt` | When it started ringing, and when it stopped; for an answered call, when the conversation ended |
+| `followUp`, `assignedUserId`, `assignedUser` | The follow-up (`open`, `in_progress` or `done`), and who it is assigned to (`{ id, name }`) |
+| `answeredByUserId`, `answeredBy`, `answeredAt` | The agent who answered it in the dashboard (`{ id, name }`), once `outcome` is `answered` |
+| `endedBy`, `endReason`, `talkSeconds` | How an answered call ended: by the `agent`, the `caller` or the `server`; `hangup`, `caller_hangup`, `agent_lost`, `media_failed`, `time_limit` or `server_restart`; and the talk time in seconds (`null` when not known) |
+| `autoReplySentAt` | When the auto-reject reply was sent |
+| `conversationId`, `conversation` | The caller's chat (`{ id, name }`), once there is one |
+| `metadata` | Details, such as the call links sent |
+| `recording` | `null`, or the recording's facts (above) |
+| `createdAt`, `updatedAt` | |
+
+`PATCH /calls/:id` takes `followUp` and `assignedUserId`; `assignedUserId: null` unassigns the call, and an assignee must be an active user of the organization. It, `reject`, `reply` and `call-link` check no role: every user of the organization, viewers too, may use them. The media status, the recordings, the call settings and the announcement are for owners and admins.
+
+`GET /calls/media/status` (owner or admin) answers the media server's readiness, its recordings storage, and each profile of the organization:
+
+```json
+{
+  "server": {
+    "enabled": true,
+    "worker": "up",
+    "port": 40000,
+    "engineHost": "api",
+    "activeSessions": 0,
+    "recordings": { "storage": "local", "configured": true, "problem": null, "lastCheck": { "at": "2026-11-03T02:30:00.000Z", "ok": true } }
+  },
+  "profiles": [
+    { "profileId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "name": "Sales", "answerInDashboard": true, "recording": false, "retentionDays": 90, "announcement": null, "ready": true, "reasons": [] }
+  ]
+}
+```
+
+- `server.enabled` is `true` when `CALLS_MEDIA_ENABLED=true` and the engines run in the API (`ENGINE_HOST` is not `worker`); `worker` is `up` or `down`; `port` is `null` while disabled; `engineHost` must be `api` for answering in the dashboard; `activeSessions` counts the organization's calls connecting or connected in the dashboard.
+- `server.recordings`: `storage` is `local` or `s3`; `configured: false` with `problem` naming the missing or refused setting; `lastCheck` is the last check that the storage refuses reads without credentials (its `reason` when it failed: `storage_not_private`, `storage_check_failed`, or `recordings_storage_unset` from the nightly check while no storage is configured).
+- Each profile has its call settings, `ready`, and the `reasons` it is not ready.
+
+Turning `answerInDashboard` on answers `409` with `reasons` when the profile is not ready: `engine_host_worker`, `media_disabled`, `media_server_down`, `auto_reject_on`, `profile_not_connected`, `engine_not_supported`, and those of its WhatsApp Web page: `not_ready`, `web_calling_disabled`, `voip_stack_unavailable`, `module_missing`, `hooks_missing`, `not_prepared` and `page_error`. [Calls answered in the dashboard](<../features/calls.md#troubleshooting>) says what each one means.
+
 Turning `recording` on answers `409` with `reasons` when it cannot be on:
 
 - `no_announcement`;
@@ -290,7 +351,7 @@ Turning `recording` on answers `409` with `reasons` when it cannot be on:
 - `storage_not_private`: the storage serves its files without credentials, and recording is turned off on every profile;
 - `storage_check_failed`: the check proved nothing; try again.
 
-A `true` sent for a setting that is already on (`recording` or `answerInDashboard`) is left as it is, without a check, so a form may send every field.
+A `true` sent for a setting that is already on (`recording` or `answerInDashboard`) is left as it is, without a check, so a form may send every field. `DELETE /profiles/:id/calls-announcement` answers `409` (`recording_on`) while recording is on.
 
 The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples; half a second more is allowed for encoders' padding) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read or the recordings storage does not answer (as `GET /profiles/:id/calls-announcement` does then). It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
 

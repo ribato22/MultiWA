@@ -7,12 +7,20 @@ namespace MultiWA\Tests;
 use DateTimeImmutable;
 use GuzzleHttp\Psr7\Query;
 use GuzzleHttp\Psr7\Response;
+use GuzzleHttp\Psr7\Utils;
 use MultiWA\Clients\BroadcastsClient;
+use MultiWA\Clients\CallsClient;
 use MultiWA\Clients\ContactsClient;
 use MultiWA\Clients\MessagesClient;
 use MultiWA\Clients\ProfilesClient;
 use MultiWA\Clients\WebhooksClient;
+use MultiWA\Exceptions\ApiException;
+use MultiWA\Models\AudioFile;
 use MultiWA\Models\Broadcast;
+use MultiWA\Models\Call;
+use MultiWA\Models\CallPage;
+use MultiWA\Models\CallRecording;
+use MultiWA\Models\CallsSettings;
 use MultiWA\Models\Contact;
 use MultiWA\Models\MessageResult;
 use MultiWA\Models\Profile;
@@ -20,10 +28,13 @@ use MultiWA\Models\Webhook;
 use MultiWA\MultiWA;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamInterface;
 
 /**
  * Every public client method: the request it sends (method, path, query, JSON
- * body), that the route exists in the API, and how it parses a real response.
+ * body or multipart parts), that the route exists in the API, and how it parses
+ * a real response.
  */
 final class ClientTest extends TestCase
 {
@@ -87,6 +98,59 @@ final class ClientTest extends TestCase
         'updatedAt' => '2026-10-28T02:00:00.000Z',
     ];
 
+    private const RECORDING = [
+        'id' => 'rec-1',
+        'durationSec' => 190,
+        'bytes' => 95000,
+        'partial' => false,
+        'announcementPlayed' => true,
+        'createdAt' => '2026-11-01T03:03:20.000Z',
+        'deletedAt' => null,
+        'deleteReason' => null,
+    ];
+
+    // A call answered in the dashboard, with its relations and its recording.
+    private const CALL = [
+        'id' => 'call-1',
+        'profileId' => 'prof-1',
+        'waCallId' => 'W1',
+        'fromJid' => '6281234567890@s.whatsapp.net',
+        'isVideo' => false,
+        'isGroup' => false,
+        'direction' => 'incoming',
+        'outcome' => 'answered',
+        'rejectedBy' => null,
+        'startedAt' => '2026-11-01T03:00:00.000Z',
+        'endedAt' => '2026-11-01T03:03:18.000Z',
+        'followUp' => 'done',
+        'assignedUserId' => null,
+        'answeredByUserId' => 'user-2',
+        'answeredAt' => '2026-11-01T03:00:06.000Z',
+        'endedBy' => 'caller',
+        'endReason' => 'caller_hangup',
+        'talkSeconds' => 192,
+        'autoReplySentAt' => null,
+        'conversationId' => 'conv-1',
+        'metadata' => [],
+        'createdAt' => '2026-11-01T03:00:00.000Z',
+        'updatedAt' => '2026-11-01T03:03:20.000Z',
+        'assignedUser' => null,
+        'answeredBy' => ['id' => 'user-2', 'name' => 'Jane'],
+        'conversation' => ['id' => 'conv-1', 'name' => 'Budi'],
+        'recording' => self::RECORDING,
+    ];
+
+    // An mp3 file's first bytes (its ID3 tag): the audio the upload tests send.
+    private const AUDIO = "ID3\x04";
+
+    private const CALLS_SETTINGS = [
+        'profileId' => 'prof-1',
+        'answerInDashboard' => true,
+        'recording' => true,
+        'retentionDays' => 30,
+        'announcement' => ['mimeType' => 'audio/mpeg', 'durationSec' => 6.2],
+    ];
+
     private const WEBHOOK = [
         'id' => 'hook-1',
         'profileId' => 'prof-1',
@@ -105,11 +169,12 @@ final class ClientTest extends TestCase
      * @param array<mixed>|null                  $body
      * @param array<mixed>                       $response
      * @param \Closure(mixed): void               $check
+     * @param array<string, array{string, string}>|null $multipart name => [filename, contents]
      */
     #[DataProvider('calls')]
-    public function testCall(\Closure $call, string $method, string $path, array $query, ?array $body, array $response, \Closure $check): void
+    public function testCall(\Closure $call, string $method, string $path, array $query, ?array $body, array $response, \Closure $check, ?ResponseInterface $reply, ?array $multipart): void
     {
-        $client = $this->client([new Response($method === 'POST' ? 201 : 200, ['Content-Type' => 'application/json'], json_encode($response, JSON_THROW_ON_ERROR))]);
+        $client = $this->client([$reply ?? new Response($method === 'POST' ? 201 : 200, ['Content-Type' => 'application/json'], json_encode($response, JSON_THROW_ON_ERROR))]);
 
         $result = $call($client);
 
@@ -118,7 +183,13 @@ final class ClientTest extends TestCase
         self::assertSame($path, $request->getUri()->getPath());
         self::assertSame($query, self::query($request));
         self::assertSame('test-key', $request->getHeaderLine('X-API-Key'));
-        if ($body === null) {
+        // A route that answers audio accepts any type; the others answer JSON.
+        self::assertSame($result instanceof AudioFile ? '*/*' : 'application/json', $request->getHeaderLine('Accept'));
+        if ($multipart !== null) {
+            // A file upload is multipart, with the boundary Guzzle chose.
+            self::assertStringStartsWith('multipart/form-data; boundary=', $request->getHeaderLine('Content-Type'));
+            self::assertSame($multipart, self::parts($request));
+        } elseif ($body === null) {
             self::assertSame('', (string) $request->getBody());
             // The API answers 400 to a bodiless POST that declares a JSON body.
             self::assertFalse($request->hasHeader('Content-Type'));
@@ -131,7 +202,7 @@ final class ClientTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{\Closure, string, string, array<string, string|list<string>>, array<mixed>|null, array<mixed>, \Closure}>
+     * @return iterable<string, array{\Closure, string, string, array<string, string|list<string>>, array<mixed>|null, array<mixed>, \Closure, ResponseInterface|null, array<string, array{string, string}>|null}>
      */
     public static function calls(): iterable
     {
@@ -473,6 +544,128 @@ final class ClientTest extends TestCase
             'POST', '/api/v1/webhooks/hook-1/test', ['success' => true, 'message' => 'Test webhook delivered successfully'],
             static fn (mixed $r) => self::assertSame(['success' => true, 'message' => 'Test webhook delivered successfully'], $r),
         );
+
+        // Calls
+        $call = static function (mixed $r): void {
+            self::assertInstanceOf(Call::class, $r);
+            self::assertSame('answered', $r->outcome);
+            self::assertSame(['id' => 'user-2', 'name' => 'Jane'], $r->answeredBy);
+            self::assertSame(192, $r->talkSeconds);
+            self::assertSame(190, $r->recording?->durationSec);
+            self::assertEquals(new DateTimeImmutable('2026-11-01T03:00:06Z'), $r->answeredAt);
+        };
+        $audio = static fn (string $bytes, string $type) => new Response(200, ['Content-Type' => $type], $bytes);
+        yield 'calls.list' => self::case(
+            fn (MultiWA $c) => $c->calls()->list('prof-1', outcome: 'answered', followUp: 'done', from: $to, since: new DateTimeImmutable('2026-11-01T00:00:00Z'), limit: 20, cursor: 'call-9'),
+            'GET', '/api/v1/calls', ['calls' => [self::CALL], 'nextCursor' => 'call-1'],
+            static function (mixed $r) use ($call): void {
+                self::assertInstanceOf(CallPage::class, $r);
+                self::assertSame('call-1', $r->nextCursor);
+                $call($r->calls[0]);
+            },
+            query: ['profileId' => 'prof-1', 'outcome' => 'answered', 'followUp' => 'done', 'from' => $to, 'since' => '2026-11-01T00:00:00+00:00', 'limit' => '20', 'cursor' => 'call-9'],
+        );
+        yield 'calls.openCount' => self::case(
+            fn (MultiWA $c) => $c->calls()->openCount(),
+            'GET', '/api/v1/calls/open-count', ['count' => 3],
+            static fn (mixed $r) => self::assertSame(3, $r),
+        );
+        yield 'calls.get' => self::case(
+            fn (MultiWA $c) => $c->calls()->get('call-1'),
+            'GET', '/api/v1/calls/call-1', self::CALL, $call,
+        );
+        yield 'calls.update' => self::case(
+            fn (MultiWA $c) => $c->calls()->update('call-1', followUp: 'in_progress', assignedUserId: 'user-3'),
+            'PATCH', '/api/v1/calls/call-1', self::CALL, $call,
+            body: ['followUp' => 'in_progress', 'assignedUserId' => 'user-3'],
+        );
+        yield 'calls.unassign' => self::case(
+            fn (MultiWA $c) => $c->calls()->unassign('call-1'),
+            'PATCH', '/api/v1/calls/call-1', self::CALL, $call,
+            body: ['assignedUserId' => null],
+        );
+        yield 'calls.reject' => self::case(
+            fn (MultiWA $c) => $c->calls()->reject('call-1'),
+            'POST', '/api/v1/calls/call-1/reject', self::CALL, $call,
+        );
+        yield 'calls.reply' => self::case(
+            fn (MultiWA $c) => $c->calls()->reply('call-1', 'We will call you back'),
+            'POST', '/api/v1/calls/call-1/reply', ['call' => self::CALL, 'message' => self::SENT],
+            static function (mixed $r) use ($call, $sent): void {
+                self::assertIsArray($r);
+                $call($r['call']);
+                $sent($r['message']);
+            },
+            body: ['text' => 'We will call you back'],
+        );
+        yield 'calls.sendCallLink' => self::case(
+            fn (MultiWA $c) => $c->calls()->sendCallLink('call-1', 'voice', 'Tap to call us'),
+            'POST', '/api/v1/calls/call-1/call-link', ['call' => self::CALL, 'message' => self::SENT, 'link' => 'https://call.whatsapp.com/voice/AbCd'],
+            static fn (mixed $r) => self::assertSame('https://call.whatsapp.com/voice/AbCd', is_array($r) ? $r['link'] : null),
+            body: ['type' => 'voice', 'text' => 'Tap to call us'],
+        );
+        yield 'calls.mediaStatus' => self::case(
+            fn (MultiWA $c) => $c->calls()->mediaStatus(),
+            'GET', '/api/v1/calls/media/status',
+            [
+                'server' => ['enabled' => true, 'worker' => 'up', 'port' => 40000, 'engineHost' => 'api', 'activeSessions' => 0,
+                    'recordings' => ['storage' => 'local', 'configured' => true, 'problem' => null, 'lastCheck' => ['at' => '2026-11-01T02:30:00.000Z', 'ok' => true]]],
+                'profiles' => [self::CALLS_SETTINGS + ['name' => 'Sales', 'ready' => false, 'reasons' => ['auto_reject_on']]],
+            ],
+            static fn (mixed $r) => self::assertSame(['auto_reject_on'], is_array($r) ? $r['profiles'][0]['reasons'] : null),
+        );
+        yield 'calls.getRecording' => self::case(
+            fn (MultiWA $c) => $c->calls()->getRecording('call-1', download: true),
+            'GET', '/api/v1/calls/call-1/recording', [],
+            static function (mixed $r): void {
+                self::assertInstanceOf(AudioFile::class, $r);
+                self::assertSame("\x1aE\xdf\xa3", $r->content);
+                self::assertSame('audio/webm', $r->contentType);
+            },
+            query: ['download' => '1'],
+            reply: $audio("\x1aE\xdf\xa3", 'audio/webm'),
+        );
+        yield 'calls.getRecording to play' => self::case(
+            fn (MultiWA $c) => $c->calls()->getRecording('call-1'),
+            'GET', '/api/v1/calls/call-1/recording', [],
+            static fn (mixed $r) => self::assertInstanceOf(AudioFile::class, $r),
+            reply: $audio("\x1aE\xdf\xa3", 'audio/webm'),
+        );
+        yield 'calls.deleteRecording' => self::case(
+            fn (MultiWA $c) => $c->calls()->deleteRecording('call-1'),
+            'DELETE', '/api/v1/calls/call-1/recording', ['callId' => 'call-1', 'recordingId' => 'rec-1', 'deletedAt' => '2026-11-02T08:00:00.000Z'],
+            static fn (mixed $r) => self::assertSame('rec-1', is_array($r) ? $r['recordingId'] : null),
+        );
+        yield 'calls.updateSettings' => self::case(
+            fn (MultiWA $c) => $c->calls()->updateSettings('prof-1', answerInDashboard: true, recording: true, retentionDays: 30),
+            'PUT', '/api/v1/profiles/prof-1/calls-settings', self::CALLS_SETTINGS,
+            static function (mixed $r): void {
+                self::assertInstanceOf(CallsSettings::class, $r);
+                self::assertSame(30, $r->retentionDays);
+                self::assertSame(['mimeType' => 'audio/mpeg', 'durationSec' => 6.2], $r->announcement);
+            },
+            body: ['answerInDashboard' => true, 'recording' => true, 'retentionDays' => 30],
+        );
+        yield 'calls.uploadAnnouncement' => self::case(
+            fn (MultiWA $c) => $c->calls()->uploadAnnouncement('prof-1', "ID3\x04", 'notice.mp3'),
+            'POST', '/api/v1/profiles/prof-1/calls-announcement', ['profileId' => 'prof-1', 'announcement' => ['mimeType' => 'audio/mpeg', 'durationSec' => 6.2]],
+            static fn (mixed $r) => self::assertSame('audio/mpeg', is_array($r) ? $r['announcement']['mimeType'] ?? null : null),
+            multipart: ['file' => ['notice.mp3', "ID3\x04"]],
+        );
+        yield 'calls.getAnnouncement' => self::case(
+            fn (MultiWA $c) => $c->calls()->getAnnouncement('prof-1'),
+            'GET', '/api/v1/profiles/prof-1/calls-announcement', [],
+            static function (mixed $r): void {
+                self::assertInstanceOf(AudioFile::class, $r);
+                self::assertSame('audio/mpeg', $r->contentType);
+            },
+            reply: $audio("ID3\x04", 'audio/mpeg'),
+        );
+        yield 'calls.deleteAnnouncement' => self::case(
+            fn (MultiWA $c) => $c->calls()->deleteAnnouncement('prof-1'),
+            'DELETE', '/api/v1/profiles/prof-1/calls-announcement', ['profileId' => 'prof-1', 'announcement' => null],
+            static fn (mixed $r) => self::assertSame(['profileId' => 'prof-1', 'announcement' => null], $r),
+        );
     }
 
     public function testEveryPublicClientMethodHasACase(): void
@@ -483,6 +676,7 @@ final class ClientTest extends TestCase
             'broadcasts' => BroadcastsClient::class,
             'profiles' => ProfilesClient::class,
             'webhooks' => WebhooksClient::class,
+            'calls' => CallsClient::class,
         ];
         $methods = [];
         foreach ($clients as $name => $class) {
@@ -514,6 +708,35 @@ final class ClientTest extends TestCase
         self::assertRouteExists('POST', '/api/v1/messages/otp');
     }
 
+    public function testRequestAudioReachesAnyRouteAndKeepsTheApiPrefix(): void
+    {
+        $client = $this->client([new Response(200, ['Content-Type' => 'audio/webm'], "\x1aE\xdf\xa3")]);
+
+        $audio = $client->requestAudio('GET', '/calls/call-1/recording', ['query' => ['download' => '1'], 'headers' => ['Accept' => 'audio/webm']]);
+
+        self::assertEquals(new AudioFile("\x1aE\xdf\xa3", 'audio/webm'), $audio);
+        $request = $this->onlyRequest();
+        self::assertSame('https://wa.example.com/api/v1/calls/call-1/recording?download=1', (string) $request->getUri());
+        self::assertSame('audio/webm', $request->getHeaderLine('Accept')); // the Accept given, not */*
+        self::assertRouteExists('GET', '/api/v1/calls/call-1/recording');
+    }
+
+    public function testRequestAudioKeepsAnAcceptGivenInAnyLetterCase(): void
+    {
+        $client = $this->client([new Response(200, ['Content-Type' => 'audio/webm'], "\x1aE\xdf\xa3")]);
+
+        $client->requestAudio('GET', 'calls/call-1/recording', ['headers' => ['accept' => 'audio/webm']]);
+
+        self::assertSame(['audio/webm'], $this->onlyRequest()->getHeader('Accept')); // alone, not with */* beside it
+    }
+
+    public function testAudioWithoutAContentTypeIsOctetStream(): void
+    {
+        $client = $this->client([new Response(200, [], self::AUDIO)]);
+
+        self::assertEquals(new AudioFile(self::AUDIO, 'application/octet-stream'), $client->calls()->getAnnouncement('prof-1'));
+    }
+
     public function testBaseUrlWithATrailingSlash(): void
     {
         $client = $this->client([new Response(200, [], '{"status":"disconnected"}')], self::BASE_URL . '/');
@@ -530,6 +753,162 @@ final class ClientTest extends TestCase
         $client->contacts()->get('a/b?c');
 
         self::assertSame('/api/v1/contacts/a%2Fb%3Fc', $this->onlyRequest()->getUri()->getPath());
+    }
+
+    public function testReplyWithoutATextSendsAnEmptyObject(): void
+    {
+        $client = $this->client([new Response(201, [], json_encode(['call' => self::CALL, 'message' => self::SENT], JSON_THROW_ON_ERROR))]);
+
+        $client->calls()->reply('call-1'); // the profile's default call reply
+
+        self::assertSame('{}', (string) $this->onlyRequest()->getBody());
+    }
+
+    /**
+     * The file uploaded, made from the path of a file notice.mp3 that holds the audio; the filename given (null: none);
+     * the filename it goes out under.
+     *
+     * @return iterable<string, array{\Closure(string): mixed, string|null, string}>
+     */
+    public static function announcements(): iterable
+    {
+        $bytes = static fn (string $path): string => self::AUDIO;
+        $file = static fn (string $path): mixed => fopen($path, 'rb');
+        $psr7 = static fn (string $path): StreamInterface => Utils::streamFor(fopen($path, 'rb'));
+        $memory = static function (string $path): mixed {
+            $stream = fopen('php://memory', 'w+b');
+            self::assertIsResource($stream);
+            fwrite($stream, self::AUDIO);
+            rewind($stream);
+
+            return $stream;
+        };
+
+        yield 'bytes' => [$bytes, null, 'announcement'];
+        yield 'bytes, named' => [$bytes, 'greeting.mp3', 'greeting.mp3'];
+        yield 'bytes, an empty name counts as none' => [$bytes, '', 'announcement'];
+        yield "a file's stream keeps the file's name" => [$file, null, 'notice.mp3'];
+        yield "a file's stream, named: the name given wins" => [$file, 'greeting.mp3', 'greeting.mp3'];
+        yield "a file's stream, an empty name counts as none" => [$file, '', 'notice.mp3'];
+        yield "a PSR-7 stream of a file keeps the file's name" => [$psr7, null, 'notice.mp3'];
+        yield 'a stream of no file' => [$memory, null, 'announcement'];
+    }
+
+    /**
+     * @param \Closure(string): mixed $file
+     */
+    #[DataProvider('announcements')]
+    public function testAnnouncementGoesOutAsExactlyItsBytes(\Closure $file, ?string $filename, string $sentAs): void
+    {
+        $dir = sys_get_temp_dir() . '/multiwa-' . bin2hex(random_bytes(6));
+        mkdir($dir);
+        $path = "{$dir}/notice.mp3";
+        file_put_contents($path, self::AUDIO);
+        $client = $this->client([new Response(201, [], json_encode(['profileId' => 'prof-1', 'announcement' => null], JSON_THROW_ON_ERROR))]);
+
+        try {
+            $filename === null
+                ? $client->calls()->uploadAnnouncement('prof-1', $file($path))
+                : $client->calls()->uploadAnnouncement('prof-1', $file($path), $filename);
+
+            self::assertSame(['file' => [$sentAs, self::AUDIO]], self::parts($this->onlyRequest()));
+        } finally {
+            unlink($path);
+            rmdir($dir);
+        }
+    }
+
+    public function testUploadLeavesTheCallersFileOpen(): void
+    {
+        $file = self::audioFile();
+        $client = $this->client([new Response(201, [], json_encode(['profileId' => 'prof-1', 'announcement' => null], JSON_THROW_ON_ERROR))]);
+
+        $client->calls()->uploadAnnouncement('prof-1', $file);
+        // Nothing holds the request any more, as after a real handler: here the client's mock keeps its last request.
+        unset($client);
+        $this->history = [];
+        gc_collect_cycles();
+
+        // Still an open stream (a closed one is of type Unknown), for the caller to close.
+        self::assertSame('stream', get_resource_type($file));
+        self::assertTrue(fclose($file));
+    }
+
+    public function testRetryWithTheSameFileSendsItWhole(): void
+    {
+        $file = self::audioFile();
+        $client = $this->client([new Response(503, [], json_encode(['statusCode' => 503, 'message' => 'Service Unavailable'], JSON_THROW_ON_ERROR))]);
+        try {
+            $client->calls()->uploadAnnouncement('prof-1', $file, 'notice.mp3');
+            self::fail('No exception was thrown');
+        } catch (ApiException $e) {
+            self::assertSame(503, $e->getStatusCode());
+        }
+        // Nothing holds the first request any more, as after a real handler: here the client's mock keeps its last
+        // request, and the exception's trace the options it was sent with.
+        unset($client, $e);
+        $this->history = [];
+        gc_collect_cycles();
+
+        $client = $this->client([new Response(201, [], json_encode(['profileId' => 'prof-1', 'announcement' => null], JSON_THROW_ON_ERROR))]);
+        $client->calls()->uploadAnnouncement('prof-1', $file, 'notice.mp3');
+
+        self::assertSame(['file' => ['notice.mp3', self::AUDIO]], self::parts($this->onlyRequest()));
+    }
+
+    public function testCallReadsEveryField(): void
+    {
+        // self::CALL with the fields it leaves at their defaults set too: a misspelled key then fails, not reads as absent.
+        $data = [
+            'isVideo' => true,
+            'isGroup' => true,
+            'direction' => 'outgoing',
+            'rejectedBy' => 'device',
+            'assignedUserId' => 'user-3',
+            'autoReplySentAt' => '2026-11-01T03:00:01.000Z',
+            'metadata' => ['callLogMessageId' => 'msg-0'],
+            'assignedUser' => ['id' => 'user-3', 'name' => 'Rina'],
+            'recording' => ['partial' => true, 'deletedAt' => '2026-12-01T00:00:00.000Z', 'deleteReason' => 'retention'] + self::RECORDING,
+        ] + self::CALL;
+
+        self::assertEquals(new Call(
+            id: 'call-1',
+            profileId: 'prof-1',
+            waCallId: 'W1',
+            fromJid: '6281234567890@s.whatsapp.net',
+            isVideo: true,
+            isGroup: true,
+            direction: 'outgoing',
+            outcome: 'answered',
+            rejectedBy: 'device',
+            startedAt: new DateTimeImmutable('2026-11-01T03:00:00Z'),
+            endedAt: new DateTimeImmutable('2026-11-01T03:03:18Z'),
+            followUp: 'done',
+            assignedUserId: 'user-3',
+            answeredByUserId: 'user-2',
+            answeredAt: new DateTimeImmutable('2026-11-01T03:00:06Z'),
+            endedBy: 'caller',
+            endReason: 'caller_hangup',
+            talkSeconds: 192,
+            autoReplySentAt: new DateTimeImmutable('2026-11-01T03:00:01Z'),
+            conversationId: 'conv-1',
+            metadata: ['callLogMessageId' => 'msg-0'],
+            assignedUser: ['id' => 'user-3', 'name' => 'Rina'],
+            answeredBy: ['id' => 'user-2', 'name' => 'Jane'],
+            conversation: ['id' => 'conv-1', 'name' => 'Budi'],
+            recording: new CallRecording(
+                id: 'rec-1',
+                durationSec: 190,
+                bytes: 95000,
+                partial: true,
+                announcementPlayed: true,
+                createdAt: new DateTimeImmutable('2026-11-01T03:03:20Z'),
+                deletedAt: new DateTimeImmutable('2026-12-01T00:00:00Z'),
+                deleteReason: 'retention',
+            ),
+            createdAt: new DateTimeImmutable('2026-11-01T03:00:00Z'),
+            updatedAt: new DateTimeImmutable('2026-11-01T03:03:20Z'),
+        ), Call::fromArray($data));
     }
 
     public function testBroadcastStoredWithATextMessage(): void
@@ -557,14 +936,54 @@ final class ClientTest extends TestCase
      * @param \Closure(mixed): void               $check
      * @param array<string, string|list<string>> $query
      * @param array<mixed>|null                  $body
+     * @param ResponseInterface|null             $reply     the answer, when it is not $response as JSON
+     * @param array<string, array{string, string}>|null $multipart name => [filename, contents] of an upload
      *
-     * @return array{\Closure, string, string, array<string, string|list<string>>, array<mixed>|null, array<mixed>, \Closure}
+     * @return array{\Closure, string, string, array<string, string|list<string>>, array<mixed>|null, array<mixed>, \Closure, ResponseInterface|null, array<string, array{string, string}>|null}
      */
-    private static function case(\Closure $call, string $method, string $path, array $response, \Closure $check, array $query = [], ?array $body = null): array
+    private static function case(\Closure $call, string $method, string $path, array $response, \Closure $check, array $query = [], ?array $body = null, ?ResponseInterface $reply = null, ?array $multipart = null): array
     {
         ksort($query);
 
-        return [$call, $method, $path, $query, $body, $response, $check];
+        return [$call, $method, $path, $query, $body, $response, $check, $reply, $multipart];
+    }
+
+    /**
+     * An open file of the audio, at its start; deleted once closed.
+     *
+     * @return resource
+     */
+    private static function audioFile(): mixed
+    {
+        $file = tmpfile();
+        self::assertIsResource($file);
+        fwrite($file, self::AUDIO);
+        rewind($file);
+
+        return $file;
+    }
+
+    /**
+     * A multipart body's parts: name => [filename, the exact bytes sent].
+     *
+     * @return array<string, array{string|null, string}>
+     */
+    private static function parts(RequestInterface $request): array
+    {
+        $boundary = explode('boundary=', $request->getHeaderLine('Content-Type'), 2)[1] ?? '';
+        $chunks = explode("--{$boundary}", (string) $request->getBody());
+        // Nothing before the first boundary, and nothing after the last.
+        self::assertSame('', array_shift($chunks));
+        self::assertSame("--\r\n", array_pop($chunks));
+        $parts = [];
+        foreach ($chunks as $chunk) {
+            [$head, $content] = explode("\r\n\r\n", $chunk, 2) + ['', ''];
+            self::assertSame(1, preg_match('/^Content-Disposition: form-data; name="([^"]*)"(?:; filename="([^"]*)")?\r?$/m', $head, $disposition));
+            self::assertStringEndsWith("\r\n", $content);
+            $parts[$disposition[1]] = [$disposition[2] ?? null, substr($content, 0, -2)];
+        }
+
+        return $parts;
     }
 
     /**
