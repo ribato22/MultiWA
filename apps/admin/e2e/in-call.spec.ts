@@ -1211,6 +1211,50 @@ for (const [width, height, sidebar] of [[1440, 900, 'open'], [1216, 800, 'collap
   });
 }
 
+// A problem (here, the microphone stopped) on the inline bar takes a line of its own: it shows whole, the controls
+// stay where they were, and the header is back to its height once the problem is over. At 1920 px the bar is narrower
+// than its room: a problem that made it wider would move the controls.
+for (const [width, height, sidebar] of [[1440, 900, 'open'], [1216, 800, 'collapsed'], [1920, 1080, 'open']] as const) {
+  for (const hear of [false, true]) {
+    test(`${width} px wide, the sidebar ${sidebar}${hear ? ', Hear the caller showing' : ''}: a problem shows whole on a line of its own, the controls stay, and the header is back to its height once it is over`, async ({ page, context, backend }) => {
+      await page.setViewportSize({ width, height });
+      await context.addInitScript(pluggable, [['mic-a', 'Desk microphone'], ['mic-b', 'Headset']]);
+      // The browser plays the caller only after a click: the bar offers Hear the caller.
+      if (hear) await context.addInitScript(() => (HTMLMediaElement.prototype.play = () => Promise.reject(new DOMException('play() needs a click first', 'NotAllowedError'))));
+      await open(page);
+      if (sidebar === 'collapsed') {
+        await page.getByRole('button', { name: 'Close menu' }).click();
+        await expect(page.getByRole('main')).toHaveCSS('margin-left', '80px');
+      }
+      const tall = () => page.locator('header').evaluate((el: HTMLElement) => el.offsetHeight);
+      const before = await tall();
+      await answer(page, backend, LONG_NAMES);
+      backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+      const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+      await expect(picker).toHaveText('Desk microphone');
+      const controls = [...(hear ? [['Hear the caller', true]] : []), ['Mute', true], ['Microphone', true], ['Hang up', true]];
+      await expect.poll(() => reachable(page)).toEqual(controls);
+      const hangUpAt = () => bar(page).getByRole('button', { name: 'Hang up' }).evaluate((el) => el.getBoundingClientRect().left);
+      const at = await hangUpAt();
+      await page.evaluate(() => (window as any).__unplug('mic-a'));
+      const problem = bar(page).getByRole('alert');
+      const said = 'The microphone stopped: the call now uses Headset';
+      await expect(problem).toHaveText(said);
+      expect(await whole(problem)).toBe(true);
+      await expect(problem).toHaveAttribute('title', said);
+      expect(await reachable(page)).toEqual(controls);
+      expect(await hangUpAt()).toBe(at);
+      expect(await overlapped(page)).toEqual([]);
+      await page.evaluate(() => (window as any).__plugIn('mic-a'));
+      await picker.click();
+      await page.getByRole('option', { name: 'Desk microphone' }).click();
+      await expect(picker).toHaveText('Desk microphone'); // the list closed: while it is open, the bar is hidden from roles
+      await expect(bar(page).locator('[role="alert"]')).toHaveCount(0);
+      expect(await tall()).toBe(before);
+    });
+  }
+}
+
 // Pages sized to the screen below the header: a call's bar makes the header taller, and they shrink with it.
 const CONV = { id: 'conv-1', profileId: PROFILE.id, jid: '628111000111@s.whatsapp.net', contactId: 'ct-1', name: 'Pak Joko', type: 'user', unreadCount: 0 };
 /** Whether the element shows whole on the screen. */
