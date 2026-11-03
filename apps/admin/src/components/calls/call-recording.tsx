@@ -85,6 +85,9 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
   };
 
   // The whole file comes before it plays (seeking then works in the blob): about 0.5 MB a minute.
+  // ponytail: every recording played keeps its whole file in memory while its row is shown, a paused one too (releasing
+  // it would lose its place): a long session playing many long calls adds up. Upgrade: release a paused file and keep its
+  // time to seek back to, or play from the API's byte ranges.
   const play = async () => {
     if (busy) return;
     setBusy('play');
