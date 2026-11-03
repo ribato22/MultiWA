@@ -955,3 +955,15 @@ for (const [width, height] of [[1280, 800], [390, 844]] as const) {
     await expect.poll(() => Promise.all(composer.map(onScreen))).toEqual([true, true]);
   });
 }
+
+test('1280 px wide, with or without a call: the flow builder’s canvas ends on the screen', async ({ page, context, backend }) => {
+  await context.addInitScript(twoMics);
+  await page.goto('/dashboard/automation/builder');
+  await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+  const canvas = page.locator('.react-flow');
+  await expect(canvas).toBeVisible();
+  const ends = () => canvas.evaluate((el) => el.getBoundingClientRect().bottom <= innerHeight);
+  expect(await ends()).toBe(true);
+  await onAnnouncedCall(page, backend);
+  await expect.poll(ends).toBe(true);
+});
