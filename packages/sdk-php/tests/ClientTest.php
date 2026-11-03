@@ -706,6 +706,19 @@ final class ClientTest extends TestCase
         self::assertRouteExists('POST', '/api/v1/messages/otp');
     }
 
+    public function testRequestAudioReachesAnyRouteAndKeepsTheApiPrefix(): void
+    {
+        $client = $this->client([new Response(200, ['Content-Type' => 'audio/webm'], "\x1aE\xdf\xa3")]);
+
+        $audio = $client->requestAudio('GET', '/calls/call-1/recording', ['query' => ['download' => '1'], 'headers' => ['Accept' => 'audio/webm']]);
+
+        self::assertEquals(new AudioFile("\x1aE\xdf\xa3", 'audio/webm'), $audio);
+        $request = $this->onlyRequest();
+        self::assertSame('https://wa.example.com/api/v1/calls/call-1/recording?download=1', (string) $request->getUri());
+        self::assertSame('audio/webm', $request->getHeaderLine('Accept')); // the Accept given, not */*
+        self::assertRouteExists('GET', '/api/v1/calls/call-1/recording');
+    }
+
     public function testAudioWithoutAContentTypeIsOctetStream(): void
     {
         $client = $this->client([new Response(200, [], self::AUDIO)]);
