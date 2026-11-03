@@ -872,6 +872,14 @@ CASES = [
         lambda r: r.content == b"ID3\x04" and r.content_type == "audio/mpeg",
     ),
     Case(
+        "calls.get_announcement without a Content-Type",
+        lambda c: c.calls.get_announcement("p-1"),
+        [httpx.Response(200, content=b"ID3\x04")],
+        [Sent("GET", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.content == b"ID3\x04"
+        and r.content_type == "application/octet-stream",
+    ),
+    Case(
         "calls.delete_announcement",
         lambda c: c.calls.delete_announcement("p-1"),
         [{"profileId": "p-1", "announcement": None}],
@@ -1085,6 +1093,28 @@ def test_a_refused_call_setting_says_why():
     assert refusal.value.response.json()["reasons"] == ["no_announcement"]
 
 
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (lambda c: c.calls.get_recording("c-1"), "This call has no recording"),
+        (
+            lambda c: c.calls.get_announcement("p-1"),
+            "This profile has no announcement",
+        ),
+    ],
+    ids=["get_recording", "get_announcement"],
+)
+def test_an_error_of_an_audio_route_raises_with_its_json(call, message: str, kind: str):
+    missing = httpx.Response(
+        404, json={"statusCode": 404, "message": message, "error": "Not Found"}
+    )
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        run(kind, call, [missing])
+    assert error.value.response.status_code == 404
+    assert error.value.response.json()["message"] == message
+
+
 # ---------------- what an announcement upload sends ----------------
 
 
@@ -1139,3 +1169,17 @@ def test_an_announcement_goes_out_as_exactly_its_bytes(
     assert [sent_files(request) for request in requests] == [
         {"file": (sent_as, b"ID3\x04")}
     ]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_an_uploaded_file_object_is_left_open_to_send_again(kind: str):
+    file = named(GREETING)
+    # The second time, a retry say, it is read again from its start.
+    for _ in range(2):
+        _, requests = run(
+            kind,
+            lambda c: c.calls.upload_announcement("p-1", file),
+            [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+        )
+        assert not file.closed
+        assert sent_files(requests[0]) == {"file": ("greeting.mp3", b"ID3\x04")}
