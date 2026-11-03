@@ -130,10 +130,11 @@ export function InCallBar() {
               one listed can be chosen, the one that stopped too once it is back. */}
           {a.local && calls.micId !== null && mics.length > 0 && (
             <Select value={calls.micId} onValueChange={calls.switchMic}>
-              {/* A phone screen shows a microphone icon for the name, which a screen reader still hears. */}
+              {/* A phone screen shows a microphone icon for the name, which a screen reader still hears. A wider one
+                  shows the name from its left edge, cut on one line where the room ends. */}
               <SelectTrigger className="h-8 w-auto gap-1.5 px-2 text-xs sm:w-40 sm:px-3" aria-label="Microphone">
                 <Mic className="h-4 w-4 sm:hidden" aria-hidden="true" />
-                <span className="sr-only sm:not-sr-only">
+                <span className="sr-only sm:not-sr-only sm:truncate sm:text-left">
                   <SelectValue placeholder="No microphone" />
                 </span>
               </SelectTrigger>

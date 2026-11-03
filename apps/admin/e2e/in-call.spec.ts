@@ -487,6 +487,38 @@ test('the microphone list shows the one in use, and follows a microphone plugged
   await expect(page.getByRole('option')).toHaveText(['Desk microphone', 'Headset', 'USB microphone']);
 });
 
+test('the microphone picker shows a long name from its left edge, on one line cut where the room ends', async ({ page, context, backend }) => {
+  await context.addInitScript(() => {
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async () => {
+      const stream = await gum({ audio: true });
+      const track = stream.getAudioTracks()[0];
+      const settings = track.getSettings.bind(track);
+      track.getSettings = () => ({ ...settings(), deviceId: 'mic-a' });
+      return stream;
+    };
+    const device = (deviceId: string, label: string) => ({ deviceId, kind: 'audioinput', label, groupId: deviceId, toJSON() { return this; } });
+    navigator.mediaDevices.enumerateDevices = async () => [device('mic-a', 'MacBook Pro Microphone (Built-in)'), device('mic-b', 'Headset')] as MediaDeviceInfo[];
+  });
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('MacBook Pro Microphone (Built-in)');
+  // The lines the name is laid out on (an ellipsis splits a line in two boxes), and how far its first box starts from
+  // where the picker's content does.
+  const shown = await picker.evaluate((el) => {
+    const text = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode()!;
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const boxes = [...range.getClientRects()];
+    const cs = getComputedStyle(el);
+    const start = el.getBoundingClientRect().left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft);
+    return { lines: new Set(boxes.map((b) => Math.round(b.top))).size, indent: Math.round(boxes[0].left - start) };
+  });
+  expect(shown).toEqual({ lines: 1, indent: 0 });
+});
+
 /**
  * Microphones the test unplugs and plugs back in: `__unplug(id)` takes one off the list and ends the track opened on it,
  * as the browser does; `__plugIn(id)` lists it again. Chrome's fake device stands in for each: a microphone asked for by
