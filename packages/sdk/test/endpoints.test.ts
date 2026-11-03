@@ -414,6 +414,12 @@ describe('SDK endpoints', () => {
     ]);
   });
 
+  it('an empty filename counts as none: a File goes under its own name, bytes as announcement', async () => {
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], 'greeting.mp3', { type: 'audio/mpeg' }), '');
+    await client.calls.uploadAnnouncement(PROFILE, new Uint8Array(3), '');
+    expect(sent.map((s) => s.form)).toEqual([{ file: 'greeting.mp3 audio/mpeg 3' }, { file: 'announcement  3' }]);
+  });
+
   it('a refusal rejects with a MultiWAError carrying the reasons', async () => {
     reply = () =>
       new Response(JSON.stringify({ message: 'Recording calls is not available for this profile', reasons: ['no_announcement'] }), {
