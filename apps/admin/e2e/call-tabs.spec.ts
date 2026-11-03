@@ -543,31 +543,55 @@ test('audio that cannot be built again with the socket up leaves the call to tak
   await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
 });
 
-test('a reload whose rejoin the server could not check (its database is down) keeps the call, and rejoins it once the socket the server closed is back', async ({ page, context, backend }) => {
+test('a reload during an outage of the server’s database keeps the call and its microphone, and rejoins it once the server can check the socket again', async ({ page, context, backend }) => {
   await open(page);
   await onCall(page, backend);
-  let down = true;
-  backend.reply('call:rejoin', (a) => (down ? { ok: false, reason: 'error' } : backend.defaults['call:rejoin'](a)));
-  await holdMics(context);
+  let checks = 3; // the sockets the server cannot check: each answers unavailable, and is closed for a retry
+  backend.reply('call:rejoin', (a) => (checks-- > 0 ? { ok: false, reason: 'unavailable' } : backend.defaults['call:rejoin'](a)));
+  // Every microphone the reloaded page opens.
+  await context.addInitScript(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    w.__micTracks = [];
+    navigator.mediaDevices.getUserMedia = async (c) => {
+      const stream = await gum(c);
+      w.__micTracks.push(...stream.getAudioTracks());
+      return stream;
+    };
+  });
   page.on('dialog', (d) => void d.accept());
   await page.reload();
-  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
-  await page.evaluate(() => (window as any).__openMic());
-  await expect.poll(() => micStates(page)).toEqual(['ended']); // the reply came, and its microphone went
-  expect(backend.commands('call:rejoin')).toHaveLength(1);
-  expect(await storedCalls(page)).toHaveLength(1);
-  await expect(bar(page)).not.toContainText('could not be reconnected');
-  down = false;
-  backend.blip(); // the server closes the socket it could not check: the page reconnects by itself
-  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked()), { timeout: 15_000 }).toBe(1);
-  await page.evaluate(() => (window as any).__openMic());
-  await expect.poll(() => backend.commands('call:rejoin')).toEqual([
-    { callId: 'call-1', ifProducerId: 'agent-producer-1' },
-    { callId: 'call-1', ifProducerId: 'agent-producer-1' },
-  ]);
-  await expect.poll(() => produced(backend)).toBe(2);
+  for (let asked = 1; asked <= 3; asked++) {
+    await expect.poll(() => backend.commands('call:rejoin'), { timeout: 15_000 }).toHaveLength(asked);
+    await rendered(page); // the reply is in
+    expect(await micStates(page)).toEqual(['live']); // kept for the next rejoin: no light that blinks, no prompt again
+    expect(await storedCalls(page)).toHaveLength(1);
+    await expect(bar(page)).not.toContainText('could not be reconnected');
+    backend.blip(); // the server closes the socket it could not check: the page reconnects by itself
+  }
+  await expect.poll(() => produced(backend), { timeout: 15_000 }).toBe(2);
+  expect(backend.commands('call:rejoin')).toEqual(Array(4).fill({ callId: 'call-1', ifProducerId: 'agent-producer-1' }));
   backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 70_000).toISOString(), agentProducerId: 'agent-producer-2' });
   await expect(timer(page)).toBeVisible();
+  await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
+  expect(await micStates(page)).toEqual(['live']); // the one microphone it opened, on the call now
+});
+
+test('a rejoin that failed on a socket the server checked (error) leaves the call to take here, which works', async ({ page, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  // The command threw on the server (its database failed mid-command): no reconnect comes to retry it.
+  backend.reply('call:rejoin', (a) => (a.ifProducerId ? { ok: false, reason: 'error' } : backend.defaults['call:rejoin'](a)));
+  page.on('dialog', (d) => void d.accept());
+  await page.reload();
+  await expect(bar(page)).toContainText('The call’s audio could not be reconnected: try again');
+  const take = bar(page).getByRole('button', { name: 'Take the call here' });
+  await expect(take).toBeVisible();
+  expect(await storedCalls(page)).toEqual([]);
+  await take.click();
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }, { callId: 'call-1' }]);
+  await expect.poll(() => produced(backend)).toBe(2);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 70_000).toISOString(), agentProducerId: 'agent-producer-2' });
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
 });
 

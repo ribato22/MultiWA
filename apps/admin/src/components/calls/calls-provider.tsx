@@ -169,7 +169,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     const setAvailable = async (on: boolean) => {
       const reply = await command(socket, 'call:availability', { available: on }, ACK_MS.availability);
       if (reply.ok) confirmed(reply.available);
-      else toast({ title: 'Your availability did not change', description: ANSWER_FAILURE_TEXT[reply.reason === 'timeout' ? 'timeout' : 'error'], variant: 'destructive' });
+      else toast({ title: 'Your availability did not change', description: ANSWER_FAILURE_TEXT[['timeout', 'unavailable'].includes(reply.reason) ? reply.reason : 'error'], variant: 'destructive' });
     };
 
     // ── ringing ──
@@ -500,13 +500,21 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       pendingMic = mic;
       mic.enabled = !(muted || hangingUp);
       if (!socket.connected) return waitForSocket();
-      asking = mine;
-      const reply = await command(socket, 'call:rejoin', { callId: call.callId, ifProducerId }, ACK_MS.rejoin);
-      if (superseded()) return mic.stop();
-      asking = 0;
+      let reply: Ack;
+      for (;;) {
+        asking = mine;
+        reply = await command(socket, 'call:rejoin', { callId: call.callId, ifProducerId }, ACK_MS.rejoin);
+        if (superseded()) return mic.stop();
+        asking = 0;
+        // The server could not check this socket (its database is down), and closes it for a retry: the rejoin goes
+        // again at the next connect, with the microphone it has. It does not go off and on, or ask the agent again, at
+        // every retry.
+        if (reply.ok || reply.reason !== 'unavailable') break;
+        await new Promise<void>((connected) => socket.once('connect', () => connected()));
+        if (superseded()) return mic.stop();
+      }
       if (!reply.ok) {
-        // `error` too: the server could not check this socket (its database is down), and closes it for a retry.
-        if (!socket.connected || reply.reason === 'error') return waitForSocket();
+        if (!socket.connected) return waitForSocket();
         if (reply.reason === 'moved') return letGo(call.callId); // it stays there, and shows here as theirs
         if (reply.reason === 'answer_undone') {
           // The answer was still connecting: the server gave it up, as Hang up does. Its call:ended, and the call's new

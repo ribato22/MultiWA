@@ -168,6 +168,17 @@ test('an answer the server refuses says why, and the card fades', async ({ page,
   await expect(banner(page)).toHaveCount(0, { timeout: 6000 });
 });
 
+test('an answer or a change of availability on a socket the server could not check says to try again in a moment', async ({ page, backend }) => {
+  backend.reply('call:answer', () => ({ ok: false, reason: 'unavailable' }));
+  backend.reply('call:availability', (a) => (a?.available === false ? { ok: false, reason: 'unavailable' } : backend.defaults['call:availability'](a)));
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await banner(page).getByRole('button', { name: 'Answer' }).click();
+  await expect(banner(page)).toContainText('The server is unavailable: try again in a moment');
+  await page.getByRole('switch', { name: 'Available for calls' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Your availability did not change' }).first()).toContainText('The server is unavailable: try again in a moment');
+});
+
 test('Mute silences the microphone track while the call stays connected', async ({ page, backend }) => {
   await open(page);
   await answer(page, backend);

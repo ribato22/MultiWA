@@ -121,6 +121,8 @@ export const ANSWER_FAILURE_TEXT: Record<string, string> = {
   media_unavailable: 'This call cannot be answered here: answer it on the phone',
   media_failed: NO_AUDIO,
   timeout: 'The server did not answer: try again',
+  // The server could not check this socket (its database is down): it reconnects in a few seconds.
+  unavailable: 'The server is unavailable: try again in a moment',
   error: 'Something went wrong: try again',
 };
 
