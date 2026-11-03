@@ -197,7 +197,8 @@ class CallsClient
      * the length from the file itself, not from its name, which is $filename, else the name of the file a stream
      * reads, else `announcement`.
      *
-     * @param string|resource $file The file's bytes, or an open stream such as fopen('notice.mp3', 'r')
+     * @param string|resource $file The file's bytes, or an open stream such as fopen('notice.mp3', 'r'), left open
+     *                              for the caller to close
      *
      * @return array{profileId: string, announcement: array{mimeType: string, durationSec: float|int}|null}
      */
@@ -211,10 +212,18 @@ class CallsClient
             $filename = is_string($uri) && preg_match('#^(php|data)://#', $uri) !== 1 ? basename($uri) : '';
         }
 
-        return $this->client->request('POST', self::profilePath($profileId) . '/calls-announcement', [
-            // Never an empty filename: Guzzle would leave it out, and the API would find no file in the request (400).
-            'multipart' => [['name' => 'file', 'contents' => $stream, 'filename' => $filename !== '' ? $filename : 'announcement']],
-        ]);
+        try {
+            return $this->client->request('POST', self::profilePath($profileId) . '/calls-announcement', [
+                // Never an empty filename: Guzzle would leave it out, and the API would find no file in the request (400).
+                'multipart' => [['name' => 'file', 'contents' => $stream, 'filename' => $filename !== '' ? $filename : 'announcement']],
+            ]);
+        } finally {
+            // The caller's resource stays open: detached, the wrapper has nothing to close once dropped. A retry with it
+            // sends the whole file, as Guzzle rewinds a body before sending it.
+            if (is_resource($file)) {
+                $stream->detach();
+            }
+        }
     }
 
     /**

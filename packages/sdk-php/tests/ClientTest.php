@@ -13,6 +13,7 @@ use MultiWA\Clients\ContactsClient;
 use MultiWA\Clients\MessagesClient;
 use MultiWA\Clients\ProfilesClient;
 use MultiWA\Clients\WebhooksClient;
+use MultiWA\Exceptions\ApiException;
 use MultiWA\Models\AudioFile;
 use MultiWA\Models\Broadcast;
 use MultiWA\Models\Call;
@@ -781,6 +782,44 @@ final class ClientTest extends TestCase
         }
     }
 
+    public function testUploadLeavesTheCallersFileOpen(): void
+    {
+        $file = self::audioFile();
+        $client = $this->client([new Response(201, [], json_encode(['profileId' => 'prof-1', 'announcement' => null], JSON_THROW_ON_ERROR))]);
+
+        $client->calls()->uploadAnnouncement('prof-1', $file);
+        // Nothing holds the request any more, as after a real handler: here the client's mock keeps its last request.
+        unset($client);
+        $this->history = [];
+        gc_collect_cycles();
+
+        // Still an open stream (a closed one is of type Unknown), for the caller to close.
+        self::assertSame('stream', get_resource_type($file));
+        self::assertTrue(fclose($file));
+    }
+
+    public function testRetryWithTheSameFileSendsItWhole(): void
+    {
+        $file = self::audioFile();
+        $client = $this->client([new Response(503, [], json_encode(['statusCode' => 503, 'message' => 'Service Unavailable'], JSON_THROW_ON_ERROR))]);
+        try {
+            $client->calls()->uploadAnnouncement('prof-1', $file, 'notice.mp3');
+            self::fail('No exception was thrown');
+        } catch (ApiException $e) {
+            self::assertSame(503, $e->getStatusCode());
+        }
+        // Nothing holds the first request any more, as after a real handler: here the client's mock keeps its last
+        // request, and the exception's trace the options it was sent with.
+        unset($client, $e);
+        $this->history = [];
+        gc_collect_cycles();
+
+        $client = $this->client([new Response(201, [], json_encode(['profileId' => 'prof-1', 'announcement' => null], JSON_THROW_ON_ERROR))]);
+        $client->calls()->uploadAnnouncement('prof-1', $file, 'notice.mp3');
+
+        self::assertSame(['file' => ['notice.mp3', self::AUDIO]], self::parts($this->onlyRequest()));
+    }
+
     public function testBroadcastStoredWithATextMessage(): void
     {
         $broadcast = Broadcast::fromArray(['message' => 'Hello!'] + self::BROADCAST);
@@ -816,6 +855,21 @@ final class ClientTest extends TestCase
         ksort($query);
 
         return [$call, $method, $path, $query, $body, $response, $check, $reply, $multipart];
+    }
+
+    /**
+     * An open file of the audio, at its start; deleted once closed.
+     *
+     * @return resource
+     */
+    private static function audioFile(): mixed
+    {
+        $file = tmpfile();
+        self::assertIsResource($file);
+        fwrite($file, self::AUDIO);
+        rewind($file);
+
+        return $file;
     }
 
     /**
