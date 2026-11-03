@@ -199,6 +199,8 @@ client.calls.delete_recording(call_id)
 Every calls method is in the [Python SDK guide](https://github.com/ribato22/MultiWA/blob/main/docs/13-sdk-python.md#calls).
 An API key acts with its user's role, and a key with a scope list needs the
 scopes in [API keys](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md#api-keys).
+The client's `timeout` is httpx's: it bounds each connect, read and write, not
+the whole download of a recording.
 A refused setting raises `httpx.HTTPStatusError` (409); `e.response.json()["reasons"]`
 says why. Answering is for people signed in to the dashboard: follow calls with the
 `call.*` webhooks, or the WebSocket `call:update` event.

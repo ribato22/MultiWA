@@ -191,7 +191,8 @@ class CallsClient(SyncResource):
     def get_recording(self, call_id: str, download: bool = False) -> AudioFile:
         """The call's recording, ``audio/webm`` (owner or admin; an API key with
         a scope list needs ``recordings:read``). Every read is audited,
-        ``download=True`` as a download."""
+        ``download=True`` as a download. The client's ``timeout`` is httpx's: it
+        bounds each connect, read and write, not the whole download."""
         return _audio(
             self._raw(
                 "GET",
@@ -250,7 +251,8 @@ class CallsClient(SyncResource):
 
     def get_announcement(self, profile_id: str) -> AudioFile:
         """The profile's announcement, to listen to (owner or admin; an API key
-        with a scope list needs ``profiles:write``)"""
+        with a scope list needs ``profiles:write``). The client's ``timeout`` is
+        httpx's: it bounds each connect, read and write, not the whole download."""
         return _audio(self._raw("GET", f"/profiles/{profile_id}/calls-announcement"))
 
     def delete_announcement(self, profile_id: str) -> AnnouncementResult:
