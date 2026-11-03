@@ -1,4 +1,4 @@
-import { test, expect, gate, rendered, ringing, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, get, rendered, ringing, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { holdMics } from './support/browser';
 import type { Locator, Page } from '@playwright/test';
@@ -923,5 +923,35 @@ for (const [width, height] of [[360, 740], [390, 844], [1440, 900]] as const) {
     expect(await overlapped(page)).toEqual([]);
     const name = bar(page).getByText('Pak Joko Widodo Santoso Hadiningrat');
     expect(await name.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  });
+}
+
+// Pages sized to the screen below the header: a call's bar makes the header taller, and they shrink with it.
+const CONV = { id: 'conv-1', profileId: PROFILE.id, jid: '628111000111@s.whatsapp.net', contactId: 'ct-1', name: 'Pak Joko', type: 'user', unreadCount: 0 };
+/** Whether the element shows whole on the screen. */
+const onScreen = (l: Locator) =>
+  l.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth;
+  });
+async function onAnnouncedCall(page: Page, backend: FakeBackend) {
+  await answer(page, backend, { recorded: true });
+  backend.emit('call:announcing', { callId: 'call-1', durationSec: 60 });
+  await expect(bar(page)).toContainText('The caller hears the recording notice');
+  await expect(bar(page).getByRole('combobox', { name: 'Microphone' })).toBeVisible();
+}
+for (const [width, height] of [[1280, 800], [390, 844]] as const) {
+  test(`${width} px wide, during a call: the chat the banner links to keeps its message field and Send on the screen`, async ({ page, context, backend }) => {
+    await page.setViewportSize({ width, height });
+    await context.addInitScript(twoMics);
+    backend.route(get('/conversations', { conversations: [CONV], total: 1 }));
+    backend.route(get('/messages/conversation/conv-1', { messages: [], hasMore: false }));
+    await page.goto('/dashboard/chat?profile=p-1&conv=conv-1');
+    await expect(page.getByRole('switch', { name: 'Available for calls' })).toBeEnabled();
+    const composer = [page.getByPlaceholder('Type a message'), page.getByRole('button', { name: 'Send message' })];
+    await expect(composer[0]).toBeVisible();
+    expect(await Promise.all(composer.map(onScreen))).toEqual([true, true]);
+    await onAnnouncedCall(page, backend);
+    await expect.poll(() => Promise.all(composer.map(onScreen))).toEqual([true, true]);
   });
 }
