@@ -111,11 +111,14 @@ export class CallClient {
 
   /**
    * Upload the announcement callers hear before a recorded call: mp3, wav, ogg, webm or m4a, at most 2 MB and 30
-   * seconds. The server reads the type and the length from the file itself.
+   * seconds. The server reads the type and the length from the file itself, not from its name, which is `filename`
+   * or by default a File's own name, else `announcement`.
    */
-  async uploadAnnouncement(profileId: string, file: Blob | Uint8Array, filename = 'announcement'): Promise<CallAnnouncementResult> {
+  async uploadAnnouncement(profileId: string, file: Blob | Uint8Array, filename?: string): Promise<CallAnnouncementResult> {
     const form = new FormData();
-    form.append('file', file instanceof Blob ? file : new Blob([new Uint8Array(file)]), filename);
+    // Read without `instanceof File`: Node 18 has no global File.
+    const name = filename ?? ((file as { name?: string }).name || 'announcement');
+    form.append('file', file instanceof Blob ? file : new Blob([new Uint8Array(file)]), name);
     return this.client.post(`/profiles/${profileId}/calls-announcement`, form);
   }
 

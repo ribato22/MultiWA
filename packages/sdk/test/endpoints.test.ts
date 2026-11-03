@@ -403,6 +403,17 @@ describe('SDK endpoints', () => {
     expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([1, 2, 3, 4]);
   });
 
+  it('a File goes under its own name unless another is given, and one without a name as announcement', async () => {
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], 'greeting.mp3', { type: 'audio/mpeg' }));
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], 'greeting.mp3', { type: 'audio/mpeg' }), 'notice.mp3');
+    await client.calls.uploadAnnouncement(PROFILE, new File([new Uint8Array(3)], ''));
+    expect(sent.map((s) => s.form)).toEqual([
+      { file: 'greeting.mp3 audio/mpeg 3' },
+      { file: 'notice.mp3 audio/mpeg 3' },
+      { file: 'announcement  3' },
+    ]);
+  });
+
   it('a refusal rejects with a MultiWAError carrying the reasons', async () => {
     reply = () =>
       new Response(JSON.stringify({ message: 'Recording calls is not available for this profile', reasons: ['no_announcement'] }), {
