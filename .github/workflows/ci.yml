@@ -71,6 +71,13 @@ jobs:
       - name: Typecheck Admin
         run: pnpm --filter admin typecheck
 
+      # The TypeScript SDK: a real typecheck of its sources, then the build npm would publish (tsup, a few seconds).
+      - name: Typecheck SDK
+        run: pnpm --filter @multiwa/sdk typecheck
+
+      - name: Build SDK
+        run: pnpm --filter @multiwa/sdk build
+
       # Lint gate (ESLint 9 flat config). Backend TS only (admin uses Next's own
       # eslint). Errors fail the build; stylistic/any rules are warnings for now.
       - name: Lint (ESLint)
