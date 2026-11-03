@@ -618,6 +618,54 @@ test('the only microphone unplugged mid-call says why the caller hears nothing, 
   await expect(picker).toHaveText('Desk microphone');
 });
 
+/**
+ * From now on the microphones the page opens wait for `__release()`, as when the browser asks the agent first; the last
+ * one opened is `__opened`. `__replaced` counts the microphones swapped into a call's sender.
+ */
+const holdNextMics = (page: Page) =>
+  page.evaluate(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    const held: Array<() => void> = [];
+    w.__micsHeld = () => held.length;
+    w.__release = () => held.splice(0).forEach((open) => open());
+    navigator.mediaDevices.getUserMedia = (c) =>
+      new Promise((resolve, reject) => held.push(() => gum(c).then((s) => resolve(((w.__opened = s.getAudioTracks()[0]), s)), reject)));
+    w.__replaced = 0;
+    const replace = RTCRtpSender.prototype.replaceTrack;
+    RTCRtpSender.prototype.replaceTrack = function (this: RTCRtpSender, track: MediaStreamTrack | null) {
+      w.__replaced++;
+      return replace.call(this, track);
+    };
+  });
+for (const [what, end] of [
+  ['the agent hangs up', async (page: Page) => {
+    await bar(page).getByRole('button', { name: 'Hang up' }).click();
+    await expect(bar(page)).toContainText('You hung up');
+  }],
+  ['the call is taken on another device', async (page: Page, backend: FakeBackend) => {
+    backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString(), agentProducerId: 'producer-phone' });
+    await expect(bar(page)).toContainText('On a call in another tab');
+  }],
+] as const) {
+  test(`a microphone that opens in place of an unplugged one after ${what} is closed at once, and replaces nothing`, async ({ page, context, backend }) => {
+    await context.addInitScript(pluggable, [['mic-a', 'Desk microphone'], ['mic-b', 'Headset']]);
+    await open(page);
+    await answer(page, backend);
+    backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+    await expect(bar(page).getByRole('combobox', { name: 'Microphone' })).toHaveText('Desk microphone');
+    await holdNextMics(page);
+    await page.evaluate(() => (window as any).__unplug('mic-a'));
+    await expect.poll(() => page.evaluate(() => (window as any).__micsHeld())).toBe(1); // the other one, opening
+    await end(page, backend);
+    await page.evaluate(() => (window as any).__release());
+    await expect.poll(() => page.evaluate(() => (window as any).__opened?.readyState)).toBe('ended');
+    await rendered(page);
+    expect(await page.evaluate(() => (window as any).__replaced)).toBe(0);
+    await expect(bar(page)).not.toContainText('the call now uses');
+  });
+}
+
 // Where the focus goes when the call console lets go of it. The agent was on a link of the page (not a field, where no
 // ring takes the focus) when the call rang.
 const working = (page: Page) => page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Chat', exact: true });
