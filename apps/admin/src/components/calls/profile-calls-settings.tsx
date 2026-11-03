@@ -308,7 +308,15 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
             </div>
           </div>
 
-          <div className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-800/80 bg-slate-950/30 p-4">
+          {/* Enter in the field saves. The range is the server's, said here rather than in the browser's own bubble. */}
+          <form
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (retentionChanged) void save('retention', { retentionDays: days });
+            }}
+            className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-800/80 bg-slate-950/30 p-4"
+          >
             <div className="space-y-1">
               <Label htmlFor="calls-retention" className="text-xs font-medium text-slate-200">Keep recordings for (days)</Label>
               <Input
@@ -317,16 +325,20 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                 min={1}
                 max={3650}
                 value={retention}
+                aria-invalid={!retentionValid}
+                aria-describedby="calls-retention-help"
                 onChange={(e) => setRetentionDraft(e.target.value)}
                 className="w-32 border-slate-800 bg-slate-950/40 text-slate-100"
               />
-              <p className="text-[11px] text-slate-400">1 to 3650. Older recordings are deleted every night.</p>
+              <p id="calls-retention-help" className={`text-[11px] ${retentionValid ? 'text-slate-400' : 'text-amber-300'}`}>
+                {retentionValid ? '1 to 3650. Older recordings are deleted every night.' : 'A whole number of days from 1 to 3650'}
+              </p>
             </div>
             {/* With nothing to save (just saved, too) it waits rather than go disabled: it keeps the focus. */}
-            <Button size="sm" aria-disabled={!retentionChanged || !!busy} onClick={() => retentionChanged && save('retention', { retentionDays: days })}>
-              Save
+            <Button type="submit" size="sm" aria-disabled={!retentionChanged || !!busy}>
+              Save<span className="sr-only"> retention</span>
             </Button>
-          </div>
+          </form>
 
           {refusal && (
             <div role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">

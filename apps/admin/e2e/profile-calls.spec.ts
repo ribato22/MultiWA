@@ -157,7 +157,7 @@ test('a read still out when a change answers is read again: the new read shows, 
   await expect(s.getByRole('button', { name: 'Checking…' })).toBeVisible();
   const days = s.getByLabel('Keep recordings for (days)');
   await days.fill('30');
-  await s.getByRole('button', { name: 'Save' }).click();
+  await s.getByRole('button', { name: 'Save retention' }).click();
   await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 30 }]);
   await expect(s).toContainText('This profile can take calls in the dashboard');
   await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
@@ -281,7 +281,7 @@ test('the retention’s Save keeps the focus while it saves and once saved, pres
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
   const days = s.getByLabel('Keep recordings for (days)');
-  const save = s.getByRole('button', { name: 'Save' });
+  const save = s.getByRole('button', { name: 'Save retention' });
   const pressEnter = async () => {
     await save.focus();
     await page.keyboard.press('Enter');
@@ -323,10 +323,10 @@ test('a retention typed but not saved stays through a saved switch and a new rea
   await expect.poll(() => backend.requests.filter((r) => r.path === '/calls/media/status').length).toBe(reads + 1);
   await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible(); // read
   await expect(days).toHaveValue('30');
-  await s.getByRole('button', { name: 'Save' }).click();
+  await s.getByRole('button', { name: 'Save retention' }).click();
   await expect.poll(() => puts(backend)).toEqual([{ answerInDashboard: true }, { retentionDays: 30 }]);
   await expect(days).toHaveValue('30');
-  await expect(s.getByRole('button', { name: 'Save' })).toBeDisabled();
+  await expect(s.getByRole('button', { name: 'Save retention' })).toBeDisabled();
 });
 
 test('recording needs an announcement: an uploaded one shows, and recording refused for the storage says why', async ({ page, backend }) => {
@@ -509,13 +509,32 @@ test('recordings are kept for 1 to 3650 days', async ({ page, backend }) => {
   const s = section(page);
   const days = s.getByLabel('Keep recordings for (days)');
   await expect(days).toHaveValue('90');
-  const save = s.getByRole('button', { name: 'Save' });
+  const save = s.getByRole('button', { name: 'Save retention' });
   await days.fill('0');
   await expect(save).toBeDisabled();
   await days.fill('30');
   await save.click();
   await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 30 }]);
   await expect(save).toBeDisabled(); // saved: nothing left to save
+});
+
+test('a retention out of the server’s range says why, and Enter in the field saves it', async ({ page, backend }) => {
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const days = s.getByLabel('Keep recordings for (days)');
+  const save = s.getByRole('button', { name: 'Save retention' });
+  await expect(days).toHaveAttribute('aria-invalid', 'false');
+  for (const value of ['0', '3651', '1.5']) {
+    await days.fill(value);
+    await expect(days).toHaveAttribute('aria-invalid', 'true');
+    await expect(days).toHaveAccessibleDescription('A whole number of days from 1 to 3650');
+    await expect(save).toBeDisabled();
+  }
+  await days.fill('3650');
+  await expect(days).toHaveAttribute('aria-invalid', 'false');
+  await days.press('Enter');
+  await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 3650 }]);
 });
 
 test.describe('a member', () => {
