@@ -4,7 +4,7 @@ Agents can answer a profile's incoming WhatsApp voice calls in the admin dashboa
 
 It is off until you turn it on: once on the server, then for each profile. Without it, MultiWA still logs every call and keeps its follow-up queue (the [Calls API](./07-api-specification.md#calls-calls) and the `call.*` [webhooks](./09-webhook-events.md#call-events)).
 
-Admins: start at [Server setup](#server-setup). Agents: start at [For agents](#for-agents).
+Operators: start at [Server setup](#server-setup). Owners and admins: [Turning it on for a profile](#turning-it-on-for-a-profile). Agents: [For agents](#for-agents).
 
 It does not cover:
 
@@ -45,13 +45,15 @@ You need:
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.calls-media.yml up -d
+   # the full stack (MinIO and Nginx too)
+   docker compose --profile full -f docker-compose.yml -f docker-compose.calls-media.yml up -d
    # with the production file
    docker compose -f docker-compose.production.yml -f docker-compose.calls-media.yml up -d
    ```
 
 3. **Open the firewall**: the agents' subnet must reach `CALLS_MEDIA_ANNOUNCED_ADDRESS` on `CALLS_MEDIA_PORT`, over UDP (preferred) and TCP (the fallback).
 4. **Serve the admin over HTTPS.** On plain HTTP calls still ring, but the banner says **Answer on the phone** and *Calls in the dashboard need HTTPS*. The admin sends `Permissions-Policy: microphone=(self)`. A reverse proxy in front of it must not send a `Permissions-Policy` of its own that leaves the microphone out (`microphone=()`).
-5. **Check the reverse proxy.** It must pass the realtime connection (`/socket.io/`) with WebSocket upgrades, and accept the announcement upload: up to 3 MB, with a read timeout of 120 seconds. See [Docker Deployment](./16-deployment-docker.md#calls-answered-in-the-dashboard).
+5. **Check the reverse proxies.** The dashboard opens its realtime connection on its own address, so the proxy there must forward `/socket.io/` to the API, with WebSocket upgrades: with the admin on a subdomain of its own, that is the admin's proxy. A proxy the announcement upload goes through must accept a request body of up to 3 MB (a file of at most 2 MB, plus the multipart framing), with a read timeout of 120 seconds. See [Docker Deployment](./16-deployment-docker.md#calls-answered-in-the-dashboard).
 6. **Restart, then check.** `GET /api/v1/health` shows `"callsMedia":{"enabled":true,"worker":"up"}`. Each profile's readiness shows in its **Calls** section (below), and in `GET /api/v1/calls/media/status`.
 
 Every setting is in the [Configuration Reference](./18-configuration-reference.md#calls-answered-in-the-dashboard).
@@ -179,7 +181,7 @@ Meanwhile the header shows **On a call**, and no other call rings for you.
 
 - **A reload rejoins the call**: the bar shows Connecting…, then the audio comes back.
 - **Another tab** of the same browser shows "On a call in another tab", with Hang up and **Take the call here**, which moves the audio to that tab.
-- **One tab rings**, and Dismiss reaches your other tabs.
+- **One tab plays the ringtone**, and Dismiss reaches your other tabs.
 - **A lost connection**: the call waits 15 seconds for you to come back, then ends.
 
 ---
@@ -241,8 +243,8 @@ Other problems:
 | The banner says *Calls in the dashboard need HTTPS* | The admin is on plain HTTP | Serve it over HTTPS. |
 | *Allow the microphone for this site to answer calls* | The browser blocks the microphone | Allow it in the browser's site settings, and check that no proxy sends `Permissions-Policy: microphone=()`. |
 | *Could not connect audio* | The agent's computer cannot reach the media port | Open `CALLS_MEDIA_PORT`, UDP and TCP, on `CALLS_MEDIA_ANNOUNCED_ADDRESS` to the agents. Agents outside the LAN need a TURN server (`CALLS_MEDIA_ICE_SERVERS`). |
-| No call rings in the dashboard | The agent is unavailable or a viewer, or has no dashboard tab open; the profile's **Answer calls in the dashboard** is off; or the proxy blocks `/socket.io/` | Check the header's switch and the profile's Calls section; proxy `/socket.io/` with WebSocket upgrades. |
-| The announcement upload fails with a size error | The reverse proxy's body size limit | Allow 3 MB on `/api/v1/profiles/<id>/calls-announcement`. |
+| No call rings in the dashboard | The agent is unavailable or a viewer, or has no dashboard tab open; the profile's **Answer calls in the dashboard** is off; or the proxy on the dashboard's address does not forward `/socket.io/` to the API | Check the header's switch and the profile's Calls section; have the dashboard's proxy forward `/socket.io/` to the API, with WebSocket upgrades. |
+| The announcement upload fails with a size error | The reverse proxy's body size limit | Allow a request body of 3 MB on `/api/v1/profiles/<id>/calls-announcement`: a 2 MB file, plus the multipart framing. |
 | *This browser cannot answer calls: use a current Chrome, Edge, Firefox or Safari* | An old browser | Update it. |
 
 ---
@@ -255,7 +257,7 @@ Other problems:
 - **Signing out during a call** ends the call after 15 seconds, without asking first.
 - **Firefox and Safari:** answering in them has not been checked on a live call yet. Use Chrome or Edge.
 - **A dialog open when a call rings** keeps the keyboard focus. The banner still shows and is announced, but a click on it also closes the dialog, and a form being filled in can be lost.
-- **The admin sends no Content-Security-Policy yet.**
+- **The admin sends no Content-Security-Policy.** One added by a proxy must allow, for calls, the realtime connection on the dashboard's own address (`connect-src 'self' wss://<the dashboard's host>`), and the `blob:` URLs the recording and announcement players play (`media-src blob:`). The microphone is governed by the `Permissions-Policy` instead ([Server setup](#server-setup)).
 
 ---
 
