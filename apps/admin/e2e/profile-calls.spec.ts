@@ -90,7 +90,7 @@ test('a read of the checklist that answers after a newer one leaves the newer on
   const done = answered + held;
   slow.open();
   await expect.poll(() => answered).toBe(done);
-  await page.waitForTimeout(300); // the page reads the late answers
+  await rendered(page); // the page has read the late answers
   await expect(s).toContainText('This profile can take calls in the dashboard');
   await expect(s).not.toContainText('Auto-reject is on');
 });
@@ -121,7 +121,7 @@ test('a read of the checklist that left before a save and answers after it leave
   const late = requestEnded(page, '/calls/media/status');
   slow.open();
   await late;
-  await page.waitForTimeout(300); // the page reads the late answer
+  await rendered(page); // the page has read the late answer
   await expect(answer).toHaveAttribute('aria-checked', 'true');
   await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
 });
@@ -165,7 +165,7 @@ test('a read still out when a change answers is read again: the new read shows, 
   const late = requestEnded(page, '/calls/media/status');
   read.open(); // the read that left before the save answers, with the retention as it was then
   await late;
-  await page.waitForTimeout(300); // the page reads the late answer
+  await rendered(page); // the page has read the late answer
   await expect(days).toHaveValue('120');
 });
 
@@ -267,13 +267,13 @@ test('a switch pressed with Space keeps the focus while it is saved and after; S
   await rendered(page);
   await expect(answer).toBeFocused();
   await page.keyboard.press('Space'); // while it is saved
-  await page.waitForTimeout(300); // a second save would be out by now
-  expect(puts(backend)).toEqual([{ answerInDashboard: true }]);
+  await rendered(page);
   await expect(answer).toHaveAttribute('aria-checked', 'false');
   slow.open();
   await expect(answer).toHaveAttribute('aria-checked', 'true');
   await expect(answer).toBeEnabled();
   await expect(answer).toBeFocused();
+  expect(puts(backend)).toEqual([{ answerInDashboard: true }]); // answered: a save sent before would have reached the server
 });
 
 test('the retention’s Save keeps the focus while it saves and once saved, pressed with Enter or clicked', async ({ page, backend }) => {
@@ -300,7 +300,7 @@ test('the retention’s Save keeps the focus while it saves and once saved, pres
     await expect(save).toBeFocused(); // while it saves
     slow.open();
     await answered;
-    await page.waitForTimeout(300); // the page reads the answer
+    await expect(page.getByRole('status').filter({ hasText: `Recordings are kept for ${value} days` }).first()).toBeVisible(); // read
     await expect(save).toBeDisabled(); // saved: nothing left to save
     await expect(save).toBeFocused();
   }
@@ -467,7 +467,7 @@ test('leaving the page while the announcement loads gives the load up: no file i
   await expect(page).toHaveURL(/\/dashboard\/calls$/);
   slow.open();
   await ended;
-  await page.waitForTimeout(300); // what the page does with an answer
+  await rendered(page); // what the page does with an answer is done by now
   expect(await page.evaluate(() => (window as any).__liveBlobs())).toEqual([]);
 });
 
@@ -540,8 +540,8 @@ test('Escape while the removal runs leaves the dialog open: once removed, the fo
   await confirm.getByRole('button', { name: 'Remove' }).click();
   await expect(confirm.getByRole('button', { name: 'Removing…' })).toBeFocused();
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(300); // the dialog would be closed by now
-  await expect(confirm).toBeVisible();
+  await rendered(page); // the key was handled: a dialog it closed says so by now
+  await expect(confirm).toHaveAttribute('data-state', 'open');
   slow.open();
   await expect(s).toContainText('Upload an announcement first');
   await expect(confirm).toHaveCount(0);

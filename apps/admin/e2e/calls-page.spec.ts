@@ -129,21 +129,22 @@ test('one action at a time in a row: Play while its file downloads, or Download 
   await press(download);
   await expect.poll(asked).toBe(1);
   await press(play);
-  await page.waitForTimeout(300); // a second request would be out by now
-  expect(asked()).toBe(1);
+  await rendered(page); // the press was handled: a Play that went ahead would say it loads by now
+  await expect(play).toHaveAccessibleName('Play the recording of the call from Pak Joko');
   await expect(play).toBeDisabled();
   await Promise.all([page.waitForEvent('download'), slow.open()]);
   await expect(play).toBeEnabled();
+  expect(asked()).toBe(1); // the download came: a request sent before it would have reached the server
   slow = gate();
   await press(play);
   await expect.poll(asked).toBe(2);
   const loading = row.getByRole('button', { name: /^Loading/ });
   await press(download);
-  await page.waitForTimeout(300); // a second request would be out by now
-  expect(asked()).toBe(2);
+  await rendered(page); // the press was handled: a Download that went ahead would have ended the loading by now
   await expect(loading).toBeDisabled(); // still loading, and says so
   slow.open();
   await expect(row.getByLabel(/^Recording of the call/)).toBeVisible();
+  expect(asked()).toBe(2); // the file came: a request sent before it would have reached the server
   await expect(download).toBeFocused(); // the player takes the focus only from Play
 });
 
@@ -224,8 +225,8 @@ test('Escape while the delete runs leaves the dialog open: once deleted, the foc
   const confirm = page.getByRole('alertdialog', { name: 'Delete this recording?' });
   await expect(confirm.getByRole('button', { name: 'Deleting…' })).toBeFocused();
   await page.keyboard.press('Escape');
-  await page.waitForTimeout(300); // the dialog would be closed by now
-  await expect(confirm).toBeVisible();
+  await rendered(page); // the key was handled: a dialog it closed says so by now
+  await expect(confirm).toHaveAttribute('data-state', 'open');
   slow.open();
   await expect(rowOf(page)).toContainText('Recording deleted by an admin');
   await expect(confirm).toHaveCount(0);
@@ -316,7 +317,7 @@ test('leaving the page while a recording loads gives the load up: no file is kep
   await expect(page).toHaveURL(/\/dashboard\/settings$/);
   slow.open();
   await ended;
-  await page.waitForTimeout(300); // what the page does with an answer
+  await rendered(page); // what the page does with an answer is done by now
   expect(await page.evaluate(() => (window as any).__liveBlobs())).toEqual([]);
 });
 

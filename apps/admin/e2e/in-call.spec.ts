@@ -673,7 +673,9 @@ test('two calls ringing: Enter on the newest keeps the focus on it while it conn
   slow.open();
   await expect(bar(page)).toContainText('Bu Sari');
   await expect(bar(page)).toBeFocused();
-  await page.waitForTimeout(300); // a second answer would be out by now
+  // The answer's audio is built over the same socket, after any second answer: once its voice is produced, that one
+  // would have come.
+  await expect.poll(() => produced(backend)).toBe(1);
   expect(backend.commands('call:answer')).toEqual([{ callId: 'call-2' }]);
   await expect(card(page, 'Pak Joko').getByRole('button', { name: 'Answer' })).toBeVisible(); // it still rings, quiet
 });
