@@ -209,7 +209,7 @@ $calls->update($callId, followUp: 'done');                // unassign() removes 
 $calls->reply($callId, 'We will call you back');
 
 // Owners and admins
-$file = fopen('notice.mp3', 'r');                         // recording needs the announcement first
+$file = fopen('notice.mp3', 'rb');                        // recording needs the announcement first
 $calls->uploadAnnouncement($profileId, $file);            // the SDK leaves your stream open
 fclose($file);
 $calls->updateSettings($profileId, answerInDashboard: true, recording: true);

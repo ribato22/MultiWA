@@ -228,7 +228,7 @@ $calls->sendCallLink($callId, 'voice', 'Tap to call us'); // also 'link' => 'htt
 
 // Owners and admins
 $status = $calls->mediaStatus();                          // ['server' => […], 'profiles' => [['profileId' => …, 'ready' => true, 'reasons' => []], …]]
-$file = fopen('notice.mp3', 'r');                         // recording needs the announcement first
+$file = fopen('notice.mp3', 'rb');                        // recording needs the announcement first
 $calls->uploadAnnouncement($profileId, $file);            // also bytes; a stream goes under its file's name
 fclose($file);                                            // the SDK leaves your stream open
 $calls->updateSettings($profileId, answerInDashboard: true, recording: true, retentionDays: 30); // CallsSettings
