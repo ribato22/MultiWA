@@ -22,6 +22,7 @@ type ProfileCalls = CallsMediaStatus['profiles'][number];
 type Refusal = { message: string; texts: string[] };
 // The server-wide readiness reasons: the checklist's server lines say them, once.
 const SERVER_REASONS = ['media_disabled', 'media_server_down', 'engine_host_worker'];
+const dayCount = (n: number) => (n === 1 ? '1 day' : `${n} days`);
 
 /**
  * What the server would refuse anyway, said before the file is sent: its size, or a file that is no audio file by its
@@ -130,7 +131,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setP((x) => (x ? { ...x, ...stored } : x));
     if (body.retentionDays !== undefined) {
       setRetentionDraft(null);
-      toast({ title: 'Retention saved', description: `Recordings are kept for ${stored.retentionDays} days` });
+      toast({ title: 'Retention saved', description: `Recordings are kept for ${dayCount(stored.retentionDays)}` });
     }
     // Its calls ring in the dashboard from now on: the header's call controls show without a reload.
     if (stored.answerInDashboard) calls?.profileAnswers();
@@ -375,9 +376,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               }}
             >
               <AlertDialogHeader>
-                <AlertDialogTitle>Keep recordings for {days} days?</AlertDialogTitle>
+                <AlertDialogTitle>Keep recordings for {dayCount(days)}?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This profile’s recordings older than {days} days are deleted for good at the next nightly cleanup, at 02:30 server time. Each
+                  This profile’s recordings older than {dayCount(days)} are deleted for good at the next nightly cleanup, at 02:30 server time. Each
                   deletion is logged.
                 </AlertDialogDescription>
               </AlertDialogHeader>
@@ -393,7 +394,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     setConfirmRetention(false);
                   }}
                 >
-                  {busy === 'retention' ? 'Saving…' : `Keep for ${days} days`}
+                  {busy === 'retention' ? 'Saving…' : `Keep for ${dayCount(days)}`}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

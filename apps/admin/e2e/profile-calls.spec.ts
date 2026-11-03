@@ -605,6 +605,19 @@ test('a shorter retention asks first, as the next nightly cleanup deletes the ol
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
 
+test('the shortest retention, 1 day, is said as one day: the dialog, its button and the toast', async ({ page, backend }) => {
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  await s.getByLabel('Keep recordings for (days)').fill('1');
+  await s.getByRole('button', { name: 'Save retention' }).click();
+  const confirm = page.getByRole('alertdialog', { name: 'Keep recordings for 1 day?' });
+  await expect(confirm).toContainText('This profile’s recordings older than 1 day are deleted for good');
+  await confirm.getByRole('button', { name: 'Keep for 1 day', exact: true }).click();
+  await expect(page.getByText('Recordings are kept for 1 day', { exact: true })).toBeVisible();
+  expect(puts(backend)).toEqual([{ retentionDays: 1 }]);
+});
+
 test('a retention out of the server’s range says why, and Enter in the field saves it', async ({ page, backend }) => {
   backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
   await page.goto('/dashboard/profiles/p-1');
