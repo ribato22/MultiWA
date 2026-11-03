@@ -341,6 +341,13 @@ test('a recording the retention removed says so', async ({ page, backend }) => {
   await expect(rowOf(page)).toContainText('Recording deleted after its retention period');
 });
 
+/** The call:update sent once the answered call's recording is stored. */
+const RECORDING_STORED = {
+  profileId: PROFILE.id, callId: 'call-9', waCallId: 'W9', from: ANSWERED.fromJid, isVideo: false, isGroup: false, direction: 'incoming',
+  outcome: 'answered', rejectedBy: null, startedAt: ANSWERED.startedAt, endedAt: ANSWERED.endedAt, followUp: 'done', assignedUserId: null,
+  answeredByUserId: 'u-jane', answeredAt: ANSWERED.answeredAt, endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 192, hasRecording: true,
+};
+
 test('a recording stored after the call shows up without a reload', async ({ page, backend }) => {
   let stored = false;
   listing(backend, () => (stored ? ANSWERED : { ...ANSWERED, recording: null }));
@@ -350,12 +357,22 @@ test('a recording stored after the call shows up without a reload', async ({ pag
   await expect(row).not.toContainText('Recording');
   await expect.poll(() => backend.joined).toContain(PROFILE.id);
   stored = true;
-  backend.emitToProfile(PROFILE.id, 'call:update', {
-    profileId: PROFILE.id, callId: 'call-9', waCallId: 'W9', from: ANSWERED.fromJid, isVideo: false, isGroup: false, direction: 'incoming',
-    outcome: 'answered', rejectedBy: null, startedAt: ANSWERED.startedAt, endedAt: ANSWERED.endedAt, followUp: 'done', assignedUserId: null,
-    answeredByUserId: 'u-jane', answeredAt: ANSWERED.answeredAt, endedBy: 'caller', endReason: 'caller_hangup', talkSeconds: 192, hasRecording: true,
-  });
+  backend.emitToProfile(PROFILE.id, 'call:update', RECORDING_STORED);
   await expect(row).toContainText('Recording 3:10');
+});
+
+test('a call not listed yet whose recording is stored is read once, for its chat and its recording both', async ({ page, backend }) => {
+  listing(backend, () => []);
+  backend.route(on('GET', '/calls/call-9', { json: ANSWERED }));
+  const listed = requestEnded(page, 'outcome=answered');
+  await openAnswered(page);
+  await listed;
+  await expect(page.getByText('No calls here')).toBeVisible(); // the tab's list is in: it does not replace the update's row
+  await expect.poll(() => backend.joined).toContain(PROFILE.id);
+  backend.emitToProfile(PROFILE.id, 'call:update', RECORDING_STORED);
+  const row = rowOf(page); // named after its chat, which only the read has
+  await expect(row).toContainText('Recording 3:10');
+  expect(backend.requests.filter((r) => r.path === '/calls/call-9').map((r) => r.method)).toEqual(['GET']);
 });
 
 test.describe('a member', () => {

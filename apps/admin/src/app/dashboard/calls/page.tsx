@@ -168,22 +168,19 @@ export default function CallsPage() {
         const others = prev.filter((c) => c.id !== p.callId);
         return p.outcome === 'ringing' ? [fromPayload(p, prev.find((c) => c.id === p.callId)), ...others] : others;
       });
-      if (p.hasRecording) {
-        // The call's recording was stored: its facts come with the row.
-        void api.getCall(p.callId).then(({ data: stored }) => {
-          if (stored) setCalls((prev) => prev.map((c) => (c.id === p.callId ? { ...c, recording: stored.recording } : c)));
-        });
-      }
-      if (!seen) {
-        // The payload has no contact: the stored row of a call not shown yet has its chat (name, Open chat). Only those
-        // relations are taken over, by id and never inserted: outcome and follow-up stay what the socket said, so a
-        // call that ended meanwhile does not come back.
+      // The payload has no relations: one read of the stored row brings what is missing, the recording's facts once it
+      // is stored, and the chat of a call not shown yet (name, Open chat). Only those are taken over, by id and never
+      // inserted: outcome and follow-up stay what the socket said, so a call that ended meanwhile does not come back.
+      if (p.hasRecording || !seen) {
         void api.getCall(p.callId).then(({ data: stored }) => {
           if (!stored) return;
-          const withChat = (c: CallRecord): CallRecord =>
-            c.id !== p.callId ? c : { ...c, conversationId: stored.conversationId, conversation: stored.conversation, assignedUser: stored.assignedUserId === c.assignedUserId ? stored.assignedUser : c.assignedUser };
-          setCalls((prev) => prev.map(withChat));
-          setRinging((prev) => prev.map(withChat));
+          const taken = (c: CallRecord): CallRecord => {
+            if (c.id !== p.callId) return c;
+            const row = p.hasRecording ? { ...c, recording: stored.recording } : c;
+            return seen ? row : { ...row, conversationId: stored.conversationId, conversation: stored.conversation, assignedUser: stored.assignedUserId === c.assignedUserId ? stored.assignedUser : c.assignedUser };
+          };
+          setCalls((prev) => prev.map(taken));
+          setRinging((prev) => prev.map(taken));
         });
       }
       // Realtime is authoritative: a strip refetch (after an action, on a reconnect) still in flight was read before this
