@@ -504,7 +504,7 @@ test('audio that cannot be built again with the socket up leaves the call to tak
   await open(page);
   await onCall(page, backend);
   await expect.poll(() => openPeers(page)).toBe(2);
-  backend.reply('call:rejoin', () => ({ ok: false, reason: 'error' }));
+  backend.reply('call:media', (a) => (a.op === 'createTransport' ? { ok: false, reason: 'media_error', message: 'No transport' } : backend.defaults['call:media'](a)));
   await failTransports(page);
   await expect(bar(page)).toContainText('The call’s audio could not be reconnected: try again');
   await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
@@ -515,6 +515,34 @@ test('audio that cannot be built again with the socket up leaves the call to tak
   await expect.poll(() => backend.commands('call:availability').length, { timeout: 10_000 }).toBeGreaterThan(reads);
   expect(backend.commands('call:rejoin')).toHaveLength(1);
   await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toBeVisible();
+});
+
+test('a reload whose rejoin the server could not check (its database is down) keeps the call, and rejoins it once the socket the server closed is back', async ({ page, context, backend }) => {
+  await open(page);
+  await onCall(page, backend);
+  let down = true;
+  backend.reply('call:rejoin', (a) => (down ? { ok: false, reason: 'error' } : backend.defaults['call:rejoin'](a)));
+  await holdMics(context);
+  page.on('dialog', (d) => void d.accept());
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
+  await page.evaluate(() => (window as any).__openMic());
+  await expect.poll(() => micStates(page)).toEqual(['ended']); // the reply came, and its microphone went
+  expect(backend.commands('call:rejoin')).toHaveLength(1);
+  expect(await storedCalls(page)).toHaveLength(1);
+  await expect(bar(page)).not.toContainText('could not be reconnected');
+  down = false;
+  backend.blip(); // the server closes the socket it could not check: the page reconnects by itself
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked()), { timeout: 15_000 }).toBe(1);
+  await page.evaluate(() => (window as any).__openMic());
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([
+    { callId: 'call-1', ifProducerId: 'agent-producer-1' },
+    { callId: 'call-1', ifProducerId: 'agent-producer-1' },
+  ]);
+  await expect.poll(() => produced(backend)).toBe(2);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 70_000).toISOString(), agentProducerId: 'agent-producer-2' });
+  await expect(timer(page)).toBeVisible();
+  await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
 });
 
 test('Take the call here is not undone by the late call:active of the tab that had the call, which shows no call time either; a takeover after its reply is', async ({ page, backend }) => {

@@ -505,7 +505,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       if (superseded()) return mic.stop();
       asking = 0;
       if (!reply.ok) {
-        if (!socket.connected) return waitForSocket();
+        // `error` too: the server could not check this socket (its database is down), and closes it for a retry.
+        if (!socket.connected || reply.reason === 'error') return waitForSocket();
         if (reply.reason === 'moved') return letGo(call.callId); // it stays there, and shows here as theirs
         if (reply.reason === 'answer_undone') {
           // The answer was still connecting: the server gave it up, as Hang up does. Its call:ended, and the call's new
