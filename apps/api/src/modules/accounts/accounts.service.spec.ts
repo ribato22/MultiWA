@@ -135,9 +135,15 @@ describe('AccountsService', () => {
       vi.mocked(prisma.profile.delete).mockReset().mockResolvedValue({ id: 'p1', settings: STORED } as any);
     });
 
-    it('the list, one profile, and a deleted one', async () => {
+    it('the list', async () => {
       expect((await accounts().getProfiles('a1')).map((p) => p.settings)).toEqual([SHOWN]);
+    });
+
+    it('one profile', async () => {
       expect((await accounts().getProfile('a1', 'p1')).settings).toEqual(SHOWN);
+    });
+
+    it('a deleted one', async () => {
       expect((await accounts().deleteProfile('a1', 'p1')).settings).toEqual(SHOWN);
     });
   });
