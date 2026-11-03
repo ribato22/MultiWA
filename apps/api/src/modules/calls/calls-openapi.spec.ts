@@ -13,6 +13,7 @@ vi.mock('./recordings/call-recordings.service', () => ({ CallRecordingsService: 
 
 import { CallsController } from './calls.controller';
 import { ProfileCallsController } from './profile-calls.controller';
+import { UpdateCallDto } from './dto';
 
 let app: NestFastifyApplication;
 let doc: OpenAPIObject;
@@ -22,7 +23,8 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
   app.setGlobalPrefix('api/v1');
   await app.init();
-  doc = SwaggerModule.createDocument(app, new DocumentBuilder().build());
+  // A request body's schema is found through the decorator metadata these tests run without: UpdateCallDto is added.
+  doc = SwaggerModule.createDocument(app, new DocumentBuilder().build(), { extraModels: [UpdateCallDto] });
 });
 
 afterAll(() => app.close());
@@ -60,6 +62,18 @@ describe('the calls routes in the OpenAPI document', () => {
     expect(Object.keys(announcement)).toEqual(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4']);
     for (const type of Object.keys(announcement)) expect(announcement[type].schema).toEqual({ type: 'string', format: 'binary' });
     expect(schema('CallAnnouncementDto').properties.mimeType.enum).toEqual(Object.keys(announcement));
+  });
+
+  it('the recording and the announcement answer a 404 in JSON, not as audio', () => {
+    for (const path of ['/calls/{id}/recording', '/profiles/{id}/calls-announcement']) {
+      expect(Object.keys(operation('get', path).responses['404'].content)).toEqual(['application/json']);
+      expect(json('get', path, '404').example).toMatchObject({ statusCode: 404, error: 'Not Found' });
+    }
+  });
+
+  it('the assignee of a call update is a string, or null to unassign', () => {
+    // An explicit type: the compiled API reflects `string | null` as Object, which the document showed as an object.
+    expect(schema('UpdateCallDto').properties.assignedUserId).toMatchObject({ type: 'string', nullable: true });
   });
 
   it('a refusal (409) is { message, reasons }', () => {

@@ -76,7 +76,8 @@ export class UpdateCallDto {
   @IsIn([...CALL_FOLLOW_UPS])
   followUp?: string;
 
-  @ApiPropertyOptional({ nullable: true, description: 'User id of the organization; null to unassign.' })
+  // An explicit type: `string | null` is reflected as Object.
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'User id of the organization; null to unassign.' })
   @IsOptional()
   @IsString()
   assignedUserId?: string | null;
