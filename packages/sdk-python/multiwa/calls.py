@@ -242,8 +242,8 @@ class CallsClient(SyncResource):
         ogg, webm or m4a, at most 2 MB and 30 seconds. ``file`` is its bytes or
         a binary file object; a path raises ``TypeError``. The server reads the
         type and the length from the file itself, not from its name, which is
-        ``filename``, else the base name of a file object's own ``name``, else
-        ``announcement``."""
+        ``filename`` (an empty one counts as none), else the base name of a file
+        object's own ``name``, else ``announcement``."""
         return AnnouncementResult.model_validate(
             self._raw(
                 "POST",
