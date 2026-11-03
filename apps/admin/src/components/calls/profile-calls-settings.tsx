@@ -73,7 +73,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     setChecking(false);
     if (!res.data) return setLoadError(res.error ?? 'Could not read the calls status');
     setLoadError(null);
-    // What was refused may be fixed since, if this read left after it: the checklist says what is still missing.
+    // What was refused may be fixed since, if this read left after it: the checklist, and the storage's last check, say
+    // what is still missing.
     if (seq > refusedAt.current) setRefusal(null);
     setServer(res.data.server);
     setP(res.data.profiles.find((x) => x.profileId === profileId) ?? null);
@@ -163,6 +164,10 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const days = Number(retention);
   const retentionValid = Number.isInteger(days) && days >= 1 && days <= 3650;
   const retentionChanged = retentionValid && days !== p?.retentionDays;
+  // The storage's last privacy check (recording turned on, or the nightly one) failed: why recording is off, in the words
+  // of the refusal. An unset storage is the `problem`, said already.
+  const lastCheck = server?.recordings.lastCheck;
+  const checkFailed = lastCheck && !lastCheck.ok && lastCheck.reason !== 'recordings_storage_unset' ? (lastCheck.reason ?? 'storage_check_failed') : null;
   const checks =
     server && p
       ? [
@@ -230,6 +235,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               />
             </div>
             {server.recordings.problem && <p className="text-[11px] text-amber-300">Recording storage: {server.recordings.problem}</p>}
+            {checkFailed && <p className="text-[11px] text-amber-300">{reasonTexts([checkFailed])}</p>}
             <div className="space-y-2">
               <p className="text-xs font-medium text-slate-200">Announcement</p>
               <p className="text-[11px] text-slate-400">

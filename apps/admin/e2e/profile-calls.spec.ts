@@ -347,6 +347,29 @@ test('recording needs an announcement: an uploaded one shows, and recording refu
   await expect(record).toHaveAttribute('aria-checked', 'false');
 });
 
+test('recording refused for a public storage still says why once the checklist is read again: its last check failed', async ({ page, backend }) => {
+  let lastCheck: { at: string; ok: boolean; reason?: string } = STATUS.server.recordings.lastCheck;
+  backend.route(on('GET', '/calls/media/status', () => ({
+    json: { ...status({ announcement: ANNOUNCEMENT }), server: { ...STATUS.server, recordings: { ...STATUS.server.recordings, lastCheck } } },
+  })));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', () => {
+    lastCheck = { at: '2026-11-01T03:00:00.000Z', ok: false, reason: 'storage_not_private' }; // the check the switch made
+    return { status: 409, json: { message: 'Recording calls is not available for this profile', reasons: ['storage_not_private'] } };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const record = s.getByRole('switch', { name: 'Record calls' });
+  const why = 'The recording storage can be read without a login: ask your administrator to make it private';
+  await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible(); // read
+  await expect(s).not.toContainText(why);
+  await record.click();
+  await expect(s.getByRole('alert')).toContainText(why);
+  await s.getByRole('button', { name: 'Check again' }).click();
+  await expect(s.getByRole('alert')).toHaveCount(0); // read after the refusal: the section says what is missing now
+  await expect(s).toContainText(why);
+  await expect(record).toHaveAttribute('aria-checked', 'false');
+});
+
 test('an announcement larger than 2 MB, or not an audio file, is refused here without being sent', async ({ page, backend }) => {
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
