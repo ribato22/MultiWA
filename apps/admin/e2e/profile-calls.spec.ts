@@ -605,6 +605,60 @@ test('a shorter retention asks first, as the next nightly cleanup deletes the ol
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
 
+test('the shorter retention’s dialog stays open while it saves: Escape leaves it, it says Saving…, and Cancel waits; once saved, the focus goes back to Save', async ({ page, backend }) => {
+  const slow = gate();
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', async (r) => {
+    await slow.passed;
+    return { json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  await s.getByLabel('Keep recordings for (days)').fill('30');
+  const save = s.getByRole('button', { name: 'Save retention' });
+  await save.click();
+  const confirm = page.getByRole('alertdialog', { name: 'Keep recordings for 30 days?' });
+  await confirm.getByRole('button', { name: 'Keep for 30 days' }).click();
+  const saving = confirm.getByRole('button', { name: 'Saving…' });
+  await expect(saving).toBeDisabled();
+  await expect(confirm.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+  await rendered(page);
+  await expect(saving).toBeFocused(); // while the save runs
+  await page.keyboard.press('Escape');
+  await rendered(page); // the key was handled: a dialog it closed says so by now
+  await expect(confirm).toHaveAttribute('data-state', 'open');
+  slow.open();
+  await expect(page.getByText('Recordings are kept for 30 days', { exact: true })).toBeVisible();
+  await expect(confirm).toHaveCount(0);
+  await expect(save).toBeFocused();
+  expect(puts(backend)).toEqual([{ retentionDays: 30 }]);
+});
+
+test('closed by a save that failed or was refused, the shorter retention’s dialog gives the focus back to where it was asked from, and the days stay to save', async ({ page, backend }) => {
+  let reply: Reply = { status: 500, json: { message: 'Internal server error' } };
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', () => reply));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const days = s.getByLabel('Keep recordings for (days)');
+  const save = s.getByRole('button', { name: 'Save retention' });
+  const confirm = page.getByRole('alertdialog', { name: 'Keep recordings for 30 days?' });
+  const failed = (description: string) => page.getByRole('status').filter({ hasText: 'Could not save' }).filter({ hasText: description }).first();
+  await days.fill('30');
+  await save.click(); // asked from Save
+  await confirm.getByRole('button', { name: 'Keep for 30 days' }).click();
+  await expect(failed('Internal server error')).toBeVisible();
+  await expect(confirm).toHaveCount(0);
+  await expect(save).toBeFocused();
+  await expect(days).toHaveValue('30');
+  reply = { status: 403, json: { message: 'Forbidden resource' } }; // the login was made a member meanwhile
+  await days.press('Enter'); // asked from the field
+  await confirm.getByRole('button', { name: 'Keep for 30 days' }).click();
+  await expect(failed('Forbidden resource')).toBeVisible();
+  await expect(confirm).toHaveCount(0);
+  await expect(days).toBeFocused();
+  await expect(days).toHaveValue('30');
+  expect(puts(backend)).toEqual([{ retentionDays: 30 }, { retentionDays: 30 }]);
+});
+
 test('the shortest retention, 1 day, is said as one day: the dialog, its button and the toast', async ({ page, backend }) => {
   backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
   await page.goto('/dashboard/profiles/p-1');
