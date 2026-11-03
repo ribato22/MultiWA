@@ -395,9 +395,12 @@ describe('SDK endpoints', () => {
     await expect(call(quick)).rejects.toMatchObject({ statusCode: 408, message: 'Request timeout' });
   }, 1000);
 
-  it('an announcement given as bytes goes as a file', async () => {
-    await client.calls.uploadAnnouncement(PROFILE, new Uint8Array([1, 2, 3, 4]));
+  it('an announcement given as bytes goes as a file of exactly those bytes', async () => {
+    // A view into a larger buffer, as a Buffer from Node's pool is: only the view's own bytes go, not the buffer's.
+    await client.calls.uploadAnnouncement(PROFILE, new Uint8Array([9, 9, 1, 2, 3, 4, 9, 9]).subarray(2, 6));
     expect(sent[0].form).toEqual({ file: 'announcement  4' }); // a file without a type
+    const file = (vi.mocked(fetch).mock.calls[0][1]?.body as FormData).get('file') as Blob;
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([1, 2, 3, 4]);
   });
 
   it('a refusal rejects with a MultiWAError carrying the reasons', async () => {
