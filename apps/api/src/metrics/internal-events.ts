@@ -31,6 +31,14 @@ export const InternalEvents = {
   ENGINE_ACK_DROPPED: 'internal.engine.ack_dropped',
 
   /**
+   * Emitted once when the engine-manager destroyed a profile's engine for a temporary disconnect (a crashed page, a
+   * dead browser, the memory limit, or one of WhatsApp's own transient drops) and retries it. Anything that held its
+   * page is gone with it: the call coordinator ends that profile's calls at once. `connection.disconnected` comes only
+   * once the retries fail.
+   */
+  ENGINE_LOST: 'internal.engine.lost',
+
+  /**
    * Emitted when the call media server's mediasoup worker dies: every call it carried lost its media, and the
    * service starts a new worker. Any occurrence is worth an alert.
    */
@@ -69,6 +77,12 @@ export interface EngineGroupFetchPayload {
 export interface EngineAckDroppedPayload {
   profileId: string;
   status: string;
+}
+
+export interface EngineLostPayload {
+  profileId: string;
+  /** The disconnect reason the engine reported (e.g. PAGE_CRASHED, MEMORY_LIMIT). */
+  reason: string;
 }
 
 export interface CallsMediaWorkerDiedPayload {

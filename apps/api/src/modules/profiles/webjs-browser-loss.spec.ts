@@ -141,6 +141,60 @@ describe('WhatsAppWebJsAdapter browser loss', () => {
     expect(second.config.onDisconnected.mock.calls).toEqual([['MEMORY_LIMIT']]);
   });
 
+  it('does not restart a Chromium above the limit while its page carries a call: one warning, then the first check after the call restarts it', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
+    const { adapter, config } = wire('p-call\n');
+    ready(adapter);
+    let onCall = true;
+    adapter.callMedia = { inUse: () => onCall };
+    adapter.readBrowserMemoryMb = vi.fn(() => 2600);
+    await adapter.connect();
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(config.onDisconnected).not.toHaveBeenCalled();
+    expect(adapter.readBrowserMemoryMb).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(console.warn).mock.calls).toEqual([
+      ['[WhatsApp-WebJS] Chromium of profile p-call holds 2600 MB (limit 2500 MB) during a call; not restarting it until the call is over.'],
+    ]);
+    onCall = false; // the call is over
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(config.onDisconnected.mock.calls).toEqual([['MEMORY_LIMIT']]);
+  });
+
+  it('leaves a page that carries a call alone at or below the limit, without a warning', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
+    const { adapter, config } = wire('p-call-at');
+    ready(adapter);
+    adapter.callMedia = { inUse: () => true };
+    adapter.readBrowserMemoryMb = vi.fn(() => 2500);
+    await adapter.connect();
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(config.onDisconnected).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('warns again for a later call that holds the restart back', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('WWEBJS_MEMORY_LIMIT_MB', '2500');
+    const { adapter, config } = wire('p-calls');
+    ready(adapter);
+    let onCall = true;
+    let mb = 2600;
+    adapter.callMedia = { inUse: () => onCall };
+    adapter.readBrowserMemoryMb = vi.fn(() => mb);
+    await adapter.connect();
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    onCall = false; // the call ends, and the page has shrunk below the limit by the next check
+    mb = 2400;
+    await vi.advanceTimersByTimeAsync(60_000);
+    onCall = true; // the next call, and the page grows again
+    mb = 2600;
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(config.onDisconnected).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledTimes(2);
+  });
+
   it('fails a send that was in flight when it was destroyed, instead of reporting it sent', async () => {
     const { adapter, client } = wire();
     ready(adapter);

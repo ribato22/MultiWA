@@ -100,6 +100,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   private releasedClients = new WeakSet<object>();
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private warnedMemoryCooldown = false;
+  private warnedMemoryOnCall = false;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
@@ -479,9 +480,14 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
   }
 
-  /** Measured only while ready: a profile still loading its chats is not a leak. */
+  /**
+   * Measured only while ready: a profile still loading its chats is not a leak. Not restarted while its page carries a
+   * call, which the restart would drop: the first check after the call restarts it if it is still over the limit.
+   */
   private checkMemory(client: Client, limitMb: number): void {
     if (client !== this.client || !this.isReady()) return;
+    const onCall = this.callMedia?.inUse() === true;
+    if (!onCall) this.warnedMemoryOnCall = false; // a later call that holds the restart back warns again
     const pid = (client as any).pupBrowser?.process?.()?.pid;
     const mb = typeof pid === 'number' ? this.readBrowserMemoryMb(pid) : null;
     if (mb === null || mb <= limitMb) return;
@@ -492,6 +498,15 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         this.warnedMemoryCooldown = true;
         console.warn(
           `[WhatsApp-WebJS] Chromium of profile ${profileId} holds ${mb} MB (limit ${limitMb} MB) within 30 minutes of its last memory restart; not restarting it again yet. Raise WWEBJS_MEMORY_LIMIT_MB if this is its normal size.`,
+        );
+      }
+      return;
+    }
+    if (onCall) {
+      if (!this.warnedMemoryOnCall) {
+        this.warnedMemoryOnCall = true;
+        console.warn(
+          `[WhatsApp-WebJS] Chromium of profile ${profileId.replace(/[\r\n]/g, '')} holds ${mb} MB (limit ${limitMb} MB) during a call; not restarting it until the call is over.`,
         );
       }
       return;
