@@ -45,6 +45,7 @@ const sidebars: SidebarsConfig = {
         'features/messaging',
         'features/groups',
         'features/automation',
+        'features/calls',
       ],
     },
     {
