@@ -72,42 +72,48 @@ export function InCallBar() {
       {...consoleFocus}
       role="group"
       aria-label="Current call"
-      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-1.5"
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-1.5 [@container(min-width:68rem)]:flex-nowrap [@container(min-width:68rem)]:py-0.5"
     >
       <PhoneCall className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
-      {/* Who, and how long: the controls go under it once less than 12rem is left for it. */}
+      {/* Who, and how long: the controls go under it once less than 12rem is left for it. Between the header's other
+          controls (a header 68rem wide or more), the bar is one row within the header's height: its details stay on
+          one line, cut where the room ends, and the controls keep their size. */}
       <div className="min-w-0 flex-1 basis-48">
         <p className="truncate text-sm font-medium text-foreground">
           {ringingCallerLabel(a.call.caller)} <span className="text-muted-foreground">· {a.call.profileName}</span>
         </p>
-        <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-          <span>
+        <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground [@container(min-width:68rem)]:flex-nowrap">
+          <span className="min-w-0 [@container(min-width:68rem)]:truncate">
             <span role="status" id={statusId}>{phase}</span>
             {a.local && a.phase === 'announcing' && !reconnecting && <span aria-hidden="true" className="tabular-nums"> ({remaining} s)</span>}
           </span>
           {a.phase === 'active' && a.answeredAt && (
-            <span role="timer" aria-label="Call time" className="tabular-nums">
+            <span role="timer" aria-label="Call time" className="shrink-0 tabular-nums">
               {formatDuration((now - Date.parse(a.answeredAt)) / 1000)}
             </span>
           )}
           {a.call.recorded && live && (
-            <span className="inline-flex items-center gap-1 text-rose-300">
+            <span className="inline-flex shrink-0 items-center gap-1 text-rose-300">
               <CircleDot className="h-3 w-3" aria-hidden="true" />
               Recording
             </span>
           )}
           {q && (
-            <span className="inline-flex items-center gap-1" title="Network quality">
+            <span className="inline-flex shrink-0 items-center gap-1" title="Network quality">
               <q.Icon className="h-3 w-3" aria-hidden="true" />
               <span className="sr-only">Network quality: </span>
               {q.label}
             </span>
           )}
+          {a.problem && (
+            <span role="alert" className="min-w-0 basis-full text-amber-300 [@container(min-width:68rem)]:basis-auto [@container(min-width:68rem)]:truncate">
+              {a.problem}
+            </span>
+          )}
         </p>
-        {a.problem && <p role="alert" className="text-xs text-amber-300">{a.problem}</p>}
       </div>
       {live && (
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 [@container(min-width:68rem)]:shrink-0">
           {a.local && calls.playBlocked && (
             <Button size="sm" variant="outline" onClick={calls.resumeAudio}>
               <Volume2 className="mr-1.5 h-4 w-4" aria-hidden="true" />

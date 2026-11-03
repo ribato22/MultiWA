@@ -958,6 +958,38 @@ for (const [width, height] of [[360, 740], [390, 844], [1440, 900]] as const) {
   });
 }
 
+// Where the bar sits between the header's controls (the header 68rem wide or more), it is one line within the
+// header's own height: a call does not make the header taller there.
+for (const [width, height, sidebar] of [[1440, 900, 'open'], [1216, 800, 'collapsed'], [1920, 1080, 'open']] as const) {
+  test(`${width} px wide, the sidebar ${sidebar}: the bar sits inline, and the header keeps its height through the call`, async ({ page, context, backend }) => {
+    await page.setViewportSize({ width, height });
+    await context.addInitScript(twoMics);
+    await open(page);
+    if (sidebar === 'collapsed') {
+      await page.getByRole('button', { name: 'Close menu' }).click();
+      await expect(page.getByRole('main')).toHaveCSS('margin-left', '80px');
+    }
+    const header = page.locator('header');
+    const tall = () => header.evaluate((el: HTMLElement) => el.offsetHeight);
+    const before = await tall();
+    await answer(page, backend, { recorded: true, ...LONG_NAMES });
+    backend.emit('call:announcing', { callId: 'call-1', durationSec: 600 });
+    await expect(bar(page)).toContainText('The caller hears the recording notice');
+    await expect(bar(page).getByRole('combobox', { name: 'Microphone' })).toBeVisible();
+    // Inline: in the row of the header's menu button.
+    expect(await bar(page).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const menu = el.closest('header')!.querySelector('button')!.getBoundingClientRect();
+      return r.top < menu.bottom && menu.top < r.bottom;
+    })).toBe(true);
+    expect(await tall()).toBe(before);
+    expect(await reachable(page)).toEqual([['Mute', true], ['Microphone', true], ['Hang up', true]]);
+    backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 3_600_000).toISOString() });
+    await expect(bar(page).getByRole('timer', { name: 'Call time' })).toHaveText(/^1:00:0\d$/);
+    expect(await tall()).toBe(before);
+  });
+}
+
 // Pages sized to the screen below the header: a call's bar makes the header taller, and they shrink with it.
 const CONV = { id: 'conv-1', profileId: PROFILE.id, jid: '628111000111@s.whatsapp.net', contactId: 'ct-1', name: 'Pak Joko', type: 'user', unreadCount: 0 };
 /** Whether the element shows whole on the screen. */
