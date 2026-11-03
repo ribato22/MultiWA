@@ -18,6 +18,7 @@ use MultiWA\Models\AudioFile;
 use MultiWA\Models\Broadcast;
 use MultiWA\Models\Call;
 use MultiWA\Models\CallPage;
+use MultiWA\Models\CallRecording;
 use MultiWA\Models\CallsSettings;
 use MultiWA\Models\Contact;
 use MultiWA\Models\MessageResult;
@@ -818,6 +819,61 @@ final class ClientTest extends TestCase
         $client->calls()->uploadAnnouncement('prof-1', $file, 'notice.mp3');
 
         self::assertSame(['file' => ['notice.mp3', self::AUDIO]], self::parts($this->onlyRequest()));
+    }
+
+    public function testCallReadsEveryField(): void
+    {
+        // self::CALL with the fields it leaves at their defaults set too: a misspelled key then fails, not reads as absent.
+        $data = [
+            'isVideo' => true,
+            'isGroup' => true,
+            'direction' => 'outgoing',
+            'rejectedBy' => 'device',
+            'assignedUserId' => 'user-3',
+            'autoReplySentAt' => '2026-11-01T03:00:01.000Z',
+            'metadata' => ['callLogMessageId' => 'msg-0'],
+            'assignedUser' => ['id' => 'user-3', 'name' => 'Rina'],
+            'recording' => ['partial' => true, 'deletedAt' => '2026-12-01T00:00:00.000Z', 'deleteReason' => 'retention'] + self::RECORDING,
+        ] + self::CALL;
+
+        self::assertEquals(new Call(
+            id: 'call-1',
+            profileId: 'prof-1',
+            waCallId: 'W1',
+            fromJid: '6281234567890@s.whatsapp.net',
+            isVideo: true,
+            isGroup: true,
+            direction: 'outgoing',
+            outcome: 'answered',
+            rejectedBy: 'device',
+            startedAt: new DateTimeImmutable('2026-11-01T03:00:00Z'),
+            endedAt: new DateTimeImmutable('2026-11-01T03:03:18Z'),
+            followUp: 'done',
+            assignedUserId: 'user-3',
+            answeredByUserId: 'user-2',
+            answeredAt: new DateTimeImmutable('2026-11-01T03:00:06Z'),
+            endedBy: 'caller',
+            endReason: 'caller_hangup',
+            talkSeconds: 192,
+            autoReplySentAt: new DateTimeImmutable('2026-11-01T03:00:01Z'),
+            conversationId: 'conv-1',
+            metadata: ['callLogMessageId' => 'msg-0'],
+            assignedUser: ['id' => 'user-3', 'name' => 'Rina'],
+            answeredBy: ['id' => 'user-2', 'name' => 'Jane'],
+            conversation: ['id' => 'conv-1', 'name' => 'Budi'],
+            recording: new CallRecording(
+                id: 'rec-1',
+                durationSec: 190,
+                bytes: 95000,
+                partial: true,
+                announcementPlayed: true,
+                createdAt: new DateTimeImmutable('2026-11-01T03:03:20Z'),
+                deletedAt: new DateTimeImmutable('2026-12-01T00:00:00Z'),
+                deleteReason: 'retention',
+            ),
+            createdAt: new DateTimeImmutable('2026-11-01T03:00:00Z'),
+            updatedAt: new DateTimeImmutable('2026-11-01T03:03:20Z'),
+        ), Call::fromArray($data));
     }
 
     public function testBroadcastStoredWithATextMessage(): void
