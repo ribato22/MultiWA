@@ -160,7 +160,8 @@ export interface CallRecording {
   announcementPlayed: boolean;
   createdAt: string;
   deletedAt: string | null;
-  deleteReason: 'admin' | 'retention' | null;
+  /** 'admin' or 'retention' today; a newer API can send another (the column is plain text). */
+  deleteReason: string | null;
 }
 
 export interface CallRecord {

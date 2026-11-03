@@ -119,7 +119,7 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
     }
     // No realtime update follows a delete: the row is read again. When that read fails, the row still says so.
     const deletedAt = res.data?.deletedAt ?? new Date().toISOString();
-    const row = (await api.getCall(call.id)).data ?? { ...call, recording: { ...r, deletedAt, deleteReason: 'admin' as const } };
+    const row = (await api.getCall(call.id)).data ?? { ...call, recording: { ...r, deletedAt, deleteReason: 'admin' } };
     setBusy(null);
     setConfirming(false);
     toast({ title: 'Recording deleted' });
