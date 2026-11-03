@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CircleDot, Download, Loader2, Play, Trash2 } from 'lucide-react';
 import { api, type CallRecord } from '@/lib/api';
-import { RECORDING_DELETED_TEXT, callerLabel, formatDuration } from '@/lib/calls';
+import { callerLabel, formatDuration, recordingDeletedText } from '@/lib/calls';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +16,8 @@ const mb = (bytes: number) => (bytes < 100_000 ? '< 0.1 MB' : `${(bytes / 1_000_
 // The recording that plays on the page: playing another pauses it. Only these players, never the call console's own
 // <audio> (the caller's voice).
 let playing: HTMLAudioElement | null = null;
+// A browser that cannot play WebM/Opus (an older Safari) can still download it. Asked once, not by every row's render.
+const playable = typeof document !== 'undefined' && document.createElement('audio').canPlayType('audio/webm; codecs="opus"') !== '';
 
 export function CallRecording({ call, canManage, onChange }: { call: CallRecord; canManage: boolean; onChange: (row: CallRecord) => void }) {
   const { toast } = useToast();
@@ -55,12 +57,10 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
   if (r.deletedAt) {
     return (
       <span ref={deletedText} tabIndex={-1}>
-        <Badge variant="outline">{RECORDING_DELETED_TEXT[r.deleteReason ?? 'admin']}</Badge>
+        <Badge variant="outline">{recordingDeletedText(r.deleteReason ?? 'admin')}</Badge>
       </span>
     );
   }
-  // A browser that cannot play WebM/Opus (an older Safari) can still download it.
-  const playable = typeof document !== 'undefined' && document.createElement('audio').canPlayType('audio/webm; codecs="opus"') !== '';
   const failed = (title: string, description?: string) => toast({ title, description, variant: 'destructive' });
   /** The row as the server has it now: a recording deleted meanwhile says so, and its player goes. */
   const show = (row: CallRecord) => {
@@ -157,7 +157,9 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
               {busy === 'play' ? <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" /> : <Play className="mr-1.5 h-4 w-4" aria-hidden="true" />}
               {busy === 'play' ? `Loading ${mb(r.bytes)}…` : 'Play'}
             </Button>
-          ) : null}
+          ) : (
+            <span className="text-xs text-muted-foreground">This browser can’t play this recording: download it</span>
+          )}
           {/* While its file comes, its name says so: the spinner is all it shows. */}
           <Button
             size="sm"

@@ -320,6 +320,21 @@ test('leaving the page while a recording loads gives the load up: no file is kep
   expect(await page.evaluate(() => (window as any).__liveBlobs())).toEqual([]);
 });
 
+test('a browser that cannot play the recording (an older Safari) says so, and offers its download', async ({ page, backend }) => {
+  await page.addInitScript(() => {
+    const canPlay = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function (this: HTMLMediaElement, type: string) {
+      return type.startsWith('audio/webm') ? '' : canPlay.call(this, type);
+    };
+  });
+  listing(backend, () => ANSWERED);
+  await openAnswered(page);
+  const row = rowOf(page);
+  await expect(row).toContainText('This browser can’t play this recording: download it');
+  await expect(row.getByRole('button', { name: /^Play/ })).toHaveCount(0);
+  await expect(row.getByRole('button', { name: 'Download the recording of the call from Pak Joko' })).toBeVisible();
+});
+
 test('a recording the retention removed says so', async ({ page, backend }) => {
   listing(backend, () => ({ ...ANSWERED, recording: { ...REC, deletedAt: NOW, deleteReason: 'retention' } }));
   await openAnswered(page);

@@ -2,7 +2,8 @@
 import { test, expect } from '@playwright/test';
 import { PhoneCall, PhoneMissed } from 'lucide-react';
 import {
-  OUTCOME_LABEL, answeredFacts, endedText, formatDuration, fromPayload, knownOutcome, reasonTexts, ringingCallerLabel, type CallUpdatePayload,
+  OUTCOME_LABEL, answeredFacts, endedText, formatDuration, fromPayload, knownOutcome, reasonTexts, recordingDeletedText, ringingCallerLabel,
+  type CallUpdatePayload,
 } from '@/lib/calls';
 import type { CallOutcome, CallRecord } from '@/lib/api';
 import { outcomeIcon } from '@/components/calls/outcome-icon';
@@ -30,6 +31,13 @@ test('an outcome this admin does not know yet reads as unknown, so its label, co
   expect(knownOutcome('call_x')).toBe('unknown');
   expect(knownOutcome('toString')).toBe('unknown'); // a name every object has is no outcome either
   expect(OUTCOME_LABEL[knownOutcome('call_x')]).toBe('Unknown');
+});
+
+test('a deleted recording says why; a reason this admin does not know yet (the column is plain text) reads as deleted, never as nothing', () => {
+  expect(recordingDeletedText('retention')).toBe('Recording deleted after its retention period');
+  expect(recordingDeletedText('admin')).toBe('Recording deleted by an admin');
+  expect(recordingDeletedText('purge')).toBe('Recording deleted');
+  expect(recordingDeletedText('toString')).toBe('Recording deleted'); // a name every object has is no reason either
 });
 
 test('a realtime update keeps what its payload lacks: the recording, and who answered while it is still them', () => {

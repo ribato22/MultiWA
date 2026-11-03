@@ -164,6 +164,10 @@ export const RECORDING_DELETED_TEXT = {
   admin: 'Recording deleted by an admin',
 } as const;
 
+/** Why a recording was deleted: a newer API can send a reason this admin does not know yet (the column is plain text). */
+export const recordingDeletedText = (reason: string): string =>
+  Object.prototype.hasOwnProperty.call(RECORDING_DELETED_TEXT, reason) ? RECORDING_DELETED_TEXT[reason as keyof typeof RECORDING_DELETED_TEXT] : 'Recording deleted';
+
 /** Socket.IO `call:update` payload (no relations). */
 export interface CallUpdatePayload {
   profileId: string;
