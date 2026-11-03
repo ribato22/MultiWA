@@ -21,8 +21,9 @@ cp .env.example .env
 # Start PostgreSQL and Redis
 docker compose up -d postgres redis
 
-# Sync the database schema (no migrations dir → db push)
-pnpm prisma db push
+# Generate the Prisma client, then sync the database schema (no migrations dir → db push)
+pnpm --filter database db:generate
+pnpm --filter database db:push
 
 # Start development servers
 pnpm dev
@@ -175,8 +176,8 @@ pnpm format
 |---------|-------------|
 | `pnpm dev` | Start dev servers |
 | `pnpm build` | Build production |
-| `pnpm prisma studio` | Open Prisma Studio |
-| `pnpm prisma db push` | Sync database schema |
+| `pnpm --filter database db:studio` | Open Prisma Studio |
+| `pnpm --filter database db:push` | Sync database schema |
 | `pnpm test` | Run tests |
 
 ---
