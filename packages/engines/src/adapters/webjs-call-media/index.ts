@@ -336,6 +336,11 @@ export class WebJsCallMedia implements CallMediaEngine {
     }
   }
 
+  /** Whether the page carries a call now: a media bridge or a recording in progress. Restarting it would drop the call. */
+  inUse(): boolean {
+    return this.bridge !== null || this.recording !== null;
+  }
+
   /** One bridge binding per page object; puppeteer keeps it across navigations. Same pattern as bindRecording. */
   private async bindBridge(page: any): Promise<void> {
     let bound = this.bridgeBindings.get(page);

@@ -893,4 +893,38 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       }
     });
   });
+
+  // The adapter's memory check does not restart a page in use: the restart would drop its call.
+  describe('inUse: whether the page carries a call', () => {
+    it('from the start of a media bridge until its handle or the coordinator closes it; not after a failed start', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      expect(media.inUse()).toBe(false);
+      const release = page.holdNext(startBridgeInPage);
+      const starting = media.startCallMedia('c1', fakeSignaling());
+      expect(media.inUse()).toBe(true);
+      release();
+      await (await starting).close();
+      expect(media.inUse()).toBe(false);
+      await media.startCallMedia('c2', fakeSignaling());
+      expect(media.inUse()).toBe(true);
+      await media.closeCallMedia('c2');
+      expect(media.inUse()).toBe(false);
+      page.failNext(startBridgeInPage, new Error('Call is not the active call'));
+      await expect(media.startCallMedia('c3', fakeSignaling())).rejects.toThrow('Call is not the active call');
+      expect(media.inUse()).toBe(false);
+    });
+
+    it('while a recording runs, until it is stopped; not after a failed start', async () => {
+      const page = bridgePage();
+      const media = new WebJsCallMedia(() => page, () => true, 'p1');
+      await media.startRecording('c1', () => undefined);
+      expect(media.inUse()).toBe(true);
+      await media.stopRecording('c1');
+      expect(media.inUse()).toBe(false);
+      page.failNext(startRecordingInPage, new Error('No call to record'));
+      await expect(media.startRecording('c2', () => undefined)).rejects.toThrow('No call to record');
+      expect(media.inUse()).toBe(false);
+    });
+  });
 });
