@@ -151,7 +151,8 @@ class CallsClient
 
     /**
      * The call's recording, audio/webm (owner or admin; an API key with a scope list needs `recordings:read`).
-     * Every read is audited, a download as a download.
+     * Every read is audited, a download as a download. The client's $timeout (30 s by default) covers the whole
+     * download, not only the wait for the answer: a long recording may need a larger one.
      */
     public function getRecording(string $callId, bool $download = false): AudioFile
     {
