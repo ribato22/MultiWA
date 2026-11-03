@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { Locator } from '@playwright/test';
 import { test, expect, get, ringing, PROFILE, STATUS } from './support/fixtures';
 
-test.skip(!process.env.DOCS_SCREENSHOTS, 'writes the docs screenshots: set DOCS_SCREENSHOTS=1');
+test.skip(process.env.DOCS_SCREENSHOTS !== '1', 'writes the docs screenshots: set DOCS_SCREENSHOTS=1');
 // One size for every picture, whatever the config's default becomes.
 test.use({ viewport: { width: 1280, height: 800 } });
 
@@ -102,6 +102,8 @@ test('the Calls page: an answered call and its recording', async ({ page, backen
     return { json: { calls, nextCursor: null } };
   });
   backend.route(get(`/calls/${answered.id}`, answered));
+  // The row names the call's day relative to today: a fixed today keeps the picture the same whenever it is taken.
+  await page.clock.setFixedTime(new Date('2026-11-03T05:00:00.000Z'));
   await page.goto('/dashboard/calls');
   await page.getByRole('tab', { name: 'Answered' }).click();
   const row = page.getByRole('list', { name: 'Calls', exact: true }).getByRole('listitem').filter({ hasText: 'Pak Joko' });
