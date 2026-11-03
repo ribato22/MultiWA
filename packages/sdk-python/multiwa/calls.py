@@ -8,6 +8,7 @@ answer calls in the dashboard; follow them with the ``call.*`` webhooks.
 
 from __future__ import annotations
 
+import os
 from typing import IO, Any
 
 import httpx
@@ -65,6 +66,17 @@ def _settings_body(
         "recording": recording,
         "retentionDays": retention_days,
     }
+
+
+def _announcement(
+    file: bytes | IO[bytes], filename: str | None
+) -> tuple[str, bytes | IO[bytes]]:
+    # Never an empty filename: httpx would leave it out, and the server would
+    # find no file in the request (400).
+    own = getattr(file, "name", None)
+    if not filename and isinstance(own, str):
+        filename = os.path.basename(own)
+    return filename or "announcement", file
 
 
 def _audio(response: httpx.Response) -> AudioFile:
@@ -206,17 +218,19 @@ class CallsClient(SyncResource):
         )
 
     def upload_announcement(
-        self, profile_id: str, file: bytes | IO[bytes], filename: str = "announcement"
+        self, profile_id: str, file: bytes | IO[bytes], filename: str | None = None
     ) -> AnnouncementResult:
         """Upload the announcement callers hear before a recorded call (owner or
         admin; an API key with a scope list needs ``profiles:write``): mp3, wav,
-        ogg, webm or m4a, at most 2 MB and 30 seconds (the server reads the type
-        and the length from the file)."""
+        ogg, webm or m4a, at most 2 MB and 30 seconds. The server reads the type
+        and the length from the file itself, not from its name, which is
+        ``filename``, else the base name of a file object's own ``name``, else
+        ``announcement``."""
         return AnnouncementResult.model_validate(
             self._raw(
                 "POST",
                 f"/profiles/{profile_id}/calls-announcement",
-                files={"file": (filename, file)},
+                files={"file": _announcement(file, filename)},
             ).json()
         )
 
@@ -345,7 +359,7 @@ class AsyncCallsClient(AsyncResource):
         )
 
     async def upload_announcement(
-        self, profile_id: str, file: bytes | IO[bytes], filename: str = "announcement"
+        self, profile_id: str, file: bytes | IO[bytes], filename: str | None = None
     ) -> AnnouncementResult:
         """Upload the announcement; see ``CallsClient.upload_announcement``"""
         return AnnouncementResult.model_validate(
@@ -353,7 +367,7 @@ class AsyncCallsClient(AsyncResource):
                 await self._raw(
                     "POST",
                     f"/profiles/{profile_id}/calls-announcement",
-                    files={"file": (filename, file)},
+                    files={"file": _announcement(file, filename)},
                 )
             ).json()
         )

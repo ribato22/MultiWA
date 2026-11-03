@@ -1068,9 +1068,35 @@ def test_a_refused_call_setting_says_why():
 
 # ---------------- what an announcement upload sends ----------------
 
+
+def named(name: object) -> io.BytesIO:
+    """A file object with a ``name``, as ``open()`` returns one."""
+    file = io.BytesIO(b"ID3\x04")
+    file.name = name
+    return file
+
+
+GREETING = "/srv/audio/greeting.mp3"
+
 # (the file, the options, the filename it goes out under); its bytes are ID3\x04.
 UPLOADS = [
+    pytest.param(lambda: b"ID3\x04", {}, "announcement", id="bytes"),
     pytest.param(lambda: io.BytesIO(b"ID3\x04"), {}, "announcement", id="file object"),
+    pytest.param(lambda: named(GREETING), {}, "greeting.mp3", id="its own base name"),
+    pytest.param(
+        lambda: named(GREETING),
+        {"filename": "notice.mp3"},
+        "notice.mp3",
+        id="the name given wins",
+    ),
+    pytest.param(
+        lambda: named(GREETING),
+        {"filename": ""},
+        "greeting.mp3",
+        id="an empty name given counts as none",
+    ),
+    pytest.param(lambda: named(""), {}, "announcement", id="an empty own name"),
+    pytest.param(lambda: named(3), {}, "announcement", id="a descriptor for a name"),
 ]
 
 
