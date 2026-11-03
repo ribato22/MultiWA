@@ -520,13 +520,15 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         asking = 0;
         // The server could not check this socket (its database is down), and closes it for a retry: the rejoin goes
         // again at the next connect, with the microphone it has. It does not go off and on, or ask the agent again, at
-        // every retry.
-        if (reply.ok || reply.reason !== 'unavailable') break;
+        // every retry. Only one that names this tab's producer: one that names none (Take the call here) would take the
+        // call from wherever the agent has taken it since, maybe much later.
+        if (reply.ok || reply.reason !== 'unavailable' || !ifProducerId) break;
         await new Promise<void>((connected) => socket.once('connect', () => connected()));
         if (superseded()) return mic.stop();
       }
       if (!reply.ok) {
         if (!socket.connected) return waitForSocket();
+        if (reply.reason === 'unavailable') return fail(ANSWER_FAILURE_TEXT.unavailable); // to take here again in a moment
         if (reply.reason === 'moved') return letGo(call.callId); // it stays there, and shows here as theirs
         if (reply.reason === 'answer_undone') {
           // The answer was still connecting: the server gave it up, as Hang up does. Its call:ended, and the call's new

@@ -616,6 +616,30 @@ test('a rejoin that failed on a socket the server checked (error) leaves the cal
   await expect(bar(page).getByRole('button', { name: 'Mute' })).toBeVisible();
 });
 
+test('Take the call here on a socket the server could not check is not sent again by itself, as the call may have moved since: it is offered again, saying why', async ({ page, backend }) => {
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page)).toBeVisible();
+  backend.emit('call:claimed', { callId: 'call-1', byUserId: ME.id, byUserName: ME.name }); // answered in another tab
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString(), agentProducerId: 'producer-other-tab' });
+  let checked = false;
+  backend.reply('call:rejoin', (a) => (checked ? backend.defaults['call:rejoin'](a) : { ok: false, reason: 'unavailable' }));
+  const take = bar(page).getByRole('button', { name: 'Take the call here' });
+  await take.click();
+  await expect(bar(page).getByRole('alert')).toHaveText('The server is unavailable: try again in a moment');
+  await expect(take).toBeVisible();
+  // The server closes the socket it could not check: the reconnect takes nothing by itself.
+  const reads = backend.commands('call:availability').length;
+  backend.blip();
+  await expect.poll(() => backend.commands('call:availability').length, { timeout: 10_000 }).toBeGreaterThan(reads);
+  await rendered(page);
+  expect(backend.commands('call:rejoin')).toEqual([{ callId: 'call-1' }]);
+  checked = true;
+  await take.click();
+  await expect.poll(() => backend.commands('call:rejoin')).toEqual([{ callId: 'call-1' }, { callId: 'call-1' }]);
+  await expect.poll(() => produced(backend)).toBe(1);
+});
+
 test('Take the call here is not undone by the late call:active of the tab that had the call, which shows no call time either; a takeover after its reply is', async ({ page, backend }) => {
   await open(page);
   backend.emit('call:ringing', ringing());
