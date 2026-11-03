@@ -161,7 +161,8 @@ class CallsClient(SyncResource):
     def reply(self, call_id: str, text: str | None = None) -> CallReplyResult:
         """Send a text to the caller, through the send gate (any role; an API
         key with a scope list needs ``messages:write``); without ``text``, the
-        profile's default call reply."""
+        profile's default call reply. Returns the call and the message sent: an
+        ``open`` follow-up is now ``in_progress``, any other is left as it was."""
         return CallReplyResult.model_validate(
             self._request("POST", f"/calls/{call_id}/reply", json={"text": text})
         )
@@ -171,7 +172,9 @@ class CallsClient(SyncResource):
     ) -> CallLinkResult:
         """Create a WhatsApp call link (``voice`` or ``video``) and send it to
         the caller, with an optional text above it (any role; an API key with a
-        scope list needs ``messages:write``)."""
+        scope list needs ``messages:write``). Returns the call, the message sent
+        and the link: an ``open`` follow-up is now ``in_progress``, any other is
+        left as it was."""
         return CallLinkResult.model_validate(
             self._request(
                 "POST",
