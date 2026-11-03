@@ -2,6 +2,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import * as crypto from 'crypto';
+import { publicProfile } from '../profiles/profile-settings';
 
 @Injectable()
 export class WorkspacesService {
@@ -18,7 +19,7 @@ export class WorkspacesService {
       include: { profiles: true },
     });
     if (!ws) throw new NotFoundException('Workspace not found');
-    return ws;
+    return { ...ws, profiles: ws.profiles.map(publicProfile) };
   }
 
   async create(organizationId: string, dto: any) {

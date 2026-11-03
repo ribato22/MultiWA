@@ -2,7 +2,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), update: vi.fn() } } }));
-vi.mock('./profile-settings', () => ({ mergeProfileSettings: vi.fn() }));
+vi.mock('./profile-settings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./profile-settings')>()),
+  mergeProfileSettings: vi.fn(),
+}));
 
 import { prisma } from '@multiwa/database';
 import { ProfilesService } from './profiles.service';

@@ -7,8 +7,8 @@ vi.mock('@multiwa/database', () => ({ prisma: { $queryRaw: vi.fn() } }));
 
 import { prisma } from '@multiwa/database';
 import {
-  announcementOf, mergeProfileSettings, mergeProfileSettingsIfAnnounced, recordingOn, removeAnnouncementUnlessRecording,
-  retentionDaysOf, turnRecordingOffEverywhere,
+  announcementOf, mergeProfileSettings, mergeProfileSettingsIfAnnounced, publicProfile, publicSettings, recordingOn,
+  removeAnnouncementUnlessRecording, retentionDaysOf, turnRecordingOffEverywhere,
 } from './profile-settings';
 
 const db = prisma as any;
@@ -83,5 +83,30 @@ describe('call settings readers', () => {
     expect(retentionDaysOf({ callsRecordingRetentionDays: 3650 })).toBe(3650);
     for (const days of [undefined, null, 0, -5, 3651, 7.5, '30']) expect(retentionDaysOf({ callsRecordingRetentionDays: days })).toBe(90);
     expect(retentionDaysOf(null)).toBe(90);
+  });
+});
+
+// Where an announcement's file is kept stays inside the server: a profile's routes answer with its type and length only.
+describe('the settings the API answers with', () => {
+  const ANNOUNCEMENT = { storageKey: 'announcements/o/p/a.mp3', mimeType: 'audio/mpeg', durationSec: 4.2 };
+
+  it("leave out the announcement's storage key, and keep its type, its length and every other setting", () => {
+    const settings = { callsRecording: true, callsAnnouncement: ANNOUNCEMENT, autoRejectCalls: false };
+    expect(publicSettings(settings)).toEqual({ callsRecording: true, callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 4.2 }, autoRejectCalls: false });
+    expect(settings.callsAnnouncement).toBe(ANNOUNCEMENT); // the row it was read from is left as it is
+  });
+
+  it('are the settings themselves when they hold no storage key', () => {
+    for (const settings of [null, undefined, 'x', {}, { callsAnnouncement: null }, { callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 1 } }]) {
+      expect(publicSettings(settings)).toBe(settings);
+    }
+  });
+
+  it('a profile row keeps every other field', () => {
+    expect(publicProfile({ id: 'p1', displayName: 'Line 1', settings: { callsAnnouncement: ANNOUNCEMENT } })).toEqual({
+      id: 'p1',
+      displayName: 'Line 1',
+      settings: { callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 4.2 } },
+    });
   });
 });

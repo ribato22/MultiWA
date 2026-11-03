@@ -8,7 +8,7 @@ vi.mock('@multiwa/database', () => ({
     user: { findUnique: vi.fn() },
     workspace: { create: vi.fn() },
     account: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
-    profile: { create: vi.fn(), delete: vi.fn() },
+    profile: { create: vi.fn(), delete: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
   },
 }));
 
@@ -119,6 +119,26 @@ describe('AccountsService', () => {
       await new AccountsService({} as any, {} as any, { purgeProfile } as any).deleteProfile('a1', 'p1');
       expect(purgeProfile).toHaveBeenCalledWith('p1');
       expect(purgeProfile.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(prisma.profile.delete).mock.invocationCallOrder[0]);
+    });
+  });
+
+  // As on /profiles: where the announcement's file is kept stays inside the server.
+  describe('the account-scoped profile routes answer without the announcement storage key', () => {
+    const STORED = { callsAnnouncement: { storageKey: 'announcements/o1/p1/a.mp3', mimeType: 'audio/mpeg', durationSec: 4.2 } };
+    const SHOWN = { callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 4.2 } };
+    const accounts = () => new AccountsService({} as any, {} as any, { purgeProfile: vi.fn().mockResolvedValue(undefined) } as any);
+
+    beforeEach(() => {
+      vi.mocked(prisma.account.findUnique).mockReset().mockResolvedValue({ id: 'a1', workspaceId: 'w1' } as any);
+      vi.mocked(prisma.profile.findMany).mockReset().mockResolvedValue([{ id: 'p1', settings: STORED }] as any);
+      vi.mocked(prisma.profile.findUnique).mockReset().mockResolvedValue({ id: 'p1', settings: STORED } as any);
+      vi.mocked(prisma.profile.delete).mockReset().mockResolvedValue({ id: 'p1', settings: STORED } as any);
+    });
+
+    it('the list, one profile, and a deleted one', async () => {
+      expect((await accounts().getProfiles('a1')).map((p) => p.settings)).toEqual([SHOWN]);
+      expect((await accounts().getProfile('a1', 'p1')).settings).toEqual(SHOWN);
+      expect((await accounts().deleteProfile('a1', 'p1')).settings).toEqual(SHOWN);
     });
   });
 });
