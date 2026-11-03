@@ -218,7 +218,7 @@ Live checks before agents rely on it: a test number on a profile with **Answer c
 | Hang up, both ways | ⚠️ Untested | **Hang up** ends the call for the caller. The caller hanging up ends it in the dashboard: "The caller hung up" |
 | Reload during a call | ⚠️ Untested | Reload the agent's tab: the bar shows Connecting…, then the audio comes back, within 15 seconds |
 | Take the call here | ⚠️ Untested | A second tab shows "On a call in another tab". **Take the call here** moves the audio to it, and the first tab lets go |
-| Recording with the announcement | ⚠️ Untested | The caller hears the announcement, then the agent; the bar counts the notice down, then shows **Recording**. After the call, the Calls page (Answered tab) has the recording: the caller on the left, the announcement then the agent on the right |
+| Recording with the announcement | ⚠️ Untested | The caller hears the announcement, then the agent; the bar shows **Recording** and counts the notice down, then starts the timer. After the call, the Calls page (Answered tab) has the recording: the caller on the left, the announcement then the agent on the right |
 | Retention | ⚠️ Untested | Set **Keep recordings for** to 1 day: after the next nightly cleanup (02:30 server time), a recording older than a day reads "Recording deleted after its retention period" |
 | Delete a recording | ⚠️ Untested | **Delete** asks first. The row then reads "Recording deleted by an admin", and the audit log has `call.recording.delete` |
 | A second call during a call | ⚠️ Untested | Call from a third phone during a call: it reaches the dashboard only once the first call ends. Note what the second caller heard |
