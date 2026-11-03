@@ -21,7 +21,10 @@ export interface MultiWAClientOptions {
   baseUrl?: string;
   /** API key for authentication */
   apiKey: string;
-  /** Request timeout in milliseconds (default: 30000) */
+  /**
+   * Request timeout in milliseconds (default: 30000). It covers the whole request, reading the response body included:
+   * a large download, such as a long call recording, may need a larger one.
+   */
   timeout?: number;
   /** Custom headers to include in all requests */
   headers?: Record<string, string>;
@@ -138,8 +141,6 @@ export class MultiWAClient {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         throw new MultiWAError(
@@ -153,13 +154,16 @@ export class MultiWAClient {
         const data = new Uint8Array(await response.arrayBuffer());
         return { data, contentType: response.headers.get('content-type') ?? 'application/octet-stream' } as T;
       }
-      return response.json();
+      // Awaited, so the timeout still runs while the body is read and its abort is caught below.
+      return await response.json();
     } catch (error: any) {
-      clearTimeout(timeoutId);
+      // The timeout's abort rejects fetch itself, or the read of a body that stalled after the headers.
       if (error.name === 'AbortError') {
         throw new MultiWAError('Request timeout', 408);
       }
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

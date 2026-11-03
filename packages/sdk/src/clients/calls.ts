@@ -83,7 +83,8 @@ export class CallClient {
 
   /**
    * The call's recording, audio/webm (owner or admin; an API key with a scope list needs `recordings:read`). Every
-   * read is audited, `download: true` as a download.
+   * read is audited, `download: true` as a download. The client's `timeout` covers the whole download: a long
+   * recording may need a larger one.
    */
   async getRecording(id: string, options?: { download?: boolean }): Promise<BinaryResponse> {
     return this.client.request('GET', `/calls/${id}/recording`, {
@@ -119,7 +120,8 @@ export class CallClient {
   }
 
   /**
-   * The profile's announcement, to listen to
+   * The profile's announcement, to listen to. The client's `timeout` covers the whole download (up to 2 MB): a slow
+   * link may need a larger one.
    */
   async getAnnouncement(profileId: string): Promise<BinaryResponse> {
     return this.client.request('GET', `/profiles/${profileId}/calls-announcement`, { binary: true });

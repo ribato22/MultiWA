@@ -293,7 +293,7 @@ const NO_REQUEST = ['webhooks.getLogs'];
 type Sent = { method: string; origin: string; path: string; query: Query; bodyKeys?: string[]; contentType?: string; form?: Form };
 let sent: Sent[];
 /** The response of the next requests; by default each request is echoed as JSON. */
-let reply: (() => Response) | undefined;
+let reply: ((init: RequestInit) => Response) | undefined;
 
 beforeEach(() => {
   sent = [];
@@ -323,7 +323,7 @@ beforeEach(() => {
           ),
       });
       // Echo the request, so a method's return value shows which response it used.
-      return reply?.() ?? new Response(JSON.stringify({ method: init.method, path: url.pathname }));
+      return reply?.(init) ?? new Response(JSON.stringify({ method: init.method, path: url.pathname }));
     }),
   );
 });
@@ -382,6 +382,18 @@ describe('SDK endpoints', () => {
     reply = () => new Response(new Uint8Array([0x49, 0x44, 0x33]), { headers: { 'content-type': 'audio/mpeg' } });
     expect(await client.calls.getAnnouncement(PROFILE)).toEqual({ data: new Uint8Array([0x49, 0x44, 0x33]), contentType: 'audio/mpeg' });
   });
+
+  // The body stalls after a 200 until the request's signal aborts it, as fetch's does. The test's own 1 s limit is the
+  // guard: a body read the timeout does not cover would hang there.
+  it.each([
+    ['bytes', (c: MultiWAClient) => c.calls.getRecording(ID)],
+    ['JSON', (c: MultiWAClient) => c.calls.get(ID)],
+  ])('the timeout covers reading the body (%s): one that stalls after the headers rejects as a timeout', async (_kind, call) => {
+    reply = ({ signal }) =>
+      new Response(new ReadableStream({ start: (body) => signal!.addEventListener('abort', () => body.error(signal!.reason)) }));
+    const quick = new MultiWAClient({ apiKey: 'test-key', baseUrl: `${ORIGIN}/api/v1`, timeout: 50 });
+    await expect(call(quick)).rejects.toMatchObject({ statusCode: 408, message: 'Request timeout' });
+  }, 1000);
 
   it('an announcement given as bytes goes as a file', async () => {
     await client.calls.uploadAnnouncement(PROFILE, new Uint8Array([1, 2, 3, 4]));
