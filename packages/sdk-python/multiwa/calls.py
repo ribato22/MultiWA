@@ -9,11 +9,12 @@ answer calls in the dashboard; follow them with the ``call.*`` webhooks.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from typing import IO, Any
 
 import httpx
 
-from ._base import AsyncResource, SyncResource, compact
+from ._base import AsyncResource, SyncResource, compact, iso
 from .types import (
     AnnouncementResult,
     AudioFile,
@@ -32,7 +33,7 @@ def _list_params(
     outcome: str | None,
     follow_up: str | None,
     from_: str | None,
-    since: str | None,
+    since: str | datetime | None,
     limit: int | None,
     cursor: str | None,
 ) -> dict[str, Any]:
@@ -41,7 +42,7 @@ def _list_params(
         "outcome": outcome,
         "followUp": follow_up,
         "from": from_,
-        "since": since,
+        "since": None if since is None else iso(since),
         "limit": limit,
         "cursor": cursor,
     }
@@ -97,7 +98,7 @@ class CallsClient(SyncResource):
         outcome: str | None = None,
         follow_up: str | None = None,
         from_: str | None = None,
-        since: str | None = None,
+        since: str | datetime | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> CallPage:
@@ -105,7 +106,8 @@ class CallsClient(SyncResource):
         no scope).
 
         ``from_`` is the caller (a phone number or a JID), ``since`` an ISO 8601
-        date, ``limit`` 1 to 100 (default 50). Pass ``next_cursor`` of a page as
+        string or a timezone-aware datetime (a naive one raises ``ValueError``),
+        ``limit`` 1 to 100 (default 50). Pass ``next_cursor`` of a page as
         ``cursor`` for the next one.
         """
         return CallPage.model_validate(
@@ -262,7 +264,7 @@ class AsyncCallsClient(AsyncResource):
         outcome: str | None = None,
         follow_up: str | None = None,
         from_: str | None = None,
-        since: str | None = None,
+        since: str | datetime | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> CallPage:

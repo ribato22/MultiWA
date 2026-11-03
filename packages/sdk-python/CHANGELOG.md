@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `client.calls`, sync and async, for every calls route: `list` (with its
-  filters and cursor; `from_` is the caller), `open_count`, `get`, `update`
+  filters and cursor; `from_` is the caller, `since` an ISO 8601 string or a
+  timezone-aware `datetime`), `open_count`, `get`, `update`
   (`unassign=True` removes the assignee; with `assigned_user_id` too it raises
   `ValueError`), `reject`, `reply`, `send_call_link` (`link_type` is `voice` or
   `video`), `media_status`, `get_recording`, `delete_recording`,

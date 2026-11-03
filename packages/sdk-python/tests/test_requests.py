@@ -699,6 +699,21 @@ CASES = [
         and r.calls[0].recording.duration_sec == 190,
     ),
     Case(
+        "calls.list since a timezone-aware datetime",
+        lambda c: c.calls.list(
+            "p-1", since=datetime(2026, 11, 1, 7, tzinfo=timezone(timedelta(hours=7)))
+        ),
+        [{"calls": [], "nextCursor": None}],
+        [
+            Sent(
+                "GET",
+                f"{V1}/calls",
+                [("profileId", "p-1"), ("since", "2026-11-01T07:00:00+07:00")],
+                None,
+            )
+        ],
+    ),
+    Case(
         "calls.open_count",
         lambda c: c.calls.open_count(),
         [{"count": 3}],
@@ -974,6 +989,8 @@ REFUSED = [
         "timezone-aware",
     ),
     (lambda c: c.broadcasts.schedule("b-1", datetime(2030, 1, 1)), "timezone-aware"),
+    # Sent without a zone, it would be read in the server's own.
+    (lambda c: c.calls.list("p-1", since=datetime(2026, 11, 1)), "timezone-aware"),
     (lambda c: c.contacts.create("p-1", "628111", email="a@b.test"), "email"),
     (lambda c: c.contacts.update("c-1", email="a@b.test"), "email"),
     (
