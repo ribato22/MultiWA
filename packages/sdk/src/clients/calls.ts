@@ -25,49 +25,52 @@ export class CallClient {
   constructor(private client: MultiWAClient) {}
 
   /**
-   * A page of a profile's calls, newest first. Pass `nextCursor` back as `cursor` for the next page.
+   * A page of a profile's calls, newest first (any role; an API key needs no scope). Pass `nextCursor` back as
+   * `cursor` for the next page.
    */
   async list(profileId: string, options?: ListCallsOptions): Promise<CallList> {
     return this.client.get('/calls', { profileId, ...options });
   }
 
   /**
-   * How many calls of the organization have their follow-up open
+   * How many calls of the organization have their follow-up open (any role; an API key needs no scope)
    */
   async openCount(): Promise<{ count: number }> {
     return this.client.get('/calls/open-count');
   }
 
   /**
-   * Get a call by ID
+   * Get a call by ID (any role; an API key needs no scope)
    */
   async get(id: string): Promise<Call> {
     return this.client.get(`/calls/${id}`);
   }
 
   /**
-   * Change the follow-up or the assignee; `assignedUserId: null` unassigns
+   * Change the follow-up or the assignee (any role; an API key needs no scope); `assignedUserId: null` unassigns
    */
   async update(id: string, data: UpdateCallOptions): Promise<Call> {
     return this.client.patch(`/calls/${id}`, data);
   }
 
   /**
-   * Reject a call that is still ringing
+   * Reject a call that is still ringing (any role; an API key needs no scope)
    */
   async reject(id: string): Promise<Call> {
     return this.client.post(`/calls/${id}/reject`);
   }
 
   /**
-   * Send a text to the caller, through the send gate. Without one, the profile's default call reply.
+   * Send a text to the caller, through the send gate (any role; an API key with a scope list needs `messages:write`).
+   * Without one, the profile's default call reply.
    */
   async reply(id: string, text?: string): Promise<CallReplyResult> {
     return this.client.post(`/calls/${id}/reply`, { text });
   }
 
   /**
-   * Create a WhatsApp call link and send it to the caller, with an optional text above it
+   * Create a WhatsApp call link and send it to the caller, with an optional text above it (any role; an API key with
+   * a scope list needs `messages:write`)
    */
   async sendCallLink(id: string, type: 'voice' | 'video', text?: string): Promise<CallLinkResult> {
     return this.client.post(`/calls/${id}/call-link`, { type, text });
@@ -75,7 +78,7 @@ export class CallClient {
 
   /**
    * Readiness of answering calls in the dashboard: the server, its recordings storage, and every profile with its
-   * call settings (owner or admin)
+   * call settings (owner or admin; an API key needs no scope)
    */
   async mediaStatus(): Promise<CallsMediaStatus> {
     return this.client.get('/calls/media/status');
@@ -94,7 +97,8 @@ export class CallClient {
   }
 
   /**
-   * Delete the call's recording: the file goes, its row stays as evidence (`recordings:delete`)
+   * Delete the call's recording: the file goes, its row stays as evidence (owner or admin; an API key with a scope
+   * list needs `recordings:delete`)
    */
   async deleteRecording(id: string): Promise<DeletedCallRecording> {
     return this.client.delete(`/calls/${id}/recording`);
@@ -110,9 +114,10 @@ export class CallClient {
   }
 
   /**
-   * Upload the announcement callers hear before a recorded call: mp3, wav, ogg, webm or m4a, at most 2 MB and 30
-   * seconds. The server reads the type and the length from the file itself, not from its name, which is `filename`
-   * or by default a File's own name, else `announcement`.
+   * Upload the announcement callers hear before a recorded call (owner or admin; an API key with a scope list needs
+   * `profiles:write`): mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds. The server reads the type and the
+   * length from the file itself, not from its name, which is `filename` or by default a File's own name, else
+   * `announcement`.
    */
   async uploadAnnouncement(profileId: string, file: Blob | Uint8Array, filename?: string): Promise<CallAnnouncementResult> {
     const form = new FormData();
@@ -123,15 +128,16 @@ export class CallClient {
   }
 
   /**
-   * The profile's announcement, to listen to. The client's `timeout` covers the whole download (up to 2 MB): a slow
-   * link may need a larger one.
+   * The profile's announcement, to listen to (owner or admin; an API key with a scope list needs `profiles:write`).
+   * The client's `timeout` covers the whole download (up to 2 MB): a slow link may need a larger one.
    */
   async getAnnouncement(profileId: string): Promise<BinaryResponse> {
     return this.client.request('GET', `/profiles/${profileId}/calls-announcement`, { binary: true });
   }
 
   /**
-   * Remove the announcement; refused with 409 (`recording_on`) while recording is on
+   * Remove the announcement (owner or admin; an API key with a scope list needs `profiles:write`); refused with 409
+   * (`recording_on`) while recording is on
    */
   async deleteAnnouncement(profileId: string): Promise<CallAnnouncementResult> {
     return this.client.delete(`/profiles/${profileId}/calls-announcement`);
