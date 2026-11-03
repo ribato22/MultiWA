@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, PhoneIncoming, Play, Trash2, Upload, XCircle } from 'lucide-react';
 import { ANNOUNCEMENT_MAX_BYTES, api, type CallsMediaStatus } from '@/lib/api';
-import { READINESS_TEXT, reasonTexts } from '@/lib/calls';
+import { READINESS_TEXT, SETTINGS_REASON_TEXT, reasonTexts } from '@/lib/calls';
 import { canManageCalls, currentUser } from '@/lib/current-user';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -259,7 +259,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               />
             </div>
             {server.recordings.problem && <p className="text-[11px] text-amber-300">Recording storage: {server.recordings.problem}</p>}
-            {checkFailed && !p.recording && <p className="text-[11px] text-amber-300">{reasonTexts([checkFailed])}</p>}
+            {checkFailed && !p.recording && <p className="text-[11px] text-amber-300">{SETTINGS_REASON_TEXT[checkFailed] ?? checkFailed}</p>}
             <div className="space-y-2">
               <p className="text-xs font-medium text-slate-200">Announcement</p>
               <p className="text-[11px] text-slate-400">
