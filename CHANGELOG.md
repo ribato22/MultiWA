@@ -7,9 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Calls answered in the dashboard** (off by default) — agents answer a profile's incoming WhatsApp voice calls in the browser: a banner with a ringtone and desktop alerts, a bar in the header with mute, the microphone and the network quality, availability, and a device check in Settings → Calls. Calls can also be recorded, and the caller then always hears an announcement first: recordings go to private storage with a privacy check, a retention period per profile, and audited playback, download and delete. New: `GET /calls/media/status`, the calls settings, announcement and recording routes, the `recordings:read` and `recordings:delete` API-key scopes, and the `call.answered`, `call.recording.ready` and `call.recording.deleted` webhooks. whatsapp-web.js with `ENGINE_HOST=api` only; see `docs/23-calls.md`. (#279, #280, #284, #285, #289, #294, #295)
+- **SDKs 1.4.0** — a calls resource in the TypeScript (`client.calls`), Python (`client.calls`) and PHP (`$client->calls()`) SDKs for every calls route: the list and the follow-up, reject, reply and the call link, the media status, the call settings, the announcement, and the recordings as bytes. Each method's documentation names the role it needs and the scope an API key with a scope list needs. The TypeScript SDK now exports `MultiWAError`, as its README showed, and gains `patch()` and `request(..., { binary: true })`, which resolves to the bytes and their Content-Type; the PHP SDK gains `requestAudio()`, which returns them as an `AudioFile`. See `packages/sdk-python/CHANGELOG.md`.
+- The OpenAPI document (`/api/docs`) describes what each calls route answers.
+- Alert rules and documented metrics for calls (`docs/monitoring/`).
+
 ### Changed
 
 - **Runtime: Node.js 24 LTS.** The Docker images (api, worker, admin) and CI run Node.js 24. Node.js 20 reached end-of-life on 2026-04-30. Running MultiWA from source now needs Node.js 24 or newer. The SDK and the n8n node keep their own, older Node floors.
+
+### Fixed
+
+- `docker/nginx/example.conf` proxies the realtime connection (`/socket.io/`); the dashboard's live updates failed behind it.
+- TypeScript SDK: the request `timeout` now covers reading the response body too, not only the wait for the headers.
+
+### Security
+
+- A profile's routes (`GET /profiles`, `GET /profiles/:id`, `PUT /profiles/:id`, the account-scoped profile routes and `GET /workspaces/:id`) no longer show where its call announcement is stored (`settings.callsAnnouncement.storageKey`); its type and length remain.
 
 ## [1.3.0] - 2026-10-29
 
