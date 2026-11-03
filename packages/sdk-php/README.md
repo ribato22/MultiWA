@@ -197,6 +197,8 @@ delivery (`['X-Tenant' => 'acme']`).
 
 ## Calls
 
+> `$client->calls()` is in SDK 1.4.0 and later.
+
 Incoming WhatsApp calls: the follow-up queue, the readiness of answering them in
 the dashboard, the recordings and the announcement
 ([Calls answered in the dashboard](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md)).

@@ -287,7 +287,7 @@ The other calls routes ask for no scope: the list, a call and the open count, th
 - **REST:** [Calls](<../api/api-specification.md#calls-calls>): the list, the follow-up, the settings, the recordings and the announcement.
 - **Realtime:** [Calls answered in the dashboard](<../api/websocket-api.md#calls-answered-in-the-dashboard>): the dashboard's events and commands, for dashboard logins only, and `call:update`.
 - **Webhooks:** [Call events](<../api/webhook-events.md#call-events>) and [Call recording events](<../api/webhook-events.md#call-recording-events>).
-- **SDKs:** the TypeScript SDK (`client.calls`), the [Python SDK](<../sdks/python-sdk.md#calls>) and the [PHP SDK](<../sdks/php-sdk.md#calls>) have a calls resource.
+- **SDKs:** from 1.4.0, the TypeScript SDK (`client.calls`), the [Python SDK](<../sdks/python-sdk.md#calls>) and the [PHP SDK](<../sdks/php-sdk.md#calls>) have a calls resource.
 
 ---
 
