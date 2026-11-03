@@ -29,7 +29,8 @@ export class CallClient {
    * `cursor` for the next page.
    */
   async list(profileId: string, options?: ListCallsOptions): Promise<CallList> {
-    return this.client.get('/calls', { profileId, ...options });
+    const since = options?.since instanceof Date ? options.since.toISOString() : options?.since;
+    return this.client.get('/calls', { profileId, ...options, since });
   }
 
   /**

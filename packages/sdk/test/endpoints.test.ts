@@ -373,6 +373,15 @@ describe('SDK endpoints', () => {
     expect(vi.mocked(fetch).mock.calls.map(([, init]) => init?.body)).toEqual(['{"assignedUserId":null}', '{}']);
   });
 
+  it('calls.list sends a Date since as ISO 8601 in UTC, and a string one as it is', async () => {
+    await client.calls.list(PROFILE, { since: new Date('2026-11-01T07:00:00+07:00') });
+    await client.calls.list(PROFILE, { since: '2026-11-01T07:00:00+07:00' });
+    expect(sent.map((s) => s.query)).toEqual([
+      { profileId: PROFILE, since: '2026-11-01T00:00:00.000Z' },
+      { profileId: PROFILE, since: '2026-11-01T07:00:00+07:00' },
+    ]);
+  });
+
   it('a recording and an announcement resolve to their bytes and Content-Type', async () => {
     reply = () => new Response(new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]), { headers: { 'content-type': 'audio/webm' } });
     const recording = await client.calls.getRecording(ID);

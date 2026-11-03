@@ -352,8 +352,8 @@ export interface ListCallsOptions {
   followUp?: CallFollowUp;
   /** The caller: a phone number (`628111000111`) or a JID. */
   from?: string;
-  /** Calls that started at or after this ISO 8601 date. */
-  since?: string;
+  /** Calls that started at or after it: a Date, sent in ISO 8601 (UTC), or an ISO 8601 string. */
+  since?: Date | string;
   /** 1 to 100 (default 50). */
   limit?: number;
   cursor?: string;
