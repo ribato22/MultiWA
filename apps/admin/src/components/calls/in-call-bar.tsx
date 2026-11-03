@@ -83,10 +83,11 @@ export function InCallBar() {
           {ringingCallerLabel(a.call.caller)} <span className="text-muted-foreground">· {a.call.profileName}</span>
         </p>
         <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground [@container(min-width:68rem)]:flex-nowrap">
-          {/* With nothing to say (the call is on), the status takes no room, but stays for what it says next. */}
-          <span className={`min-w-0 [@container(min-width:68rem)]:truncate${phase ? '' : ' sr-only'}`}>
-            <span role="status" id={statusId}>{phase}</span>
-            {a.local && a.phase === 'announcing' && !reconnecting && <span aria-hidden="true" className="tabular-nums"> ({remaining} s)</span>}
+          {/* With nothing to say (the call is on), the status takes no room, but stays for what it says next. Cut, it
+              loses its words, not the notice's seconds. */}
+          <span className={`min-w-0 [@container(min-width:68rem)]:flex${phase ? '' : ' sr-only'}`}>
+            <span role="status" id={statusId} className="[@container(min-width:68rem)]:truncate">{phase}</span>
+            {a.local && a.phase === 'announcing' && !reconnecting && <span aria-hidden="true" className="shrink-0 whitespace-pre tabular-nums"> ({remaining} s)</span>}
           </span>
           {a.phase === 'active' && a.answeredAt && (
             <span role="timer" aria-label="Call time" className="shrink-0 tabular-nums">

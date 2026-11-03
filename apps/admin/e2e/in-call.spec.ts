@@ -1119,6 +1119,17 @@ const overlapped = (page: Page) =>
       })
       .map((el) => el.getAttribute('aria-label') ?? el.textContent);
   });
+/** Whether an element of the bar shows whole: inside every box it is in, up to the bar, and its own text not cut. */
+const whole = (l: Locator) =>
+  l.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const c = p.getBoundingClientRect();
+      if (r.left < c.left - 0.5 || r.right > c.right + 0.5 || r.top < c.top - 0.5 || r.bottom > c.bottom + 0.5) return false;
+      if (p.matches('[aria-label="Current call"]')) break;
+    }
+    return el.scrollWidth <= el.clientWidth;
+  });
 for (const [width, height, sidebars] of [
   [1280, 800, ['open', 'collapsed']],
   [1024, 768, ['open', 'collapsed']],
@@ -1168,9 +1179,9 @@ for (const [width, height] of [[360, 740], [390, 844], [1440, 900]] as const) {
 }
 
 // Where the bar sits between the header's controls (the header 68rem wide or more), it is one line within the
-// header's own height: a call does not make the header taller there.
+// header's own height: a call does not make the header taller there. The notice's words are cut there, not its seconds.
 for (const [width, height, sidebar] of [[1440, 900, 'open'], [1216, 800, 'collapsed'], [1920, 1080, 'open']] as const) {
-  test(`${width} px wide, the sidebar ${sidebar}: the bar sits inline, and the header keeps its height through the call`, async ({ page, context, backend }) => {
+  test(`${width} px wide, the sidebar ${sidebar}: the bar sits inline, the notice's countdown shows whole, and the header keeps its height through the call`, async ({ page, context, backend }) => {
     await page.setViewportSize({ width, height });
     await context.addInitScript(twoMics);
     await open(page);
@@ -1193,6 +1204,7 @@ for (const [width, height, sidebar] of [[1440, 900, 'open'], [1216, 800, 'collap
     })).toBe(true);
     expect(await tall()).toBe(before);
     expect(await reachable(page)).toEqual([['Mute', true], ['Microphone', true], ['Hang up', true]]);
+    expect(await whole(bar(page).locator('[aria-hidden="true"]', { hasText: /^ ?\(\d+ s\)$/ }))).toBe(true);
     backend.emit('call:active', { callId: 'call-1', answeredAt: new Date(Date.now() - 3_600_000).toISOString() });
     await expect(bar(page).getByRole('timer', { name: 'Call time' })).toHaveText(/^1:00:0\d$/);
     expect(await tall()).toBe(before);
