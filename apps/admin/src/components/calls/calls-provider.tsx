@@ -419,6 +419,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       const media = mediaRef.current;
       const callId = audioCallId;
       if (!media || !callId) return;
+      micGone = null; // the agent's pick: one still opening in place of a microphone that stopped gives way to it
       let next: MediaStreamTrack | undefined;
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -427,7 +428,6 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         next = stream.getAudioTracks()[0];
         await media.replaceMic(next);
         setMicId(next.getSettings().deviceId ?? deviceId);
-        micGone = null;
         // What the bar said of the microphone before is over.
         if (micSaid && stateRef.current.active?.problem === micSaid) dispatch({ type: 'problem', callId, text: null });
       } catch {

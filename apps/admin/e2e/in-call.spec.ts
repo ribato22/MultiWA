@@ -666,6 +666,52 @@ for (const [what, end] of [
   });
 }
 
+test('a microphone picked while another one opens in place of an unplugged one is the one the call sends, and the one the picker names', async ({ page, context, backend }) => {
+  await context.addInitScript(pluggable, [['mic-a', 'Desk microphone'], ['mic-b', 'Headset'], ['mic-c', 'USB microphone']]);
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const picker = bar(page).getByRole('combobox', { name: 'Microphone' });
+  await expect(picker).toHaveText('Desk microphone');
+  // Each microphone asked for opens with `__opens[i]()`; the first swap into the call's sender waits for `__swap()`.
+  await page.evaluate(() => {
+    const w = window as any;
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    w.__opens = [];
+    w.__tracks = [];
+    navigator.mediaDevices.getUserMedia = (c) =>
+      new Promise((resolve, reject) => w.__opens.push(() => gum(c).then((s) => resolve((w.__tracks.push(s.getAudioTracks()[0]), s)), reject)));
+    const replace = RTCRtpSender.prototype.replaceTrack;
+    RTCRtpSender.prototype.replaceTrack = function (this: RTCRtpSender, track: MediaStreamTrack | null) {
+      if (w.__swap) return replace.call(this, track);
+      return new Promise((resolve, reject) => (w.__swap = () => replace.call(this, track).then(resolve, reject)));
+    };
+  });
+  await page.evaluate(() => (window as any).__unplug('mic-a'));
+  await expect.poll(() => page.evaluate(() => (window as any).__opens.length)).toBe(1); // the one in its place: Headset
+  await picker.click();
+  await page.getByRole('option', { name: 'USB microphone' }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__opens.length)).toBe(2);
+  await page.evaluate(() => (window as any).__opens[1]()); // the pick opens first, and is being swapped in
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__swap)).toBe('function');
+  await page.evaluate(() => (window as any).__opens[0]()); // then the one in its place opens
+  await expect.poll(() => page.evaluate(() => (window as any).__tracks.some((t: MediaStreamTrack) => t.label === 'Headset'))).toBe(true);
+  await page.evaluate(() => (window as any).__swap());
+  // Settled: the Headset is closed, or it went into the call after the pick.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const w = window as any;
+        const headset = w.__tracks.find((t: MediaStreamTrack) => t.label === 'Headset');
+        const sent = w.__pcs.flatMap((pc: RTCPeerConnection) => pc.getSenders()).find((s: RTCRtpSender) => s.track)?.track;
+        return headset.readyState === 'ended' || sent === headset;
+      }),
+    )
+    .toBe(true);
+  expect(await sending(page)).toEqual({ label: 'USB microphone', state: 'live' });
+  await expect(picker).toHaveText('USB microphone');
+});
+
 // Where the focus goes when the call console lets go of it. The agent was on a link of the page (not a field, where no
 // ring takes the focus) when the call rang.
 const working = (page: Page) => page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name: 'Chat', exact: true });
