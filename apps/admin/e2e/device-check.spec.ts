@@ -366,9 +366,14 @@ test('the bell’s Notification Settings opens that tab, from Settings too, what
 test('a tab click changes the URL in place, with no request to the server', async ({ page }) => {
   await page.goto('/dashboard/settings');
   await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
-  // A request for the page's server components (RSC) carries this header, or `_rsc=` in its URL.
+  // A request for this page's server components (RSC) carries this header, or `_rsc=` in its URL. Not a prefetch: a
+  // production build prefetches the links that come into view (the sidebar's), which is no navigation of this page.
   const asked: string[] = [];
-  page.on('request', (r) => void ((r.headers().rsc === '1' || r.url().includes('_rsc=')) && asked.push(r.url())));
+  page.on('request', (r) => {
+    const h = r.headers();
+    const rsc = h.rsc === '1' || r.url().includes('_rsc=');
+    if (rsc && !h['next-router-prefetch'] && new URL(r.url()).pathname === '/dashboard/settings') asked.push(r.url());
+  });
   await tab(page, 'Team').click();
   await expect(page).toHaveURL(/\/dashboard\/settings\?tab=team$/);
   await tab(page, 'Security').click();
