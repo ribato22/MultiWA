@@ -54,8 +54,10 @@ sum(rate(multiwa_messages_failed_total[5m]))
 
 ## Calls metrics (API)
 
-Calls answered in the dashboard ([Calls answered in the dashboard](../23-calls.md)). The labelled counters
-start every label at 0 when the API starts, so an `increase(...) > 0` alert fires on the first event too.
+Calls answered in the dashboard ([Calls answered in the dashboard](../23-calls.md)). The privacy checks, the
+recording uploads and the recorder failures start every label at 0 when the API starts, so an `increase(...) > 0`
+alert on them fires on the first event too. The media failures and the ended calls show a `reason` only from its
+first event on, which `increase()` does not count.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
