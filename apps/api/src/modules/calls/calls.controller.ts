@@ -2,13 +2,14 @@
 // apps/api/src/modules/calls/calls.controller.ts
 
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, Res, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiProduces, ApiQuery, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { PassThrough } from 'stream';
 import { CallsService } from './calls.service';
 import { CallRecordingsService, type RecordingReader } from './recordings/call-recordings.service';
 import { AuditService } from '../audit/audit.service';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './dto';
+import { CallCountDto, CallDto, CallLinkResultDto, CallListDto, CallReplyResultDto, CallsMediaStatusDto, DeletedCallRecordingDto } from './dto/responses';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -39,6 +40,7 @@ export class CallsController {
   @Get()
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List calls of a profile, newest first' })
+  @ApiResponse({ status: 200, description: 'A page of calls', type: CallListDto })
   @ApiValidationError()
   list(@Query() query: ListCallsQueryDto) {
     return this.service.list(query);
@@ -48,6 +50,7 @@ export class CallsController {
   // syntax out of comments: scripts/check-api-contract.mjs reads every line, comments included.)
   @Get('open-count')
   @ApiOperation({ summary: 'Open call follow-ups across the organization' })
+  @ApiResponse({ status: 200, description: 'How many calls of the organization have the follow-up open', type: CallCountDto })
   openCount(@Request() req: any) {
     return this.service.openCount(req.user.organizationId);
   }
@@ -56,6 +59,7 @@ export class CallsController {
   @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @ApiOperation({ summary: 'Readiness of answering calls in the dashboard: the media server and every profile of the organization' })
+  @ApiResponse({ status: 200, description: 'The server, its recordings storage, and each profile with its call settings and readiness', type: CallsMediaStatusDto })
   mediaStatus(@Request() req: any) {
     return this.service.mediaStatus(req.user.organizationId);
   }
@@ -63,6 +67,7 @@ export class CallsController {
   @Get(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Get a call' })
+  @ApiResponse({ status: 200, description: 'The call', type: CallDto })
   @ApiNotFound('Call')
   get(@Param('id') id: string) {
     return this.service.get(id);
@@ -71,6 +76,7 @@ export class CallsController {
   @Patch(':id')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Update the follow-up status or the assignee' })
+  @ApiResponse({ status: 200, description: 'The call as updated', type: CallDto })
   @ApiNotFound('Call')
   @ApiValidationError()
   update(@Param('id') id: string, @Body() dto: UpdateCallDto) {
@@ -80,6 +86,7 @@ export class CallsController {
   @Post(':id/reject')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Reject a call that is still ringing' })
+  @ApiResponse({ status: 201, description: 'The call, rejected', type: CallDto })
   @ApiNotFound('Call')
   reject(@Param('id') id: string) {
     return this.service.reject(id);
@@ -89,6 +96,7 @@ export class CallsController {
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Send a text to the caller (send-gated)' })
+  @ApiResponse({ status: 201, description: 'The call (its follow-up in progress) and the message sent', type: CallReplyResultDto })
   @ApiNotFound('Call')
   @ApiValidationError()
   reply(@Param('id') id: string, @Body() dto: ReplyCallDto) {
@@ -99,6 +107,7 @@ export class CallsController {
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Create a WhatsApp call link and send it to the caller' })
+  @ApiResponse({ status: 201, description: 'The call, the message sent and the link', type: CallLinkResultDto })
   @ApiNotFound('Call')
   @ApiValidationError()
   callLink(@Param('id') id: string, @Body() dto: CallLinkDto) {
@@ -114,6 +123,8 @@ export class CallsController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: "The call's recording (audio/webm): HTTP Range for seeking, ?download=1 as an attachment; audited" })
   @ApiProduces('audio/webm')
+  @ApiQuery({ name: 'download', required: false, enum: ['1', 'true'], description: 'As an attachment (Content-Disposition), audited as a download' })
+  @ApiResponse({ status: 200, description: 'The whole recording', schema: { type: 'string', format: 'binary' } })
   @ApiResponse({ status: 206, description: 'One byte range of the recording, with Content-Range' })
   @ApiResponse({ status: 416, description: 'The range starts past the end: `Content-Range: bytes */<size>`' })
   @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server or did not answer, or the access could not be audited: nothing is sent' })
@@ -133,6 +144,7 @@ export class CallsController {
   @RequireScope('recordings:delete')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: "Delete the call's recording: the file goes, the row stays marked deleted as evidence" })
+  @ApiResponse({ status: 200, description: 'Deleted', type: DeletedCallRecordingDto })
   @ApiResponse({ status: 409, description: 'The recording is in another storage location than this server uses now: it cannot be deleted from here' })
   @ApiResponse({ status: 503, description: 'The recordings storage is not configured on this server' })
   @ApiNotFound('Recording')

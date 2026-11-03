@@ -12,6 +12,7 @@ import { CallsService } from './calls.service';
 import { CallAnnouncementService } from './recordings/call-announcement.service';
 import { ANNOUNCEMENT_MAX_BYTES } from './recordings/announcement-audio';
 import { UpdateCallSettingsDto } from './dto';
+import { CallAnnouncementResultDto, CallsRefusalDto, CallsSettingsDto } from './dto/responses';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard, apiKeyLacksScope } from '../auth/guards/api-key-scope.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -74,7 +75,8 @@ export class ProfileCallsController {
   @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: "This profile's call settings: answering in the dashboard, recording, the retention period" })
-  @ApiResponse({ status: 409, description: 'Not available for this profile now: `reasons` says why' })
+  @ApiResponse({ status: 200, description: 'The call settings as stored', type: CallsSettingsDto })
+  @ApiResponse({ status: 409, description: 'Not available for this profile now: `reasons` says why', type: CallsRefusalDto })
   @ApiNotFound('Profile')
   @ApiValidationError()
   updateCallSettings(@Param('id') id: string, @Body() dto: UpdateCallSettingsDto, @Req() req: { user?: { apiKeyScopes?: string[] } }) {
@@ -96,7 +98,8 @@ export class ProfileCallsController {
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
   @ApiResponse({ status: 400, description: 'No file, not multipart/form-data, or a malformed body' })
-  @ApiResponse({ status: 409, description: 'The recordings storage is not configured (`reasons`)' })
+  @ApiResponse({ status: 201, description: 'The announcement as stored: its type and length, read from the file', type: CallAnnouncementResultDto })
+  @ApiResponse({ status: 409, description: 'The recordings storage is not configured (`reasons`)', type: CallsRefusalDto })
   @ApiResponse({ status: 413, description: 'Larger than 2 MB' })
   @ApiResponse({ status: 415, description: 'Not one of the audio formats' })
   @ApiResponse({ status: 422, description: "Longer than 30 seconds (half a second more is allowed for encoders' padding), or its length is unknown" })
@@ -112,6 +115,7 @@ export class ProfileCallsController {
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: "The profile's announcement, to listen to" })
   @ApiProduces('audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4')
+  @ApiResponse({ status: 200, description: 'The announcement, with its stored Content-Type', schema: { type: 'string', format: 'binary' } })
   @ApiResponse({ status: 503, description: 'The recordings storage did not answer: try again' })
   @ApiNotFound('Announcement')
   async announcement(@Param('id') id: string, @Req() request: FastifyRequest, @Res() reply: FastifyReply): Promise<void> {
@@ -129,7 +133,8 @@ export class ProfileCallsController {
   @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Remove the announcement (refused while recording is on)' })
-  @ApiResponse({ status: 409, description: 'Recording is on (`reasons`: recording_on)' })
+  @ApiResponse({ status: 200, description: 'Removed', type: CallAnnouncementResultDto })
+  @ApiResponse({ status: 409, description: 'Recording is on (`reasons`: recording_on)', type: CallsRefusalDto })
   @ApiNotFound('Profile')
   deleteAnnouncement(@Param('id') id: string) {
     return this.announcements.remove(id);
