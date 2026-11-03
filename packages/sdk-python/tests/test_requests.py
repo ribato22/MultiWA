@@ -710,7 +710,9 @@ CASES = [
         lambda c: c.calls.get("c-1"),
         [rows.CALL_ROW],
         [Sent("GET", f"{V1}/calls/c-1", [], None)],
-        lambda r: r.outcome == "answered" and r.talk_seconds == 192,
+        lambda r: r.outcome == "answered" and r.talk_seconds == 192
+        # Tz-aware: a naive datetime is never equal to an aware one.
+        and r.started_at == datetime(2026, 10, 28, 10, tzinfo=timezone.utc),
     ),
     Case(
         "calls.update",
