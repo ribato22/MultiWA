@@ -142,7 +142,7 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "The call recordings storage can be read without credentials"
-          description: "A privacy check fetched its probe file from the recordings storage without credentials: anyone can read the recordings. Recording was turned off on every profile; make the storage private, then turn recording on again."
+          description: "A privacy check fetched its probe file from the recordings storage without credentials: anyone can read the recordings. Recording was turned off on every profile, and stays off until the storage is made private and recording is turned on again. The alert resolves an hour later even if the storage is still public; the nightly check raises it again while it is."
 
       - alert: CallRecordingUploadFailed
         expr: increase(multiwa_calls_recording_uploads_total{result="failed"}[1h]) > 0
