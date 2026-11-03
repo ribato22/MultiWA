@@ -103,7 +103,8 @@ class CallsClient
      * Sends a text to the caller, through the send gate (any role; an API key with a scope list needs
      * `messages:write`); without one, the profile's default call reply.
      *
-     * @return array{call: Call, message: MessageResult}
+     * @return array{call: Call, message: MessageResult} The call and the message sent: an `open` follow-up is now
+     *                                                   `in_progress`, any other is left as it was
      */
     public function reply(string $callId, ?string $text = null): array
     {
@@ -120,7 +121,9 @@ class CallsClient
      *
      * @param string $type voice or video
      *
-     * @return array{call: Call, message: MessageResult, link: string}
+     * @return array{call: Call, message: MessageResult, link: string} The call, the message sent and the link: an
+     *                                                                 `open` follow-up is now `in_progress`, any other
+     *                                                                 is left as it was
      */
     public function sendCallLink(string $callId, string $type, ?string $text = null): array
     {
