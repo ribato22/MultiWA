@@ -3,6 +3,7 @@
 import rows
 
 from multiwa.types import (
+    AudioFile,
     Broadcast,
     Contact,
     Message,
@@ -134,3 +135,10 @@ def test_template_content_is_an_object():
         }
     )
     assert t.content == {"text": "Hello {{name}}"}
+
+
+def test_audio_repr_leaves_the_bytes_out():
+    # A recording is megabytes: printing one must not print them all.
+    audio = AudioFile(content=bytes(5_000_000), content_type="audio/webm")
+    assert repr(audio) == "AudioFile(content_type='audio/webm')"
+    assert len(audio.content) == 5_000_000

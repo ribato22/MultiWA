@@ -391,7 +391,8 @@ class AudioFile(BaseModel):
     """Audio the API answered with: the bytes and their Content-Type
     (``audio/webm`` for a recording)."""
 
-    content: bytes
+    # Out of repr(): a recording is megabytes.
+    content: bytes = Field(repr=False)
     content_type: str
 
 
