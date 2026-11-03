@@ -108,8 +108,8 @@ export class CallClient {
 
   /**
    * A profile's call settings (owner or admin; an API key with a scope list needs `profiles:write`, and
-   * `recordings:delete` too for `retentionDays`). A setting that cannot be turned on is refused with 409: the
-   * error's `details.reasons` says why.
+   * `recordings:delete` too for `retentionDays`, 1 to 3650 days). A setting that cannot be turned on is refused with
+   * 409: the error's `details.reasons` says why.
    */
   async updateSettings(profileId: string, settings: UpdateCallsSettingsOptions): Promise<CallsSettings> {
     return this.client.put(`/profiles/${profileId}/calls-settings`, settings);
