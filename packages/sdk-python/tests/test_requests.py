@@ -1081,6 +1081,13 @@ GREETING = "/srv/audio/greeting.mp3"
 # (the file, the options, the filename it goes out under); its bytes are ID3\x04.
 UPLOADS = [
     pytest.param(lambda: b"ID3\x04", {}, "announcement", id="bytes"),
+    pytest.param(lambda: bytearray(b"ID3\x04"), {}, "announcement", id="bytearray"),
+    pytest.param(
+        lambda: memoryview(b"<ID3\x04>")[1:5],
+        {},
+        "announcement",
+        id="only a memoryview's bytes",
+    ),
     pytest.param(lambda: io.BytesIO(b"ID3\x04"), {}, "announcement", id="file object"),
     pytest.param(lambda: named(GREETING), {}, "greeting.mp3", id="its own base name"),
     pytest.param(

@@ -69,14 +69,16 @@ def _settings_body(
 
 
 def _announcement(
-    file: bytes | IO[bytes], filename: str | None
+    file: bytes | bytearray | memoryview | IO[bytes], filename: str | None
 ) -> tuple[str, bytes | IO[bytes]]:
     # Never an empty filename: httpx would leave it out, and the server would
     # find no file in the request (400).
     own = getattr(file, "name", None)
     if not filename and isinstance(own, str):
         filename = os.path.basename(own)
-    return filename or "announcement", file
+    # httpx sends bytes as they are, and reads anything else as a file.
+    content = bytes(file) if isinstance(file, (bytes, bytearray, memoryview)) else file
+    return filename or "announcement", content
 
 
 def _audio(response: httpx.Response) -> AudioFile:
@@ -218,7 +220,10 @@ class CallsClient(SyncResource):
         )
 
     def upload_announcement(
-        self, profile_id: str, file: bytes | IO[bytes], filename: str | None = None
+        self,
+        profile_id: str,
+        file: bytes | bytearray | memoryview | IO[bytes],
+        filename: str | None = None,
     ) -> AnnouncementResult:
         """Upload the announcement callers hear before a recorded call (owner or
         admin; an API key with a scope list needs ``profiles:write``): mp3, wav,
@@ -359,7 +364,10 @@ class AsyncCallsClient(AsyncResource):
         )
 
     async def upload_announcement(
-        self, profile_id: str, file: bytes | IO[bytes], filename: str | None = None
+        self,
+        profile_id: str,
+        file: bytes | bytearray | memoryview | IO[bytes],
+        filename: str | None = None,
     ) -> AnnouncementResult:
         """Upload the announcement; see ``CallsClient.upload_announcement``"""
         return AnnouncementResult.model_validate(
