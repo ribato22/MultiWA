@@ -125,7 +125,8 @@ export default function CallsPage() {
     void load();
   }, [load]);
 
-  // The ringing strip belongs to the profile, not to the selected tab (Missed and Rejected never list a ringing call).
+  // The ringing strip belongs to the profile, not to the selected tab (Answered, Missed and Rejected never list a ringing
+  // call).
   const loadRinging = useCallback(async () => {
     if (!profileId) return;
     const seq = ++ringingSeq.current;
