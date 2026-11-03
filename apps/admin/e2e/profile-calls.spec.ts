@@ -375,11 +375,18 @@ test('recording refused for a public storage still says why once the checklist i
 });
 
 test('a failed check of the storage says why only while recording is off: once recording is turned on (its check passed), the line goes', async ({ page, backend }) => {
-  backend.route(get('/calls/media/status', {
-    ...status({ announcement: ANNOUNCEMENT }),
-    server: { ...STATUS.server, recordings: { ...STATUS.server.recordings, lastCheck: { at: '2026-11-01T02:30:00.000Z', ok: false, reason: 'storage_not_private' } } },
+  let recording = false;
+  // A read that still has the failed check: the line goes all the same, as recording is on.
+  backend.route(on('GET', '/calls/media/status', () => ({
+    json: {
+      ...status({ announcement: ANNOUNCEMENT, recording }),
+      server: { ...STATUS.server, recordings: { ...STATUS.server.recordings, lastCheck: { at: '2026-11-01T02:30:00.000Z', ok: false, reason: 'storage_not_private' } } },
+    },
+  })));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', () => {
+    recording = true;
+    return { json: settings({ recording, announcement: ANNOUNCEMENT }) };
   }));
-  backend.route(on('PUT', '/profiles/p-1/calls-settings', { json: settings({ recording: true, announcement: ANNOUNCEMENT }) }));
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
   const why = 'The recording storage can be read without a login: ask your administrator to make it private';
@@ -387,6 +394,33 @@ test('a failed check of the storage says why only while recording is off: once r
   const record = s.getByRole('switch', { name: 'Record calls' });
   await record.click();
   await expect(record).toHaveAttribute('aria-checked', 'true');
+  await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible(); // no read out
+  await expect(s).not.toContainText(why);
+});
+
+test('recording turned on (its check of the storage passed) and then off does not bring back the failed check from before', async ({ page, backend }) => {
+  let lastCheck: { at: string; ok: boolean; reason?: string } = { at: '2026-11-01T02:30:00.000Z', ok: false, reason: 'storage_not_private' };
+  let recording = false;
+  backend.route(on('GET', '/calls/media/status', () => ({
+    json: { ...status({ announcement: ANNOUNCEMENT, recording }), server: { ...STATUS.server, recordings: { ...STATUS.server.recordings, lastCheck } } },
+  })));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => {
+    recording = JSON.parse(r.body!.toString()).recording;
+    if (recording) lastCheck = { at: '2026-11-01T03:00:00.000Z', ok: true }; // the check the switch made
+    return { json: settings({ recording, announcement: ANNOUNCEMENT }) };
+  }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const why = 'The recording storage can be read without a login: ask your administrator to make it private';
+  await expect(s).toContainText(why);
+  const record = s.getByRole('switch', { name: 'Record calls' });
+  await record.click();
+  await expect(record).toHaveAttribute('aria-checked', 'true');
+  await expect(s).not.toContainText(why);
+  await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible(); // no read out
+  await record.click();
+  await expect(record).toHaveAttribute('aria-checked', 'false');
+  await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
   await expect(s).not.toContainText(why);
 });
 

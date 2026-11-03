@@ -129,6 +129,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     if (!res.data) return toast({ title: 'Could not save', description: res.error, variant: 'destructive' });
     const stored = res.data;
     setP((x) => (x ? { ...x, ...stored } : x));
+    // Turned on, recording passed the server's check of the storage: read again, so a check that failed before does not
+    // come back once recording is off.
+    if (body.recording) void load();
     if (body.retentionDays !== undefined) {
       setRetentionDraft(null);
       toast({ title: 'Retention saved', description: `Recordings are kept for ${dayCount(stored.retentionDays)}` });
