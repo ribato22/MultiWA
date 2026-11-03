@@ -136,6 +136,9 @@ final class ClientTest extends TestCase
         'recording' => self::RECORDING,
     ];
 
+    // An mp3 file's first bytes (its ID3 tag): the audio the upload tests send.
+    private const AUDIO = "ID3\x04";
+
     private const CALLS_SETTINGS = [
         'profileId' => 'prof-1',
         'answerInDashboard' => true,
@@ -724,6 +727,58 @@ final class ClientTest extends TestCase
         $client->calls()->reply('call-1'); // the profile's default call reply
 
         self::assertSame('{}', (string) $this->onlyRequest()->getBody());
+    }
+
+    /**
+     * The file uploaded, made from the path of a file notice.mp3 that holds the audio; the filename given (null: none);
+     * the filename it goes out under.
+     *
+     * @return iterable<string, array{\Closure(string): mixed, string|null, string}>
+     */
+    public static function announcements(): iterable
+    {
+        $bytes = static fn (string $path): string => self::AUDIO;
+        $file = static fn (string $path): mixed => fopen($path, 'rb');
+        $memory = static function (string $path): mixed {
+            $stream = fopen('php://memory', 'w+b');
+            self::assertIsResource($stream);
+            fwrite($stream, self::AUDIO);
+            rewind($stream);
+
+            return $stream;
+        };
+
+        yield 'bytes' => [$bytes, null, 'announcement'];
+        yield 'bytes, named' => [$bytes, 'greeting.mp3', 'greeting.mp3'];
+        yield 'bytes, an empty name counts as none' => [$bytes, '', 'announcement'];
+        yield "a file's stream keeps the file's name" => [$file, null, 'notice.mp3'];
+        yield "a file's stream, named: the name given wins" => [$file, 'greeting.mp3', 'greeting.mp3'];
+        yield "a file's stream, an empty name counts as none" => [$file, '', 'notice.mp3'];
+        yield 'a stream of no file' => [$memory, null, 'announcement'];
+    }
+
+    /**
+     * @param \Closure(string): mixed $file
+     */
+    #[DataProvider('announcements')]
+    public function testAnnouncementGoesOutAsExactlyItsBytes(\Closure $file, ?string $filename, string $sentAs): void
+    {
+        $dir = sys_get_temp_dir() . '/multiwa-' . bin2hex(random_bytes(6));
+        mkdir($dir);
+        $path = "{$dir}/notice.mp3";
+        file_put_contents($path, self::AUDIO);
+        $client = $this->client([new Response(201, [], json_encode(['profileId' => 'prof-1', 'announcement' => null], JSON_THROW_ON_ERROR))]);
+
+        try {
+            $filename === null
+                ? $client->calls()->uploadAnnouncement('prof-1', $file($path))
+                : $client->calls()->uploadAnnouncement('prof-1', $file($path), $filename);
+
+            self::assertSame(['file' => [$sentAs, self::AUDIO]], self::parts($this->onlyRequest()));
+        } finally {
+            unlink($path);
+            rmdir($dir);
+        }
     }
 
     public function testBroadcastStoredWithATextMessage(): void

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace MultiWA\Clients;
 
 use DateTimeInterface;
+use GuzzleHttp\Psr7\Utils;
 use MultiWA\Models\AudioFile;
 use MultiWA\Models\Call;
 use MultiWA\Models\CallPage;
@@ -193,16 +194,26 @@ class CallsClient
     /**
      * Uploads the announcement callers hear before a recorded call (owner or admin; an API key with a scope list
      * needs `profiles:write`): mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds. The server reads the type and
-     * the length from the file itself.
+     * the length from the file itself, not from its name, which is $filename, else the name of the file a stream
+     * reads, else `announcement`.
      *
      * @param string|resource $file The file's bytes, or an open stream such as fopen('notice.mp3', 'r')
      *
      * @return array{profileId: string, announcement: array{mimeType: string, durationSec: float|int}|null}
      */
-    public function uploadAnnouncement(string $profileId, mixed $file, string $filename = 'announcement'): array
+    public function uploadAnnouncement(string $profileId, mixed $file, ?string $filename = null): array
     {
+        // One wrapper, read for its name and sent: a second one around the same resource would close it once dropped.
+        $stream = Utils::streamFor($file);
+        if ($filename === null || $filename === '') {
+            // A file's stream has the file's path as its URI; bytes (php://temp), php://memory and data:// have none.
+            $uri = $stream->getMetadata('uri');
+            $filename = is_string($uri) && preg_match('#^(php|data)://#', $uri) !== 1 ? basename($uri) : '';
+        }
+
         return $this->client->request('POST', self::profilePath($profileId) . '/calls-announcement', [
-            'multipart' => [['name' => 'file', 'contents' => $file, 'filename' => $filename]],
+            // Never an empty filename: Guzzle would leave it out, and the API would find no file in the request (400).
+            'multipart' => [['name' => 'file', 'contents' => $stream, 'filename' => $filename !== '' ? $filename : 'announcement']],
         ]);
     }
 
