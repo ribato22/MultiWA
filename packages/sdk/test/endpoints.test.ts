@@ -392,6 +392,11 @@ describe('SDK endpoints', () => {
     expect(await client.calls.getAnnouncement(PROFILE)).toEqual({ data: new Uint8Array([0x49, 0x44, 0x33]), contentType: 'audio/mpeg' });
   });
 
+  it('bytes answered without a Content-Type are application/octet-stream', async () => {
+    reply = () => new Response(new Uint8Array([0x49, 0x44, 0x33])); // a byte body gets no Content-Type of its own
+    expect(await client.calls.getAnnouncement(PROFILE)).toEqual({ data: new Uint8Array([0x49, 0x44, 0x33]), contentType: 'application/octet-stream' });
+  });
+
   // The body stalls after a 200 until the request's signal aborts it, as fetch's does. The test's own 1 s limit is the
   // guard: a body read the timeout does not cover would hang there.
   it.each([
