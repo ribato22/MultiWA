@@ -251,19 +251,22 @@ class ApiClient {
     return localStorage.getItem('refreshToken');
   }
 
-  private async tryRefreshToken(): Promise<boolean> {
+  /** `sent`: the token the request that got the 401 carried. */
+  private async tryRefreshToken(sent: string | null): Promise<boolean> {
+    // A refresh token works once: the API reads a second use as theft and revokes the login, in every tab. A 401 that
+    // comes back after a refresh since its request left (a slow link) retries with that token, never refreshes again.
+    const stored = this.getToken();
+    if (stored && stored !== sent) return true;
     if (this.isRefreshing && this.refreshPromise) {
       return this.refreshPromise;
     }
 
     this.isRefreshing = true;
-    // A refresh token works once: the API reads a second use as theft and revokes the login, in every tab. So the
-    // browser's tabs refresh one at a time (a Web Lock, in a secure context), and one that waited while another
+    // The browser's tabs refresh one at a time (a Web Lock, in a secure context), and one that waited while another
     // refreshed takes that token instead of refreshing again.
-    const stale = this.getToken();
     const refresh = async () => {
       const now = this.getToken();
-      if (now && now !== stale) return true;
+      if (now && now !== sent) return true;
       const refreshToken = this.getRefreshToken();
       if (!refreshToken) return false;
 
@@ -321,7 +324,7 @@ class ApiClient {
 
     // Auto-refresh on 401 (skip for auth endpoints and retries)
     if (response.status === 401 && !_isRetry && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh')) {
-      const refreshed = await this.tryRefreshToken();
+      const refreshed = await this.tryRefreshToken(token);
       if (refreshed) {
         return this.send(endpoint, options, true);
       }

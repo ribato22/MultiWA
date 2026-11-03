@@ -153,6 +153,29 @@ test('two tabs whose requests get a 401 at once refresh the token once, and both
   expect(Object.fromEntries(store)).toEqual({ accessToken: 'new-token', refreshToken: 'new-refresh' });
 });
 
+test('a 401 that comes back after this tab refreshed the token retries with the new token: it does not refresh again', async () => {
+  const { store } = signedIn();
+  let late!: () => void;
+  const held = new Promise<void>((resolve) => (late = resolve));
+  const sent: Array<{ url: string; authorization?: string }> = [];
+  stub('fetch', async (url: string, init: RequestInit = {}) => {
+    const authorization = ((init.headers ?? {}) as Record<string, string>).Authorization;
+    sent.push({ url, authorization });
+    if (url === '/api/v1/auth/refresh') return Response.json({ accessToken: 'new-token', refreshToken: 'new-refresh' });
+    if (authorization === 'Bearer new-token') return Response.json({ id: 'u-ada' });
+    if (url === '/api/v1/calls/c-1/recording') await held; // a slow link: its 401 comes once the other request refreshed
+    return Response.json({ message: 'Unauthorized' }, { status: 401 });
+  });
+  const slow = api.fetchCallRecording('c-1');
+  expect((await api.me()).status).toBe(200);
+  late();
+  expect((await slow).status).toBe(200);
+  // Without the Web Locks of a secure context, a second refresh would present a refresh token another tab may present too.
+  expect(sent.filter((s) => s.url === '/api/v1/auth/refresh')).toHaveLength(1);
+  expect(sent.filter((s) => s.url === '/api/v1/calls/c-1/recording').map((s) => s.authorization)).toEqual(['Bearer old-token', 'Bearer new-token']);
+  expect(Object.fromEntries(store)).toEqual({ accessToken: 'new-token', refreshToken: 'new-refresh' });
+});
+
 test('a tab that waited while another tab’s refresh failed signs out too: it does not retry without a token', async () => {
   const { store } = signedIn();
   webLocks();
