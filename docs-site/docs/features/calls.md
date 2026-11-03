@@ -79,7 +79,7 @@ Owners and admins open the profile and find its **Calls** section.
 
   Otherwise each missing item says why, in the words of [Troubleshooting](#troubleshooting). **Check again** reads the checklist again once you fixed something. A switch the server refuses shows the server's reasons.
 - **Record calls** needs an announcement first ("Upload an announcement first: the caller hears it before the agent."), and a recordings storage that passed its privacy check.
-- **Announcement**: **Upload announcement** (then **Replace**), **Listen**, and **Remove**, which asks first. While recording is on, the announcement stays: "Turn recording off to remove the announcement".
+- **Announcement**: **Upload announcement** (then **Replace**), **Listen**, and **Remove**, which asks first. While recording is on, **Remove** is hidden: "Turn recording off to remove the announcement".
 - **Keep recordings for (days)**: 1 to 3650. A shorter period asks first, as the next nightly cleanup deletes the older recordings.
 
 The API has the same settings: `PUT /profiles/:id/calls-settings` and the `/profiles/:id/calls-announcement` routes ([API Specification](<../api/api-specification.md#calls-calls>)).
@@ -113,6 +113,8 @@ The **Calls** page lists a profile's calls. Its **Answered** tab has the calls a
 
 ![An answered call on the Calls page, with its recording](/img/screenshots/calls/calls-page-recording.png)
 
+Every user of the organization, viewers too, can follow a call up: **Reply** sends the caller a text, **Call link** a WhatsApp call link, **Assign** gives the call to someone of the team, and **Done** and **Reopen** set its follow-up. **Reject** turns down a call that is still ringing. The API checks no role for these.
+
 For owners and admins, a call with a recording has:
 
 - **Play**: the file loads, then plays, and you can seek in it;
@@ -125,16 +127,17 @@ Every play, download and delete is in the audit log (`call.recording.play`, `cal
 
 ## API keys
 
-The recordings and the call settings are for owners and admins only, through an API key too: a key acts with its user's role. A key with an explicit scope list also needs:
+The recordings, the call settings (`GET /calls/media/status` reads them) and the announcement are for owners and admins only, through an API key too: a key acts with its user's role. The rest of the calls API, the follow-up included, is open to every user of the organization. A key with an explicit scope list also needs:
 
 | To | Scope (its name in the dashboard) |
 |---|---|
+| Reply to the caller, or send a call link | `messages:write` (Send Messages) |
 | Play or download a recording | `recordings:read` (Read Recordings) |
 | Delete a recording | `recordings:delete` (Delete Recordings) |
 | Change the call settings; upload, listen to or remove the announcement | `profiles:write` (Manage Profiles) |
 | Change `retentionDays` | `profiles:write` and `recordings:delete` |
 
-Keys with no scopes, or with `*`, skip these checks. Calls are answered by people signed in to the dashboard: an API key is never rung, and its socket cannot answer.
+The other calls routes ask for no scope: the list, a call and the open count, the follow-up and the assignee (`PATCH /calls/:id`), Reject, and the media status. Keys with no scopes, or with `*`, skip these checks. Calls are answered by people signed in to the dashboard: an API key is never rung, and its socket cannot answer.
 
 ---
 
@@ -146,11 +149,11 @@ The organization's owners, admins and members answer calls. Each of them who is 
 
 ![The incoming-call banner](/img/screenshots/calls/incoming-call.png)
 
-A banner shows at the top right of every page: the profile, the caller (the chat's name, else the number, or "Unknown number" when WhatsApp hides it), a link to the chat, and **This call is recorded** when it is.
+A banner shows at the top right of every page: the profile, the caller (the chat's name when it has one, and the number, or "Unknown number" when WhatsApp hides it), a link to the chat, and **This call is recorded** when it is.
 
 - **Answer** takes the call. The focus moves to Answer when a call rings, unless you are typing in a field.
 - **Dismiss**, or Escape, stops the ringing for you only: the call keeps ringing for the others.
-- **Answer on the phone**, with the reason, shows when the call cannot be answered here: a video or group call, a profile that is not ready, or a dashboard on plain HTTP.
+- **Answer on the phone**, with the reason, shows when the call cannot be answered here: a video or group call, a profile that is not ready, a dashboard on plain HTTP, or a browser that cannot answer calls.
 - **Answered by Jane** shows when someone else took the call; the banner then fades.
 
 While a call rings:
@@ -163,7 +166,7 @@ While a call rings:
 
 ![The in-call bar in the header: the caller, the timer, Recording, the network quality, Mute, the microphone and Hang up](/img/screenshots/calls/in-call-bar.png)
 
-The first time, the browser asks to use the microphone: allow it. The bar in the header then shows the call, on every page:
+The first time, the browser asks to use the microphone: allow it. The bar in the header then shows the call, on every page: on a row of its own under the header's controls, as above, or between them once the window is wide enough. It shows:
 
 - **Connecting…** while the audio connects.
 - On a recorded call, *The caller hears the recording notice*, with the seconds left. You hear the caller meanwhile; the caller hears you once it has played.
