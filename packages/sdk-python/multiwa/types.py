@@ -279,7 +279,8 @@ class CallPage(BaseModel):
 
 
 class CallReplyResult(BaseModel):
-    """The call (its follow-up now in progress) and the message sent to the caller."""
+    """The call and the message sent to the caller: an ``open`` follow-up is now
+    ``in_progress``, any other is left as it was."""
 
     call: Call
     message: MessageResult
