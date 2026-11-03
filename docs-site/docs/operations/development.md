@@ -17,6 +17,8 @@ pnpm install
 
 # Setup environment
 cp .env.example .env
+# The database commands run in packages/database and read DATABASE_URL from the .env there
+cp .env packages/database/.env
 
 # Start PostgreSQL and Redis
 docker compose up -d postgres redis
@@ -179,6 +181,8 @@ pnpm format
 | `pnpm --filter database db:studio` | Open Prisma Studio |
 | `pnpm --filter database db:push` | Sync database schema |
 | `pnpm test` | Run tests |
+
+The `database` commands read `DATABASE_URL` from `packages/database/.env` (see the setup above), or from the environment.
 
 ---
 
