@@ -188,9 +188,9 @@ server {
 }
 ```
 
-If you put the Admin on a different subdomain than the API (e.g., `admin.example.com` and `api.example.com`), update `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` accordingly, then **rebuild the admin image** so the new API URL is baked into the client bundle.
+If you put the Admin on a different subdomain than the API (e.g., `admin.example.com` and `api.example.com`), update `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` accordingly, then **rebuild the admin image** so the new API URL is baked into the client bundle. The dashboard opens its realtime connection on its own address, so the admin's proxy must still forward `/socket.io/` to the API, as above.
 
-`docker/nginx/example.conf` is a fuller example for a host Nginx in front of the API.
+`docker/nginx/example.conf` is a fuller TLS example for an Nginx in front of the API alone: it serves a static landing page at `/`, not the admin.
 
 ---
 
@@ -203,11 +203,13 @@ Agents can answer WhatsApp calls in the dashboard through a media server in the 
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.calls-media.yml up -d
+   # the full stack (MinIO and Nginx too)
+   docker compose --profile full -f docker-compose.yml -f docker-compose.calls-media.yml up -d
    ```
 
 3. Open the firewall: the agents' subnet must reach that port on that address, over UDP (preferred) and TCP (the fallback). Call audio goes straight to the API, never through Nginx. Agents outside the LAN need a TURN server, in `CALLS_MEDIA_ICE_SERVERS`.
 4. Serve the admin over HTTPS: browsers give the microphone to a secure origin only. The admin sends `Permissions-Policy: microphone=(self)`; a proxy must not replace it with a policy that leaves the microphone out.
-5. Proxy `/socket.io/` with WebSocket upgrades, and give the announcement upload 3 MB and a 120 s read timeout, as the example above does.
+5. Have the proxy on the dashboard's address forward `/socket.io/` to the API, with WebSocket upgrades: the dashboard opens its realtime connection on its own address, so with the admin on a subdomain of its own, that is the admin's proxy. Give the announcement upload a request body of 3 MB (a file of at most 2 MB, plus the multipart framing) and a 120 s read timeout. The example above does both.
 
 Recording needs a recordings storage: the stock Compose files keep the recordings on volumes of their own (see [Call recordings](<configuration-reference.md#call-recordings>)).
 
