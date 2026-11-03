@@ -1,13 +1,23 @@
 # MultiWA gitleaks configuration.
 #
-# Extends the default gitleaks rule set. Only the `curl-auth-header` rule is
-# customized: documentation curl examples use placeholder tokens
-# (e.g. `YOUR_TOKEN`), which the stock rule flags despite being non-secrets.
-# The allowlist is scoped by path to the two documentation trees so real
-# secrets anywhere else are still detected.
+# Extends the default gitleaks rule set, with two narrow exceptions for values
+# that are not secrets. Real secrets anywhere else are still detected.
+# - The `curl-auth-header` rule is customized: documentation curl examples use
+#   placeholder tokens (e.g. `YOUR_TOKEN`), which the stock rule flags. Its
+#   allowlist is scoped by path to the two documentation trees.
+# - The global allowlist below covers the admin e2e's fake backend.
 
 [extend]
 useDefault = true
+
+# The admin e2e's fake backend (apps/admin/e2e). Its API keys are made up:
+# `mwa_live_` and four digits, while a real key is `mwa_` and 64 hex characters,
+# so no real key can match. Its mediasoup file replays the transport parameters
+# of a local test call, whose ICE credentials were good for that call only.
+[allowlist]
+description = "Admin e2e fixtures: made-up API keys, and a replayed test call's mediasoup parameters"
+paths = ['''^apps/admin/e2e/support/mediasoup\.json$''']
+regexes = ['''^mwa_live_\d{4}$''']
 
 [[rules]]
 id = "curl-auth-header"
