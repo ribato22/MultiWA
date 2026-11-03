@@ -5,9 +5,11 @@ title: "Calls"
 
 # 23 - Calls answered in the dashboard
 
-Agents can answer a profile's incoming WhatsApp voice calls in the admin dashboard and talk to the caller in the browser, with a headset or the computer's microphone and speakers. A call can also be recorded, always after an announcement that tells the caller so.
+Agents can answer a profile's incoming WhatsApp voice calls in the admin dashboard and talk to the caller in the browser, with a headset or the computer's microphone and speakers. A call can also be recorded; the caller then always hears an announcement that says so first.
 
 It is off until you turn it on: once on the server, then for each profile. Without it, MultiWA still logs every call and keeps its follow-up queue (the [Calls API](<../api/api-specification.md#calls-calls>) and the `call.*` [webhooks](<../api/webhook-events.md#call-events>)).
+
+Admins: start at [Server setup](#server-setup). Agents: start at [For agents](#for-agents).
 
 It does not cover:
 
@@ -20,7 +22,7 @@ It does not cover:
 
 ## How it works
 
-The API runs each profile's WhatsApp Web page. When a call comes in, MultiWA rings the agents who are online in the dashboard. When an agent presses **Answer**, WhatsApp Web takes the call, and the API's media server carries the audio between that page and the agent's browser over WebRTC. The audio uses one UDP or TCP port, straight to the API, never through the web proxy. Ringing, answering and hanging up go over the dashboard's realtime connection.
+The API runs each profile's WhatsApp Web page. When a call comes in, MultiWA rings the agents who are online in the dashboard. When an agent presses **Answer**, WhatsApp Web takes the call, and the API's media server carries the audio between that page and the agent's browser over WebRTC. The audio uses one UDP or TCP port, straight to the API or through your TURN server, never through the web proxy. Ringing, answering and hanging up go over the dashboard's realtime connection.
 
 ---
 
@@ -119,31 +121,28 @@ For owners and admins, a call with a recording has:
 
 - **Play**: the file loads, then plays, and you can seek in it;
 - **Download**: the file, `call-<id>.webm`;
-- **Delete**: asks first, then deletes the file for good. The call stays listed, with "Recording deleted by an admin".
+- **Delete**: asks first, then deletes the file. The call stays listed, with "Recording deleted by an admin". On an S3 bucket with versioning on, a deleted recording stays as a noncurrent version: keep versioning off on the recordings bucket, or expire noncurrent versions ([Call recordings](<../operations/configuration-reference.md#call-recordings>)).
 
 Every play, download and delete is in the audit log (`call.recording.play`, `call.recording.download`, `call.recording.delete`, with the user, the address and the browser). Members and viewers see that a call was recorded, but cannot play, download or delete it. A browser that cannot play WebM/Opus, such as an older Safari, offers the download only.
-
----
-
-## API keys
-
-The recordings, the call settings (`GET /calls/media/status` reads them) and the announcement are for owners and admins only, through an API key too: a key acts with its user's role. The rest of the calls API, the follow-up included, is open to every user of the organization. A key with an explicit scope list also needs:
-
-| To | Scope (its name in the dashboard) |
-|---|---|
-| Reply to the caller, or send a call link | `messages:write` (Send Messages) |
-| Play or download a recording | `recordings:read` (Read Recordings) |
-| Delete a recording | `recordings:delete` (Delete Recordings) |
-| Change the call settings; upload, listen to or remove the announcement | `profiles:write` (Manage Profiles) |
-| Change `retentionDays` | `profiles:write` and `recordings:delete` |
-
-The other calls routes ask for no scope: the list, a call and the open count, the follow-up and the assignee (`PATCH /calls/:id`), Reject, and the media status. Keys with no scopes, or with `*`, skip these checks. Calls are answered by people signed in to the dashboard: an API key is never rung, and its socket cannot answer.
 
 ---
 
 ## For agents
 
 The organization's owners, admins and members answer calls. Each of them who is signed in to the dashboard, available, and not already on a call is rung. Viewers are not. The call controls show once a profile of the organization answers calls in the dashboard.
+
+### Settings → Calls
+
+![Settings → Calls: the microphone, its test, the speaker test, the ringtone and desktop alerts](/img/screenshots/calls/settings-calls.png)
+
+Before your first call, open Settings → Calls:
+
+- **Microphone**: whether the browser allows it. Choose one, and **Test the microphone** shows its level.
+- **Speaker**: **Play a test sound**.
+- **Ring for incoming calls**: off, a call still shows its banner, without a sound.
+- **Desktop alerts**: **Turn on desktop alerts** for calls that ring while the tab is in the background.
+
+These choices belong to this browser.
 
 ### When a call rings
 
@@ -172,13 +171,14 @@ The first time, the browser asks to use the microphone: allow it. The bar in the
 - On a recorded call, *The caller hears the recording notice*, with the seconds left. You hear the caller meanwhile; the caller hears you once it has played.
 - **The timer**, **Recording** on a recorded call, and the **network quality**: Good, Fair or Poor.
 - **Mute** silences your microphone. The **microphone list** switches to another microphone during the call, and keeps that choice for the next one.
-- **Hang up** ends the call. On a recorded call it can take up to half a minute, while the recording is saved.
+- **Hang up** ends the call. On a recorded call it can take up to half a minute, while the recorder finishes.
+- **Hear the caller** shows when the browser holds the caller's audio back until you click, as after a reload: click it to hear the caller.
 
 Meanwhile the header shows **On a call**, and no other call rings for you.
 
 ### Availability
 
-**Available for calls**, in the header, turns ringing on or off for you. Off, no call rings for you, in any tab. It stays off through a reload, but not into a new session: once you closed the dashboard (no tab open for 15 seconds), you are available again. A restart of the server makes everyone available again.
+**Available for calls**, in the header, turns ringing on or off for you. Off, no call rings for you, in any tab. It stays off through a reload, but not into a new session: once you closed the dashboard (no tab open for 15 seconds), you are available again. A restart of the server makes everyone available again. While the dashboard has no realtime connection to the server, or the server has not yet said whether you are available, the switch is greyed out and reads **Calls offline**.
 
 ### Reloads, tabs and lost connections
 
@@ -187,24 +187,11 @@ Meanwhile the header shows **On a call**, and no other call rings for you.
 - **One tab rings**, and Dismiss reaches your other tabs.
 - **A lost connection**: the call waits 15 seconds for you to come back, then ends.
 
-### Settings → Calls
-
-![Settings → Calls: the microphone, its test, the speaker test, the ringtone and desktop alerts](/img/screenshots/calls/settings-calls.png)
-
-Before your first call, open Settings → Calls:
-
-- **Microphone**: whether the browser allows it. Choose one, and **Test the microphone** shows its level.
-- **Speaker**: **Play a test sound**.
-- **Ring for incoming calls**: off, a call still shows its banner, without a sound.
-- **Desktop alerts**: **Turn on desktop alerts** for calls that ring while the tab is in the background.
-
-These choices belong to this browser.
-
 ---
 
 ## Recordings and privacy
 
-- **Private storage.** Recordings and announcements are never served without the login of an owner or admin of their organization. Recording cannot be turned on unless the storage refuses reads without credentials, which MultiWA checks then and every night. When a check finds the storage public, recording is turned off on every profile and the owners and admins are alerted.
+- **Private storage.** Recordings and announcements are never served without the credentials of an owner or admin of their organization: their login, or their API key. Recording cannot be turned on unless the storage refuses reads without credentials, which MultiWA checks then and every night. When a check finds the storage public, recording is turned off on every profile and the owners and admins are alerted.
 - **Owners and admins only, audited.** Every play, download and delete is in the audit log.
 - **No public URLs.** The `call.recording.ready` and `call.recording.deleted` webhooks carry the call's and the recording's ids. The audio is fetched through the API, with credentials.
 - **The logs** never carry the audio.
@@ -217,7 +204,7 @@ Recording phone calls is regulated in many places: find out what applies to you 
 
 - **Tell callers they are recorded.** Recording cannot be turned on without an announcement, and every recorded call starts with it.
 - **Keep recordings no longer than needed.** Set a short retention period.
-- **Honour requests to delete.** Delete a recording on the Calls page, or with `DELETE /calls/:id/recording`.
+- **Honour requests to delete.** Delete a recording on the Calls page, or with `DELETE /calls/:id/recording`. On S3, keep versioning off on the recordings bucket, or expire noncurrent versions, so a deleted recording is gone for good.
 - **Limit and audit access.** Owners and admins only, every access in the audit log.
 
 In Indonesia, for example, the Personal Data Protection Law (UU PDP, UU No. 27 Tahun 2022) applies to recordings of callers; other countries have their own rules on consent. This is not legal advice.
@@ -226,7 +213,7 @@ In Indonesia, for example, the Personal Data Protection Law (UU PDP, UU No. 27 T
 
 ## Troubleshooting
 
-Why a profile cannot take calls in the dashboard, as its Calls section and the banner say it. The reason is the API's code, in `reasons`:
+Why a profile cannot take calls in the dashboard, as its Calls section and the banner say it. The reason is the API's code: in `reasons` (of a refused change, and of each profile in `GET /calls/media/status`), and in a ringing call's `unavailableReason`:
 
 | Reason | What the dashboard says | What to do |
 |---|---|---|
@@ -238,11 +225,7 @@ Why a profile cannot take calls in the dashboard, as its Calls section and the b
 | `engine_not_supported` | The profile’s engine cannot take calls: switch it to whatsapp-web.js | Switch the profile's engine to whatsapp-web.js, then connect it again. |
 | `not_ready` | WhatsApp Web is still loading | Wait a moment, then **Check again**. |
 | `web_calling_disabled` | WhatsApp has not enabled calling on WhatsApp Web for this number | WhatsApp turns calling on for each account. Until it does, answer on the phone. |
-| `voip_stack_unavailable` | WhatsApp Web changed, or is still loading | **Check again** in a minute. If it stays, disconnect and connect the profile. If it still stays, WhatsApp Web changed, and MultiWA needs an update. |
-| `module_missing` | WhatsApp Web changed, or is still loading | **Check again** in a minute. If it stays, disconnect and connect the profile. If it still stays, WhatsApp Web changed, and MultiWA needs an update. |
-| `hooks_missing` | WhatsApp Web changed, or is still loading | **Check again** in a minute. If it stays, disconnect and connect the profile. If it still stays, WhatsApp Web changed, and MultiWA needs an update. |
-| `not_prepared` | WhatsApp Web changed, or is still loading | **Check again** in a minute. If it stays, disconnect and connect the profile. If it still stays, WhatsApp Web changed, and MultiWA needs an update. |
-| `page_error` | WhatsApp Web changed, or is still loading | **Check again** in a minute. If it stays, disconnect and connect the profile. If it still stays, WhatsApp Web changed, and MultiWA needs an update. |
+| `voip_stack_unavailable`, `module_missing`, `hooks_missing`, `not_prepared`, `page_error` | WhatsApp Web changed, or is still loading | **Check again** in a minute. If it stays, disconnect and connect the profile. If it still stays, WhatsApp Web changed, and MultiWA needs an update. |
 
 Other refusals:
 
@@ -253,8 +236,8 @@ Other refusals:
 | `storage_not_private` | The recording storage can be read without a login: ask your administrator to make it private | Make the bucket private (no public access, public URL or CDN on it), then turn recording on again. |
 | `storage_check_failed` | The recording storage could not be checked: try again, or ask your administrator | Try again, and check the storage's address and credentials. |
 | `recording_on` | Recording is on for this profile | Turn recording off before you remove the announcement. |
-| `video_call` | Video calls can’t be answered in the dashboard | Answer on the phone. |
-| `group_call` | Group calls can’t be answered in the dashboard | Answer on the phone. |
+
+A video or a group call rings with **Answer on the phone** and its `unavailableReason`: `video_call` (Video calls can’t be answered in the dashboard) or `group_call` (Group calls can’t be answered in the dashboard). Answer it on the phone.
 
 Other problems:
 
@@ -278,6 +261,22 @@ Other problems:
 - **Firefox and Safari:** answering in them has not been checked on a live call yet. Use Chrome or Edge.
 - **A dialog open when a call rings** keeps the keyboard focus. The banner still shows and is announced, but a click on it also closes the dialog, and a form being filled in can be lost.
 - **The admin sends no Content-Security-Policy yet.**
+
+---
+
+## API keys
+
+The recordings, the call settings (`GET /calls/media/status` reads them) and the announcement are for owners and admins only, through an API key too: a key acts with its user's role. The rest of the calls API, the follow-up included, is open to every user of the organization. A key with an explicit scope list also needs:
+
+| To | Scope (its name in the dashboard) |
+|---|---|
+| Reply to the caller, or send a call link | `messages:write` (Send Messages) |
+| Play or download a recording | `recordings:read` (Read Recordings) |
+| Delete a recording | `recordings:delete` (Delete Recordings) |
+| Change the call settings; upload, listen to or remove the announcement | `profiles:write` (Manage Profiles) |
+| Change `retentionDays` | `profiles:write` and `recordings:delete` |
+
+The other calls routes ask for no scope: the list, a call and the open count, the follow-up and the assignee (`PATCH /calls/:id`), Reject, and the media status. Keys with no scopes, or with `*`, skip these checks. Calls are answered by people signed in to the dashboard: an API key is never rung, and its socket cannot answer.
 
 ---
 
