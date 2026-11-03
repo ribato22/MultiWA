@@ -180,7 +180,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const retentionValid = Number.isInteger(days) && days >= 1 && days <= 3650;
   const retentionChanged = retentionValid && days !== p?.retentionDays;
   // The storage's last privacy check (recording turned on, or the nightly one) failed: why recording is off, in the words
-  // of the refusal. An unset storage is the `problem`, said already.
+  // of the refusal. Only while it is off: turned on since, its own check passed (this read is older), and a nightly check
+  // that could not run leaves it on. An unset storage is the `problem`, said already.
   const lastCheck = server?.recordings.lastCheck;
   const checkFailed = lastCheck && !lastCheck.ok && lastCheck.reason !== 'recordings_storage_unset' ? (lastCheck.reason ?? 'storage_check_failed') : null;
   const checks =
@@ -253,7 +254,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               />
             </div>
             {server.recordings.problem && <p className="text-[11px] text-amber-300">Recording storage: {server.recordings.problem}</p>}
-            {checkFailed && <p className="text-[11px] text-amber-300">{reasonTexts([checkFailed])}</p>}
+            {checkFailed && !p.recording && <p className="text-[11px] text-amber-300">{reasonTexts([checkFailed])}</p>}
             <div className="space-y-2">
               <p className="text-xs font-medium text-slate-200">Announcement</p>
               <p className="text-[11px] text-slate-400">

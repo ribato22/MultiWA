@@ -374,6 +374,22 @@ test('recording refused for a public storage still says why once the checklist i
   await expect(record).toHaveAttribute('aria-checked', 'false');
 });
 
+test('a failed check of the storage says why only while recording is off: once recording is turned on (its check passed), the line goes', async ({ page, backend }) => {
+  backend.route(get('/calls/media/status', {
+    ...status({ announcement: ANNOUNCEMENT }),
+    server: { ...STATUS.server, recordings: { ...STATUS.server.recordings, lastCheck: { at: '2026-11-01T02:30:00.000Z', ok: false, reason: 'storage_not_private' } } },
+  }));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', { json: settings({ recording: true, announcement: ANNOUNCEMENT }) }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const why = 'The recording storage can be read without a login: ask your administrator to make it private';
+  await expect(s).toContainText(why);
+  const record = s.getByRole('switch', { name: 'Record calls' });
+  await record.click();
+  await expect(record).toHaveAttribute('aria-checked', 'true');
+  await expect(s).not.toContainText(why);
+});
+
 test('a screen reader hears what went through: an upload and a saved retention are said, and the announcement’s player takes the focus from Listen', async ({ page, backend }) => {
   backend.route(on('POST', '/profiles/p-1/calls-announcement', { json: { profileId: 'p-1', announcement: ANNOUNCEMENT } }));
   backend.route(on('GET', '/profiles/p-1/calls-announcement', { body: sineWav(2), headers: { 'content-type': 'audio/wav' } }));
