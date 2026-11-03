@@ -196,10 +196,10 @@ class CallsClient
     /**
      * Uploads the announcement callers hear before a recorded call (owner or admin; an API key with a scope list
      * needs `profiles:write`): mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds. The server reads the type and
-     * the length from the file itself, not from its name, which is $filename, else the name of the file a stream
-     * reads, else `announcement`.
+     * the length from the file itself, not from its name, which is $filename (an empty one counts as none), else the
+     * name of the file a stream reads, else `announcement`.
      *
-     * @param string|resource|StreamInterface $file The file's bytes, an open stream such as fopen('notice.mp3', 'r'),
+     * @param string|resource|StreamInterface $file The file's bytes, an open stream such as fopen('notice.mp3', 'rb'),
      *                                              or a PSR-7 stream; a stream is left open, for the caller to close
      *
      * @return array{profileId: string, announcement: array{mimeType: string, durationSec: float|int}|null}
