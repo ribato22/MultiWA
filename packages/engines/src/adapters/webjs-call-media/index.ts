@@ -131,6 +131,13 @@ export class WebJsCallMedia implements CallMediaEngine {
   private readonly bridgeBindings = new WeakMap<object, Promise<void>>();
   /** The probe error logged last: a probe that keeps failing the same way logs once. */
   private probeError: string | null = null;
+  /**
+   * The probe in flight, per page object: requests while it runs share it, so a page that hangs is asked once and not
+   * once per request (a caller's timeout does not cancel the page's evaluate).
+   * It ends within the in-page probe's own 5 s deadline, or on a frozen page at puppeteer's protocolTimeout (240 s),
+   * when the evaluate rejects and the entry clears.
+   */
+  private probing: { page: object; result: Promise<CallMediaSupport> } | null = null;
   /** The setup problem warned about last: ready repeats 5-12 times per sync, so a problem that stays warns once. */
   private setupWarning: string | null = null;
 
@@ -165,6 +172,16 @@ export class WebJsCallMedia implements CallMediaEngine {
   async getSupport(): Promise<CallMediaSupport> {
     const page = this.page();
     if (!page || !this.isReady()) return { supported: false, reasons: ['not_ready'] };
+    if (this.probing?.page !== page) {
+      const result: Promise<CallMediaSupport> = this.probe(page).finally(() => {
+        if (this.probing?.result === result) this.probing = null;
+      });
+      this.probing = { page, result };
+    }
+    return this.probing.result;
+  }
+
+  private async probe(page: any): Promise<CallMediaSupport> {
     try {
       const r = await page.evaluate(probeCallMedia, PROBE_TIMEOUT_MS);
       this.probeError = null;

@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   Plus,
   X,
@@ -954,7 +955,7 @@ export default function BroadcastPage() {
                 You need at least one connected WhatsApp profile to send broadcasts.
               </p>
               <Button variant="outline" size="sm" className="mt-3 cursor-pointer" asChild>
-                <a href="/dashboard/profiles/new">Connect Profile</a>
+                <Link href="/dashboard/profiles/new">Connect Profile</Link>
               </Button>
             </div>
           </div>

@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   Plus,
   RefreshCw,
@@ -453,9 +454,9 @@ export default function ContactsPage() {
                         asChild
                         aria-label={`Message ${contact.name}`}
                       >
-                        <a href={`/dashboard/messages?to=${contact.phone}`}>
+                        <Link href={`/dashboard/messages?to=${contact.phone}`}>
                           <MessageCircle className="w-4 h-4" aria-hidden="true" />
-                        </a>
+                        </Link>
                       </Button>
                       <Button
                         variant="ghost"

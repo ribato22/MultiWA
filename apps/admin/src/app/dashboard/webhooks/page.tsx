@@ -20,6 +20,9 @@ import {
   PhoneIncoming,
   PhoneMissed,
   PhoneOff,
+  PhoneCall,
+  CircleDot,
+  Trash2,
   RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
@@ -61,17 +64,20 @@ import { useToast } from '@/hooks/use-toast';
 // Available webhook events
 type WebhookEvent = { value: string; label: string; Icon: LucideIcon; tone: string };
 const WEBHOOK_EVENTS: WebhookEvent[] = [
-  { value: 'message.received',  label: 'Message Received',  Icon: Inbox,         tone: 'text-sky-300' },
-  { value: 'message.sent',      label: 'Message Sent',      Icon: Send,          tone: 'text-primary' },
-  { value: 'message.delivered', label: 'Message Delivered', Icon: CheckCircle2,  tone: 'text-primary' },
-  { value: 'message.read',      label: 'Message Read',      Icon: Eye,           tone: 'text-violet-300' },
-  { value: 'connection.update', label: 'Connection Update', Icon: Link2,         tone: 'text-amber-300' },
-  { value: 'contact.created',   label: 'Contact Created',   Icon: UserPlus,      tone: 'text-rose-300' },
-  { value: 'group.update',      label: 'Group Update',      Icon: Users,         tone: 'text-orange-300' },
-  { value: 'call.received',     label: 'Call Received',     Icon: PhoneIncoming, tone: 'text-sky-300' },
-  { value: 'call.ended',        label: 'Call Ended',        Icon: PhoneMissed,   tone: 'text-rose-300' },
-  { value: 'call.rejected',     label: 'Call Rejected',     Icon: PhoneOff,      tone: 'text-amber-300' },
-  { value: 'call.updated',      label: 'Call Updated',      Icon: RefreshCw,     tone: 'text-violet-300' },
+  { value: 'message.received',       label: 'Message Received',  Icon: Inbox,         tone: 'text-sky-300' },
+  { value: 'message.sent',           label: 'Message Sent',      Icon: Send,          tone: 'text-primary' },
+  { value: 'message.delivered',      label: 'Message Delivered', Icon: CheckCircle2,  tone: 'text-primary' },
+  { value: 'message.read',           label: 'Message Read',      Icon: Eye,           tone: 'text-violet-300' },
+  { value: 'connection.update',      label: 'Connection Update', Icon: Link2,         tone: 'text-amber-300' },
+  { value: 'contact.created',        label: 'Contact Created',   Icon: UserPlus,      tone: 'text-rose-300' },
+  { value: 'group.update',           label: 'Group Update',      Icon: Users,         tone: 'text-orange-300' },
+  { value: 'call.received',          label: 'Call Received',     Icon: PhoneIncoming, tone: 'text-sky-300' },
+  { value: 'call.answered',          label: 'Call Answered',     Icon: PhoneCall,     tone: 'text-emerald-300' },
+  { value: 'call.ended',             label: 'Call Ended',        Icon: PhoneMissed,   tone: 'text-rose-300' },
+  { value: 'call.rejected',          label: 'Call Rejected',     Icon: PhoneOff,      tone: 'text-amber-300' },
+  { value: 'call.updated',           label: 'Call Updated',      Icon: RefreshCw,     tone: 'text-violet-300' },
+  { value: 'call.recording.ready',   label: 'Recording Ready',   Icon: CircleDot,     tone: 'text-sky-300' },
+  { value: 'call.recording.deleted', label: 'Recording Deleted', Icon: Trash2,        tone: 'text-rose-300' },
 ];
 // Compares the listed events only: a webhook made through the API can subscribe to events this list lacks.
 const hasAllListed = (events: string[]) => WEBHOOK_EVENTS.every((e) => events.includes(e.value));
@@ -547,7 +553,7 @@ export default function WebhooksPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="cursor-pointer">Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer">
+            <AlertDialogAction onClick={handleDelete} className="bg-red-600 text-white hover:bg-red-700 cursor-pointer">
               Delete Webhook
             </AlertDialogAction>
           </AlertDialogFooter>

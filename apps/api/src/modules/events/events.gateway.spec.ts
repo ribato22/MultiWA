@@ -24,7 +24,7 @@ const hash = (token: string) => createHash('sha256').update(token).digest('hex')
 const liveSession = () => ({ expiresAt: new Date(Date.now() + 7 * 24 * 3_600_000) });
 
 const fakeClient = () =>
-  ({ id: 's1', handshake: { auth: { token: 't' } }, data: {}, connected: true, join: vi.fn(), disconnect: vi.fn() }) as any;
+  ({ id: 's1', handshake: { auth: { token: 't' } }, data: {}, connected: true, join: vi.fn(), disconnect: vi.fn(), conn: { close: vi.fn() } }) as any;
 
 describe('EventsGateway join during the handshake', () => {
   let gateway: EventsGateway;
@@ -95,6 +95,7 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
       connected: true,
       join: vi.fn((room: string) => s.connected && (rooms.get(room) ?? rooms.set(room, new Set()).get(room)!).add(id)),
       disconnect: vi.fn(),
+      conn: { close: vi.fn() }, // the transport: closing it, the client reconnects by itself
     };
     sockets.set(id, s);
     return s;
@@ -127,6 +128,7 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks(); // Math.random
   });
 
   it('authenticates a socket once, whichever gateway asks first (Nest runs the gateways\' hooks in no set order)', async () => {
@@ -199,16 +201,160 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(bus.emit).not.toHaveBeenCalled();
   });
 
-  it('a socket whose authentication throws (the database is down) is refused like an unauthenticated one; nothing rejects', async () => {
-    db.apiKey.findUnique.mockRejectedValue(new Error('connection refused\nforged line'));
-    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
-    const s = socket('s7', { apiKey: 'k' });
+  it.each([
+    ['user', { token: 't' }],
+    ['session', { token: 't' }],
+    ['apiKey', { apiKey: 'k' }],
+  ])("a socket whose %s lookup throws (the database is down) is closed, not refused, so it reconnects by itself; nothing rejects", async (table, auth) => {
+    vi.useFakeTimers();
+    db[table].findUnique.mockRejectedValue(new Error('connection refused'));
+    const s = socket('s7', auth);
     await expect(gateway.authOf(s)).resolves.toBeNull();
     await expect(gateway.handleConnection(s)).resolves.toBeUndefined();
-    expect(s.disconnect).toHaveBeenCalledWith(true);
     expect(s.join).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection refusedforged line'));
-    await expect(gateway.handleJoin(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Forbidden' });
+    // Not Forbidden, which a client may take as final: it is to join again once it has reconnected.
+    await expect(gateway.handleJoin(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Unavailable' });
+    await expect(gateway.handleSubscribeProfile(s, { profileId: 'p1' })).resolves.toEqual({ success: false, error: 'Unavailable' });
+    expect(s.join).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(s.conn.close).toHaveBeenCalledTimes(1);
+    expect(s.disconnect).not.toHaveBeenCalled();
+    expect(bus.emit).not.toHaveBeenCalled();
+  });
+
+  // socket.io-client resets its reconnect backoff whenever a connection opens: one closed at once would be back in
+  // about a second, every tab and integration, for as long as the database is down.
+  it('a socket whose credentials could not be checked is not closed at once: it is held 5 to 15 s, jittered, and never refused', async () => {
+    vi.useFakeTimers();
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.9999);
+    const [soonest, latest] = [socket('s1'), socket('s2')];
+    await gateway.handleConnection(soonest);
+    await gateway.handleConnection(latest);
+    const closes = () => [soonest, latest].map((s) => s.conn.close.mock.calls.length);
+    expect(closes()).toEqual([0, 0]);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(closes()).toEqual([0, 0]);
+    await vi.advanceTimersByTimeAsync(1); // 5 s
+    expect(closes()).toEqual([1, 0]);
+    await vi.advanceTimersByTimeAsync(9_999); // just under 15 s
+    expect(closes()).toEqual([1, 1]);
+    expect([soonest, latest].map((s) => s.disconnect.mock.calls.length)).toEqual([0, 0]);
+  });
+
+  // Real timers: a spy set on a fake setTimeout would put that fake back when the mocks are restored.
+  it('the hold does not keep the process open', async () => {
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    await gateway.handleConnection(socket('s1'));
+    const hold: NodeJS.Timeout = timers.mock.results[timers.mock.calls.findIndex(([, ms]) => ms !== undefined && ms < 60_000)].value; // not the quiet minute
+    clearTimeout(hold);
+    gateway.onModuleDestroy();
+    expect(hold.hasRef()).toBe(false);
+  });
+
+  it('a socket whose credentials could not be checked and that has left meanwhile is not closed', async () => {
+    vi.useFakeTimers();
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    const s = socket('s1');
+    await gateway.handleConnection(s);
+    leave(s);
+    gateway.handleDisconnect(s);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(s.conn.close).not.toHaveBeenCalled();
+    expect(s.disconnect).not.toHaveBeenCalled();
+  });
+
+  // While the database is down every socket is unchecked, and each comes back every few seconds.
+  it('the first socket whose credentials could not be checked is warned at once, its error on one line; alone, it makes no other warning', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValueOnce(new Error('connection refused\nforged line'));
+    await gateway.handleConnection(socket('s1'));
+    expect(warn.mock.calls).toEqual([[expect.stringMatching(/s1.*: connection refusedforged line$/)]]);
+    expect((gateway as any).unchecked.quiet.hasRef()).toBe(false); // the quiet minute does not hold the process open
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('more within the minute after that warning are only counted, with no line of their own, and make one warning at its end: their count and the latest error', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    // Nest's default logger prints debug lines in production too: one per socket would flood the log in an outage.
+    const debug = vi.spyOn((gateway as any).logger, 'debug').mockImplementation(() => undefined);
+    db.user.findUnique
+      .mockRejectedValueOnce(new Error('connection refused'))
+      .mockRejectedValueOnce(new Error('connection reset'))
+      .mockRejectedValueOnce(new Error('timed out\nforged line'));
+    await gateway.handleConnection(socket('s1'));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await gateway.handleConnection(socket('s2'));
+    await vi.advanceTimersByTimeAsync(29_000);
+    await gateway.handleConnection(socket('s3'));
+    expect(warn.mock.calls).toEqual([[expect.stringMatching(/s1.*: connection refused$/)]]);
+    await vi.advanceTimersByTimeAsync(1_000); // a minute after the first
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/ 2 more socket\(s\) .*: timed outforged line$/));
+    expect(debug).not.toHaveBeenCalled();
+  });
+
+  it('that warning starts the next quiet minute; a socket after a minute with none is warned at once again', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    await gateway.handleConnection(socket('s1')); // warned at once
+    await vi.advanceTimersByTimeAsync(30_000);
+    await gateway.handleConnection(socket('s2')); // counted
+    await vi.advanceTimersByTimeAsync(31_000); // 61 s: s2 was counted in a warning at 60 s
+    expect(warn).toHaveBeenCalledTimes(2);
+    await gateway.handleConnection(socket('s3')); // within the minute that warning started: only counted
+    expect(warn).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(59_000); // 120 s
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/ 1 more socket\(s\) .*: connection refused$/));
+    await vi.advanceTimersByTimeAsync(61_000); // 181 s, two minutes after s3: the minute from 120 s counted none
+    expect(warn).toHaveBeenCalledTimes(3);
+    await gateway.handleConnection(socket('s4'));
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenLastCalledWith(expect.stringMatching(/s4.*: connection refused$/));
+  });
+
+  it('a socket closed because its credentials could not be checked leaves no line when it goes (each is back every few seconds); any other socket does', async () => {
+    vi.useFakeTimers();
+    vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    const log = vi.spyOn((gateway as any).logger, 'log').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValueOnce(new Error('connection refused'));
+    const held = socket('s1');
+    await gateway.handleConnection(held);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(held.conn.close).toHaveBeenCalledTimes(1);
+    leave(held);
+    gateway.handleDisconnect(held);
+    const checked = socket('s2');
+    await gateway.handleConnection(checked);
+    leave(checked);
+    gateway.handleDisconnect(checked);
+    expect(log).not.toHaveBeenCalledWith('Client disconnected: s1');
+    expect(log).toHaveBeenCalledWith('Client disconnected: s2');
+  });
+
+  it('bad credentials are still refused, never closed for a retry: an invalid JWT, an inactive user, a missing or expired session', async () => {
+    const refusals = [
+      () => verify.mockRejectedValueOnce(new Error('jwt expired')),
+      () => db.user.findUnique.mockResolvedValueOnce({ id: 'u1', organizationId: 'o1', isActive: false }),
+      () => db.session.findUnique.mockResolvedValueOnce(null),
+      () => db.session.findUnique.mockResolvedValueOnce({ expiresAt: new Date(Date.now() - 1_000) }),
+    ];
+    for (const [i, refuse] of refusals.entries()) {
+      refuse();
+      const s = socket(`s2${i}`);
+      await gateway.handleConnection(s);
+      expect(s.disconnect).toHaveBeenCalledWith(true);
+      expect(s.conn.close).not.toHaveBeenCalled();
+      expect(s.join).not.toHaveBeenCalled();
+      expect(await gateway.handleJoin(s, { profileId: 'p1' })).toEqual({ success: false, error: 'Forbidden' });
+    }
   });
 
   it("an API-key socket (an integration) joins no user room and keeps no one online; the same user's dashboard login does", async () => {
@@ -336,5 +482,16 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     gateway.onModuleDestroy();
     await vi.advanceTimersByTimeAsync(180_000);
     expect(sweep).toHaveBeenCalledTimes(2);
+  });
+
+  it('module destroy ends a quiet minute too: its warning never comes', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+    db.user.findUnique.mockRejectedValue(new Error('connection refused'));
+    await gateway.handleConnection(socket('s1')); // warned at once
+    await gateway.handleConnection(socket('s2')); // counted, for the warning at the end of the minute
+    gateway.onModuleDestroy();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

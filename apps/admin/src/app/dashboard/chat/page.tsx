@@ -763,7 +763,7 @@ export default function ChatPage() {
   // Render loading skeleton
   if (loading) {
     return (
-      <div className="h-[calc(100vh-120px)] flex">
+      <div className="h-[calc(100vh-var(--header-height,77px)-43px)] flex">
         <div className="w-96 border-r border-border p-4 space-y-4">
           <Skeleton className="h-10 w-full" />
           {[1, 2, 3, 4, 5].map(i => (
@@ -780,8 +780,10 @@ export default function ChatPage() {
   // A message's key uses its index among the messages only, so a call row landing before it does not remount it.
   let msgIdx = 0;
 
+  // The screen below the header, less the page's padding: the header grows while a call's bar takes a row of its own,
+  // and the chat shrinks with it, so the message field stays on the screen.
   return (
-    <div className="h-[calc(100vh-120px)] flex bg-card rounded-2xl border border-border overflow-hidden">
+    <div className="h-[calc(100vh-var(--header-height,77px)-43px)] flex bg-card rounded-2xl border border-border overflow-hidden">
       {/* Conversation Sidebar */}
       <div className={`${mobileView === 'list' ? 'flex' : 'hidden'} lg:flex w-full lg:w-96 border-r border-border flex-col`}>
         {/* Sidebar Header */}

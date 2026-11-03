@@ -318,8 +318,10 @@ export default function AutomationBuilderPage() {
 
   const draft = loadDraft();
 
+  // The screen below the header, less the page's padding: the header grows while a call's bar takes a row of its own,
+  // and the canvas shrinks with it, so all of it stays on the screen.
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-[calc(100vh-var(--header-height,77px)-48px)] flex flex-col">
       {/* Header */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between px-6 py-4 border-b border-border bg-card">
         <div className="flex items-center gap-3 min-w-0">
@@ -401,7 +403,7 @@ export default function AutomationBuilderPage() {
       </div>
 
       {/* Flow Builder */}
-      <div className="flex-1 relative" style={{ height: 'calc(100vh - 130px)', minHeight: '500px' }}>
+      <div className="flex-1 relative" style={{ minHeight: '500px' }}>
         <DesktopOnlyGuard
           pageName="Visual Flow Builder"
           reason="Drag-and-drop canvas needs a larger screen for comfortable use."

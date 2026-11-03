@@ -35,6 +35,12 @@ const sessionTokenHash = (token: string) => crypto.createHash('sha256').update(t
 /** How often the dashboard sockets' sessions are checked again: a revoked device stops being rung within this. */
 const SESSION_SWEEP_MS = 60_000;
 
+/** A socket whose credentials could not be checked is closed after this long, plus up to the jitter (see handleConnection). */
+const UNCHECKED_HOLD_MS = 5_000;
+const UNCHECKED_HOLD_JITTER_MS = 10_000;
+/** After a warning about sockets whose credentials could not be checked, the next ones are only counted this long. */
+const UNCHECKED_WARN_MS = 60_000;
+
 /** The /ws namespace's options: every gateway on it (this one, CallsGateway) declares the same. */
 export const WS_GATEWAY_OPTIONS: GatewayMetadata = {
   namespace: '/ws',
@@ -59,6 +65,11 @@ export interface SocketPrincipal {
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy, RealtimeEmitter {
   private readonly logger = new Logger(EventsGateway.name);
   private sweepTimer?: NodeJS.Timeout;
+  /**
+   * The sockets whose credentials could not be checked since the last warning, the latest error, and the timer of the
+   * quiet minute after that warning (none: the next one is warned at once).
+   */
+  private unchecked: { count: number; error: unknown; quiet?: NodeJS.Timeout } = { count: 0, error: undefined };
 
   constructor(private readonly jwt: JwtService, private readonly eventEmitter: EventEmitter2) {}
 
@@ -68,6 +79,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
   onModuleDestroy(): void {
     clearInterval(this.sweepTimer);
+    clearTimeout(this.unchecked.quiet);
   }
 
   // With a namespace, Nest injects the namespace (not the root Server): its adapter holds the rooms.
@@ -86,6 +98,19 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     // Left while it was being authenticated: its handleDisconnect has run already and socket.io ignores a closed
     // socket's join, so it must not touch presence.
     if (!client.connected) return;
+    if (!auth && client.data.authUnchecked) {
+      // Not refused: its credentials could not be checked. A closed transport is one the client reconnects by itself,
+      // and the next handshake checks them again; a refusal would leave it off until a reload. Not closed at once
+      // either: socket.io-client resets its reconnect backoff whenever a connection opens, so a socket closed at once
+      // is back within about a second, every tab and integration, each time with lookups against a database that is
+      // trying to recover. Held open a few seconds, jittered so that they do not all come back together. Until then
+      // it has no principal and joins no room; its joins answer Unavailable and its call commands unavailable, not the
+      // Forbidden and not_allowed of a refusal, which a client may take as final.
+      setTimeout(() => {
+        if (client.connected) client.conn.close();
+      }, UNCHECKED_HOLD_MS + Math.random() * UNCHECKED_HOLD_JITTER_MS).unref();
+      return;
+    }
     if (!auth) {
       this.logger.warn(`Rejected unauthenticated socket: ${client.id}`);
       client.disconnect(true);
@@ -105,7 +130,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   }
 
   handleDisconnect(client: Socket) {
-    this.logger.log(`Client disconnected: ${client.id}`);
+    // Not for a socket whose credentials could not be checked: noteUnchecked counted it, and while the database is down
+    // it is closed and back every few seconds, so a line for each would flood the log.
+    if (!client.data?.authUnchecked) this.logger.log(`Client disconnected: ${client.id}`);
     // Clean up client from all profile rooms
     this.clients.forEach((clientSet, profileId) => {
       clientSet.delete(client.id);
@@ -122,14 +149,44 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   /**
    * The socket's principal, authenticated ONCE per socket: the promise is kept on the socket and shared by every
    * gateway on /ws, since Nest runs their connection hooks in no set order and dispatches messages before they end.
-   * A lookup that throws (the database is down) refuses the socket like a bad credential: Nest drops the hooks'
+   * A lookup that throws (the database is down) gives no principal either, and marks the socket `authUnchecked`, so
+   * that handleConnection closes it, a few seconds on, instead of refusing it. It never rejects: Nest drops the hooks'
    * promises, so a rejection would reach the process's rejection guard, which rethrows it and the api exits.
    */
   authOf(client: Socket): Promise<SocketPrincipal | null> {
     return (client.data.auth ??= this.authenticate(client).catch((e) => {
-      this.logger.warn(`Could not authenticate socket ${client.id}: ${clean((e as Error)?.message ?? e)}`);
+      client.data.authUnchecked = true;
+      this.noteUnchecked(client, (e as Error)?.message ?? e);
       return null;
     }));
+  }
+
+  /**
+   * While the database is down every socket is unchecked, and each comes back every few seconds. The first is warned at
+   * once, so the log shows when an outage began. Those in the minute after a warning are only counted (no line each:
+   * Nest's default logger prints debug lines in production too), and make one warning at its end, with the latest
+   * error; that warning starts another such minute. A minute with none ends it: the next one is warned at once again.
+   */
+  private noteUnchecked(client: Socket, error: unknown): void {
+    if (this.unchecked.quiet) {
+      this.unchecked.count++;
+      this.unchecked.error = error;
+      return;
+    }
+    this.logger.warn(`Could not check the credentials of socket ${client.id} (it is closed after a few seconds, and reconnects): ${clean(error)}`);
+    this.quietUnchecked();
+  }
+
+  private quietUnchecked(): void {
+    this.unchecked.quiet = setTimeout(() => {
+      const { count, error } = this.unchecked;
+      this.unchecked = { count: 0, error: undefined };
+      if (!count) return;
+      this.logger.warn(
+        `Could not check the credentials of ${count} more socket(s) in the last minute (each is closed after a few seconds, and reconnects); the latest error: ${clean(error)}`,
+      );
+      this.quietUnchecked();
+    }, UNCHECKED_WARN_MS).unref();
   }
 
   // Handle 'join' event (frontend: socket.emit('join', { profileId }))
@@ -142,6 +199,9 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     const auth = await this.authOf(client);
     // Left while it was being authenticated: its handleDisconnect has cleaned up already, so record nothing.
     if (!client.connected) return { success: false, error: 'Disconnected' };
+    // Its credentials could not be checked: not Forbidden, which a client may take as final. It is closed in a few
+    // seconds, and is to join again once it has reconnected.
+    if (!auth && client.data.authUnchecked) return { success: false, error: 'Unavailable' };
     const organizationId = auth?.organizationId;
 
     if (!organizationId || !profileId || !(await this.ownsProfile(profileId, organizationId))) {
@@ -203,8 +263,14 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       handshake.auth?.apiKey || handshake.headers?.['x-api-key'] || handshake.query?.apiKey;
 
     if (token && typeof token === 'string') {
+      let payload: any = null;
       try {
-        const payload: any = await this.jwt.verifyAsync(token, { secret: process.env.JWT_SECRET });
+        payload = await this.jwt.verifyAsync(token, { secret: process.env.JWT_SECRET });
+      } catch {
+        /* an invalid or expired token: fall through to API key */
+      }
+      // Outside that try: a lookup that throws is no bad token, and reaches authOf.
+      if (payload) {
         // As on the HTTP API (JwtStrategy), the token needs a live session: a login that was logged out or revoked
         // keeps a valid token for days, and must not open a socket that is rung and answers calls.
         const tokenHash = sessionTokenHash(token);
@@ -215,8 +281,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
         if (user && user.isActive && session && session.expiresAt > new Date()) {
           return { userId: user.id, organizationId: user.organizationId, sessionTokenHash: tokenHash };
         }
-      } catch {
-        /* fall through to API key */
       }
     }
 

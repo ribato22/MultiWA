@@ -36,9 +36,10 @@ const nextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-XSS-Protection", value: "1; mode=block" },
           {
+            // The call console answers WhatsApp calls with this origin's microphone; frames of other origins get none.
             key: "Permissions-Policy",
             value:
-              "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+              "camera=(), microphone=(self), geolocation=(), interest-cohort=()",
           },
           {
             key: "Strict-Transport-Security",

@@ -6,8 +6,8 @@
 // connects within CALLS_CONNECT_TIMEOUT_MS: a media room, the page's bridge, the agent's transports, and only then
 // WhatsApp's own Accept. A claim whose audio does not connect is given back, and the call rings again unless it was
 // hung up. Once WhatsApp has answered, the call ends with the agent's Hang up, the caller's, the talk-time cap, an agent
-// lost for CALLS_AGENT_GRACE_MS, or a media failure (the page's media link down as long, too): every end hangs up what
-// WhatsApp still holds, closes the media, and stores who ended it and why.
+// lost for CALLS_AGENT_GRACE_MS, or a media failure (the page's media link down as long, too): every end silences the
+// agent at once, hangs up what WhatsApp still holds, closes the media, and stores who ended it and why.
 // Sessions live in this process, with the engines and the media server they use: a restart ends them, and the next
 // boot closes their rows.
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, forwardRef } from '@nestjs/common';
@@ -120,8 +120,13 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   private readonly sessions = new Map<string, Session>();
   /** The users each ringing call rang: they hear when it is claimed or stops ringing. */
   private readonly rung = new Map<string, Set<string>>();
-  /** Users who turned themselves unavailable. They are available again once their last socket goes. */
+  /**
+   * Users who turned themselves unavailable. They are available again once they have had no socket for the agent grace:
+   * a reload keeps it, closing the dashboard ends it.
+   */
   private readonly unavailable = new Set<string>();
+  /** That reset, per user whose last socket went: cancelled when a socket of theirs comes back. */
+  private readonly availableAgain = new Map<string, NodeJS.Timeout>();
   /** Users whose Answer is claiming a call: busy before their session exists. */
   private readonly claiming = new Set<string>();
 
@@ -156,6 +161,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
 
   /** Shutdown: the engines and the media server go with the process. Answered calls are stored as ended, claims given back. */
   async onModuleDestroy(): Promise<void> {
+    for (const timer of this.availableAgain.values()) clearTimeout(timer);
+    this.availableAgain.clear();
     await Promise.all(
       [...this.sessions.values()].map((s) =>
         s.phase === 'connecting' ? this.stopConnecting(s, { reRing: false, hangUp: false }) : this.end(s, 'server', 'server_restart'),
@@ -270,13 +277,26 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   }
 
   /**
-   * A reloaded agent page joins its call again: the old agent goes off the microphone and its transports are closed,
-   * and the reply carries what the page needs to produce anew. Once it has produced and listens, it is back on.
+   * An agent page joins its call again (reloaded, its audio failed, or the call taken into it): the old agent goes off
+   * the microphone and its transports are closed, and the reply carries what the page needs to produce anew. Once it
+   * has produced and listens, it is back on. `ifProducerId`, from a page that rejoins by itself: the producer it had.
+   * Another one on the call is another tab or device of the agent, which took it meanwhile and keeps it (`moved`). None
+   * yet is a rejoin under way, the page's own one too. A call whose answer is still connecting is given up instead, as
+   * by Hang up (`answer_undone`): the audio it connects went with the page, and the caller would be answered into silence.
    */
-  async rejoin(principal: SocketPrincipal, callId: unknown): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
+  async rejoin(
+    principal: SocketPrincipal,
+    callId: unknown,
+    ifProducerId?: unknown,
+  ): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
     const own = await this.ownSession(principal, callId);
     if (!own.ok) return own;
     const { session } = own;
+    if (typeof ifProducerId === 'string' && session.agentProducerId && session.agentProducerId !== ifProducerId) return { ok: false, reason: 'moved' };
+    if (session.phase === 'connecting') {
+      await this.stopConnecting(session, { reRing: true });
+      return { ok: false, reason: 'answer_undone' };
+    }
     if (session.phase !== 'active' || !session.handle || !session.room) return { ok: false, reason: 'not_in_call' };
     session.rejoining = true;
     session.agentProducerId = null;
@@ -325,12 +345,22 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
 
   @OnEvent(InternalEvents.WS_USER_OFFLINE)
   onUserOffline(payload: WsUserPayload): void {
-    this.unavailable.delete(payload.userId); // available again at their next connect
-    this.setSocketsLost(payload.userId, true);
+    const { userId } = payload;
+    clearTimeout(this.availableAgain.get(userId)); // a second offline starts the grace over
+    // Unref'd: Nest closes the socket server after onModuleDestroy, so shutdown's own disconnects arm resets after
+    // they were cleared.
+    const reset = setTimeout(() => {
+      this.availableAgain.delete(userId);
+      this.unavailable.delete(userId);
+    }, this.timing.agentGraceMs).unref();
+    this.availableAgain.set(userId, reset);
+    this.setSocketsLost(userId, true);
   }
 
   @OnEvent(InternalEvents.WS_USER_ONLINE)
   onUserOnline(payload: WsUserPayload): void {
+    clearTimeout(this.availableAgain.get(payload.userId));
+    this.availableAgain.delete(payload.userId);
     this.setSocketsLost(payload.userId, false);
   }
 
@@ -380,6 +410,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         profileId: profile.id,
         profileName: profile.displayName ?? profile.id,
         caller: { name: found.callerName, number: callerNumber(call.fromJid) },
+        // The banner's link to the caller's chat, when the call has one.
+        conversationId: call.conversationId ?? null,
         startedAt: call.startedAt.toISOString(),
         answerable: !unavailableReason,
         // Recorded from before an announcement the caller hears first: the agent's banner says so.
@@ -462,7 +494,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
       // A rejoin before connect's own connectAgent makes this the page's first consume: its link is first read here.
       if (current()) this.updatePageLink(session, session.room!.linkUp('page'));
-      if (session.phase === 'active' && current()) this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString() });
+      if (session.phase === 'active' && current()) this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString(), agentProducerId });
     } catch (e) {
       if (current()) await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
     }
@@ -600,7 +632,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       // The page's receive transport links at its first consume, this one: until now it was never linked.
       this.updatePageLink(session, session.room!.linkUp('page'));
       if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
-      this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString() });
+      // The producer on the call: the agent's tab whose own producer it is not lets go of its audio (reconnectAgent too).
+      this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString(), agentProducerId });
     } catch (e) {
       if (session.phase === 'connecting') await this.stopConnecting(session, { failure, error: e, reRing: true });
       else if (session.phase === 'active') await this.end(session, 'server', 'media_failed', { failure, error: e });
@@ -636,6 +669,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     const at = new Date();
     if (session.phase !== 'active') return;
     session.phase = 'ending';
+    // From now on nothing the agent says reaches the caller or the recording, whichever tab or device has the call:
+    // WhatsApp's hang-up and the recorder's stop below can take half a minute.
+    void session.room?.silenceAgent();
     this.clearTimers(session);
     // The caller's own end needs no hang-up, and neither does a shutdown: the engines close with the process.
     if (endedBy !== 'caller' && endReason !== 'server_restart') await this.hangUpQuietly(session);

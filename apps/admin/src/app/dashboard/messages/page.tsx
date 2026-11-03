@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import {
   Pencil,
   User,
@@ -584,10 +585,10 @@ export default function MessagesPage() {
           </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No Connected Profiles</h3>
           <p className="text-muted-foreground mb-6">Connect a WhatsApp profile first</p>
-          <a href="/dashboard/profiles/new" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors cursor-pointer">
+          <Link href="/dashboard/profiles/new" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors cursor-pointer">
             <Plus className="w-4 h-4" aria-hidden="true" />
             Add Profile
-          </a>
+          </Link>
         </div>
       ) : (
         <div className="grid lg:grid-cols-3 gap-6">

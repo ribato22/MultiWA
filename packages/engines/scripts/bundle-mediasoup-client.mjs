@@ -27,6 +27,15 @@ function packageOf(file) {
 
 const entry = require.resolve('mediasoup-client');
 const { name, version } = packageOf(entry);
+// The admin console's agent talks to the same media server with its own copy: both must be the same exact version.
+const adminManifest = path.join(root, '../../apps/admin/package.json');
+if (!existsSync(adminManifest)) {
+  throw new Error(`${adminManifest} is missing: it pins the admin console's mediasoup-client, which must be the exact version used here (${version})`);
+}
+const adminPin = JSON.parse(readFileSync(adminManifest, 'utf8')).dependencies?.['mediasoup-client'];
+if (adminPin !== version) {
+  throw new Error(`mediasoup-client is ${version} here but "${adminPin}" in apps/admin/package.json: pin both to the same exact version`);
+}
 const { metafile } = await build({
   entryPoints: [entry],
   absWorkingDir: root,

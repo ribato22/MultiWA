@@ -36,7 +36,7 @@ export class CallsGateway {
 
   @SubscribeMessage('call:rejoin')
   rejoin(@ConnectedSocket() client: Socket, @MessageBody() body: Body) {
-    return this.as(client, 'call:rejoin', (p) => this.sessions.rejoin(p, body?.callId));
+    return this.as(client, 'call:rejoin', (p) => this.sessions.rejoin(p, body?.callId, body?.ifProducerId));
   }
 
   @SubscribeMessage('call:hangup')
@@ -49,10 +49,15 @@ export class CallsGateway {
     return this.as(client, 'call:availability', (p) => this.sessions.setAvailability(p, body?.available));
   }
 
-  /** Run a command as the socket's principal. Every command is answered: not_allowed without one, error when it throws. */
+  /**
+   * Run a command as the socket's principal. Every command is answered: not_allowed without one, error when it throws.
+   * A socket whose credentials could not be checked (the database is down) has none either, and answers unavailable, as
+   * its join answers Unavailable: it is closed for a retry, so the command is to be sent again after the next connect.
+   * A not_allowed would read as final, and an error as a command that failed, with no reconnect to come.
+   */
   private async as<T>(client: Socket, command: string, run: (principal: SocketPrincipal) => Promise<T>): Promise<T | { ok: false; reason: string }> {
     const principal = await this.events.authOf(client);
-    if (!principal) return { ok: false, reason: 'not_allowed' };
+    if (!principal) return { ok: false, reason: client.data.authUnchecked ? 'unavailable' : 'not_allowed' };
     try {
       return await run(principal);
     } catch (e) {

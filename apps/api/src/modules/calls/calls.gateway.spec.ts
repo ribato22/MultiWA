@@ -11,9 +11,9 @@ import { EventsGateway, WS_GATEWAY_OPTIONS } from '../events/events.gateway';
 import { CallsGateway } from './calls.gateway';
 
 const principal = { userId: 'u1', organizationId: 'o1' };
-const socket = {} as any;
+const socket = { data: {} } as any;
 function make(auth: unknown = principal) {
-  const events = { authOf: vi.fn(async () => auth) };
+  const events = { authOf: vi.fn(async (_client: { data: Record<string, unknown> }) => auth) };
   const sessions = {
     answer: vi.fn(async () => ({ ok: true })),
     media: vi.fn(async () => ({ ok: true, result: null })),
@@ -44,12 +44,12 @@ describe('CallsGateway', () => {
     const { gateway, sessions } = make();
     await gateway.answer(socket, { callId: 'c1' });
     await gateway.media(socket, { callId: 'c1', op: 'produce', kind: 'audio' });
-    await gateway.rejoin(socket, { callId: 'c1' });
+    await gateway.rejoin(socket, { callId: 'c1', ifProducerId: 'producer-1' });
     await gateway.hangup(socket, { callId: 'c1' });
     await gateway.availability(socket, { available: false });
     expect(sessions.answer).toHaveBeenCalledWith(principal, 'c1');
     expect(sessions.media).toHaveBeenCalledWith(principal, 'c1', 'produce', { callId: 'c1', op: 'produce', kind: 'audio' });
-    expect(sessions.rejoin).toHaveBeenCalledWith(principal, 'c1');
+    expect(sessions.rejoin).toHaveBeenCalledWith(principal, 'c1', 'producer-1');
     expect(sessions.hangup).toHaveBeenCalledWith(principal, 'c1');
     expect(sessions.setAvailability).toHaveBeenCalledWith(principal, false);
   });
@@ -63,5 +63,25 @@ describe('CallsGateway', () => {
     expect(await gateway.hangup(socket, { callId: 'c1' })).toEqual({ ok: false, reason: 'error' });
     await gateway.answer(socket, undefined as any);
     expect(sessions.answer).toHaveBeenCalledWith(principal, undefined);
+  });
+
+  // not_allowed is final for a client, and error is a command that failed on a checked socket, where no reconnect
+  // comes; a socket held for a retry (the database is down) is to try again once reconnected.
+  it('a socket whose credentials could not be checked is answered unavailable, never not_allowed or error, on every command', async () => {
+    const { gateway, events, sessions } = make(null);
+    // As EventsGateway.authOf does when the lookup throws: it marks the socket, then gives no principal.
+    events.authOf.mockImplementation(async (client) => {
+      client.data.authUnchecked = true;
+      return null;
+    });
+    const held = { data: {} } as any;
+    expect(await Promise.all([
+      gateway.answer(held, { callId: 'c1' }),
+      gateway.media(held, { callId: 'c1', op: 'rtpCapabilities' }),
+      gateway.rejoin(held, { callId: 'c1' }),
+      gateway.hangup(held, { callId: 'c1' }),
+      gateway.availability(held, {}),
+    ])).toEqual(Array(5).fill({ ok: false, reason: 'unavailable' }));
+    expect(Object.values(sessions).flatMap((run) => run.mock.calls)).toEqual([]);
   });
 });

@@ -39,7 +39,7 @@ const as = (userId: string, apiKeyScopes?: string[]) => ({
   userId, organizationId: USERS[userId].organizationId, ...(apiKeyScopes !== undefined ? { apiKeyScopes } : { sessionTokenHash: `session-of-${userId}` }),
 });
 const ringing = (call: Record<string, unknown> = {}, settings: Record<string, unknown> = {}) => ({
-  call: { id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false, outcome: 'ringing', answeredByUserId: null, startedAt: STARTED, ...call },
+  call: { id: 'c1', profileId: 'p1', waCallId: 'W1', fromJid: '628111000111@c.us', isVideo: false, isGroup: false, outcome: 'ringing', answeredByUserId: null, startedAt: STARTED, conversationId: 'conv1', ...call },
   profile: { id: 'p1', displayName: 'Line 1', settings: { callsAnswerInDashboard: true, ...settings }, organizationId: 'o1' },
   callerName: 'Pak Joko',
 });
@@ -73,6 +73,7 @@ function harness() {
     signalingFor: vi.fn((p: string) => (p === 'agent' ? agentPeer : peer())),
     close: vi.fn(),
     closePeer: vi.fn(),
+    silenceAgent: vi.fn(async () => undefined),
     // The page's receive transport links at its first consume, which is the agent's connect.
     linkUp: vi.fn((peer: string) => peer !== 'page' || handle.connectAgent.mock.calls.length > 0),
     onLinkChange: vi.fn((l: any) => links.push(l)),
@@ -166,7 +167,7 @@ describe('CallSessionService: who is rung', () => {
       to: ['u1', 'u2'],
       payload: {
         callId: 'c1', profileId: 'p1', profileName: 'Line 1', caller: { name: 'Pak Joko', number: '628111000111' },
-        startedAt: STARTED.toISOString(), answerable: true, recorded: false,
+        startedAt: STARTED.toISOString(), answerable: true, recorded: false, conversationId: 'conv1',
       },
     }]);
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'rung' });
@@ -214,11 +215,12 @@ describe('CallSessionService: who is rung', () => {
     ]);
   });
 
-  it('a LID caller has no number to show', async () => {
+  it('a LID caller has no number to show, and a call without a chat no chat to link', async () => {
     const h = harness();
-    S.findCallForAnswer.mockResolvedValueOnce(ringing({ fromJid: '123456789012345@lid' }));
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ fromJid: '123456789012345@lid', conversationId: null }));
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing')[0].payload.caller).toEqual({ name: 'Pak Joko', number: null });
+    expect(h.sent('call:ringing')[0].payload.conversationId).toBeNull();
   });
 });
 
@@ -292,7 +294,7 @@ describe('CallSessionService: recorded calls', () => {
     played();
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
-    expect(h.sent('call:active')).toHaveLength(1);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]); // the new page's producer
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
   });
 
@@ -349,6 +351,24 @@ describe('CallSessionService: recorded calls', () => {
     expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
   });
 
+  it("a call that starts to end carries none of the agent's voice: silenced before WhatsApp's hang-up and the recorder's stop, whoever ended it", async () => {
+    const first = (fn: { mock: { invocationCallOrder: number[] } }) => fn.mock.invocationCallOrder[0];
+    const h = harness();
+    h.recorder.plan.mockReturnValue({ announcement });
+    await answered(h);
+    expect(await h.service.hangup(as('u1'), 'c1')).toEqual({ ok: true });
+    expect(h.room.silenceAgent).toHaveBeenCalledTimes(1);
+    expect(first(h.room.silenceAgent)).toBeLessThan(first(h.media.hangUp));
+    expect(first(h.room.silenceAgent)).toBeLessThan(first(h.recorder.end));
+    // The caller's own end: no hang-up, the recorder's stop all the same.
+    const caller = harness();
+    caller.recorder.plan.mockReturnValue({ announcement });
+    await answered(caller);
+    await caller.service.onEngineSignal({ profileId: 'p1', waCallId: 'W1', state: 'ended' });
+    expect(caller.room.silenceAgent).toHaveBeenCalledTimes(1);
+    expect(first(caller.room.silenceAgent)).toBeLessThan(first(caller.recorder.end));
+  });
+
   it('a call that ends during its announcement never connects its agent', async () => {
     const h = harness();
     h.recorder.plan.mockReturnValue({ announcement });
@@ -384,15 +404,69 @@ describe('CallSessionService: recorded calls', () => {
 });
 
 describe('CallSessionService: availability', () => {
-  it("an unavailable agent is not rung; their tabs are told; going offline makes them available again", async () => {
+  it("an unavailable agent is not rung; their tabs are told; no socket for the agent grace makes them available again", async () => {
+    vi.useFakeTimers();
     const h = harness();
     expect(await h.service.setAvailability(as('u2'), false)).toEqual({ ok: true, available: false });
     expect(h.sent('call:availability')).toEqual([{ to: ['u2'], payload: { available: false } }]);
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing')[0].to).toEqual(['u1']);
     h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(15_000);
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing')[1].to).toEqual(['u1', 'u2']);
+  });
+
+  it('"unavailable" outlives a reload: an agent back within the agent grace is still unavailable', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' }); // the reload: the agent's last tab went
+    await vi.advanceTimersByTimeAsync(14_000);
+    h.service.onUserOnline({ userId: 'u2' }); // and is back
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: false });
+    await h.service.onCallReceived({ callId: 'c1' });
+    expect(h.sent('call:ringing')[0].to).toEqual(['u1']);
+  });
+
+  it('no socket for the whole agent grace (the dashboard closed) makes the agent available again', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: false });
+    await vi.advanceTimersByTimeAsync(1);
+    h.service.onUserOnline({ userId: 'u2' }); // a new session
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: true });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('offline, online, offline: the grace starts over from the last offline', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(10_000);
+    h.service.onUserOnline({ userId: 'u2' });
+    h.service.onUserOffline({ userId: 'u2' });
+    await vi.advanceTimersByTimeAsync(10_000); // 20 s from the first offline, 10 s from the last
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: false });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await h.service.setAvailability(as('u2'), undefined)).toEqual({ ok: true, available: true });
+  });
+
+  it('shutdown clears the resets still pending; one armed after it (the socket server closes later) does not hold the process open', async () => {
+    vi.useFakeTimers();
+    const h = harness();
+    await h.service.setAvailability(as('u2'), false);
+    h.service.onUserOffline({ userId: 'u2' });
+    expect(vi.getTimerCount()).toBe(1);
+    await h.service.onModuleDestroy();
+    expect(vi.getTimerCount()).toBe(0);
+    h.service.onUserOffline({ userId: 'u2' }); // Nest closes the socket server after onModuleDestroy
+    expect((h.service as any).availableAgain.get('u2').hasRef()).toBe(false);
   });
 
   it('a viewer, an inactive user, any API-key socket (calls are answered in the dashboard) may not; a value that is not a boolean is refused', async () => {
@@ -502,7 +576,7 @@ describe('CallSessionService: answering', () => {
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'answered', answerSeconds: expect.any(Number) });
     expect(h.handle.attachCaller).toHaveBeenCalled();
     expect(h.handle.connectAgent).toHaveBeenCalledWith('agent-producer');
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer' } }]);
   });
 
   it('refuses a viewer, another organization, a call no longer ringing or already claimed, a call that cannot be answered here, an agent on a call', async () => {
@@ -1034,7 +1108,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]);
     expect(S.markEnded).not.toHaveBeenCalled();
     expect(h.service.activeSessionCount()).toBe(1);
   });
@@ -1076,7 +1150,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer'], ['agent-producer-2']]);
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String) } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]);
     expect(S.markEnded).not.toHaveBeenCalled();
   });
 
@@ -1098,7 +1172,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer'], ['agent-producer-2'], ['agent-producer-3']]);
-    expect(h.sent('call:active')).toHaveLength(2);
+    expect(h.sent('call:active').map((s) => s.payload.agentProducerId)).toEqual(['agent-producer', 'agent-producer-3']); // the answer's, then the last page's
     expect(S.markEnded).not.toHaveBeenCalled();
     expect(h.service.activeSessionCount()).toBe(1);
   });
@@ -1187,6 +1261,25 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
   });
 
+  it("a rejoin naming the producer its page had never takes a call another tab or device now has (moved); its own, or one with no producer yet, it does", async () => {
+    const h = harness();
+    await answered(h); // agent-producer
+    // Taken into another tab or device: a rejoin without a producer takes it, whoever has it.
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true });
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-producer-2' });
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(2));
+    // The first page's own rejoin, its audio failed meanwhile: the call stays where it is now.
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer')).toEqual({ ok: false, reason: 'moved' });
+    expect(h.handle.disconnectAgent).toHaveBeenCalledTimes(1);
+    expect(h.room.closePeer).toHaveBeenCalledTimes(1);
+    expect((h.service as any).sessions.get('c1')).toMatchObject({ agentProducerId: 'agent-producer-2', rejoining: false });
+    // The page that has the call can rejoin it; while its new producer is not there yet, any page can.
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer-2')).toMatchObject({ ok: true });
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer')).toMatchObject({ ok: true });
+    expect(S.markEnded).not.toHaveBeenCalled();
+  });
+
   it("rejoin: a page that already let its bridge go is fine; another failure ends the call; only one's own call", async () => {
     const h = harness();
     await answered(h);
@@ -1196,5 +1289,65 @@ describe('CallSessionService: an agent lost, and back', () => {
     h.handle.disconnectAgent.mockRejectedValueOnce(new Error('Target closed'));
     expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_failed' });
     expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
+  });
+
+  // The console asks before its page is left while the answer connects: a reload then is a deliberate Leave.
+  it("a page reloaded while WhatsApp answers gives the answer up (answer_undone): hung up, again once the accept is over, never answered with the closed page's voice", async () => {
+    const h = harness();
+    let accepted!: () => void;
+    h.media.answer.mockReturnValueOnce(new Promise((r) => (accepted = () => r({ connectedAfterMs: 900 }))));
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.media.answer).toHaveBeenCalled());
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer')).toEqual({ ok: false, reason: 'answer_undone' });
+    expect(h.media.hangUp.mock.calls).toEqual([['W1']]);
+    expect(S.releaseClaim.mock.calls).toEqual([['c1', 'u1']]);
+    expect(h.sent('call:ended')).toEqual([{ to: ['u1'], payload: { callId: 'c1', endReason: 'cancelled' } }]);
+    accepted(); // the accept already under way connects after all
+    await vi.waitFor(() => expect(h.media.hangUp).toHaveBeenCalledTimes(2));
+    await flush();
+    expect(S.markAnswered).not.toHaveBeenCalled();
+    expect(h.published()).toEqual([]);
+    expect(h.handle.attachCaller).not.toHaveBeenCalled();
+    expect(h.handle.connectAgent).not.toHaveBeenCalled();
+    expect(h.sent('call:active')).toEqual([]);
+    expect(h.sent('call:ringing')).toEqual([]); // hung up: it rings nowhere
+    expect(h.counted()).toEqual([]); // given up, not a media failure
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it('a page reloaded before its audio was ready gives the answer up (answer_undone): released, and rung again for everyone before the reply', async () => {
+    const h = harness();
+    await h.service.onCallReceived({ callId: 'c1' }); // rings u1 and u2
+    await h.service.answer(as('u1'), 'c1');
+    expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'answer_undone' });
+    expect(S.releaseClaim.mock.calls).toEqual([['c1', 'u1']]);
+    expect(h.media.closeCallMedia).toHaveBeenCalledWith('W1');
+    expect(h.room.close).toHaveBeenCalled();
+    expect(h.sent('call:ended')).toEqual([{ to: ['u1'], payload: { callId: 'c1', endReason: 'cancelled' } }]);
+    expect(h.sent('call:ringing').map((s) => s.to)).toEqual([['u1', 'u2'], ['u1', 'u2']]);
+    expect(h.media.hangUp).not.toHaveBeenCalled(); // WhatsApp was never asked: nothing to hang up
+    // The closed page's last commands reach no call, and a second rejoin finds none.
+    await agentReady(h);
+    await flush();
+    expect(h.media.answer).not.toHaveBeenCalled();
+    expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_in_call' });
+    expect(h.published()).toEqual([]);
+    expect(h.service.activeSessionCount()).toBe(0);
+  });
+
+  it("a rejoin that is not the answering page's leaves a connecting answer alone: another agent's, a viewer's, one naming another producer (moved)", async () => {
+    const h = harness();
+    h.media.answer.mockReturnValueOnce(new Promise(() => undefined)); // WhatsApp is still answering
+    await h.service.answer(as('u1'), 'c1');
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.media.answer).toHaveBeenCalled());
+    expect(await h.service.rejoin(as('u2'), 'c1')).toEqual({ ok: false, reason: 'not_in_call' });
+    expect(await h.service.rejoin(as('u3'), 'c1')).toEqual({ ok: false, reason: 'not_allowed' });
+    expect(await h.service.rejoin(as('u1'), 'c1', 'agent-producer-old')).toEqual({ ok: false, reason: 'moved' });
+    expect(h.media.hangUp).not.toHaveBeenCalled();
+    expect(S.releaseClaim).not.toHaveBeenCalled();
+    expect(h.sent('call:ended')).toEqual([]);
+    expect(h.service.activeSessionCount()).toBe(1);
   });
 });

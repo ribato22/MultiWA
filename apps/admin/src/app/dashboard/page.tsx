@@ -7,6 +7,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
@@ -38,6 +39,7 @@ const MessageChart = dynamic(() => import('@/components/dashboard/MessageChart')
 });
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -98,7 +100,7 @@ export default function DashboardPage() {
   }, [fetchDataCb]);
 
   const handleConnect = async (profileId: string) => {
-    window.location.href = `/dashboard/profiles/${profileId}?action=connect`;
+    router.push(`/dashboard/profiles/${profileId}?action=connect`);
   };
 
   const handleDisconnect = async (profileId: string) => {
@@ -107,7 +109,7 @@ export default function DashboardPage() {
   };
 
   const handleViewProfile = (profileId: string) => {
-    window.location.href = `/dashboard/profiles/${profileId}`;
+    router.push(`/dashboard/profiles/${profileId}`);
   };
 
   const firstName = user?.name?.split(' ')[0];

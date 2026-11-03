@@ -1,16 +1,16 @@
 // The media path end to end, in real Chrome with a REAL mediasoup worker. One page is the engine's WhatsApp Web
 // page (fake WhatsApp Web + the engine's hooks, driven through the real WebJsCallMedia). The other is an agent's
-// browser (mediasoup-client). Each side plays a tone and the test listens on the other: the caller at 440 Hz,
-// the agent at 660 Hz.
+// browser (the admin console's own agent media module). Each side plays a tone and the test listens on the other:
+// the caller at 440 Hz, the agent at 660 Hz.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Logger } from '@nestjs/common';
-import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
+import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, runCallMediaSignal } from '@multiwa/engines';
 import { CallMediaService } from './call-media.service';
 import type { CallMediaRoom } from './call-media-room';
 import {
-  WWEBJS_USER_AGENT, agentHearsInPage, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sleep, startAgentPeerInPage,
-  until,
+  WWEBJS_USER_AGENT, agentHearsInPage, consoleAgentBundle, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sleep,
+  startConsoleAgentInPage, until,
 } from '../../../testing/call-media-browser';
 
 const PRESENT = 0.05;
@@ -44,18 +44,18 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
    */
   const openWaPage = () => openFakeWhatsAppPage(launched.browser, launched.url, CALL_MEDIA_INIT_SCRIPT, (p) => p.setUserAgent(WWEBJS_USER_AGENT));
 
-  /** The agent's page: mediasoup-client in, signalling to the current room's agent peer. */
+  /** The agent's page: the console's agent media module in, signalling to the current room's agent peer. */
   const openAgentPage = async () => {
     const p = await launched.browser.newPage();
     await p.exposeFunction('__agentSignal', async (op: string, json: string) =>
       JSON.stringify((await runCallMediaSignal(room!.signalingFor('agent'), op, JSON.parse(json))) ?? null),
     );
     await p.goto(launched.url);
-    await p.evaluate(mediasoupClientBundle());
+    await p.evaluate(consoleAgentBundle());
     return p;
   };
 
-  it('the agent hears the caller once attached (silence before), and the caller hears the agent while connected', async () => {
+  it('the agent hears the caller once attached (silence before), and the caller hears the agent while connected and unmuted', async () => {
     const waPage = await openWaPage();
     const agentPage = await openAgentPage();
     const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
@@ -65,7 +65,7 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
       const handle = await media.startCallMedia('CALL1', room.signalingFor('page'));
       expect(await waPage.evaluate(() => (window as any).__mwBridge.device.handlerName)).toBe('Chrome111');
       // 2. the agent consumes the caller and produces its voice
-      const { agentProducerId } = await agentPage.evaluate(startAgentPeerInPage, handle.callerProducerId, 660);
+      const { agentProducerId } = await agentPage.evaluate(startConsoleAgentInPage, handle.callerProducerId, 660);
       // 3. answer: the fake connects after 300 ms and plays the caller at 440 Hz, which the agent does not hear until
       // the caller is attached
       await media.answer('CALL1');
@@ -79,10 +79,34 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
       await handle.connectAgent(agentProducerId);
       expect(await waPage.evaluate(() => (window as any).__mwCall.noted)).toBe(notedBefore);
       expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
-      // 5. off the microphone again
-      await handle.disconnectAgent();
+      // 5. muted, the caller hears nothing; a microphone switched meanwhile (880 Hz) stays muted, and is heard once unmuted
+      await agentPage.evaluate(() => (window as any).__agent.media.setMuted(true));
       expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) < ABSENT, 5_000)).toBe(true);
-      // 6. close: the page lets go (WhatsApp Web's own playback track stays live), the room closes
+      await agentPage.evaluate(async () => {
+        const ctx = (window as any).__agent.analyser.context as AudioContext;
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 880;
+        const mic = ctx.createMediaStreamDestination();
+        osc.connect(mic);
+        osc.start();
+        await (window as any).__agent.media.replaceMic(mic.stream.getAudioTracks()[0]);
+      });
+      let loudest = 0; // over 3 s, the new microphone never reaches the caller
+      for (const end = Date.now() + 3_000; Date.now() < end; ) {
+        loudest = Math.max(loudest, await waPage.evaluate(micCarriesInPage, 880));
+        await sleep(100);
+      }
+      expect(loudest).toBeLessThan(ABSENT);
+      await agentPage.evaluate(() => (window as any).__agent.media.setMuted(false));
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 880)) > PRESENT, 10_000)).toBe(true);
+      expect(await waPage.evaluate(micCarriesInPage, 660)).toBeLessThan(ABSENT); // the old microphone is gone
+      // 6. the link's stats, with audio flowing both ways: a round trip
+      const sample = () => agentPage.evaluate(() => (window as any).__agent.media.sample());
+      expect(await until(async () => (await sample()).rttMs != null, 10_000)).toBe(true);
+      // 7. off the microphone again
+      await handle.disconnectAgent();
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 880)) < ABSENT, 5_000)).toBe(true);
+      // 8. close: the page lets go (WhatsApp Web's own playback track stays live), the room closes
       await handle.close();
       expect(await waPage.evaluate(() => (window as any).__mwBridge)).toBeUndefined();
       expect(
@@ -90,8 +114,37 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
           (window as any).__mwCall.taps.every((t: any) => t.stream.getAudioTracks().every((k: MediaStreamTrack) => k.readyState === 'live')),
         ),
       ).toBe(true);
+      // the caller's audio stopped coming: the agent's link reads as all lost, not as its last good stats
+      expect(await until(async () => (await sample()).lossPct === 100, 5_000)).toBe(true);
       room.close();
       expect(service.status().activeRooms).toBe(0);
+    } finally {
+      await media.closeCallMedia('CALL1');
+      room?.close();
+      await waPage.close();
+      await agentPage.close();
+    }
+  }, 60_000);
+
+  it('an agent that starts muted (a call rebuilt muted) sends silence until it unmutes', async () => {
+    const waPage = await openWaPage();
+    const agentPage = await openAgentPage();
+    const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
+    try {
+      room = await service.createRoom('CALL5');
+      const handle = await media.startCallMedia('CALL1', room.signalingFor('page'));
+      const { agentProducerId } = await agentPage.evaluate(startConsoleAgentInPage, handle.callerProducerId, 660, true);
+      await media.answer('CALL1');
+      await handle.connectAgent(agentProducerId);
+      let loudest = 0; // over 3 s on the microphone, the agent never reaches the caller
+      for (const end = Date.now() + 3_000; Date.now() < end; ) {
+        loudest = Math.max(loudest, await waPage.evaluate(micCarriesInPage, 660));
+        await sleep(100);
+      }
+      expect(loudest).toBeLessThan(ABSENT);
+      await agentPage.evaluate(() => (window as any).__agent.media.setMuted(false));
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
+      await handle.close();
     } finally {
       await media.closeCallMedia('CALL1');
       room?.close();

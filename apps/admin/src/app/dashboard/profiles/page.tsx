@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Plus, RefreshCw, Lightbulb, Smartphone, Wifi, WifiOff } from 'lucide-react';
 import { api, Profile } from '@/lib/api';
 import { ProfileCard, ProfileGrid } from '@/components/ui/profile-card';
@@ -13,6 +14,7 @@ import { EmptyProfiles } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function ProfilesPage() {
+  const router = useRouter();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -48,7 +50,7 @@ export default function ProfilesPage() {
   }, []);
 
   const handleConnect = (profileId: string) => {
-    window.location.href = `/dashboard/profiles/${profileId}?action=connect`;
+    router.push(`/dashboard/profiles/${profileId}?action=connect`);
   };
 
   const handleDisconnect = async (profileId: string) => {
@@ -57,7 +59,7 @@ export default function ProfilesPage() {
   };
 
   const handleView = (profileId: string) => {
-    window.location.href = `/dashboard/profiles/${profileId}`;
+    router.push(`/dashboard/profiles/${profileId}`);
   };
 
   // Loading skeletons

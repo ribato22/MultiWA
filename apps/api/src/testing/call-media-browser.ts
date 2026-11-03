@@ -9,6 +9,25 @@ import { CALL_MEDIA_CHROME_ARGS } from '@multiwa/engines';
 export const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..');
 export const engines = createRequire(path.join(REPO_ROOT, 'packages/engines/package.json'));
 export const puppeteer = createRequire(engines.resolve('whatsapp-web.js'))('puppeteer');
+const esbuild = engines('esbuild');
+let consoleAgent: string | undefined;
+/**
+ * The admin console's own agent media module (apps/admin/src/lib/call-console/agent-media.ts) with its mediasoup-client,
+ * as one IIFE that defines `consoleAgent`: the media specs run the agent the dashboard runs.
+ */
+export function consoleAgentBundle(): string {
+  consoleAgent ??= esbuild.buildSync({
+    entryPoints: [path.join(REPO_ROOT, 'apps/admin/src/lib/call-console/agent-media.ts')],
+    bundle: true,
+    format: 'iife',
+    globalName: 'consoleAgent',
+    platform: 'browser',
+    target: 'chrome120',
+    write: false,
+    logLevel: 'warning',
+  }).outputFiles[0].text as string;
+  return consoleAgent;
+}
 /** The user agent whatsapp-web.js gives WhatsApp Web (a Mac Chrome 101), so a fake page looks to its scripts like the engine's. */
 export const WWEBJS_USER_AGENT: string = createRequire(engines.resolve('whatsapp-web.js'))('whatsapp-web.js').DefaultOptions.userAgent;
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -147,46 +166,34 @@ export async function openFakeWhatsAppPage(browser: any, url: string, initScript
 }
 
 /**
- * In the agent's page (mediasoup-client evaluated in): consume the caller, and produce a `hz` tone as the agent's
- * voice. Signalling goes through the page binding `__agentSignal(op, json)` to the room's agent peer.
+ * In the agent's page (consoleAgentBundle() evaluated in): the console's startAgentMedia, with a `hz` tone as the
+ * microphone and the page binding `__agentSignal(op, json)` as its signalling, started muted if `muted`. What the agent
+ * hears goes to an analyser.
  */
-export async function startAgentPeerInPage(callerProducerId: string, hz: number): Promise<{ agentProducerId: string }> {
+export async function startConsoleAgentInPage(callerProducerId: string, hz: number, muted = false): Promise<{ agentProducerId: string }> {
   const w = window as any;
-  const signal = async (op: string, args: unknown = {}) => JSON.parse(await w.__agentSignal(op, JSON.stringify(args)));
-  const device = new w.mediasoupClient.Device({ handlerName: 'Chrome111' }); // a headless user agent is not detected
-  await device.load({ routerRtpCapabilities: await signal('rtpCapabilities') });
-  const wire = (t: any) => {
-    t.on('connect', ({ dtlsParameters }: any, ok: () => void, fail: (e: Error) => void) => {
-      signal('connectTransport', { transportId: t.id, dtlsParameters }).then(() => ok(), fail);
-    });
-    return t;
-  };
-  const recv = wire(device.createRecvTransport(await signal('createTransport', { direction: 'recv' })));
-  const consumer = await recv.consume(
-    await signal('consume', { transportId: recv.id, producerId: callerProducerId, rtpCapabilities: device.rtpCapabilities }),
-  );
-  await signal('resumeConsumer', { consumerId: consumer.id });
   const ctx = new AudioContext();
-  const heard = new MediaStream([consumer.track]);
+  const osc = ctx.createOscillator();
+  osc.frequency.value = hz;
+  const mic = ctx.createMediaStreamDestination();
+  osc.connect(mic);
+  osc.start();
+  const media = await w.consoleAgent.startAgentMedia({
+    signal: async (op: string, args: unknown) => JSON.parse(await w.__agentSignal(op, JSON.stringify(args ?? {}))),
+    callerProducerId,
+    iceServers: [],
+    mic: mic.stream.getAudioTracks()[0],
+    muted,
+  });
   const keepAlive = new Audio(); // Chrome feeds a remote track to Web Audio only while a media element plays it
   keepAlive.muted = true;
-  keepAlive.srcObject = heard;
+  keepAlive.srcObject = media.remote;
   keepAlive.play().catch(() => {});
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 8192;
-  ctx.createMediaStreamSource(heard).connect(analyser);
-  const send = wire(device.createSendTransport(await signal('createTransport', { direction: 'send' })));
-  send.on('produce', ({ kind, rtpParameters }: any, ok: (r: { id: string }) => void, fail: (e: Error) => void) => {
-    signal('produce', { transportId: send.id, kind, rtpParameters }).then(ok, fail);
-  });
-  const osc = ctx.createOscillator();
-  osc.frequency.value = hz;
-  const out = ctx.createMediaStreamDestination();
-  osc.connect(out);
-  osc.start();
-  const producer = await send.produce({ track: out.stream.getAudioTracks()[0] });
-  w.__agent = { analyser, keepAlive, recv, send };
-  return { agentProducerId: producer.id };
+  ctx.createMediaStreamSource(media.remote).connect(analyser);
+  w.__agent = { analyser, keepAlive, media };
+  return { agentProducerId: media.producerId };
 }
 
 /** Amplitude of `hz` in what the agent hears (single-bin DFT over the analyser window). */

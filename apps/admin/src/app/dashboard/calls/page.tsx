@@ -6,16 +6,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { io } from 'socket.io-client';
 import {
-  CheckCircle2, Link2, Loader2, MessageSquareText, MessagesSquare, Phone, PhoneIncoming,
-  PhoneMissed, PhoneOff, RotateCcw, UserPlus, Video,
+  CheckCircle2, Link2, Loader2, MessageSquareText, MessagesSquare, PhoneIncoming, PhoneOff, RotateCcw, UserPlus, Video,
 } from 'lucide-react';
-import { api, type CallFollowUp, type CallRecord, type Profile } from '@/lib/api';
+import { api, type CallFollowUp, type CallOutcome, type CallRecord, type Profile } from '@/lib/api';
 import { getSocketUrl } from '@/lib/socket';
 import { formatFull, formatRelative } from '@/lib/datetime';
 import {
-  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, callerLabel, filterQuery, fromPayload, matchesFilter, upsertCall,
+  CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, answeredFacts, callerLabel, filterQuery, fromPayload, knownOutcome, matchesFilter, upsertCall,
   type CallFilter, type CallUpdatePayload,
 } from '@/lib/calls';
+import { canManageCalls, currentUser } from '@/lib/current-user';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,6 +25,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
+import { outcomeIcon } from '@/components/calls/outcome-icon';
+import { CallRecording } from '@/components/calls/call-recording';
 import { useToast } from '@/hooks/use-toast';
 
 type Member = { id: string; name: string; email: string; isActive: boolean };
@@ -39,15 +41,25 @@ const GATE_REASON: Record<string, string> = {
   COLD_CIRCUIT_OPEN: 'Sending to new conversations is paused for this profile.',
 };
 
+const OUTCOME_COLOUR: Record<CallOutcome, string> = {
+  answered: 'text-emerald-400',
+  ringing: 'text-primary',
+  rejected: 'text-amber-400',
+  answered_elsewhere: 'text-emerald-400',
+  missed: 'text-red-400',
+  unknown: 'text-muted-foreground',
+};
+
 function OutcomeIcon({ call }: { call: CallRecord }) {
-  if (call.outcome === 'ringing') return <PhoneIncoming className="w-4 h-4 text-primary animate-pulse" aria-hidden="true" />;
-  if (call.outcome === 'rejected') return <PhoneOff className="w-4 h-4 text-amber-400" aria-hidden="true" />;
-  if (call.outcome === 'answered_elsewhere') return <Phone className="w-4 h-4 text-emerald-400" aria-hidden="true" />;
-  return <PhoneMissed className={`w-4 h-4 ${call.outcome === 'unknown' ? 'text-muted-foreground' : 'text-red-400'}`} aria-hidden="true" />;
+  const outcome = knownOutcome(call.outcome);
+  const Icon = outcomeIcon(outcome);
+  return <Icon className={`w-4 h-4 ${OUTCOME_COLOUR[outcome]}${outcome === 'ringing' ? ' animate-pulse' : ''}`} aria-hidden="true" />;
 }
 
 export default function CallsPage() {
   const { toast } = useToast();
+  // Owner and admin play, download and delete recordings; everyone sees the facts. The API checks it again.
+  const [canManage] = useState(() => canManageCalls(currentUser()?.role));
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileId, setProfileId] = useState('');
   const [filter, setFilter] = useState<CallFilter>('open');
@@ -113,7 +125,8 @@ export default function CallsPage() {
     void load();
   }, [load]);
 
-  // The ringing strip belongs to the profile, not to the selected tab (Missed and Rejected never list a ringing call).
+  // The ringing strip belongs to the profile, not to the selected tab (Answered, Missed and Rejected never list a ringing
+  // call).
   const loadRinging = useCallback(async () => {
     if (!profileId) return;
     const seq = ++ringingSeq.current;
@@ -151,21 +164,28 @@ export default function CallsPage() {
     socket.on('call:update', (p: CallUpdatePayload) => {
       if (p.profileId !== profileId) return;
       const seen = callsRef.current.some((c) => c.id === p.callId) || ringingRef.current.some((c) => c.id === p.callId);
-      setCalls((prev) => upsertCall(prev, p, filterRef.current));
+      // A call answered from the ringing strip is new to the Answered tab: its row takes the chat the strip's read brought.
+      setCalls((prev) => upsertCall(prev, p, filterRef.current, ringingRef.current.find((c) => c.id === p.callId)));
       setRinging((prev) => {
         const others = prev.filter((c) => c.id !== p.callId);
         return p.outcome === 'ringing' ? [fromPayload(p, prev.find((c) => c.id === p.callId)), ...others] : others;
       });
-      if (!seen) {
-        // The payload has no contact: the stored row of a call not shown yet has its chat (name, Open chat). Only those
-        // relations are taken over, by id and never inserted: outcome and follow-up stay what the socket said, so a
-        // call that ended meanwhile does not come back.
+      // The payload has no relations: one read of the stored row brings what is missing, the recording's facts once it
+      // is stored, and the chat (name, Open chat) and any recording of a call not shown yet. Only those are taken over,
+      // by id and never inserted: outcome and follow-up stay what the socket said, so a call that ended meanwhile does
+      // not come back.
+      if (p.hasRecording || !seen) {
         void api.getCall(p.callId).then(({ data: stored }) => {
           if (!stored) return;
-          const withChat = (c: CallRecord): CallRecord =>
-            c.id !== p.callId ? c : { ...c, conversationId: stored.conversationId, conversation: stored.conversation, assignedUser: stored.assignedUserId === c.assignedUserId ? stored.assignedUser : c.assignedUser };
-          setCalls((prev) => prev.map(withChat));
-          setRinging((prev) => prev.map(withChat));
+          const taken = (c: CallRecord): CallRecord => {
+            if (c.id !== p.callId) return c;
+            const row = p.hasRecording ? { ...c, recording: stored.recording } : c;
+            if (seen) return row;
+            const assignedUser = stored.assignedUserId === c.assignedUserId ? stored.assignedUser : c.assignedUser;
+            return { ...row, conversationId: stored.conversationId, conversation: stored.conversation, assignedUser, recording: stored.recording };
+          };
+          setCalls((prev) => prev.map(taken));
+          setRinging((prev) => prev.map(taken));
         });
       }
       // Realtime is authoritative: a strip refetch (after an action, on a reconnect) still in flight was read before this
@@ -295,12 +315,14 @@ export default function CallsPage() {
                           {call.isVideo && <Video className="inline w-3 h-3 mr-1" aria-label="Video call" />}
                           {formatRelative(call.startedAt)}
                           {assigned ? ` · ${assigned}` : ''}
+                          {call.outcome === 'answered' && ` · ${answeredFacts(call, memberName(call.answeredByUserId))}`}
                         </p>
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={call.outcome === 'missed' ? 'destructive' : 'secondary'}>{OUTCOME_LABEL[call.outcome]}</Badge>
+                      <Badge variant={call.outcome === 'missed' ? 'destructive' : 'secondary'}>{OUTCOME_LABEL[knownOutcome(call.outcome)]}</Badge>
                       <Badge variant="outline">{FOLLOW_UP_LABEL[call.followUp]}</Badge>
+                      <CallRecording call={call} canManage={canManage} onChange={(row) => setCalls((prev) => prev.map((c) => (c.id === row.id ? row : c)))} />
                       {call.conversationId && (
                         <Button asChild size="sm" variant="ghost">
                           <Link href={`/dashboard/chat?profile=${call.profileId}&conv=${call.conversationId}`} aria-label={`Open chat with ${callerLabel(call)}`}>

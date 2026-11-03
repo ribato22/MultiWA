@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   X,
   CheckCircle2,
@@ -40,6 +41,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { DeviceCheck } from '@/components/calls/device-check';
+import { useCalls } from '@/components/calls/calls-provider';
 import {
   Tabs,
   TabsContent,
@@ -72,6 +75,8 @@ interface Member {
   createdAt: string;
 }
 
+const TABS = ['account', 'team', 'notifications', 'calls', 'api', 'security', 'storage'];
+
 const ROLES = [
   { value: 'admin', label: 'Admin', color: 'bg-sky-500' },
   { value: 'member', label: 'Member', color: 'bg-green-500' },
@@ -83,6 +88,24 @@ export default function SettingsPage() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // The URL names the tab shown (`?tab=calls`, none for Account): a reload or Back opens it again, and a link to a tab,
+  // followed on this page too (the bell's Notification Settings, the sidebar's Settings), switches to it. A click
+  // changes the URL in place, without asking the server for the page again: a request that failed would reload it.
+  const tab = useSearchParams().get('tab') ?? 'account';
+  const select = (v: string) => window.history.replaceState(null, '', `/dashboard/settings?tab=${v}`);
+  // The Calls tab is there when the header's call controls are: a profile answers calls in the dashboard, or a call is
+  // here. Never for a role that takes no calls (it has no console), nor in an organization that does not use them.
+  const calls = useCalls();
+  const callsTab = !!calls?.inUse;
+  // A link to the Calls tab waits until the console knows whether there is one: it must not show Account, then switch.
+  // Meanwhile the other tabs can be opened, and the Calls tab only keeps its place, unseen.
+  const waiting = tab === 'calls' && !!calls && !calls.inUseKnown;
+  // A tab this page does not have, or not for this user, opens Account, and the URL says so: a later ring then leaves
+  // the tab as it is.
+  const shown = waiting || (TABS.includes(tab) && (tab !== 'calls' || callsTab)) ? tab : 'account';
+  useEffect(() => {
+    if (shown !== tab) select(shown);
+  }, [shown, tab]);
 
   // Team state
   const [members, setMembers] = useState<Member[]>([]);
@@ -474,11 +497,16 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="account" className="space-y-6">
+      <Tabs value={shown} onValueChange={select} className="space-y-6">
         <TabsList className="bg-secondary/30">
           <TabsTrigger value="account">Account</TabsTrigger>
           <TabsTrigger value="team">Team</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          {(callsTab || waiting) && (
+            <TabsTrigger value="calls" disabled={!callsTab} className={callsTab ? undefined : 'invisible'}>
+              Calls
+            </TabsTrigger>
+          )}
           <TabsTrigger value="api">API & Webhooks</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="storage">Storage</TabsTrigger>
@@ -920,6 +948,19 @@ export default function SettingsPage() {
             </div>
           </div>
         </TabsContent>
+
+        {/* Calls Tab */}
+        {callsTab && (
+          <TabsContent value="calls">
+            <DeviceCheck />
+          </TabsContent>
+        )}
+        {/* Its tab is unseen meanwhile: the placeholder says what it waits for, to a screen reader too. */}
+        {waiting && (
+          <Skeleton role="status" aria-live="polite" className="mt-2 h-[400px]">
+            <span className="sr-only">Loading calls settings</span>
+          </Skeleton>
+        )}
 
         {/* API Tab */}
         <TabsContent value="api">

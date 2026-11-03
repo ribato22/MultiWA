@@ -79,3 +79,7 @@ temp/
 
 # Docusaurus
 docs-site/.docusaurus/
+
+# Playwright (apps/admin end-to-end tests)
+test-results/
+playwright-report/

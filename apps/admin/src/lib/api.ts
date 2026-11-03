@@ -4,11 +4,23 @@
 // Use relative path - Next.js rewrite will proxy /api/* to backend API
 const API_BASE = '/api/v1';
 
+// The API's own limit on an announcement upload (its multipart `fileSize`), in bytes.
+export const ANNOUNCEMENT_MAX_BYTES = 2 * 1024 * 1024;
+
+// How long a token refresh may take before it is given up. Long enough not to abort a slow refresh the server may
+// have carried out: this browser would keep the refresh token it rotated, and the next refresh, read as reuse, would
+// sign out every tab. A refresh given up for a request outside /auth/ signs out, and the tabs waiting on the lock then
+// have no refresh token to send. One given up for an /auth/ request (api.me()) does not sign out: each waiting tab
+// then sends the same refresh token in turn, and on a dead connection each waits its own minute.
+const REFRESH_TIMEOUT_MS = 60_000;
+
 // Types
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
   status: number;
+  /** The body of a failed request (a 409's `reasons`, for one); null when it was not JSON. */
+  body?: any;
 }
 
 export interface User {
@@ -134,8 +146,23 @@ export interface Conversation {
   lastMessageAt: string;
 }
 
-export type CallOutcome = 'ringing' | 'missed' | 'rejected' | 'answered_elsewhere' | 'unknown';
+export type CallOutcome = 'ringing' | 'answered' | 'missed' | 'rejected' | 'answered_elsewhere' | 'unknown';
 export type CallFollowUp = 'open' | 'in_progress' | 'done';
+export type CallEndReason = 'hangup' | 'caller_hangup' | 'agent_lost' | 'media_failed' | 'time_limit' | 'server_restart';
+
+/** A call's recording facts: every role sees them; owner and admin play, download and delete. */
+export interface CallRecording {
+  id: string;
+  durationSec: number;
+  bytes: number;
+  /** The server stopped before the call ended: the file holds the call up to then. */
+  partial: boolean;
+  announcementPlayed: boolean;
+  createdAt: string;
+  deletedAt: string | null;
+  /** 'admin' or 'retention' today; a newer API can send another (the column is plain text). */
+  deleteReason: string | null;
+}
 
 export interface CallRecord {
   id: string;
@@ -152,8 +179,47 @@ export interface CallRecord {
   followUp: CallFollowUp;
   assignedUserId: string | null;
   conversationId: string | null;
+  answeredByUserId: string | null;
+  answeredAt: string | null;
+  endedBy: 'agent' | 'caller' | 'server' | null;
+  endReason: CallEndReason | null;
+  talkSeconds: number | null;
   assignedUser: { id: string; name: string } | null;
+  answeredBy: { id: string; name: string } | null;
   conversation: { id: string; name: string | null } | null;
+  recording: CallRecording | null;
+}
+
+export interface CallsAnnouncement {
+  mimeType: string;
+  durationSec: number;
+}
+
+/** A profile's calls settings, as `PUT /profiles/:id/calls-settings` answers them. */
+export interface CallsSettings {
+  profileId: string;
+  answerInDashboard: boolean;
+  recording: boolean;
+  retentionDays: number;
+  announcement: CallsAnnouncement | null;
+}
+
+/** `GET /calls/media/status` (owner and admin): the server's readiness, and each profile's settings and readiness. */
+export interface CallsMediaStatus {
+  server: {
+    enabled: boolean;
+    worker: 'up' | 'down';
+    port: number | null;
+    engineHost: 'api' | 'worker';
+    activeSessions: number;
+    recordings: {
+      storage: 'local' | 's3';
+      configured: boolean;
+      problem: string | null;
+      lastCheck: { at: string; ok: boolean; reason?: string } | null;
+    };
+  };
+  profiles: Array<CallsSettings & { name: string; ready: boolean; reasons: string[] }>;
 }
 
 // Result of POST /notifications/push/test — the endpoint returns per-endpoint
@@ -186,33 +252,49 @@ class ApiClient {
     return localStorage.getItem('refreshToken');
   }
 
-  private async tryRefreshToken(): Promise<boolean> {
+  /** `sent`: the token the request that got the 401 carried. */
+  private async tryRefreshToken(sent: string | null): Promise<boolean> {
+    // A refresh token works once: the API reads a second use as theft and revokes the login, in every tab. A 401 that
+    // comes back after a refresh since its request left (a slow link) retries with that token, never refreshes again.
+    const stored = this.getToken();
+    if (stored && stored !== sent) return true;
     if (this.isRefreshing && this.refreshPromise) {
       return this.refreshPromise;
     }
 
     this.isRefreshing = true;
-    this.refreshPromise = (async () => {
+    // The browser's tabs refresh one at a time (a Web Lock, in a secure context), and one that waited while another
+    // refreshed takes that token instead of refreshing again.
+    const refresh = async () => {
+      const now = this.getToken();
+      if (now && now !== sent) return true;
       const refreshToken = this.getRefreshToken();
       if (!refreshToken) return false;
 
+      const res = await fetch(`${this.baseUrl}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+        // Every tab's refresh waits on this one: one that hangs is given up (see REFRESH_TIMEOUT_MS). An optional call:
+        // an older Safari has no AbortSignal.timeout, and its TypeError would sign every 401 out.
+        signal: AbortSignal.timeout?.(REFRESH_TIMEOUT_MS),
+      });
+
+      if (!res.ok) return false;
+
+      const data = await res.json();
+      const tokens = data.data || data;
+      if (tokens.accessToken) {
+        localStorage.setItem('accessToken', tokens.accessToken);
+        if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
+        return true;
+      }
+      return false;
+    };
+    this.refreshPromise = (async () => {
       try {
-        const res = await fetch(`${this.baseUrl}/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
-        });
-
-        if (!res.ok) return false;
-
-        const data = await res.json();
-        const tokens = data.data || data;
-        if (tokens.accessToken) {
-          localStorage.setItem('accessToken', tokens.accessToken);
-          if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
-          return true;
-        }
-        return false;
+        const locks = globalThis.navigator?.locks;
+        return await (locks ? locks.request('multiwa-token-refresh', refresh) : refresh());
       } catch {
         return false;
       } finally {
@@ -224,13 +306,10 @@ class ApiClient {
     return this.refreshPromise;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {},
-    _isRetry = false
-  ): Promise<ApiResponse<T>> {
+  /** fetch() with the Bearer header, for JSON and bytes alike: a 401 refreshes the token once, and a failed refresh signs out. */
+  private async send(endpoint: string, options: RequestInit = {}, _isRetry = false): Promise<Response> {
     const token = this.getToken();
-    
+
     const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const headers: HeadersInit = {
       // Only set Content-Type for JSON bodies, not FormData (browser auto-sets multipart boundary)
@@ -239,32 +318,39 @@ class ApiClient {
       ...options.headers,
     };
 
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    // Auto-refresh on 401 (skip for auth endpoints and retries)
+    if (response.status === 401 && !_isRetry && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh')) {
+      const refreshed = await this.tryRefreshToken(token);
+      if (refreshed) {
+        return this.send(endpoint, options, true);
+      }
+      // Refresh failed — redirect to login
+      if (typeof window !== 'undefined' && !endpoint.startsWith('/auth/')) {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        window.location.href = '/auth/login';
+      }
+    }
+
+    return response;
+  }
+
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        ...options,
-        headers,
-      });
+      const response = await this.send(endpoint, options);
 
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        // Auto-refresh on 401 (skip for auth endpoints and retries)
-        if (response.status === 401 && !_isRetry && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh')) {
-          const refreshed = await this.tryRefreshToken();
-          if (refreshed) {
-            return this.request<T>(endpoint, options, true);
-          }
-          // Refresh failed — redirect to login
-          if (typeof window !== 'undefined' && !endpoint.startsWith('/auth/')) {
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
-            window.location.href = '/auth/login';
-          }
-        }
-
         return {
           error: data?.message || data?.error || `Request failed with status ${response.status}`,
           status: response.status,
+          body: data,
         };
       }
 
@@ -277,6 +363,20 @@ class ApiClient {
         error: error instanceof Error ? error.message : 'Network error',
         status: 0,
       };
+    }
+  }
+
+  /** A route that answers bytes (a recording, an announcement), on the same auth path as request(); `signal` gives it up. */
+  async fetchBlob(endpoint: string, signal?: AbortSignal): Promise<{ blob?: Blob; error?: string; status: number }> {
+    try {
+      const response = await this.send(endpoint, { signal });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        return { error: data?.message || data?.error || `Request failed with status ${response.status}`, status: response.status };
+      }
+      return { blob: await response.blob(), status: response.status };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error', status: 0 };
     }
   }
 
@@ -590,6 +690,50 @@ class ApiClient {
 
   async sendCallLink(id: string, type: 'voice' | 'video', text?: string) {
     return this.request<{ call: CallRecord; message: unknown; link: string }>(`/calls/${id}/call-link`, { method: 'POST', body: JSON.stringify(text ? { type, text } : { type }) });
+  }
+
+  // Calls answered in the dashboard: readiness, a profile's settings and announcement, recordings (owner and admin).
+  async getCallsMediaStatus() {
+    return this.request<CallsMediaStatus>('/calls/media/status');
+  }
+
+  async updateCallsSettings(profileId: string, body: { answerInDashboard?: boolean; recording?: boolean; retentionDays?: number }) {
+    return this.request<CallsSettings>(`/profiles/${profileId}/calls-settings`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async uploadCallsAnnouncement(profileId: string, file: File) {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await this.request<{ profileId: string; announcement: CallsAnnouncement }>(`/profiles/${profileId}/calls-announcement`, {
+      method: 'POST',
+      body: form,
+    });
+    if (res.status !== 413 || res.body) return res;
+    // A proxy's own size refusal (nginx answers 413 in HTML): only a file past the API's limit is too large; a smaller
+    // one met a proxy whose limit is lower. A proxy counts the whole multipart request, so one set to exactly 2 MB still
+    // refuses a file a little under 2 MB: 3 MB leaves room.
+    const limit = `${ANNOUNCEMENT_MAX_BYTES / (1024 * 1024)} MB`;
+    const error = file.size > ANNOUNCEMENT_MAX_BYTES
+      ? `The file must be at most ${limit}`
+      : 'The server refused a file of this size: ask your administrator to allow uploads of at least 3 MB';
+    return { ...res, error };
+  }
+
+  fetchCallsAnnouncement(profileId: string, signal?: AbortSignal) {
+    return this.fetchBlob(`/profiles/${profileId}/calls-announcement`, signal);
+  }
+
+  async deleteCallsAnnouncement(profileId: string) {
+    return this.request<{ profileId: string; announcement: null }>(`/profiles/${profileId}/calls-announcement`, { method: 'DELETE' });
+  }
+
+  /** The recording's bytes, for a blob: URL: an <audio src> cannot send the Bearer header. Each fetch is audited. */
+  fetchCallRecording(callId: string, download = false, signal?: AbortSignal) {
+    return this.fetchBlob(`/calls/${callId}/recording${download ? '?download=1' : ''}`, signal);
+  }
+
+  async deleteCallRecording(callId: string) {
+    return this.request<{ callId: string; recordingId: string; deletedAt: string }>(`/calls/${callId}/recording`, { method: 'DELETE' });
   }
 
   async getMessages(conversationId: string) {
