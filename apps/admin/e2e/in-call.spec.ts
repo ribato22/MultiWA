@@ -1034,12 +1034,14 @@ const reachable = (page: Page) =>
 const overlapped = (page: Page) =>
   page.evaluate(() => {
     const barBox = document.querySelector('[aria-label="Current call"]')!.getBoundingClientRect();
-    return [...document.querySelectorAll('header :is([aria-label$="menu"], [aria-label="Calls availability"], [aria-label^="Notifications"])')]
+    // The menu button, the notifications and the account menu (each opens something), and the availability.
+    return [...document.querySelectorAll('header :is(button[aria-expanded], [aria-label="Calls availability"])')]
+      .filter((el) => !el.closest('[aria-label="Current call"]'))
       .filter((el) => {
         const r = el.getBoundingClientRect();
         return r.left < barBox.right && barBox.left < r.right && r.top < barBox.bottom && barBox.top < r.bottom;
       })
-      .map((el) => el.getAttribute('aria-label'));
+      .map((el) => el.getAttribute('aria-label') ?? el.textContent);
   });
 for (const [width, height, sidebars] of [
   [1280, 800, ['open', 'collapsed']],
@@ -1062,7 +1064,7 @@ for (const [width, height, sidebars] of [
       await expect(bar(page).getByRole('combobox', { name: 'Microphone' })).toBeVisible();
       expect(await reachable(page)).toEqual([['Mute', true], ['Microphone', true], ['Hang up', true]]);
       expect(await overlapped(page)).toEqual([]);
-      if (width === 360) await expectAccessible(page, 'header');
+      if (width === 360 || width === 1280) await expectAccessible(page, 'header');
       // A call that rang before this one was answered keeps its banner: it floats below the header, clear of the bar.
       backend.emit('call:ringing', ringing(SARI));
       await expect(card(page, 'Bu Sari')).toBeVisible();

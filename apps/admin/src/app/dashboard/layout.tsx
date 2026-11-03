@@ -470,20 +470,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
               {/* Account menu */}
               <div className="relative" ref={userRef} onBlur={closeOnLeave(() => setShowUserMenu(false))}>
+                {/* Named by the name and email it shows (a phone screen shows only the initial), then by what it opens:
+                    the visible text is part of the name (WCAG 2.5.3). */}
                 <button
                   type="button"
                   onClick={() => setShowUserMenu((v) => !v)}
-                  aria-label="Account menu"
                   aria-expanded={showUserMenu}
                   className="inline-flex items-center gap-2 rounded-lg p-1 sm:pr-2 hover:bg-secondary/60 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
-                  <span className="w-9 h-9 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center font-medium flex-shrink-0">
+                  <span aria-hidden="true" className="w-9 h-9 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center font-medium flex-shrink-0">
                     {user.name?.[0]?.toUpperCase() || 'U'}
                   </span>
                   <span className="hidden sm:block max-w-[160px] text-left leading-tight">
                     <span className="block text-sm font-medium text-foreground truncate">{user.name}</span>
                     <span className="block text-xs text-muted-foreground truncate">{user.email}</span>
                   </span>
+                  <span className="sr-only">Account menu</span>
                   <ChevronDown className="hidden sm:block w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
                 </button>
 
