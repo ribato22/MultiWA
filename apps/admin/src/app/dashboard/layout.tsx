@@ -360,8 +360,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
             {/* The call's bar: on a row of its own under the header's controls, and between them once the header is
-                wide enough for all of it. */}
-            <div className="order-last basis-full empty:hidden [@container(min-width:68rem)]:order-none [@container(min-width:68rem)]:flex [@container(min-width:68rem)]:min-w-0 [@container(min-width:68rem)]:flex-1 [@container(min-width:68rem)]:justify-center [@container(min-width:68rem)]:px-4">
+                wide enough for all of it. min-w-0: a long name is cut, rather than push the controls off the screen. */}
+            <div className="order-last min-w-0 basis-full empty:hidden [@container(min-width:68rem)]:order-none [@container(min-width:68rem)]:flex [@container(min-width:68rem)]:flex-1 [@container(min-width:68rem)]:justify-center [@container(min-width:68rem)]:px-4">
               <InCallBar />
             </div>
             <div className="flex items-center gap-4">
