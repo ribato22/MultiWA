@@ -95,7 +95,7 @@ export const SETTINGS_REASON_TEXT: Record<string, string> = {
   recordings_storage_unset: 'Recording storage is not set up on the server: ask your administrator',
   storage_not_private: 'The recording storage can be read without a login: ask your administrator to make it private',
   storage_check_failed: 'The recording storage could not be checked: try again, or ask your administrator',
-  recording_on: 'Turn recording off first',
+  recording_on: 'Recording is on for this profile',
 };
 
 /** A refusal's reasons as texts, each once (several reasons share a text); an unknown reason shows as it came. */

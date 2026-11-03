@@ -186,7 +186,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const checks =
     server && p
       ? [
-          { ok: server.enabled, text: server.enabled ? 'Calls in the dashboard are on, on the server' : READINESS_TEXT.media_disabled },
+          { ok: server.enabled, text: server.enabled ? 'The server has calls in the dashboard turned on' : READINESS_TEXT.media_disabled },
           ...(server.enabled ? [{ ok: server.worker === 'up', text: server.worker === 'up' ? 'The call media server runs' : READINESS_TEXT.media_server_down }] : []),
           { ok: server.engineHost === 'api', text: server.engineHost === 'api' ? 'The engines run in the API' : READINESS_TEXT.engine_host_worker },
           ...(p.ready
@@ -287,7 +287,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     the announcement, and its close then hands the focus to the upload. It stays open, Escape too,
                     while the removal runs: its answer closes it. */}
                 <AlertDialog open={confirmRemove} onOpenChange={(open) => busy !== 'remove' && setConfirmRemove(open)}>
-                  {p.announcement && (
+                  {/* Recording needs the announcement: while it is on, the server refuses to remove it. */}
+                  {p.announcement && !p.recording && (
                     <AlertDialogTrigger asChild>
                       <Button size="sm" variant="ghost" aria-disabled={!!busy} onClick={(e) => busy && e.preventDefault()}>
                         <Trash2 className="mr-1.5 h-4 w-4" aria-hidden="true" />
@@ -304,7 +305,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                   >
                     <AlertDialogHeader>
                       <AlertDialogTitle>Remove the announcement?</AlertDialogTitle>
-                      <AlertDialogDescription>Recording calls needs one: it can be turned on again once another announcement is uploaded.</AlertDialogDescription>
+                      <AlertDialogDescription>Recording calls needs an announcement: it can’t be turned on until another one is uploaded.</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel disabled={busy === 'remove'}>Cancel</AlertDialogCancel>
@@ -321,6 +322,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
+                {p.announcement && p.recording && <span className="text-[11px] text-slate-400">Turn recording off to remove the announcement</span>}
               </div>
               {preview && <audio ref={previewPlayer} controls src={preview} aria-label="The announcement" className="h-8" />}
             </div>

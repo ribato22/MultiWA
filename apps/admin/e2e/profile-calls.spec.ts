@@ -51,6 +51,7 @@ test('auto-reject turned off in the guardrails, as the checklist asks, leaves th
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
   await expect(s).toContainText('Auto-reject is on for this profile: turn it off');
+  await expect(s.getByRole('list', { name: 'What answering in the dashboard needs' }).getByRole('listitem').first()).toHaveText('Ready: The server has calls in the dashboard turned on');
   await turnAutoRejectOff(page);
   await expect(s).toContainText('This profile can take calls in the dashboard');
   await expect(s).not.toContainText('Auto-reject is on');
@@ -414,18 +415,16 @@ test('an announcement the server refuses says why, and so does a proxy’s size 
   await expect(s.getByRole('alert')).toContainText('ask your administrator to allow uploads of at least 3 MB');
 });
 
-test('the announcement can be heard, and stays while recording is on', async ({ page, backend }) => {
+test('the announcement can be heard, and stays while recording is on: Remove is not offered, and the section says why', async ({ page, backend }) => {
   backend.route(get('/calls/media/status', status({ answerInDashboard: true, recording: true, announcement: { mimeType: 'audio/wav', durationSec: 2 } })));
   backend.route(on('GET', '/profiles/p-1/calls-announcement', { body: sineWav(2), headers: { 'content-type': 'audio/wav' } }));
-  backend.route(on('DELETE', '/profiles/p-1/calls-announcement', { status: 409, json: { message: 'Turn recording off before removing the announcement', reasons: ['recording_on'] } }));
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
   await s.getByRole('button', { name: 'Listen' }).click();
   await expect(s.getByLabel('The announcement')).toHaveAttribute('src', /^blob:/);
   expect(backend.requests.find((r) => r.method === 'GET' && r.path === '/profiles/p-1/calls-announcement')?.headers.authorization).toBe('Bearer test-token');
-  await s.getByRole('button', { name: 'Remove' }).click();
-  await page.getByRole('alertdialog', { name: 'Remove the announcement?' }).getByRole('button', { name: 'Remove' }).click();
-  await expect(s.getByRole('alert')).toContainText('Turn recording off first');
+  await expect(s).toContainText('Turn recording off to remove the announcement');
+  await expect(s.getByRole('button', { name: 'Remove' })).toHaveCount(0);
   await expect(s).toContainText('wav · 2.0 s');
 });
 
@@ -455,7 +454,7 @@ test('removing the announcement asks first', async ({ page, backend }) => {
   const s = section(page);
   await s.getByRole('button', { name: 'Remove' }).click();
   const confirm = page.getByRole('alertdialog', { name: 'Remove the announcement?' });
-  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText('Recording calls needs an announcement: it can’t be turned on until another one is uploaded');
   await confirm.getByRole('button', { name: 'Cancel' }).click();
   await expect(confirm).toHaveCount(0);
   expect(deletes()).toBe(0);
@@ -469,7 +468,7 @@ test('removing the announcement asks first', async ({ page, backend }) => {
 });
 
 test('closed without a removal, the dialog gives the focus back to Remove: Cancel, Escape, and a removal the server refused', async ({ page, backend }) => {
-  backend.route(get('/calls/media/status', status({ answerInDashboard: true, recording: true, announcement: ANNOUNCEMENT })));
+  backend.route(get('/calls/media/status', status({ answerInDashboard: true, announcement: ANNOUNCEMENT })));
   const slow = gate();
   backend.route(on('DELETE', '/profiles/p-1/calls-announcement', async () => {
     await slow.passed;
@@ -495,7 +494,9 @@ test('closed without a removal, the dialog gives the focus back to Remove: Cance
   await rendered(page);
   await expect(removing).toBeFocused(); // while the removal runs
   slow.open();
-  await expect(s.getByRole('alert')).toContainText('Turn recording off first');
+  // Recording was turned on elsewhere meanwhile: the refusal says what to do, then why, each once.
+  await expect(s.getByRole('alert')).toContainText('Turn recording off before removing the announcement');
+  await expect(s.getByRole('alert').getByRole('listitem')).toHaveText(['Recording is on for this profile']);
   await expect(confirm).toHaveCount(0);
   await expect(remove).toBeFocused();
 });
