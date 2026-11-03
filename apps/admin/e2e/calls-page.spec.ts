@@ -86,7 +86,7 @@ test('an admin downloads a recording as a file', async ({ page, backend }) => {
   expect(asked?.headers.authorization).toBe('Bearer test-token');
 });
 
-test('Download keeps the focus while its file comes, and after', async ({ page, backend }) => {
+test('Download keeps the focus while its file comes, and after; a screen reader hears it download, and that it did', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
   const slow = gate();
   backend.route(on('GET', '/calls/call-9/recording', async () => {
@@ -94,14 +94,17 @@ test('Download keeps the focus while its file comes, and after', async ({ page, 
     return { body: sineWav(1), headers: { 'content-type': 'audio/webm' } };
   }));
   await openAnswered(page);
-  const download = rowOf(page).getByRole('button', { name: 'Download the recording of the call from Pak Joko' });
+  const download = rowOf(page).getByRole('button', { name: /^Download(ing)? the recording of the call from Pak Joko/ });
   await download.focus();
   await page.keyboard.press('Enter');
+  await expect(download).toHaveAccessibleName('Downloading the recording of the call from Pak Joko…');
   await expect(download).toBeDisabled();
   await rendered(page);
   await expect(download).toBeFocused();
   const [file] = await Promise.all([page.waitForEvent('download'), slow.open()]);
   expect(file.suggestedFilename()).toBe('call-call-9.webm');
+  await expect(page.getByRole('status').filter({ hasText: 'Recording downloaded' }).first()).toBeVisible();
+  await expect(download).toHaveAccessibleName('Download the recording of the call from Pak Joko');
   await expect(download).toBeEnabled();
   await expect(download).toBeFocused();
 });

@@ -102,6 +102,7 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
     const href = URL.createObjectURL(res.blob);
     Object.assign(document.createElement('a'), { href, download: `call-${call.id}.webm` }).click();
     setTimeout(() => URL.revokeObjectURL(href), 60_000);
+    toast({ title: 'Recording downloaded' }); // the browser's own download says nothing to a screen reader
   };
   const remove = async () => {
     if (busy) return;
@@ -157,7 +158,14 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
               {busy === 'play' ? `Loading ${mb(r.bytes)}…` : 'Play'}
             </Button>
           ) : null}
-          <Button size="sm" variant="outline" aria-disabled={!!busy} onClick={download} aria-label={`Download the recording of the call from ${callerLabel(call)}`}>
+          {/* While its file comes, its name says so: the spinner is all it shows. */}
+          <Button
+            size="sm"
+            variant="outline"
+            aria-disabled={!!busy}
+            onClick={download}
+            aria-label={busy === 'download' ? `Downloading the recording of the call from ${callerLabel(call)}…` : `Download the recording of the call from ${callerLabel(call)}`}
+          >
             {busy === 'download' ? <Loader2 className="h-4 w-4 mw-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
           </Button>
           {/* The trigger gets the focus back when the dialog closes without a delete. It stays open, Escape too, while

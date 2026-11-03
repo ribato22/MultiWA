@@ -57,6 +57,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const retentionAsker = useRef<HTMLElement | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const uploadButton = useRef<HTMLButtonElement>(null);
+  const listenButton = useRef<HTMLButtonElement>(null);
+  const previewPlayer = useRef<HTMLAudioElement>(null);
   // Only the latest read shows: an older one answering after it (a slow link) is stale, and so is one still out when a
   // change answers (it may have left before the change): the page reads again then.
   const loadSeq = useRef(0);
@@ -87,6 +89,11 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   }, [allowed, load, refreshKey]);
   useEffect(() => () => {
     if (preview) URL.revokeObjectURL(preview);
+  }, [preview]);
+  // The announcement's player takes the focus from Listen, as a recording's player takes it from Play: not from where
+  // the admin went meanwhile.
+  useEffect(() => {
+    if (preview && (document.activeElement === listenButton.current || document.activeElement === document.body)) previewPlayer.current?.focus();
   }, [preview]);
   useEffect(() => {
     const leaving = new AbortController();
@@ -121,7 +128,10 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     if (!res.data) return toast({ title: 'Could not save', description: res.error, variant: 'destructive' });
     const stored = res.data;
     setP((x) => (x ? { ...x, ...stored } : x));
-    if (body.retentionDays !== undefined) setRetentionDraft(null);
+    if (body.retentionDays !== undefined) {
+      setRetentionDraft(null);
+      toast({ title: 'Retention saved', description: `Recordings are kept for ${stored.retentionDays} days` });
+    }
     // Its calls ring in the dashboard from now on: the header's call controls show without a reload.
     if (stored.answerInDashboard) calls?.profileAnswers();
   };
@@ -138,6 +148,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     const announcement = res.data.announcement;
     setP((x) => (x ? { ...x, announcement } : x));
     dropPreview();
+    toast({ title: 'Announcement uploaded' }); // the button's spinner says nothing to a screen reader
   };
   const listen = async () => {
     if (busy) return;
@@ -263,7 +274,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                   {p.announcement ? 'Replace' : 'Upload announcement'}
                 </Button>
                 {p.announcement && (
-                  <Button size="sm" variant="outline" aria-disabled={!!busy} onClick={listen}>
+                  <Button ref={listenButton} size="sm" variant="outline" aria-disabled={!!busy} onClick={listen}>
                     <Play className="mr-1.5 h-4 w-4" aria-hidden="true" />
                     Listen
                   </Button>
@@ -307,7 +318,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                   </AlertDialogContent>
                 </AlertDialog>
               </div>
-              {preview && <audio controls src={preview} aria-label="The announcement" className="h-8" />}
+              {preview && <audio ref={previewPlayer} controls src={preview} aria-label="The announcement" className="h-8" />}
             </div>
           </div>
 

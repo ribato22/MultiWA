@@ -370,6 +370,22 @@ test('recording refused for a public storage still says why once the checklist i
   await expect(record).toHaveAttribute('aria-checked', 'false');
 });
 
+test('a screen reader hears what went through: an upload and a saved retention are said, and the announcement’s player takes the focus from Listen', async ({ page, backend }) => {
+  backend.route(on('POST', '/profiles/p-1/calls-announcement', { json: { profileId: 'p-1', announcement: ANNOUNCEMENT } }));
+  backend.route(on('GET', '/profiles/p-1/calls-announcement', { body: sineWav(2), headers: { 'content-type': 'audio/wav' } }));
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ announcement: ANNOUNCEMENT, retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const said = (text: string) => page.getByRole('status').filter({ hasText: text }).first();
+  await s.locator('input[type="file"]').setInputFiles({ name: 'notice.wav', mimeType: 'audio/wav', buffer: sineWav(2) });
+  await expect(said('Announcement uploaded')).toBeVisible();
+  await s.getByLabel('Keep recordings for (days)').fill('120');
+  await s.getByRole('button', { name: 'Save retention' }).click();
+  await expect(said('Recordings are kept for 120 days')).toBeVisible();
+  await s.getByRole('button', { name: 'Listen' }).click();
+  await expect(s.getByLabel('The announcement')).toBeFocused();
+});
+
 test('an announcement larger than 2 MB, or not an audio file, is refused here without being sent', async ({ page, backend }) => {
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
