@@ -107,7 +107,7 @@ export class CallsController {
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Create a WhatsApp call link and send it to the caller' })
-  @ApiResponse({ status: 201, description: 'The call, the message sent and the link', type: CallLinkResultDto })
+  @ApiResponse({ status: 201, description: 'The call, the message sent and the link: an `open` follow-up is now `in_progress`, any other is left as it was', type: CallLinkResultDto })
   @ApiNotFound('Call')
   @ApiValidationError()
   callLink(@Param('id') id: string, @Body() dto: CallLinkDto) {
