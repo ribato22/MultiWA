@@ -179,6 +179,26 @@ test('an answer or a change of availability on a socket the server could not che
   await expect(page.getByRole('status').filter({ hasText: 'Your availability did not change' }).first()).toContainText('The server is unavailable: try again in a moment');
 });
 
+test('an answer the server did not run (it could not check the socket) leaves the call ringing, saying why, and Answer works once the socket is back', async ({ page, backend }) => {
+  let checked = false;
+  backend.reply('call:answer', (a) => (checked ? backend.defaults['call:answer'](a) : { ok: false, reason: 'unavailable' }));
+  await open(page);
+  backend.emit('call:ringing', ringing());
+  const c = card(page, 'Pak Joko');
+  await c.getByRole('button', { name: 'Answer' }).click();
+  await expect(c.getByRole('alert')).toHaveText('The server is unavailable: try again in a moment');
+  const again = c.getByRole('button', { name: 'Answer' });
+  await expect(again).toBeFocused(); // nothing rings it here again: it still rings
+  // The server closes the socket it could not check, and checks it at the reconnect.
+  const reads = backend.commands('call:availability').length;
+  backend.blip();
+  await expect.poll(() => backend.commands('call:availability').length, { timeout: 10_000 }).toBeGreaterThan(reads);
+  checked = true;
+  await again.click();
+  await expect(bar(page)).toContainText('Connecting…');
+  expect(backend.commands('call:answer')).toEqual([{ callId: 'call-1' }, { callId: 'call-1' }]);
+});
+
 test('Mute silences the microphone track while the call stays connected', async ({ page, backend }) => {
   await open(page);
   await answer(page, backend);

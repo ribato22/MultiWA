@@ -33,14 +33,24 @@ test('this tab’s own answer: its claim marks the banner as this agent’s, ano
 
 test('two tabs of this agent answer at once: the tab that lost, or whose microphone was refused, shows the call as the other tab’s, in either order', () => {
   const answering: ConsoleEvent[] = [{ type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' }];
-  // the refusals that come before a claim, and a microphone refused before this tab could claim (no reason)
-  for (const reason of ['busy', 'already_claimed', 'not_ringing', undefined]) {
+  // the refusals that come before a claim (unavailable: the server did not run it), and a microphone refused before this
+  // tab could claim (no reason)
+  for (const reason of ['busy', 'already_claimed', 'not_ringing', 'unavailable', undefined]) {
     const refused: ConsoleEvent = { type: 'answerFailed', callId: 'c1', message: 'Could not answer', reason };
     for (const s of [run(...answering, claimed('u1', 'Ada'), refused), run(...answering, refused, claimed('u1', 'Ada'))]) {
       expect(s.banners).toEqual([]);
       expect(s.active).toEqual({ call: call(), phase: 'connecting', local: false, muted: false });
     }
   }
+});
+
+test('an answer the server did not run (it could not check this tab’s socket, which reconnects) still rings, saying why, and can be answered again', () => {
+  const s = run(
+    { type: 'ringing', call: call() }, { type: 'answering', callId: 'c1' },
+    { type: 'answerFailed', callId: 'c1', message: 'The server is unavailable: try again in a moment', reason: 'unavailable' },
+  );
+  expect(s.banners).toEqual([{ call: call(), status: 'ringing', notice: 'The server is unavailable: try again in a moment' }]);
+  expect(reduce(s, { type: 'answering', callId: 'c1' }).banners).toEqual([{ call: call(), status: 'answering' }]);
 });
 
 test('this tab’s own claim failing before its end comes fades as a failed answer, and the call then rings again, saying why', () => {

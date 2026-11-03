@@ -109,13 +109,16 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       return { ...s, banners: s.banners.map((x) => (x.call.callId === e.callId && x.status === 'ringing' ? { call: x.call, status: 'answering' } : x)) };
     case 'answerFailed': {
       const b = banner(e.callId);
-      // Refused before this tab could claim, or no reason (its microphone was refused before it asked): the claim seen
-      // here is another tab's. Any other refusal is this tab's own claim failing (the audio did not connect), and fades
-      // like any failed answer.
-      if (b?.status === 'answering' && b.mine && (e.reason === undefined || LOST_RACE.includes(e.reason))) return theirs(b.call);
+      // Refused before this tab could claim (unavailable: the server did not run it), or no reason (its microphone was
+      // refused before it asked): the claim seen here is another tab's.
+      if (b?.status === 'answering' && b.mine && (e.reason === undefined || e.reason === 'unavailable' || LOST_RACE.includes(e.reason))) return theirs(b.call);
+      // Not run: the server could not check this tab's socket, which reconnects. Nothing rings the call here again, so it
+      // still rings, and says why.
+      if (b?.status === 'answering' && e.reason === 'unavailable') return { ...s, banners: swap(b, { call: b.call, status: 'ringing', notice: e.message }) };
       // Rung again before the reply came: it still rings, and says why this answer did not go through. A lost race says
       // nothing, as when the ring comes after the reply: it rings again because the winner's answer failed.
       if (b?.status === 'ringing') return LOST_RACE.includes(e.reason) ? s : { ...s, banners: swap(b, { ...b, notice: e.message }) };
+      // Any other refusal is this tab's own claim failing (the audio did not connect), and fades like any failed answer.
       if (b?.status === 'answering') return { ...s, banners: swap(b, { call: b.call, status: 'failed', message: e.message, reason: e.reason }) };
       return s;
     }
