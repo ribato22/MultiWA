@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `docker/nginx/example.conf` proxies the realtime connection (`/socket.io/`); the dashboard's live updates failed behind it.
+- `docker/nginx/example.conf` proxies the realtime connection (`/socket.io/`) to the API: a Socket.IO client connecting through it got the landing page.
 - TypeScript SDK: the request `timeout` now covers reading the response body too, not only the wait for the headers.
 
 ### Security
