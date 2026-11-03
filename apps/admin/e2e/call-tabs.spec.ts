@@ -212,6 +212,32 @@ test('the profiles page opens a profile without a reload, so a call carries on',
   await expect(bar(page)).toBeVisible();
 });
 
+for (const [where, path, link, to] of [
+  ['an empty list’s action', '/dashboard/profiles', 'Add Profile', /\/dashboard\/profiles\/new$/],
+  ['the template picker’s Manage Templates', '/dashboard/messages', 'Manage Templates', /\/dashboard\/templates$/],
+] as const) {
+  test(`${where} opens its page without a reload or a prompt, so a call carries on`, async ({ page, backend }) => {
+    if (path === '/dashboard/profiles') backend.route(get('/profiles', [])); // the list is empty: it offers to add one
+    backend.route(get('/templates', []));
+    await page.goto(path);
+    await expect.poll(() => backend.commands('call:availability').length).toBeGreaterThan(0); // the console is connected
+    await onCall(page, backend);
+    if (link === 'Manage Templates') await page.getByRole('button', { name: 'Use Template' }).click();
+    const dialogs: string[] = [];
+    page.on('dialog', (d) => {
+      dialogs.push(d.type());
+      void d.dismiss();
+    });
+    await page.evaluate(() => ((window as any).__sameDocument = true));
+    await page.getByRole('link', { name: link }).last().click(); // the empty list's Add Profile comes after the header's
+    await expect(page).toHaveURL(to);
+    expect(await page.evaluate(() => (window as any).__sameDocument)).toBe(true);
+    await expect(timer(page)).toBeVisible();
+    expect(dialogs).toEqual([]);
+    expect(backend.commands('call:rejoin')).toEqual([]);
+  });
+}
+
 test('another tab of the agent shows the call as theirs, and can take its audio over', async ({ page, context, backend }) => {
   await open(page);
   const other = await context.newPage();

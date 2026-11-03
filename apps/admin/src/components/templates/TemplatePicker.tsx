@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   FileText,
   X,
@@ -227,13 +228,13 @@ export default function TemplatePicker({ profileId, onSelect, onClose, variables
 
         {/* Footer */}
         <div className="p-4 border-t border-border text-center">
-          <a
+          <Link
             href="/dashboard/templates"
             className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 font-medium"
           >
             Manage Templates
             <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-          </a>
+          </Link>
         </div>
       </div>
     </div>

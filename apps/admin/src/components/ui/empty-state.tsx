@@ -11,6 +11,7 @@ import {
   Search,
   AlertTriangle,
 } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -81,11 +82,9 @@ export function EmptyState({
         <div className="flex items-center gap-3">
           {action && (
             action.href ? (
-              <a href={action.href}>
-                <Button className="cursor-pointer">
-                  {action.label}
-                </Button>
-              </a>
+              <Button asChild className="cursor-pointer">
+                <Link href={action.href}>{action.label}</Link>
+              </Button>
             ) : (
               <Button onClick={action.onClick} className="cursor-pointer">
                 {action.label}
@@ -94,11 +93,9 @@ export function EmptyState({
           )}
           {secondaryAction && (
             secondaryAction.href ? (
-              <a href={secondaryAction.href}>
-                <Button variant="outline" className="cursor-pointer">
-                  {secondaryAction.label}
-                </Button>
-              </a>
+              <Button asChild variant="outline" className="cursor-pointer">
+                <Link href={secondaryAction.href}>{secondaryAction.label}</Link>
+              </Button>
             ) : (
               <Button variant="outline" onClick={secondaryAction.onClick} className="cursor-pointer">
                 {secondaryAction.label}
