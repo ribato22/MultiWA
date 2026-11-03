@@ -413,6 +413,31 @@ test('an announcement the server refuses says why, and so does a proxy’s size 
   reply = { status: 413, body: '<html><body>413 Request Entity Too Large</body></html>', headers: { 'content-type': 'text/html' } };
   await file.setInputFiles({ name: 'big.wav', mimeType: 'audio/wav', buffer: sineWav(1) });
   await expect(s.getByRole('alert')).toContainText('ask your administrator to allow uploads of at least 3 MB');
+  reply = { status: 409, json: { message: 'The call recordings storage is not configured on this server', reasons: ['recordings_storage_unset'] } };
+  await file.setInputFiles({ name: 'notice.wav', mimeType: 'audio/wav', buffer: sineWav(1) });
+  await expect(s.getByRole('alert')).toContainText('The call recordings storage is not configured on this server');
+  await expect(s.getByRole('alert').getByRole('listitem')).toHaveText(['Recording storage is not set up on the server: ask your administrator']);
+});
+
+test('an announcement of a type the browser names its own way (audio/x-m4a) goes by its name: an .m4a is sent', async ({ page, backend }) => {
+  backend.route(on('POST', '/profiles/p-1/calls-announcement', { json: { profileId: 'p-1', announcement: { mimeType: 'audio/mp4', durationSec: 2 } } }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  await s.locator('input[type="file"]').setInputFiles({ name: 'notice.m4a', mimeType: 'audio/x-m4a', buffer: sineWav(2) });
+  await expect(s).toContainText('m4a · 2.0 s');
+  await expect(s.getByRole('alert')).toHaveCount(0);
+  expect(backend.requests.filter((r) => r.path === '/profiles/p-1/calls-announcement').map((r) => r.method)).toEqual(['POST']);
+});
+
+test('an announcement that cannot be loaded now (a 503) says why, and nothing plays', async ({ page, backend }) => {
+  backend.route(get('/calls/media/status', status({ announcement: ANNOUNCEMENT })));
+  backend.route(on('GET', '/profiles/p-1/calls-announcement', { status: 503, json: { message: 'Another announcement is being read; try again in a moment' } }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  await s.getByRole('button', { name: 'Listen' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Could not load the announcement' }).first()).toContainText('Another announcement is being read; try again in a moment');
+  await expect(s.getByLabel('The announcement')).toHaveCount(0);
+  await expect(s.getByRole('button', { name: 'Listen' })).toBeEnabled();
 });
 
 test('the announcement can be heard, and stays while recording is on: Remove is not offered, and the section says why', async ({ page, backend }) => {

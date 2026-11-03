@@ -320,6 +320,16 @@ test('leaving the page while a recording loads gives the load up: no file is kep
   expect(await page.evaluate(() => (window as any).__liveBlobs())).toEqual([]);
 });
 
+test('a recording that cannot be loaded now (a 503) says why, and Play stays: only a 404 reads the call again', async ({ page, backend }) => {
+  listing(backend, () => ANSWERED);
+  backend.route(on('GET', '/calls/call-9/recording', { status: 503, json: { message: 'The recordings storage did not answer; try again' } }));
+  await openAnswered(page);
+  await rowOf(page).getByRole('button', { name: 'Play' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'Could not load the recording' }).first()).toContainText('The recordings storage did not answer; try again');
+  await expect(rowOf(page).getByRole('button', { name: 'Play the recording of the call from Pak Joko' })).toBeEnabled();
+  expect(backend.requests.filter((r) => r.path === '/calls/call-9').map((r) => r.method)).toEqual([]);
+});
+
 test('a browser that cannot play the recording (an older Safari) says so, and offers its download', async ({ page, backend }) => {
   await page.addInitScript(() => {
     const canPlay = HTMLMediaElement.prototype.canPlayType;
