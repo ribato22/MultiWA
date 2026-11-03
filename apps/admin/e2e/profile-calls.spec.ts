@@ -508,12 +508,12 @@ test('removing the announcement asks first', async ({ page, backend }) => {
   await expect(s.getByRole('button', { name: 'Upload announcement' })).toBeFocused(); // not the page: Remove went
 });
 
-test('closed without a removal, the dialog gives the focus back to Remove: Cancel, Escape, and a removal the server refused', async ({ page, backend }) => {
+test('closed without a removal, the dialog gives the focus back to Remove: Cancel, Escape, and a removal that failed', async ({ page, backend }) => {
   backend.route(get('/calls/media/status', status({ answerInDashboard: true, announcement: ANNOUNCEMENT })));
   const slow = gate();
   backend.route(on('DELETE', '/profiles/p-1/calls-announcement', async () => {
     await slow.passed;
-    return { status: 409, json: { message: 'Turn recording off before removing the announcement', reasons: ['recording_on'] } };
+    return { status: 500, json: { message: 'Internal server error' } };
   }));
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
@@ -535,11 +535,29 @@ test('closed without a removal, the dialog gives the focus back to Remove: Cance
   await rendered(page);
   await expect(removing).toBeFocused(); // while the removal runs
   slow.open();
-  // Recording was turned on elsewhere meanwhile: the refusal says what to do, then why, each once.
+  await expect(s.getByRole('alert')).toContainText('Internal server error');
+  await expect(confirm).toHaveCount(0);
+  await expect(remove).toBeFocused();
+});
+
+test('a removal refused because recording was turned on elsewhere shows recording on and says why; Remove goes, and the focus goes to the upload', async ({ page, backend }) => {
+  backend.route(get('/calls/media/status', status({ answerInDashboard: true, announcement: ANNOUNCEMENT })));
+  backend.route(on('DELETE', '/profiles/p-1/calls-announcement', { status: 409, json: { message: 'Turn recording off before removing the announcement', reasons: ['recording_on'] } }));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const record = s.getByRole('switch', { name: 'Record calls' });
+  await expect(record).toHaveAttribute('aria-checked', 'false');
+  await s.getByRole('button', { name: 'Remove' }).click();
+  const confirm = page.getByRole('alertdialog', { name: 'Remove the announcement?' });
+  await confirm.getByRole('button', { name: 'Remove' }).click();
+  // The refusal says what to do, then why, each once; the section shows it too.
   await expect(s.getByRole('alert')).toContainText('Turn recording off before removing the announcement');
   await expect(s.getByRole('alert').getByRole('listitem')).toHaveText(['Recording is on for this profile']);
   await expect(confirm).toHaveCount(0);
-  await expect(remove).toBeFocused();
+  await expect(record).toHaveAttribute('aria-checked', 'true');
+  await expect(s).toContainText('Turn recording off to remove the announcement');
+  await expect(s.getByRole('button', { name: 'Remove' })).toHaveCount(0);
+  await expect(s.getByRole('button', { name: 'Replace' })).toBeFocused(); // not the page: Remove went
 });
 
 test('Escape while the removal runs leaves the dialog open: once removed, the focus goes to the upload, not to the page', async ({ page, backend }) => {

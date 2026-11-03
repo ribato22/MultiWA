@@ -170,7 +170,11 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
     const res = await api.deleteCallsAnnouncement(profileId);
     setBusy(null);
     setConfirmRemove(false);
-    if (res.error) return refused(res.error, res.body);
+    if (res.error) {
+      // Recording was turned on elsewhere meanwhile: the section shows it on, and says to turn it off first.
+      if (res.body?.reasons?.includes('recording_on')) setP((x) => (x ? { ...x, recording: true } : x));
+      return refused(res.error, res.body);
+    }
     readAgain();
     setP((x) => (x ? { ...x, announcement: null } : x));
     dropPreview();
@@ -285,9 +289,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                     Listen
                   </Button>
                 )}
-                {/* Remove is the trigger, so the focus comes back to it; the dialog itself stays when Remove goes with
-                    the announcement, and its close then hands the focus to the upload. It stays open, Escape too,
-                    while the removal runs: its answer closes it. */}
+                {/* Remove is the trigger, so the focus comes back to it; the dialog itself stays when Remove goes (with
+                    the announcement, or as recording is on), and its close then hands the focus to the upload. It
+                    stays open, Escape too, while the removal runs: its answer closes it. */}
                 <AlertDialog open={confirmRemove} onOpenChange={(open) => busy !== 'remove' && setConfirmRemove(open)}>
                   {/* Recording needs the announcement: while it is on, the server refuses to remove it. */}
                   {p.announcement && !p.recording && (
@@ -300,8 +304,8 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
                   )}
                   <AlertDialogContent
                     onCloseAutoFocus={(e) => {
-                      if (p?.announcement) return; // cancelled or refused: back to Remove
-                      e.preventDefault(); // removed, and Remove with it: the focus goes to the upload, not to the page
+                      if (p?.announcement && !p.recording) return; // cancelled, failed or refused: back to Remove
+                      e.preventDefault(); // Remove went: the focus goes to the upload, not to the page
                       uploadButton.current?.focus();
                     }}
                   >
