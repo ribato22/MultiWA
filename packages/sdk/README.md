@@ -211,7 +211,7 @@ larger one.
 The SDK has no realtime events for calls: answering is for people signed in to
 the dashboard, and an API key never gets the agents' events. Follow calls with
 the `call.*` [webhooks](https://github.com/ribato22/MultiWA/blob/main/docs/09-webhook-events.md#call-events),
-or the [WebSocket](https://github.com/ribato22/MultiWA/blob/main/docs/08-websocket-api.md#callupdate)
+or the [WebSocket](https://github.com/ribato22/MultiWA/blob/main/docs/08-websocket-api.md#83-events)
 `call:update` event.
 
 ## Error Handling

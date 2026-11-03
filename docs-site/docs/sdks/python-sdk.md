@@ -262,7 +262,7 @@ except httpx.HTTPStatusError as e:
         print(e.response.json()["reasons"])  # e.g. ["no_announcement"]
 ```
 
-The SDK has no realtime events for calls: answering is for people signed in to the dashboard, and an API key never gets the agents' events. Follow calls with the `call.*` [webhooks](<../api/webhook-events.md#call-events>), or the [WebSocket](<../api/websocket-api.md#callupdate>) `call:update` event.
+The SDK has no realtime events for calls: answering is for people signed in to the dashboard, and an API key never gets the agents' events. Follow calls with the `call.*` [webhooks](<../api/webhook-events.md#call-events>), or the [WebSocket](<../api/websocket-api.md#83-events>) `call:update` event.
 
 ### Other endpoints
 
