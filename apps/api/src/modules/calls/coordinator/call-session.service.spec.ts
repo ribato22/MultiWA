@@ -518,10 +518,19 @@ describe('CallSessionService: the Nest wiring', () => {
       onUserOffline: [InternalEvents.WS_USER_OFFLINE],
       onUserOnline: [InternalEvents.WS_USER_ONLINE],
       onEngineSignal: [InternalEvents.CALL_ENGINE_SIGNAL],
-      onProfileDisconnected: [AppEvents.CONNECTION.DISCONNECTED],
+      onProfileDisconnected: [AppEvents.CONNECTION.DISCONNECTED, InternalEvents.ENGINE_LOST].sort(),
     });
   });
 });
+
+/** An event as Nest's event-emitter module delivers it: to every handler whose @OnEvent names it. */
+async function deliver(service: CallSessionService, event: string, payload: unknown) {
+  const proto = CallSessionService.prototype as any;
+  for (const name of Object.getOwnPropertyNames(proto)) {
+    const listeners: Array<{ event: string }> | undefined = Reflect.getMetadata(EVENT_LISTENER_METADATA, proto[name]);
+    if (listeners?.some((l) => l.event === event)) await proto[name].call(service, payload);
+  }
+}
 
 describe('CallSessionService: boot and settings', () => {
   it('closes what the previous process left (answered calls, claims) once every module is initialized, not before', async () => {
@@ -987,6 +996,24 @@ describe('CallSessionService: the caller, the engine and the media server end ca
     await h.service.onProfileDisconnected({ profileId: 'p1' });
     expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'media_failed', reason: 'engine_lost' });
+  });
+
+  it("the profile's engine is destroyed to be retried (ENGINE_LOST): its calls end the same way at once; other profiles' calls go on", async () => {
+    const h = harness();
+    await answered(h); // c1 on p1, talking
+    S.findCallForAnswer.mockResolvedValue(ringing({ id: 'c2', waCallId: 'W2', profileId: 'p2' }));
+    expect(await h.service.answer(as('u2'), 'c2')).toMatchObject({ ok: true }); // c2 on p2, still connecting
+    const rings = h.sent('call:ringing').length;
+    await deliver(h.service, InternalEvents.ENGINE_LOST, { profileId: 'p1', reason: 'PAGE_CRASHED' });
+    expect(S.markEnded).toHaveBeenCalledWith('c1', 'server', 'media_failed', expect.any(Date));
+    expect(h.counted()).toContainEqual({ kind: 'media_failed', reason: 'engine_lost' });
+    expect(h.service.activeSessionCount()).toBe(1);
+    expect(S.releaseClaim).not.toHaveBeenCalled(); // p2's call is untouched
+    await deliver(h.service, InternalEvents.ENGINE_LOST, { profileId: 'p2', reason: 'MEMORY_LIMIT' });
+    expect(S.releaseClaim).toHaveBeenCalledWith('c2', 'u2'); // stopConnecting: the claim goes back
+    expect(h.sent('call:ended')).toContainEqual({ to: ['u2'], payload: { callId: 'c2', endReason: 'media_failed' } });
+    expect(h.sent('call:ringing')).toHaveLength(rings); // and it does not ring again
+    expect(h.service.activeSessionCount()).toBe(0);
   });
 
   it('shutdown: an answered call is stored as ended (server_restart) without a hang-up; a claim is given back', async () => {

@@ -4,6 +4,8 @@
 // ringing; rejectCallByAgent is what the REST reject calls (the worker's has the same job for engine-commands).
 // The runtime itself is pinned by calls-runtime.spec.ts: here it only receives what the manager hands over.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { HttpException } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn() } } }));
@@ -36,7 +38,7 @@ const runtime = {
 };
 
 function make() {
-  const realtime = { emitCallUpdate: vi.fn() };
+  const realtime = { emitCallUpdate: vi.fn(), emitConnectionStatus: vi.fn() };
   const messages = { sendText: vi.fn().mockResolvedValue(SENT) };
   const eventEmitter = { emit: vi.fn() };
   const svc = new EngineManagerService(realtime as any, {} as any, { createForOrg: vi.fn() } as any, eventEmitter as any, messages as any);
@@ -241,6 +243,39 @@ describe('the engine call callbacks', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('boom'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('bang'));
     });
+  });
+});
+
+// A call answered in the dashboard lives in the engine's page: the call coordinator hears at once that the page went
+// (ENGINE_LOST), not only once the retries failed (connection.disconnected).
+describe('an engine lost to a temporary disconnect', () => {
+  it('is announced once, with the profile and the reason, once it is destroyed and dropped, before the retries', async () => {
+    const { svc, config, eventEmitter } = await connect();
+    vi.spyOn((svc as any).logger, 'error').mockImplementation(() => undefined);
+    vi.useFakeTimers();
+    const { engine } = (svc as any).engines.get(P);
+    const retry = vi.spyOn(svc, 'connectProfile').mockRejectedValue(new Error('the browser did not start'));
+    const whenLost: unknown[] = [];
+    eventEmitter.emit.mockImplementation((event: string) => {
+      if (event === 'internal.engine.lost') whenLost.push({ destroyed: engine.destroy.mock.calls.length, held: (svc as any).engines.has(P), retries: retry.mock.calls.length });
+    });
+    const handled = config.onDisconnected!('PAGE_CRASHED');
+    await vi.advanceTimersByTimeAsync(65_000); // the three retries, 5, 15 and 45 s apart, all fail
+    await handled;
+    expect(retry).toHaveBeenCalledTimes(3);
+    expect(whenLost).toEqual([{ destroyed: 1, held: false, retries: 0 }]);
+    expect(eventEmitter.emit.mock.calls.filter(([event]) => event === 'internal.engine.lost' || event === 'connection.disconnected')).toEqual([
+      ['internal.engine.lost', { profileId: P, reason: 'PAGE_CRASHED' }],
+      ['connection.disconnected', { profileId: P, reason: 'max retries exhausted' }],
+    ]);
+  });
+
+  it('a session that ended (LOGOUT) is connection.disconnected at once, never ENGINE_LOST', async () => {
+    vi.stubEnv('SESSIONS_DIR', path.join(tmpdir(), 'multiwa-engine-lost-spec')); // the session folder it clears does not exist
+    const { config, eventEmitter } = await connect();
+    await config.onDisconnected!('LOGOUT');
+    expect(eventEmitter.emit).toHaveBeenCalledWith('connection.disconnected', { profileId: P, reason: 'LOGOUT' });
+    expect(eventEmitter.emit).not.toHaveBeenCalledWith('internal.engine.lost', expect.anything());
   });
 });
 

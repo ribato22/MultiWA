@@ -19,7 +19,7 @@ import * as QRCode from 'qrcode';
 import { RuleEngineService } from '../automation/rule-engine.service';
 import { MessagesService } from '../messages/messages.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
-import { InternalEvents, type CallEngineSignalPayload } from '../../metrics/internal-events';
+import { InternalEvents, type CallEngineSignalPayload, type EngineLostPayload } from '../../metrics/internal-events';
 
 
 interface EngineInstance {
@@ -840,6 +840,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             this.logger.warn(`Error destroying engine before retry: ${(e as Error).message}`);
           }
           this.engines.delete(profileId);
+          // Whatever held its page (a call answered in the dashboard) went with it: say so now, not after the retries.
+          this.emitEvent(InternalEvents.ENGINE_LOST, { profileId, reason } satisfies EngineLostPayload);
 
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             const delay = baseDelay * Math.pow(3, attempt - 1); // 5s, 15s, 45s

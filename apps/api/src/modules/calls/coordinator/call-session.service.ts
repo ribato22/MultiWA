@@ -374,8 +374,10 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     else await this.end(session, 'caller', 'caller_hangup');
   }
 
-  // The profile's WhatsApp connection went, and its call with it.
+  // The profile's WhatsApp connection went, and its call with it. ENGINE_LOST comes as soon as the engine-manager has
+  // destroyed the engine to retry it; connection.disconnected for a session that ended, or once the retries failed.
   @OnEvent(AppEvents.CONNECTION.DISCONNECTED)
+  @OnEvent(InternalEvents.ENGINE_LOST)
   async onProfileDisconnected(payload: { profileId?: unknown }): Promise<void> {
     for (const s of [...this.sessions.values()]) {
       if (s.profileId !== payload?.profileId) continue;
