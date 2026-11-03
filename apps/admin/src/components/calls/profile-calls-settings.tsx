@@ -52,6 +52,9 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   const [retentionDraft, setRetentionDraft] = useState<string | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmRetention, setConfirmRetention] = useState(false);
+  // Where a shorter retention was asked from (the field or its Save): the focus goes back there.
+  const retentionAsker = useRef<HTMLElement | null>(null);
   const file = useRef<HTMLInputElement>(null);
   const uploadButton = useRef<HTMLButtonElement>(null);
   // Only the latest read shows: an older one answering after it (a slow link) is stale, and so is one still out when a
@@ -313,7 +316,13 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
             noValidate
             onSubmit={(e) => {
               e.preventDefault();
-              if (retentionChanged) void save('retention', { retentionDays: days });
+              if (!retentionChanged || busy) return;
+              // A shorter one asks first: the nightly cleanup deletes the recordings older than it.
+              if (days >= p.retentionDays) return void save('retention', { retentionDays: days });
+              // A browser that does not focus a clicked button (Safari) leaves the focus on the page: Save then.
+              const at = document.activeElement;
+              retentionAsker.current = at instanceof HTMLElement && e.currentTarget.contains(at) ? at : (e.nativeEvent as SubmitEvent).submitter;
+              setConfirmRetention(true);
             }}
             className="flex flex-wrap items-end gap-3 rounded-lg border border-slate-800/80 bg-slate-950/30 p-4"
           >
@@ -339,6 +348,38 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
               Save<span className="sr-only"> retention</span>
             </Button>
           </form>
+          {/* It stays open, Escape too, while the save runs: its answer closes it. */}
+          <AlertDialog open={confirmRetention} onOpenChange={(open) => busy !== 'retention' && setConfirmRetention(open)}>
+            <AlertDialogContent
+              onCloseAutoFocus={(e) => {
+                e.preventDefault(); // no trigger to go back to
+                retentionAsker.current?.focus();
+              }}
+            >
+              <AlertDialogHeader>
+                <AlertDialogTitle>Keep recordings for {days} days?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This profile’s recordings older than {days} days are deleted for good at the next nightly cleanup, at 02:30 server time. Each
+                  deletion is logged.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={busy === 'retention'}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  aria-disabled={busy === 'retention'}
+                  className="bg-red-600 text-white hover:bg-red-700"
+                  onClick={async (e) => {
+                    e.preventDefault(); // the dialog closes once the server answered
+                    if (busy) return;
+                    await save('retention', { retentionDays: days });
+                    setConfirmRetention(false);
+                  }}
+                >
+                  {busy === 'retention' ? 'Saving…' : `Keep for ${days} days`}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {refusal && (
             <div role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200">

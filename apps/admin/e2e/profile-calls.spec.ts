@@ -156,16 +156,16 @@ test('a read still out when a change answers is read again: the new read shows, 
   await s.getByRole('button', { name: 'Check again' }).click();
   await expect(s.getByRole('button', { name: 'Checking…' })).toBeVisible();
   const days = s.getByLabel('Keep recordings for (days)');
-  await days.fill('30');
+  await days.fill('120');
   await s.getByRole('button', { name: 'Save retention' }).click();
-  await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 30 }]);
+  await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 120 }]);
   await expect(s).toContainText('This profile can take calls in the dashboard');
   await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible();
   const late = requestEnded(page, '/calls/media/status');
   read.open(); // the read that left before the save answers, with the retention as it was then
   await late;
   await page.waitForTimeout(300); // the page reads the late answer
-  await expect(days).toHaveValue('30');
+  await expect(days).toHaveValue('120');
 });
 
 test('a change refused while a read is out leaves the read to answer, and its refusal stays', async ({ page, backend }) => {
@@ -286,7 +286,7 @@ test('the retention’s Save keeps the focus while it saves and once saved, pres
     await save.focus();
     await page.keyboard.press('Enter');
   };
-  for (const [value, press] of [['30', pressEnter], ['45', () => save.click()]] as const) {
+  for (const [value, press] of [['120', pressEnter], ['150', () => save.click()]] as const) {
     slow = gate();
     await days.fill(value);
     const answered = requestEnded(page, '/calls-settings');
@@ -313,19 +313,19 @@ test('a retention typed but not saved stays through a saved switch and a new rea
   const s = section(page);
   const days = s.getByLabel('Keep recordings for (days)');
   await expect(days).toHaveValue('90');
-  await days.fill('30');
+  await days.fill('120');
   const answer = s.getByRole('switch', { name: 'Answer calls in the dashboard' });
   await answer.click();
   await expect(answer).toHaveAttribute('aria-checked', 'true');
-  await expect(days).toHaveValue('30');
+  await expect(days).toHaveValue('120');
   const reads = backend.requests.filter((r) => r.path === '/calls/media/status').length;
   await s.getByRole('button', { name: 'Check again' }).click();
   await expect.poll(() => backend.requests.filter((r) => r.path === '/calls/media/status').length).toBe(reads + 1);
   await expect(s.getByRole('button', { name: 'Check again' })).toBeVisible(); // read
-  await expect(days).toHaveValue('30');
+  await expect(days).toHaveValue('120');
   await s.getByRole('button', { name: 'Save retention' }).click();
-  await expect.poll(() => puts(backend)).toEqual([{ answerInDashboard: true }, { retentionDays: 30 }]);
-  await expect(days).toHaveValue('30');
+  await expect.poll(() => puts(backend)).toEqual([{ answerInDashboard: true }, { retentionDays: 120 }]);
+  await expect(days).toHaveValue('120');
   await expect(s.getByRole('button', { name: 'Save retention' })).toBeDisabled();
 });
 
@@ -512,10 +512,36 @@ test('recordings are kept for 1 to 3650 days', async ({ page, backend }) => {
   const save = s.getByRole('button', { name: 'Save retention' });
   await days.fill('0');
   await expect(save).toBeDisabled();
+  await days.fill('365');
+  await save.click();
+  await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 365 }]);
+  await expect(save).toBeDisabled(); // saved: nothing left to save
+});
+
+test('a shorter retention asks first, as the next nightly cleanup deletes the older recordings; a longer one does not', async ({ page, backend }) => {
+  backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
+  await page.goto('/dashboard/profiles/p-1');
+  const s = section(page);
+  const days = s.getByLabel('Keep recordings for (days)');
+  const save = s.getByRole('button', { name: 'Save retention' });
+  const confirm = page.getByRole('alertdialog', { name: 'Keep recordings for 30 days?' });
   await days.fill('30');
   await save.click();
+  await expect(confirm).toContainText('This profile’s recordings older than 30 days are deleted for good at the next nightly cleanup, at 02:30 server time');
+  await confirm.getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(save).toBeFocused();
+  expect(puts(backend)).toEqual([]);
+  await days.press('Enter'); // from the field: the focus comes back to it
+  await expect(confirm.getByRole('button', { name: 'Keep for 30 days' })).toHaveClass(/bg-red-600/);
+  await confirm.getByRole('button', { name: 'Keep for 30 days' }).click();
   await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 30 }]);
-  await expect(save).toBeDisabled(); // saved: nothing left to save
+  await expect(confirm).toHaveCount(0);
+  await expect(days).toBeFocused();
+  await days.fill('60');
+  await save.click();
+  await expect.poll(() => puts(backend)).toEqual([{ retentionDays: 30 }, { retentionDays: 60 }]);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
 });
 
 test('a retention out of the server’s range says why, and Enter in the field saves it', async ({ page, backend }) => {
