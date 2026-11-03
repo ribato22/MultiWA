@@ -25,7 +25,8 @@ class CallsClient
     }
 
     /**
-     * A page of a profile's calls, newest first. Pass `nextCursor` of a page as `cursor` for the next one.
+     * A page of a profile's calls, newest first (any role; an API key needs no scope). Pass `nextCursor` of a page as
+     * `cursor` for the next one.
      *
      * @param string|null                   $outcome  ringing, answered, missed, rejected, answered_elsewhere or unknown
      * @param string|null                   $followUp open, in_progress or done
@@ -56,21 +57,24 @@ class CallsClient
     }
 
     /**
-     * How many calls of the organization have their follow-up open.
+     * How many calls of the organization have their follow-up open (any role; an API key needs no scope).
      */
     public function openCount(): int
     {
         return (int) $this->client->request('GET', 'calls/open-count')['count'];
     }
 
+    /**
+     * A call, by its ID (any role; an API key needs no scope).
+     */
     public function get(string $callId): Call
     {
         return Call::fromArray($this->client->request('GET', self::path($callId)));
     }
 
     /**
-     * Changes the follow-up (open, in_progress, done) or the assignee (an active user of the organization). To
-     * remove the assignee, use unassign().
+     * Changes the follow-up (open, in_progress, done) or the assignee, an active user of the organization (any role;
+     * an API key needs no scope). To remove the assignee, use unassign().
      */
     public function update(string $callId, ?string $followUp = null, ?string $assignedUserId = null): Call
     {
@@ -80,7 +84,7 @@ class CallsClient
     }
 
     /**
-     * Removes the call's assignee.
+     * Removes the call's assignee (any role; an API key needs no scope).
      */
     public function unassign(string $callId): Call
     {
@@ -88,7 +92,7 @@ class CallsClient
     }
 
     /**
-     * Rejects a call that is still ringing.
+     * Rejects a call that is still ringing (any role; an API key needs no scope).
      */
     public function reject(string $callId): Call
     {
@@ -96,7 +100,8 @@ class CallsClient
     }
 
     /**
-     * Sends a text to the caller, through the send gate; without one, the profile's default call reply.
+     * Sends a text to the caller, through the send gate (any role; an API key with a scope list needs
+     * `messages:write`); without one, the profile's default call reply.
      *
      * @return array{call: Call, message: MessageResult}
      */
@@ -110,7 +115,8 @@ class CallsClient
     }
 
     /**
-     * Creates a WhatsApp call link and sends it to the caller, with an optional text above it.
+     * Creates a WhatsApp call link and sends it to the caller, with an optional text above it (any role; an API key
+     * with a scope list needs `messages:write`).
      *
      * @param string $type voice or video
      *
@@ -131,7 +137,7 @@ class CallsClient
 
     /**
      * Readiness of answering calls in the dashboard: the server, its recordings storage, and every profile of the
-     * organization with its call settings (owner or admin).
+     * organization with its call settings (owner or admin; an API key needs no scope).
      *
      * @return array{server: array{enabled: bool, worker: string, port: int|null, engineHost: string, activeSessions: int, recordings: array{storage: string, configured: bool, problem: string|null, lastCheck: array{at: string, ok: bool, reason?: string}|null}}, profiles: list<array{profileId: string, name: string, answerInDashboard: bool, recording: bool, retentionDays: int, announcement: array{mimeType: string, durationSec: float|int}|null, ready: bool, reasons: list<string>}>}
      */
@@ -141,8 +147,8 @@ class CallsClient
     }
 
     /**
-     * The call's recording, audio/webm (owner or admin; an API key with a scope list needs recordings:read). Every
-     * read is audited, a download as a download.
+     * The call's recording, audio/webm (owner or admin; an API key with a scope list needs `recordings:read`).
+     * Every read is audited, a download as a download.
      */
     public function getRecording(string $callId, bool $download = false): AudioFile
     {
@@ -150,7 +156,8 @@ class CallsClient
     }
 
     /**
-     * Deletes the call's recording (recordings:delete): the file goes, its row stays as evidence.
+     * Deletes the call's recording: the file goes, its row stays as evidence (owner or admin; an API key with a
+     * scope list needs `recordings:delete`).
      *
      * @return array{callId: string, recordingId: string, deletedAt: string}
      */
@@ -160,8 +167,8 @@ class CallsClient
     }
 
     /**
-     * A profile's call settings (owner or admin; an API key with a scope list needs profiles:write, and
-     * recordings:delete too for $retentionDays, 1 to 3650). A setting that cannot be turned on throws an
+     * A profile's call settings (owner or admin; an API key with a scope list needs `profiles:write`, and
+     * `recordings:delete` too for $retentionDays, 1 to 3650). A setting that cannot be turned on throws an
      * ApiException with status 409: getResponseBody()['reasons'] says why.
      */
     public function updateSettings(
@@ -180,8 +187,9 @@ class CallsClient
     }
 
     /**
-     * Uploads the announcement callers hear before a recorded call: mp3, wav, ogg, webm or m4a, at most 2 MB and 30
-     * seconds. The server reads the type and the length from the file itself.
+     * Uploads the announcement callers hear before a recorded call (owner or admin; an API key with a scope list
+     * needs `profiles:write`): mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds. The server reads the type and
+     * the length from the file itself.
      *
      * @param string|resource $file The file's bytes, or an open stream such as fopen('notice.mp3', 'r')
      *
@@ -195,7 +203,8 @@ class CallsClient
     }
 
     /**
-     * The profile's announcement, to listen to.
+     * The profile's announcement, to listen to (owner or admin; an API key with a scope list needs
+     * `profiles:write`).
      */
     public function getAnnouncement(string $profileId): AudioFile
     {
@@ -203,7 +212,8 @@ class CallsClient
     }
 
     /**
-     * Removes the announcement. While recording is on, the API refuses with 409 (`reasons`: recording_on).
+     * Removes the announcement (owner or admin; an API key with a scope list needs `profiles:write`). While
+     * recording is on, the API refuses with 409 (`reasons`: recording_on).
      *
      * @return array{profileId: string, announcement: null}
      */
