@@ -243,9 +243,12 @@ test('one change at a time: while a switch is saved, the other controls wait', a
   await expect(record).toBeDisabled();
   await expect(s.getByRole('button', { name: 'Replace' })).toBeDisabled();
   await expect(s.getByRole('button', { name: 'Remove' })).toBeDisabled();
+  // A file picked meanwhile (its chooser opened before) waits too: it is not sent.
+  await s.locator('input[type="file"]').setInputFiles({ name: 'notice.wav', mimeType: 'audio/wav', buffer: sineWav(2) });
   slow.open();
   await expect(s.getByRole('switch', { name: 'Answer calls in the dashboard' })).toHaveAttribute('aria-checked', 'true');
   await expect(record).toBeEnabled();
+  expect(backend.requests.filter((r) => r.path === '/profiles/p-1/calls-announcement').map((r) => r.method)).toEqual([]);
 });
 
 test('a switch pressed with Space keeps the focus while it is saved and after; Space again meanwhile changes nothing', async ({ page, backend }) => {

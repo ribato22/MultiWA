@@ -137,6 +137,7 @@ export function ProfileCallsSettings({ profileId, refreshKey }: { profileId: str
   };
   const upload = async (f: File) => {
     if (file.current) file.current.value = ''; // the same file may be picked again
+    if (busy) return;
     const problem = fileProblem(f);
     if (problem) return showRefusal({ message: problem, texts: [] });
     setBusy('upload');
