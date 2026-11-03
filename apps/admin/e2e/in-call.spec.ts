@@ -487,6 +487,20 @@ test('the microphone list shows the one in use, and follows a microphone plugged
   await expect(page.getByRole('option')).toHaveText(['Desk microphone', 'Headset', 'USB microphone']);
 });
 
+test('on an active call the call time starts the details line, under the caller’s name; the status stays there for a screen reader', async ({ page, backend }) => {
+  await open(page);
+  await answer(page, backend);
+  backend.emit('call:active', { callId: 'call-1', answeredAt: new Date().toISOString() });
+  const time = bar(page).getByRole('timer', { name: 'Call time' });
+  await expect(time).toBeVisible();
+  const left = (l: Locator) => l.evaluate((el) => Math.round(el.getBoundingClientRect().left));
+  expect(await left(time)).toBe(await left(bar(page).getByText('Pak Joko')));
+  const status = bar(page).getByRole('status');
+  await expect(status).toHaveText('');
+  await bar(page).getByRole('button', { name: 'Hang up' }).click();
+  await expect(status).toHaveText(/^(Hanging up…|You hung up)$/);
+});
+
 test('the microphone picker shows a long name from its left edge, on one line cut where the room ends', async ({ page, context, backend }) => {
   await context.addInitScript(() => {
     const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
