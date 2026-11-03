@@ -1241,7 +1241,6 @@ for (const [width, height, sidebar] of [[1440, 900, 'open'], [1216, 800, 'collap
       const said = 'The microphone stopped: the call now uses Headset';
       await expect(problem).toHaveText(said);
       expect(await whole(problem)).toBe(true);
-      await expect(problem).toHaveAttribute('title', said);
       expect(await reachable(page)).toEqual(controls);
       expect(await hangUpAt()).toBe(at);
       expect(await overlapped(page)).toEqual([]);

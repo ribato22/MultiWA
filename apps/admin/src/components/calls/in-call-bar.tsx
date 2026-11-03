@@ -172,7 +172,7 @@ export function InCallBar() {
       {/* A problem has a line of its own under the rest, lined up with the name, at every width: it shows whole, and the
           header is taller only while one shows. */}
       {a.problem && (
-        <p role="alert" title={a.problem} className="mt-2 pl-7 text-xs text-amber-300 [@container(min-width:68rem)]:mt-1">
+        <p role="alert" className="mt-2 pl-7 text-xs text-amber-300 [@container(min-width:68rem)]:mt-1">
           {a.problem}
         </p>
       )}
