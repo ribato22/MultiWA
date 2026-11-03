@@ -114,7 +114,7 @@ When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), 
 
 | Direction | Event | Payload / ack |
 |---|---|---|
-| server → agent | `call:ringing` | `{ callId, profileId, profileName, caller: { name, number }, conversationId, startedAt, answerable, unavailableReason?, recorded }`. `conversationId`: the caller's chat, or null. `answerable: false`: answer on the phone; `unavailableReason` says why. `recorded: true`: the call is recorded, from before an announcement the caller hears first |
+| server → agent | `call:ringing` | `{ callId, profileId, profileName, caller: { name, number }, conversationId, startedAt, answerable, unavailableReason?, recorded }`. `conversationId`: the caller's chat, or null. `answerable: false`: answer on the phone; `unavailableReason` says why: `group_call`, `video_call`, or the first reason the profile is not ready (the `reasons` of [`GET /calls/media/status`](./07-api-specification.md#calls-calls)). `recorded: true`: the call is recorded, from before an announcement the caller hears first |
 | server → agent | `call:claimed` | `{ callId, byUserId, byUserName }`: an agent took the call. Sent to every agent it rang, that one included (their other tabs stop ringing too): compare `byUserId` with your own |
 | server → agent | `call:announcing` | `{ callId, durationSec }`: on a recorded call, the caller hears the profile's announcement first. You hear the caller meanwhile; `call:active` follows when it has played |
 | server → agent | `call:ended` | `{ callId, outcome }` when the call stopped ringing; for the agent's own call `{ callId, endedBy, endReason, talkSeconds }`, or `{ callId, endReason }` (`media_failed` or `cancelled`) when it ended before its audio connected |
