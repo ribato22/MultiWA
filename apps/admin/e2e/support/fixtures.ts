@@ -151,6 +151,18 @@ export class FakeBackend {
   emitToProfile(profileId: string, event: string, payload: unknown) {
     this.io.of('/ws').to(`profile:${profileId}`).emit(event, payload);
   }
+  /**
+   * The reply to a `call:rejoin` made while the answer itself still connects: the server gives the answer up, as Hang up
+   * does, says so (`call:ended`, cancelled) and rings the call again, then replies. `missed`: neither event reached the
+   * page.
+   */
+  undoAnswer(callId: string, missed = false) {
+    if (!missed) {
+      this.emit('call:ended', { callId, endReason: 'cancelled' });
+      this.emit('call:ringing', ringing({ callId }));
+    }
+    return { ok: false, reason: 'answer_undone' };
+  }
   /** The `call:*` commands the pages sent, by name, oldest first. */
   commands(event: string) {
     return this.sent.filter((s) => s.event === event).map((s) => s.args);

@@ -101,6 +101,51 @@ test('a reload after the call ended elsewhere finds nothing to rejoin', async ({
   expect(await storedCalls(page)).toEqual([]);
 });
 
+/** Answered here, its audio connected, but not on yet: WhatsApp has not answered the call (no call:active). */
+async function answerConnecting(page: Page, backend: FakeBackend) {
+  backend.emit('call:ringing', ringing());
+  await banner(page).getByRole('button', { name: 'Answer' }).click();
+  await expect.poll(() => produced(backend)).toBe(1);
+  await expect(bar(page)).toContainText('Connecting…');
+}
+const micStates = (page: Page) => page.evaluate(() => (window as any).__micTracks.map((t: MediaStreamTrack) => t.readyState));
+
+test('a reload while the answer still connects gives the answer up: its end and its new ring come first, and the call rings here again', async ({ page, context, backend }) => {
+  await open(page);
+  await answerConnecting(page, backend);
+  backend.reply('call:rejoin', (a) => backend.undoAnswer(a.callId));
+  await holdMics(context);
+  page.on('dialog', (d) => void d.accept());
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
+  await page.evaluate(() => (window as any).__openMic());
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeVisible();
+  await expect(banner(page)).toContainText('The call was not connected');
+  await expect(bar(page)).toHaveCount(0);
+  expect(backend.commands('call:rejoin')).toEqual([{ callId: 'call-1', ifProducerId: 'agent-producer-1' }]);
+  await expect.poll(() => micStates(page)).toEqual(['ended']);
+  expect(await storedCalls(page)).toEqual([]);
+});
+
+test('a reload while the answer still connects, whose end and new ring did not reach the page: the reply ends the call as not connected', async ({ page, context, backend }) => {
+  await open(page);
+  await answerConnecting(page, backend);
+  backend.reply('call:rejoin', (a) => backend.undoAnswer(a.callId, true));
+  await holdMics(context);
+  page.on('dialog', (d) => void d.accept());
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => (window as any).__micsAsked())).toBe(1);
+  await page.evaluate(() => (window as any).__openMic());
+  await expect(bar(page)).toContainText('The call was not connected');
+  await expect(bar(page)).not.toContainText('could not be reconnected');
+  await expect(bar(page).getByRole('button', { name: 'Take the call here' })).toHaveCount(0);
+  await expect.poll(() => micStates(page)).toEqual(['ended']);
+  expect(await storedCalls(page)).toEqual([]);
+  // A ring that comes later is the call ringing again: it shows.
+  backend.emit('call:ringing', ringing());
+  await expect(banner(page).getByRole('button', { name: 'Answer' })).toBeVisible();
+});
+
 test('signing out while a reload rejoins the call closes the microphone at once, and rejoins nothing', async ({ page, context, backend }) => {
   await open(page);
   await onCall(page, backend);

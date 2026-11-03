@@ -506,6 +506,17 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       if (!reply.ok) {
         if (!socket.connected) return waitForSocket();
         if (reply.reason === 'moved') return letGo(call.callId); // it stays there, and shows here as theirs
+        if (reply.reason === 'answer_undone') {
+          // The answer was still connecting: the server gave it up, as Hang up does. Its call:ended, and the call's new
+          // ring, came before this reply and say so; the bar still shows the call only when they did not reach this tab.
+          stopAudio();
+          if (storedCall()?.callId === call.callId) keep(null);
+          const shown = stateRef.current.active;
+          if (shown?.call.callId === call.callId && shown.phase !== 'ended') {
+            dispatch({ type: 'ended', callId: call.callId, text: endedText({ callId: call.callId, endReason: 'cancelled' }) });
+          }
+          return;
+        }
         if (reply.reason !== 'not_in_call' && reply.reason !== 'not_allowed') return fail(CALL_AUDIO_TEXT.rejoinFailed);
         stopAudio();
         keep(null);
