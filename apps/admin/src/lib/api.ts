@@ -401,6 +401,11 @@ class ApiClient {
     return this.request<User>('/auth/me');
   }
 
+  /** Public: whether the server takes new accounts (it closes after its first user, unless it allows more). */
+  async registration() {
+    return this.request<{ open: boolean }>('/auth/registration');
+  }
+
   // Dashboard
   async getDashboardStats(organizationId: string) {
     return this.request<DashboardStats>(`/statistics/dashboard?organizationId=${organizationId}`);
