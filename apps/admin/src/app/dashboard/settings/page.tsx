@@ -84,6 +84,13 @@ const ROLES = [
   { value: 'viewer', label: 'Viewer', color: 'bg-muted-foreground/60' },
 ];
 
+// The API's team rules, mirrored: an owner or admin manages the team, an admin its members and viewers only; the
+// owner and your own row are never changed here.
+const manages = (me: User | null, member: Member) =>
+  !!me && member.id !== me.id && member.role !== 'owner' && (me.role === 'owner' || (me.role === 'admin' && member.role !== 'admin'));
+// Only the owner makes someone an admin.
+const rolesFor = (me: User | null) => (me?.role === 'owner' ? ROLES : ROLES.filter((r) => r.value !== 'admin'));
+
 export default function SettingsPage() {
   const { toast } = useToast();
   const [user, setUser] = useState<User | null>(null);
@@ -433,45 +440,44 @@ export default function SettingsPage() {
     }
   };
 
+  // api.request never throws: a refusal (the team rules, a taken email) comes back as `error`, and is said as such.
   const handleInviteMember = async () => {
     if (!inviteData.name.trim() || !inviteData.email.trim()) {
       toast({ title: 'Name and email are required', variant: 'destructive' });
       return;
     }
     setInviting(true);
-    try {
-      const res = await api.addMember(inviteData);
-      const member = res.data || res;
-      setTempPassword(member.temporaryPassword || '');
-      fetchMembers();
-      toast({ title: `Member ${inviteData.name} added successfully` });
-      setInviteData({ name: '', email: '', role: 'member' });
-    } catch (error: any) {
-      toast({ title: error?.message || 'Failed to add member', variant: 'destructive' });
-    } finally {
-      setInviting(false);
+    const res = await api.addMember(inviteData);
+    setInviting(false);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setTempPassword(res.data?.temporaryPassword || '');
+    fetchMembers();
+    toast({ title: `Member ${inviteData.name} added successfully` });
+    setInviteData({ name: '', email: '', role: 'member' });
   };
 
   const handleChangeRole = async (memberId: string, role: string) => {
-    try {
-      await api.updateMemberRole(memberId, role);
-      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
-      toast({ title: 'Role updated' });
-    } catch (error: any) {
-      toast({ title: error?.message || 'Failed to update role', variant: 'destructive' });
+    const res = await api.updateMemberRole(memberId, role);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
+    toast({ title: 'Role updated' });
   };
 
   const handleRemoveMember = async (member: Member) => {
     if (!confirm(`Remove ${member.name} from your organization?`)) return;
-    try {
-      await api.removeMember(member.id);
-      setMembers(prev => prev.filter(m => m.id !== member.id));
-      toast({ title: `${member.name} removed` });
-    } catch (error: any) {
-      toast({ title: error?.message || 'Failed to remove member', variant: 'destructive' });
+    const res = await api.removeMember(member.id);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setMembers(prev => prev.filter(m => m.id !== member.id));
+    toast({ title: `${member.name} removed` });
   };
 
   if (loading) {
@@ -571,7 +577,7 @@ export default function SettingsPage() {
                 <h2 className="font-semibold text-foreground">Team Members</h2>
                 <p className="text-sm text-muted-foreground">Manage who has access to your organization</p>
               </div>
-              {user?.role === 'owner' && (
+              {canConfigure(user?.role) && (
                 <Button size="sm" onClick={() => { setTempPassword(''); setShowInviteDialog(true); }}>
                   + Invite Member
                 </Button>
@@ -603,13 +609,13 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2">
                       {member.role === 'owner' ? (
                         <Badge className="bg-amber-500/15 text-amber-300 border border-amber-500/30">Owner</Badge>
-                      ) : user?.role === 'owner' ? (
+                      ) : manages(user, member) ? (
                         <Select value={member.role} onValueChange={(val) => handleChangeRole(member.id, val)}>
-                          <SelectTrigger className="w-28 h-8 text-xs">
+                          <SelectTrigger className="w-28 h-8 text-xs" aria-label={`Role of ${member.name}`}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {ROLES.map(r => (
+                            {rolesFor(user).map(r => (
                               <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
                             ))}
                           </SelectContent>
@@ -617,7 +623,7 @@ export default function SettingsPage() {
                       ) : (
                         <Badge variant="secondary">{member.role}</Badge>
                       )}
-                      {user?.role === 'owner' && member.role !== 'owner' && (
+                      {manages(user, member) && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -674,11 +680,11 @@ export default function SettingsPage() {
                   <div className="space-y-2">
                     <Label>Role</Label>
                     <Select value={inviteData.role} onValueChange={(val) => setInviteData(prev => ({ ...prev, role: val }))}>
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Role">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {ROLES.map(r => (
+                        {rolesFor(user).map(r => (
                           <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
                         ))}
                       </SelectContent>
