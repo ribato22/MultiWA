@@ -752,7 +752,7 @@ test.describe('a member', () => {
 
   test('does not see the calls settings', async ({ page }) => {
     await page.goto('/dashboard/profiles/p-1');
-    await expect(page.getByRole('button', { name: 'Save guardrails' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Sending guardrails' })).toBeVisible(); // the page is in
     await expect(section(page)).toHaveCount(0);
   });
 });
