@@ -146,8 +146,8 @@ describe('AuthService', () => {
       expect(prisma.user.create).toHaveBeenCalledOnce();
     });
 
-    it('refuses a registration once the server has a user, unless ALLOW_REGISTRATION=true', async () => {
-      vi.mocked(prisma.user.count).mockResolvedValueOnce(3 as any);
+    it('refuses a registration once the server has its owner, unless ALLOW_REGISTRATION=true', async () => {
+      vi.mocked(prisma.user.count).mockResolvedValue(1 as any);
       await expect(
         authService.register({ email: 'late@test.com', password: 'password123', name: 'Late', organizationName: 'LateOrg' }),
       ).rejects.toThrow(ForbiddenException);
@@ -155,12 +155,24 @@ describe('AuthService', () => {
       expect(prisma.user.findUnique).not.toHaveBeenCalled(); // a closed registration tells nothing about who exists
     });
 
-    it('opens registration for the first user, or for anyone with ALLOW_REGISTRATION=true', async () => {
+    it('opens registration for the first user', async () => {
       await expect(authService.registrationOpen()).resolves.toBe(true); // count 0
-      vi.mocked(prisma.user.count).mockResolvedValueOnce(3 as any);
-      await expect(authService.registrationOpen()).resolves.toBe(false);
-      allowRegistration = 'true';
-      await expect(authService.registrationOpen()).resolves.toBe(true);
+    });
+
+    // One user: the owner alone, as on every server just set up.
+    describe('once the server has its owner', () => {
+      beforeEach(() => vi.mocked(prisma.user.count).mockResolvedValue(1 as any));
+
+      // Exactly 'true': .env.example sets 'false', which a truthy parse would open.
+      it.each([undefined, 'false', 'TRUE', '1', ' true'])('keeps registration closed with ALLOW_REGISTRATION=%j', async (value) => {
+        allowRegistration = value;
+        await expect(authService.registrationOpen()).resolves.toBe(false);
+      });
+
+      it('opens registration with ALLOW_REGISTRATION=true', async () => {
+        allowRegistration = 'true';
+        await expect(authService.registrationOpen()).resolves.toBe(true);
+      });
     });
 
     it("the sign-in answer's user says whether they are the server's owner", async () => {

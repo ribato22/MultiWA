@@ -91,6 +91,8 @@ services:
       API_PORT: 3333
       API_HOST: 0.0.0.0
       JWT_SECRET: dev-jwt-secret-change-in-production
+      # Sign-up is open only to the first account (the server's owner), unless exactly true.
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       CORS_ORIGINS: http://localhost:3001,http://admin:3001,http://localhost:3333
       # S3/MinIO configuration for media uploads
       S3_ENDPOINT: http://minio:9000

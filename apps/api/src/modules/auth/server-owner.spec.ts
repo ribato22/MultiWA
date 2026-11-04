@@ -1,4 +1,5 @@
-// isServerOwner: the owner of the oldest organization, and nobody else.
+// isServerOwner: the owner of the oldest organization, and nobody else. assertServerOwnerMayLeave: that owner may not
+// delete their account while any other organization uses the server.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
 
@@ -42,7 +43,7 @@ describe('assertServerOwnerMayLeave', () => {
   });
 
   it("refuses the server's owner while other organizations use the server", async () => {
-    count.mockResolvedValueOnce(2);
+    count.mockResolvedValueOnce(1); // one other is enough
     await expect(assertServerOwnerMayLeave({ role: 'owner', organizationId: 'org-first' })).rejects.toThrow(ForbiddenException);
     expect(count).toHaveBeenCalledWith({ where: { id: { not: 'org-first' } } });
   });

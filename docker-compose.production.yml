@@ -103,6 +103,8 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      # Sign-up is open only to the first account (the server's owner), unless exactly true.
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       ADMIN_URL: ${ADMIN_URL:-https://wa.yourdomain.com}
       S3_ENDPOINT: http://minio:9000
       S3_PORT: 9000
