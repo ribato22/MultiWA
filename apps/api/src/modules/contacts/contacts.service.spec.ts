@@ -156,4 +156,14 @@ describe('ContactsService', () => {
       );
     });
   });
+
+  // ?limit=1000000 would load a whole table into one answer: the list takes at most 1000 rows, and says so.
+  describe('findAll', () => {
+    it('answers at most 1000 rows, and the limit it used', async () => {
+      vi.mocked(prisma.contact.findMany).mockReset().mockResolvedValue([]);
+      vi.mocked(prisma.contact.count).mockReset().mockResolvedValue(0);
+      expect(await service.findAll('p', { limit: 1_000_000 })).toMatchObject({ limit: 1000 });
+      expect(vi.mocked(prisma.contact.findMany).mock.calls[0][0]).toMatchObject({ take: 1000 });
+    });
+  });
 });
