@@ -112,16 +112,14 @@ export function EmptyState({
 }
 
 // Preset empty states for common scenarios
-export function EmptyProfiles() {
+/** `canAdd`: the role may add a profile (owner, admin). The others are told who does. */
+export function EmptyProfiles({ canAdd }: { canAdd: boolean }) {
   return (
     <EmptyState
       icon={EmptyStateIcons.profiles}
       title="No WhatsApp profiles yet"
-      description="Connect your first WhatsApp device to start sending messages."
-      action={{
-        label: "Add Profile",
-        href: "/dashboard/profiles/new",
-      }}
+      description={canAdd ? "Connect your first WhatsApp device to start sending messages." : "An owner or admin connects the WhatsApp devices."}
+      action={canAdd ? { label: "Add Profile", href: "/dashboard/profiles/new" } : undefined}
     />
   );
 }

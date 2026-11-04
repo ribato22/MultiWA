@@ -12,6 +12,7 @@ import dynamic from 'next/dynamic';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { api, DashboardStats, Profile } from '@/lib/api';
+import { canAct, canConfigure, currentUser } from '@/lib/current-user';
 import { StatCard } from '@/components/ui/stat-card';
 import { ProfileCard, ProfileGrid } from '@/components/ui/profile-card';
 import { Button } from '@/components/ui/button';
@@ -40,6 +41,8 @@ const MessageChart = dynamic(() => import('@/components/dashboard/MessageChart')
 
 export default function DashboardPage() {
   const router = useRouter();
+  // What this role may start from here: a send (an agent), a profile or a broadcast (an owner or admin).
+  const [role] = useState(() => currentUser()?.role);
   const [user, setUser] = useState<any>(null);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -186,25 +189,31 @@ export default function DashboardPage() {
           Quick actions
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <QuickAction
-            href="/dashboard/profiles/new"
-            icon={Plus}
-            title="Add profile"
-            desc="Connect a new WhatsApp device"
-            primary
-          />
-          <QuickAction
-            href="/dashboard/messages"
-            icon={Send}
-            title="Send message"
-            desc="Send a quick test message"
-          />
-          <QuickAction
-            href="/dashboard/broadcast"
-            icon={Megaphone}
-            title="Create broadcast"
-            desc="Bulk message a contact list"
-          />
+          {canConfigure(role) && (
+            <QuickAction
+              href="/dashboard/profiles/new"
+              icon={Plus}
+              title="Add profile"
+              desc="Connect a new WhatsApp device"
+              primary
+            />
+          )}
+          {canAct(role) && (
+            <QuickAction
+              href="/dashboard/messages"
+              icon={Send}
+              title="Send message"
+              desc="Send a quick test message"
+            />
+          )}
+          {canConfigure(role) && (
+            <QuickAction
+              href="/dashboard/broadcast"
+              icon={Megaphone}
+              title="Create broadcast"
+              desc="Bulk message a contact list"
+            />
+          )}
           <QuickAction
             href="/api/docs"
             icon={BookOpen}
@@ -261,19 +270,19 @@ export default function DashboardPage() {
                     : 'offline'
                 }
                 messageCount={profile.messageCount || 0}
-                onConnect={handleConnect}
-                onDisconnect={handleDisconnect}
+                onConnect={canConfigure(role) ? handleConnect : undefined}
+                onDisconnect={canConfigure(role) ? handleDisconnect : undefined}
                 onView={handleViewProfile}
               />
             ))}
           </ProfileGrid>
         ) : (
-          <EmptyProfiles />
+          <EmptyProfiles canAdd={canConfigure(role)} />
         )}
       </section>
 
       {/* Getting started card — only when no profiles */}
-      {!loading && profiles.length === 0 && (
+      {!loading && profiles.length === 0 && canConfigure(role) && (
         <section
           aria-label="Getting started"
           className="rounded-xl border p-6"
