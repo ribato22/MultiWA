@@ -5,6 +5,7 @@ export interface CurrentUser {
   email: string;
   role: string;
   organizationId?: string;
+  isServerOwner?: boolean;
 }
 
 export function currentUser(): CurrentUser | null {

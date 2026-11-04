@@ -357,10 +357,8 @@ export default function SettingsPage() {
       const res = await api.me();
       if (res.data) {
         setUser(res.data);
-        if (res.data.isServerOwner) {
-          fetchStorageConfig();
-          fetchSmtpConfig();
-        }
+        // Read before the page shows: a Save meanwhile would write the defaults over the stored settings.
+        if (res.data.isServerOwner) await Promise.all([fetchStorageConfig(), fetchSmtpConfig()]);
         setSettings(prev => ({
           ...prev,
           name: res.data?.name || '',

@@ -15,7 +15,8 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   // The server closes registration after its first user, unless it allows more: say so instead of a form that fails.
-  const [closed, setClosed] = useState(false);
+  // Unknown until it answers, so neither shows first; a failed check keeps the form.
+  const [closed, setClosed] = useState<boolean>();
 
   useEffect(() => {
     api.registration().then((res) => setClosed(res.data?.open === false));
@@ -83,7 +84,7 @@ export default function RegisterPage() {
 
         {/* Card */}
         <div className="bg-card rounded-3xl p-8 shadow-2xl shadow-black/40 border border-border">
-          {closed ? (
+          {closed === undefined ? null : closed ? (
             <div role="status">
               <h1 className="text-2xl font-bold text-foreground mb-2">Registration is closed</h1>
               <p className="text-muted-foreground">Ask an admin to add you.</p>

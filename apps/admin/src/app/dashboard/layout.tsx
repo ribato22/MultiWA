@@ -40,7 +40,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
-import { canConfigure } from '@/lib/current-user';
+import { canConfigure, currentUser } from '@/lib/current-user';
 import { EmptyState } from '@/components/ui/empty-state';
 import { DemoBanner } from '@/components/demo-banner';
 import { CallsProvider, forgetStoredCall } from '@/components/calls/calls-provider';
@@ -129,11 +129,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
-    if (userData) {
-      setUser(JSON.parse(userData));
-    } else {
+    if (!userData) {
       router.push('/auth/login');
+      return;
     }
+    setUser(JSON.parse(userData));
+    // A role changed since sign-in reaches the UI without signing out: the server's answer updates the stored user.
+    api.me().then(({ data }) => {
+      const stored = currentUser();
+      if (!data?.role || !stored || stored.id !== data.id) return; // failed, or signed out or in as someone else since
+      if (data.role === stored.role && !!data.isServerOwner === !!stored.isServerOwner) return;
+      const next = { ...stored, role: data.role, isServerOwner: data.isServerOwner };
+      localStorage.setItem('user', JSON.stringify(next));
+      setUser(next);
+    });
   }, [router]);
 
   // Fetch unread count periodically

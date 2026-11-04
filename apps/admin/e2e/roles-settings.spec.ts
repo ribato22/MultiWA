@@ -1,5 +1,5 @@
 // Settings by role: the team under the team rules, and the server-wide settings for the server owner.
-import { test, expect, get, on, ME, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, get, on, rendered, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
@@ -95,6 +95,22 @@ test.describe('the server owner', () => {
     await tab(page, 'Notifications').click();
     await expect(page.getByRole('heading', { name: 'Email Server (SMTP)' })).toBeVisible();
     await expect(page.getByPlaceholder('smtp.gmail.com')).toHaveValue('smtp.example.com');
+  });
+
+  test('cannot save the storage settings before they are read: a Save then would write the defaults over them', async ({ page, backend }) => {
+    const slow = gate();
+    backend.route(on('GET', '/settings/storage', async () => {
+      await slow.passed;
+      return { json: { type: 's3', s3Endpoint: 'https://s3.example.net', s3Bucket: 'uploads', source: 'database' } };
+    }));
+    await page.goto('/dashboard/settings?tab=storage');
+    await expect.poll(() => backend.requests.some((r) => r.path === '/settings/storage')).toBe(true); // `/auth/me` answered
+    await rendered(page);
+    const save = page.getByRole('button', { name: 'Save Configuration' });
+    await expect(save).toHaveCount(0);
+    slow.open();
+    await expect(save).toBeEnabled();
+    await expect(page.getByPlaceholder('https://minio.example.com')).toHaveValue('https://s3.example.net'); // the stored S3, not the default local
   });
 });
 

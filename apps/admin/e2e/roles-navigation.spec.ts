@@ -1,15 +1,44 @@
 // Which dashboard pages each role gets: every read of Webhooks and Audit is an owner's or admin's.
-import { test, expect, ME } from './support/fixtures';
+import { test, expect, gate, on, rendered, requestEnded, ME } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
 const sidebarLink = (page: Page, name: string) =>
   page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name, exact: true });
+const storedUser = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem('user') ?? 'null'));
 
 test('an admin has Webhooks and Audit in the sidebar', async ({ page }) => {
   await page.goto('/dashboard/api-keys');
   await expect(sidebarLink(page, 'Webhooks')).toBeVisible();
   await expect(sidebarLink(page, 'Audit')).toBeVisible();
+});
+
+test.describe('a member made an admin since signing in', () => {
+  test.use({ user: { ...ME, role: 'member' } });
+
+  test('gets Webhooks without signing out or reloading, and the stored user says admin', async ({ page, backend }) => {
+    const slow = gate();
+    backend.route(on('GET', '/auth/me', async () => {
+      await slow.passed;
+      return { json: { ...ME, role: 'admin' } };
+    }));
+    await page.goto('/dashboard/api-keys');
+    await expect(sidebarLink(page, 'Chat')).toBeVisible();
+    await expect(sidebarLink(page, 'Webhooks')).toHaveCount(0); // the role it signed in with
+    slow.open();
+    await expect(sidebarLink(page, 'Webhooks')).toBeVisible();
+    expect(await storedUser(page)).toEqual({ ...ME, role: 'admin' });
+  });
+
+  test('keeps the role it signed in with when /auth/me fails', async ({ page, backend }) => {
+    backend.route(on('GET', '/auth/me', { status: 500, json: { message: 'Internal server error' } }));
+    const answered = requestEnded(page, '/auth/me');
+    await page.goto('/dashboard/webhooks');
+    await answered;
+    await rendered(page);
+    await expect(page.getByRole('heading', { name: 'Not available for your role' })).toBeVisible();
+    expect(await storedUser(page)).toEqual({ ...ME, role: 'member' });
+  });
 });
 
 for (const role of ['member', 'viewer']) {
