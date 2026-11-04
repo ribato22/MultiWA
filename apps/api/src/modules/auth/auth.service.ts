@@ -12,6 +12,9 @@ import { assertServerOwnerMayLeave, isServerOwner } from './server-owner';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 
+/** The advisory lock every registration takes first: any fixed key no other lock uses. */
+const REGISTRATION_LOCK = 4_726_310_001n;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -34,65 +37,85 @@ export class AuthService {
    * Whether anyone may create an account (and an organization with it): the first person on a new server always may,
    * since they become its owner; after that only when ALLOW_REGISTRATION=true. Otherwise an admin adds people.
    */
-  async registrationOpen(): Promise<boolean> {
+  async registrationOpen(db: Pick<typeof prisma, 'user'> = prisma): Promise<boolean> {
     if (this.config.get<string>('ALLOW_REGISTRATION') === 'true') return true;
-    return (await prisma.user.count()) === 0;
+    return (await db.user.count()) === 0;
   }
 
   async register(dto: RegisterDto): Promise<TokenResponseDto> {
-    // Before any lookup: a closed registration tells nothing about which emails exist.
-    if (!(await this.registrationOpen())) {
-      throw new ForbiddenException('Registration is closed: ask an admin to add you');
-    }
-
-    // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-
-    if (existingUser) {
-      throw new ConflictException('Email already registered');
-    }
-
-    // Create organization and user
-    const organization = await prisma.organization.create({
-      data: {
-        name: dto.organizationName,
-        slug: this.generateSlug(dto.organizationName),
-      },
-    });
-
-    // Create default workspace
-    const workspace = await prisma.workspace.create({
-      data: {
-        organizationId: organization.id,
-        name: 'Default',
-        slug: 'default',
-      },
-    });
-
-    await prisma.account.create({
-      data: {
-        workspaceId: workspace.id,
-        name: 'Default Account',
-        description: 'Automatically created for WhatsApp profiles',
-        settings: {},
-      },
-    });
-
-    // Create user
+    // Before any lookup: a closed registration tells nothing about which emails exist. Checked again under the lock;
+    // answering here spares a closed server the hash and the lock.
+    await this.assertRegistrationOpen();
+    // Hashed before the lock, which every registration waits for.
     const passwordHash = await this.hashPassword(dto.password);
-    const user = await prisma.user.create({
-      data: {
-        organizationId: organization.id,
-        email: dto.email,
-        passwordHash,
-        name: dto.name,
-        role: 'owner',
-      },
+
+    // One transaction: a failure leaves no organization without its owner. Registrations queue on the lock, and each
+    // statement after it sees what the earlier ones committed (READ COMMITTED): two first sign-ups cannot both find
+    // the server empty, nor two sign-ups the same email free.
+    const user = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${REGISTRATION_LOCK})`;
+      await this.assertRegistrationOpen(tx);
+
+      // Check if user exists
+      const existingUser = await tx.user.findUnique({
+        where: { email: dto.email },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('Email already registered');
+      }
+
+      // Create organization and user
+      const organization = await tx.organization.create({
+        data: {
+          name: dto.organizationName,
+          slug: this.generateSlug(dto.organizationName),
+        },
+      });
+
+      // Create default workspace
+      const workspace = await tx.workspace.create({
+        data: {
+          organizationId: organization.id,
+          name: 'Default',
+          slug: 'default',
+        },
+      });
+
+      await tx.account.create({
+        data: {
+          workspaceId: workspace.id,
+          name: 'Default Account',
+          description: 'Automatically created for WhatsApp profiles',
+          settings: {},
+        },
+      });
+
+      // Create user
+      try {
+        return await tx.user.create({
+          data: {
+            organizationId: organization.id,
+            email: dto.email,
+            passwordHash,
+            name: dto.name,
+            role: 'owner',
+          },
+        });
+      } catch (e) {
+        // A member added with this email since the check: adding members does not take the lock.
+        if ((e as { code?: string }).code === 'P2002') throw new ConflictException('Email already registered');
+        throw e;
+      }
     });
 
     return this.generateTokens(user);
+  }
+
+  private async assertRegistrationOpen(db?: Pick<typeof prisma, 'user'>): Promise<void> {
+    if (!(await this.registrationOpen(db))) {
+      throw new ForbiddenException('Registration is closed: ask an admin to add you');
+    }
   }
 
   async login(dto: LoginDto, ipAddress?: string, userAgent?: string): Promise<TokenResponseDto | { requires2FA: true; userId: string }> {

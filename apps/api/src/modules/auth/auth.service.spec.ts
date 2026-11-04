@@ -31,6 +31,8 @@ vi.mock('@multiwa/database', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    $transaction: vi.fn(),
+    $executeRaw: vi.fn(),
   },
 }));
 
@@ -82,6 +84,9 @@ describe('AuthService', () => {
     vi.mocked(prisma.refreshToken.findUnique).mockReset();
     vi.mocked(prisma.refreshToken.update).mockReset().mockResolvedValue({} as any);
     vi.mocked(prisma.refreshToken.updateMany).mockReset().mockResolvedValue({ count: 0 } as any);
+    // A transaction's callback runs on the mocked client.
+    vi.mocked(prisma.$transaction as any).mockReset().mockImplementation((fn: (tx: typeof prisma) => unknown) => fn(prisma));
+    vi.mocked(prisma.$executeRaw).mockReset().mockResolvedValue(1);
 
     mockJwtService.sign.mockReset().mockReturnValue('mock-token');
     mockJwtService.verify.mockReset();
@@ -144,6 +149,34 @@ describe('AuthService', () => {
       expect(prisma.organization.create).toHaveBeenCalledOnce();
       expect(prisma.workspace.create).toHaveBeenCalledOnce();
       expect(prisma.user.create).toHaveBeenCalledOnce();
+      expect(prisma.$transaction).toHaveBeenCalledOnce();
+    });
+
+    it('takes the registration lock, then checks the gate again under it: of two first sign-ups, the later finds the owner', async () => {
+      vi.mocked(prisma.user.count).mockResolvedValueOnce(0 as any).mockResolvedValueOnce(1 as any);
+      await expect(
+        authService.register({ email: 'second@test.com', password: 'password123', name: 'Second', organizationName: 'SecondOrg' }),
+      ).rejects.toThrow(ForbiddenException);
+      const lock = vi.mocked(prisma.$executeRaw).mock;
+      expect((lock.calls[0][0] as unknown as string[]).join('?')).toBe('SELECT pg_advisory_xact_lock(?)');
+      expect(lock.invocationCallOrder[0]).toBeLessThan(vi.mocked(prisma.user.count).mock.invocationCallOrder[1]);
+      expect(prisma.user.findUnique).not.toHaveBeenCalled();
+      expect(prisma.organization.create).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when a member was added with the email meanwhile, and lets any other failure through', async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+      vi.mocked(prisma.organization.create).mockResolvedValue({ id: 'org-1' } as any);
+      vi.mocked(prisma.workspace.create).mockResolvedValue({ id: 'ws-1' } as any);
+      const dto = { email: 'taken@test.com', password: 'password123', name: 'Taken', organizationName: 'TakenOrg' };
+
+      vi.mocked(prisma.user.create).mockRejectedValueOnce(Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }));
+      const taken = authService.register(dto);
+      await expect(taken).rejects.toThrow(ConflictException);
+      await expect(taken).rejects.toThrow('Email already registered');
+
+      vi.mocked(prisma.user.create).mockRejectedValueOnce(new Error('connection lost'));
+      await expect(authService.register(dto)).rejects.toThrow('connection lost');
     });
 
     it('refuses a registration once the server has its owner, unless ALLOW_REGISTRATION=true', async () => {
@@ -153,6 +186,7 @@ describe('AuthService', () => {
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.organization.create).not.toHaveBeenCalled();
       expect(prisma.user.findUnique).not.toHaveBeenCalled(); // a closed registration tells nothing about who exists
+      expect(prisma.$transaction).not.toHaveBeenCalled(); // nor waits for the lock
     });
 
     it('opens registration for the first user', async () => {

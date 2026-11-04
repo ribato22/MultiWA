@@ -144,6 +144,23 @@ describe('API (e2e)', () => {
     expect(ok.statusCode).toBe(201); // exactly 12 chars
   });
 
+  // Unqueued, both found the email free and each created an organization; the second user's insert then failed (500),
+  // leaving an organization with no user. On a new server it could be the oldest: then nobody owns the server.
+  it('answers two sign-ups with the same new email at once with 201 and 409, and leaves no organization without its owner', async () => {
+    const tag = `race_${Date.now()}`;
+    const signUp = (n: number) =>
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/register',
+        remoteAddress: `10.10.0.${n}`, // the register throttle counts per client IP
+        payload: { email: `${tag}@test.local`, password: 'password1234!', name: 'R', organizationName: tag },
+      });
+    const statuses = (await Promise.all([signUp(1), signUp(2)])).map((r) => r.statusCode);
+    expect(statuses.sort()).toEqual([201, 409]);
+    const orgs = await prisma.organization.findMany({ where: { name: tag }, select: { _count: { select: { users: true } } } });
+    expect(orgs.map((o) => o._count.users)).toEqual([1]); // the winner's, with its owner
+  });
+
   // Tenant isolation / IDOR: the TenantGuard must stop one org from reaching another
   // org's resources. Unit tests assert the guard is *applied* (route-coverage meta-test);
   // this proves it actually *blocks* over real HTTP + Prisma.
