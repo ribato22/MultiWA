@@ -545,6 +545,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <EmptyState
               icon={<Lock className="w-8 h-8" aria-hidden="true" />}
               title="Not available for your role"
+              titleAs="h1"
               description="Only an owner or an admin can open this page."
               action={{ label: 'Back to the overview', href: '/dashboard' }}
             />

@@ -58,7 +58,7 @@ for (const role of ['member', 'viewer']) {
     for (const path of ['/dashboard/webhooks', '/dashboard/audit']) {
       test(`opening ${path} by its address says it is not for this role, and reads nothing`, async ({ page, backend }) => {
         await page.goto(path);
-        await expect(page.getByRole('heading', { name: 'Not available for your role' })).toBeVisible();
+        await expect(page.getByRole('heading', { level: 1, name: 'Not available for your role' })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Back to the overview' })).toHaveAttribute('href', '/dashboard');
         expect(backend.requests.filter((r) => r.path === '/webhooks' || r.path.startsWith('/audit/')).map((r) => r.path)).toEqual([]);
         await expectAccessible(page, 'main > .p-6');

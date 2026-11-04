@@ -220,33 +220,32 @@ export default function SettingsPage() {
     }
   };
 
+  // api.request never throws: a refusal (the server's owner changed, say) comes back as `error`, and is said as such.
   const handleSaveSmtp = async () => {
     setSavingSmtp(true);
-    try {
-      await api.updateSmtpConfig(smtpConfig);
-      setSmtpTestResult({ success: true, message: 'SMTP configuration saved and applied' });
-      fetchSmtpConfig();
-    } catch (err: any) {
-      setSmtpTestResult({ success: false, message: err.message || 'Failed to save SMTP config' });
-    } finally {
-      setSavingSmtp(false);
+    const res = await api.updateSmtpConfig(smtpConfig);
+    setSavingSmtp(false);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setSmtpTestResult({ success: true, message: 'SMTP configuration saved and applied' });
+    fetchSmtpConfig();
   };
 
   const handleTestSmtp = async (sendEmail?: boolean) => {
     setTestingSmtp(true);
     setSmtpTestResult(null);
-    try {
-      const res = await api.testSmtpConnection(
-        smtpConfig,
-        sendEmail && testEmailAddress ? { sendTo: testEmailAddress } : undefined,
-      );
-      setSmtpTestResult(res.data || res);
-    } catch (err: any) {
-      setSmtpTestResult({ success: false, message: err.message || 'SMTP test failed' });
-    } finally {
-      setTestingSmtp(false);
+    const res = await api.testSmtpConnection(
+      smtpConfig,
+      sendEmail && testEmailAddress ? { sendTo: testEmailAddress } : undefined,
+    );
+    setTestingSmtp(false);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setSmtpTestResult(res.data);
   };
 
   const fetchConnectedProfiles = async () => {

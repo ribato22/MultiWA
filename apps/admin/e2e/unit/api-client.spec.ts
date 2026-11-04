@@ -46,6 +46,15 @@ test('a refused change keeps its error body: the reasons of a 409 reach the page
   expect(res).toMatchObject({ status: 409, error: 'Recording calls is not available for this profile', body: { reasons: ['no_announcement'] } });
 });
 
+test('a validation 400 says every rule it broke on one line; a single message stays as it is', async () => {
+  answerWith(400, { statusCode: 400, message: ['email must be an email', 'name must be a string'], error: 'Bad Request' });
+  expect(await api.addMember({ email: 'ada', name: '' })).toMatchObject({ status: 400, error: 'email must be an email; name must be a string' });
+  answerWith(400, { statusCode: 400, message: ['download must be a boolean value'], error: 'Bad Request' });
+  expect(await api.fetchCallRecording('c-1')).toEqual({ status: 400, error: 'download must be a boolean value' });
+  answerWith(400, { statusCode: 400, message: 'Invalid role', error: 'Bad Request' });
+  expect(await api.addMember({ email: 'ada@example.com', name: 'Ada', role: 'boss' })).toMatchObject({ status: 400, error: 'Invalid role' });
+});
+
 test('a recording comes back as bytes, its download asks for an attachment, and a byte route’s error reads as its message', async () => {
   answerWith(200, 'RIFF-bytes', 'audio/webm');
   const ok = await api.fetchCallRecording('c-1');

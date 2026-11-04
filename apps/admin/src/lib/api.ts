@@ -29,7 +29,7 @@ export interface User {
   name: string;
   role: string;
   organizationId: string;
-  /** From `/auth/me` only: the owner of the server's oldest organization, who alone sets storage and SMTP. */
+  /** From `/auth/me` and the sign-in answer's `user`: the owner of the server's oldest organization, who alone sets storage and SMTP. */
   isServerOwner?: boolean;
 }
 
@@ -234,6 +234,12 @@ export interface PushTestResult {
   results?: Array<{ success?: boolean; error?: string; statusCode?: number }>;
 }
 
+/** A failed request's message. A validation 400 lists every rule the request broke: one line, for a toast. */
+function errorOf(data: any, status: number): string {
+  const message = data?.message || data?.error;
+  return (Array.isArray(message) ? message.join('; ') : message) || `Request failed with status ${status}`;
+}
+
 // API Client Class
 class ApiClient {
   private baseUrl: string;
@@ -350,7 +356,7 @@ class ApiClient {
 
       if (!response.ok) {
         return {
-          error: data?.message || data?.error || `Request failed with status ${response.status}`,
+          error: errorOf(data, response.status),
           status: response.status,
           body: data,
         };
@@ -374,7 +380,7 @@ class ApiClient {
       const response = await this.send(endpoint, { signal });
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        return { error: data?.message || data?.error || `Request failed with status ${response.status}`, status: response.status };
+        return { error: errorOf(data, response.status), status: response.status };
       }
       return { blob: await response.blob(), status: response.status };
     } catch (error) {

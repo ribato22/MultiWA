@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 interface EmptyStateProps {
   icon?: React.ReactNode;
   title: string;
+  /** The title's heading: h3 inside a page, h1 when the empty state is the page. */
+  titleAs?: 'h1' | 'h2' | 'h3';
   description?: string;
   action?: {
     label: string;
@@ -48,6 +50,7 @@ export const EmptyStateIcons = {
 export function EmptyState({
   icon,
   title,
+  titleAs: Title = 'h3',
   description,
   action,
   secondaryAction,
@@ -66,9 +69,9 @@ export function EmptyState({
       )}
 
       {/* Title */}
-      <h3 className="text-xl font-semibold text-foreground mb-2">
+      <Title className="text-xl font-semibold text-foreground mb-2">
         {title}
-      </h3>
+      </Title>
 
       {/* Description */}
       {description && (

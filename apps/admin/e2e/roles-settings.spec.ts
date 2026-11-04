@@ -112,6 +112,19 @@ test.describe('the server owner', () => {
     await expect(save).toBeEnabled();
     await expect(page.getByPlaceholder('https://minio.example.com')).toHaveValue('https://s3.example.net'); // the stored S3, not the default local
   });
+
+  test('an SMTP save or test the server refuses says why, and not that it saved', async ({ page, backend }) => {
+    backend.route(get('/settings/smtp', { host: 'smtp.example.com', port: 587, user: '', pass: '', from: 'noreply@example.com', secure: false, source: 'database' }));
+    // The server's ownership moved since the page was read.
+    backend.route(on('PUT', '/settings/smtp', { status: 403, json: { message: "Only the server's owner manages server-wide settings" } }));
+    backend.route(on('POST', '/settings/smtp/test', { status: 403, json: { message: 'Insufficient role for this action' } }));
+    await page.goto('/dashboard/settings?tab=notifications');
+    await page.getByRole('button', { name: 'Save SMTP Configuration' }).click();
+    await expect(toasts(page).getByText("Only the server's owner manages server-wide settings")).toBeVisible();
+    await page.getByRole('button', { name: 'Test Connection' }).click();
+    await expect(toasts(page).getByText('Insufficient role for this action')).toBeVisible();
+    await expect(page.getByText('SMTP configuration saved and applied')).toHaveCount(0);
+  });
 });
 
 test('an admin who is not the server owner has no Storage tab nor SMTP settings, and never reads them', async ({ page, backend }) => {
