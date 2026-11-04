@@ -2,7 +2,7 @@
 // apps/api/src/modules/auth/auth.controller.ts
 
 import { Controller, Post, Body, Get, Patch, Delete, UseGuards, Request, Param, Headers } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiForbiddenResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { AuthService } from './auth.service';
@@ -27,9 +27,17 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'Register a new user and organization' })
   @ApiResponse({ status: 201, description: 'User registered successfully', type: TokenResponseDto })
+  @ApiForbiddenResponse({ description: 'Registration is closed: ask an admin to add you' })
   @ApiValidationError()
   async register(@Body() dto: RegisterDto): Promise<TokenResponseDto> {
     return this.authService.register(dto);
+  }
+
+  @Get('registration')
+  @ApiOperation({ summary: 'Whether a new account can be created (the dashboard shows "Create account" only then)' })
+  @ApiResponse({ status: 200, description: '{ open: boolean }' })
+  async registration() {
+    return { open: await this.authService.registrationOpen() };
   }
 
   @Post('login')

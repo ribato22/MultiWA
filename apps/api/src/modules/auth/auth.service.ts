@@ -1,7 +1,7 @@
 // MultiWA Gateway API - Auth Service
 // apps/api/src/modules/auth/auth.service.ts
 
-import { Injectable, UnauthorizedException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { prisma } from '@multiwa/database';
@@ -29,7 +29,21 @@ export class AuthService {
     return this.config.get<string>('JWT_REFRESH_SECRET') as string;
   }
 
+  /**
+   * Whether anyone may create an account (and an organization with it): the first person on a new server always may,
+   * since they become its owner; after that only when ALLOW_REGISTRATION=true. Otherwise an admin adds people.
+   */
+  async registrationOpen(): Promise<boolean> {
+    if (this.config.get<string>('ALLOW_REGISTRATION') === 'true') return true;
+    return (await prisma.user.count()) === 0;
+  }
+
   async register(dto: RegisterDto): Promise<TokenResponseDto> {
+    // Before any lookup: a closed registration tells nothing about which emails exist.
+    if (!(await this.registrationOpen())) {
+      throw new ForbiddenException('Registration is closed: ask an admin to add you');
+    }
+
     // Check if user exists
     const existingUser = await prisma.user.findUnique({
       where: { email: dto.email },

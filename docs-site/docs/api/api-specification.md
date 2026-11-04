@@ -76,6 +76,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/auth/register` | Register an account and receive tokens |
+| `GET` | `/auth/registration` | Whether registration is open: `{ "open": boolean }` (public) |
 | `POST` | `/auth/login` | Log in and receive tokens |
 | `POST` | `/auth/2fa/verify` | Verify a 2FA challenge during login |
 | `POST` | `/auth/refresh` | Exchange refresh token for a new access token |

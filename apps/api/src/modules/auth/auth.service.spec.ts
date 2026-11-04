@@ -2,7 +2,7 @@
 // Tests core authentication logic with mocked dependencies
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { UnauthorizedException, ConflictException, BadRequestException } from '@nestjs/common';
+import { UnauthorizedException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 
 // Mock Prisma — factory creates fresh mock functions
@@ -13,6 +13,7 @@ vi.mock('@multiwa/database', () => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      count: vi.fn(),
     },
     organization: {
       create: vi.fn(),
@@ -50,10 +51,12 @@ describe('AuthService', () => {
     createSession: vi.fn(),
     removeSessionByToken: vi.fn(),
   };
+  let allowRegistration: string | undefined;
   const mockConfigService = {
     // refresh-token secret + ttl (defaults mirror ConfigService.get(key, default))
     get: vi.fn((key: string, def?: unknown) => {
       if (key === 'JWT_REFRESH_SECRET') return 'test-refresh-secret';
+      if (key === 'ALLOW_REGISTRATION') return allowRegistration;
       return def;
     }),
   };
@@ -64,6 +67,7 @@ describe('AuthService', () => {
     vi.mocked(prisma.user.create).mockReset();
     vi.mocked(prisma.user.update).mockReset();
     vi.mocked(prisma.user.delete).mockReset();
+    vi.mocked(prisma.user.count).mockReset().mockResolvedValue(0 as any);
     vi.mocked(prisma.organization.create).mockReset();
     vi.mocked(prisma.organization.delete).mockReset();
     vi.mocked(prisma.workspace.create).mockReset();
@@ -81,6 +85,7 @@ describe('AuthService', () => {
     mockTwoFactorService.verifyTwoFactor.mockReset();
 
     mockConfigService.get.mockClear();
+    allowRegistration = undefined;
 
     authService = new AuthService(
       mockJwtService as any,
@@ -130,6 +135,23 @@ describe('AuthService', () => {
       expect(prisma.organization.create).toHaveBeenCalledOnce();
       expect(prisma.workspace.create).toHaveBeenCalledOnce();
       expect(prisma.user.create).toHaveBeenCalledOnce();
+    });
+
+    it('refuses a registration once the server has a user, unless ALLOW_REGISTRATION=true', async () => {
+      vi.mocked(prisma.user.count).mockResolvedValueOnce(3 as any);
+      await expect(
+        authService.register({ email: 'late@test.com', password: 'password123', name: 'Late', organizationName: 'LateOrg' }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.organization.create).not.toHaveBeenCalled();
+      expect(prisma.user.findUnique).not.toHaveBeenCalled(); // a closed registration tells nothing about who exists
+    });
+
+    it('opens registration for the first user, or for anyone with ALLOW_REGISTRATION=true', async () => {
+      await expect(authService.registrationOpen()).resolves.toBe(true); // count 0
+      vi.mocked(prisma.user.count).mockResolvedValueOnce(3 as any);
+      await expect(authService.registrationOpen()).resolves.toBe(false);
+      allowRegistration = 'true';
+      await expect(authService.registrationOpen()).resolves.toBe(true);
     });
   });
 

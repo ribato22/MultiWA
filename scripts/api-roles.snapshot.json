@@ -1,6 +1,6 @@
 {
   "note": "Who may call each route: Public (no sign-in), Any, Agent (owner, admin, member), Admin (owner, admin) or Server owner. role-route-coverage.spec.ts compares it with the controllers' @Roles; change it together with them. Regenerate: UPDATE_ROLE_SNAPSHOT=1 pnpm --filter api test:meta",
-  "routeCount": 222,
+  "routeCount": 223,
   "routes": {
     "GET /": "Public",
     "DELETE /account/delete": "Any",
@@ -46,6 +46,7 @@
     "PATCH /auth/preferences": "Any",
     "POST /auth/refresh": "Public",
     "POST /auth/register": "Public",
+    "GET /auth/registration": "Public",
     "DELETE /auth/sessions": "Any",
     "GET /auth/sessions": "Any",
     "DELETE /auth/sessions/:id": "Any",

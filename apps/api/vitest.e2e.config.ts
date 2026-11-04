@@ -30,6 +30,8 @@ export default defineConfig({
     // reduces dangling-handle flakiness.
     pool: 'forks',
     poolOptions: { forks: { singleFork: true } },
+    // The suites register several organizations; the registration gate is tested by turning this off in roles.e2e-spec.ts.
+    env: { ALLOW_REGISTRATION: 'true' },
     // The schema is created by a dedicated CI step (`prisma db push`) before this runs,
     // so no vitest globalSetup is needed.
   },

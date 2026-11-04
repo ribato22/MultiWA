@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 220,
+  "routeCount": 221,
   "routes": [
     {
       "method": "DELETE",
@@ -180,6 +180,10 @@
     {
       "method": "POST",
       "path": "/api/v1/auth/register"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/auth/registration"
     },
     {
       "method": "DELETE",
