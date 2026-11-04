@@ -1,6 +1,6 @@
 // apps/api/src/modules/workspaces/workspaces.controller.ts
 import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { WorkspacesService } from './workspaces.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -14,7 +14,6 @@ import { CreateWorkspaceDto, UpdateWorkspaceDto } from './dto';
 @Controller('workspaces')
 @UseGuards(JwtAuthGuard, TenantGuard)
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 export class WorkspacesController {
   constructor(private readonly service: WorkspacesService) {}

@@ -248,7 +248,7 @@ client.calls.update_settings(profile_id, recording=False)
 client.calls.delete_announcement(profile_id)     # refused with 409 while recording is on
 ```
 
-Everything above `# Owners and admins` is open to every user of the organization; the rest is for owners and admins. An API key acts with its user's role, and a key with a scope list also needs `messages:write` for `reply` and `send_call_link`, `recordings:read` to fetch a recording, `recordings:delete` to delete one, and `profiles:write` for the settings and the announcement, with `recordings:delete` too for `retention_days` ([API keys](<../features/calls.md#api-keys>)). The client's `timeout` is httpx's: it bounds each connect, read and write, not the whole download of a recording.
+Everything above `# Owners and admins` is for owners, admins and members (a viewer's key gets 403), except `list`, `open_count` and `get`, which a viewer's key may call too; the rest is for owners and admins. An API key acts with its user's role, and a key with a scope list also needs `messages:write` for `reply` and `send_call_link`, `recordings:read` to fetch a recording, `recordings:delete` to delete one, and `profiles:write` for the settings and the announcement, with `recordings:delete` too for `retention_days` ([API keys](<../features/calls.md#api-keys>)). The client's `timeout` is httpx's: it bounds each connect, read and write, not the whole download of a recording.
 
 A setting that cannot be turned on is refused with 409, and the response says why:
 

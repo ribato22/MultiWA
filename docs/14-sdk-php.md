@@ -170,7 +170,7 @@ $profiles->delete($profile->id);                   // ['success' => true]; also 
 $profiles->connect($profileId); // ['status' => 'connecting', 'message' => 'Scan QR code to connect']
 ```
 
-The QR code is not part of the REST API. It is pushed as the `qr:update` event of the [WebSocket API](./08-websocket-api.md): a Socket.IO client connects to the `/ws` namespace with the API key, emits `join` with the profile id, and shows each event's `qrCode` (a `data:image/png;base64,…` URL) until it is scanned. It can also be scanned in the admin dashboard. Afterwards `status()` reports `connected`. A profile that is already linked answers `['status' => 'already_connected', …]`.
+The QR code is not part of the REST API. It is pushed as the `qr:update` event of the [WebSocket API](./08-websocket-api.md): a Socket.IO client connects to the `/ws` namespace with the API key, emits `join` with the profile id, and shows each event's `qrCode` (a `data:image/png;base64,…` URL) until it is scanned. The event reaches owners and admins only: a dashboard sign-in of one qualifies, and so does an API key of one with `profiles:write` (or no scope list). It can also be scanned in the admin dashboard. Afterwards `status()` reports `connected`. A profile that is already linked answers `['status' => 'already_connected', …]`.
 
 ### Webhooks
 
@@ -239,7 +239,7 @@ $calls->updateSettings($profileId, recording: false);
 $calls->deleteAnnouncement($profileId);                   // refused with 409 while recording is on
 ```
 
-Everything above `// Owners and admins` is open to every user of the organization; the rest is for owners and admins. An API key acts with its user's role, and a key with a scope list also needs `messages:write` for `reply()` and `sendCallLink()`, `recordings:read` to fetch a recording, `recordings:delete` to delete one, and `profiles:write` for the settings and the announcement, with `recordings:delete` too for `retentionDays` ([API keys](./23-calls.md#api-keys)). With Guzzle's cURL handler, the default, the client's `timeout` covers a whole download: a long recording may need a larger one.
+Everything above `// Owners and admins` is for owners, admins and members (a viewer's key gets 403), except `list()`, `openCount()` and `get()`, which a viewer's key may call too; the rest is for owners and admins. An API key acts with its user's role, and a key with a scope list also needs `messages:write` for `reply()` and `sendCallLink()`, `recordings:read` to fetch a recording, `recordings:delete` to delete one, and `profiles:write` for the settings and the announcement, with `recordings:delete` too for `retentionDays` ([API keys](./23-calls.md#api-keys)). With Guzzle's cURL handler, the default, the client's `timeout` covers a whole download: a long recording may need a larger one.
 
 A setting that cannot be turned on throws an `ApiException` with status 409, whose body says why:
 

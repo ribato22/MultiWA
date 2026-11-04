@@ -2,7 +2,7 @@
 // apps/api/src/modules/notifications/notifications.controller.ts
 
 import { Controller, Get, Post, Patch, Delete, Param, Query, Body, UseGuards, Request, Headers } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ANY_ROLES } from '../auth/roles';
@@ -14,7 +14,6 @@ import { PushService, PushSubscriptionPayload } from '@multiwa/engine-runtime';
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 export class NotificationsController {
   constructor(

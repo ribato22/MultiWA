@@ -5,7 +5,7 @@ import {
   Controller, Post, Get, Delete, Body, Param,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
@@ -18,7 +18,6 @@ import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/dec
 @Controller('ai/knowledge')
 @UseGuards(JwtAuthGuard, TenantGuard)
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 export class KnowledgeBaseController {
   constructor(private readonly kbService: KnowledgeBaseService) {}

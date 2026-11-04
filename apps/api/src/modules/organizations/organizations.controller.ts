@@ -1,6 +1,6 @@
 // apps/api/src/modules/organizations/organizations.controller.ts
 import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiForbiddenResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiForbiddenResponse } from '@nestjs/swagger';
 import { OrganizationsService } from './organizations.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -11,7 +11,6 @@ import { UpdateOrganizationDto, AddMemberDto, UpdateMemberRoleDto } from './dto'
 @Controller('organizations')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 export class OrganizationsController {
   constructor(private readonly service: OrganizationsService) {}

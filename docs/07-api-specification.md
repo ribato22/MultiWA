@@ -35,6 +35,19 @@ x-api-key: YOUR_API_KEY
 
 The Swagger UI registers the API key under the `api-key` security scheme; the header name is lowercase `x-api-key`. Create keys in the dashboard, or with `POST /api-keys` while signed in: an API key cannot create another.
 
+### Roles
+
+Each organization member has one role. An API key acts with its user's role, at the time of each request.
+
+| Role | May |
+|---|---|
+| `viewer` | read; their own account, sessions, 2FA, notifications and API keys |
+| `member` | as a viewer, plus send messages, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, use the AI routes |
+| `admin` | as a member, plus configure profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, delete chats, read webhooks and audit logs, export contacts, and manage members and viewers |
+| `owner` | as an admin, plus manage admins |
+
+The server-wide settings (`/settings/*`) are for the server's owner: the owner of the oldest organization. A role that may not call a route gets `403`. `scripts/api-roles.snapshot.json` lists each route's class; the CI checks it against the code.
+
 ---
 
 ## 7.3 Response Format
@@ -134,6 +147,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Messages (`/messages`)
 
+Owners, admins and members send; deleting a stored message (`DELETE /messages/:id`) is for owners and admins.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/messages/text` | Send text message |
@@ -214,6 +229,8 @@ Message lists answer at most 500 rows per request (`limit`).
 | `POST` | `/groups/:groupId/invite-link/revoke` | Revoke invite link |
 
 ### Conversations (`/conversations`)
+
+An API key needs `messages:read` for the reads and `messages:write` for the changes.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -316,7 +333,7 @@ A call:
 | `recording` | `null`, or the recording's facts (above) |
 | `createdAt`, `updatedAt` | |
 
-`PATCH /calls/:id` takes `followUp` and `assignedUserId`; `assignedUserId: null` unassigns the call, and an assignee must be an active user of the organization. It, `reject`, `reply` and `call-link` check no role: every user of the organization, viewers too, may use them. The media status, the recordings, the call settings and the announcement are for owners and admins.
+`PATCH /calls/:id` takes `followUp` and `assignedUserId`; `assignedUserId: null` unassigns the call, and an assignee must be an active owner, admin or member of the organization. It, `reject`, `reply` and `call-link` are for owners, admins and members; a viewer gets `403`. The media status, the recordings, the call settings and the announcement are for owners and admins.
 
 `GET /calls/media/status` (owner or admin) answers the media server's readiness, its recordings storage, and each profile of the organization:
 
@@ -355,6 +372,8 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 
 ### Contacts (`/contacts`)
 
+Owners, admins and members add and edit contacts and tags; deleting, importing, syncing and exporting are for owners and admins.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/contacts` | List contacts |
@@ -388,6 +407,8 @@ Contact lists answer at most 1000 rows per request (`limit`), and a bulk validat
 | `POST` | `/templates/:id/duplicate` | Duplicate template |
 
 ### Webhooks (`/webhooks`)
+
+Owner and admin only, reads included (they carry the signing secret). A key with `webhooks:read` reads each webhook's signing secret and custom headers.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -458,6 +479,8 @@ Contact lists answer at most 1000 rows per request (`limit`), and a bulk validat
 
 ### Settings (`/settings`)
 
+The server's owner only (the owner of the oldest organization).
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/settings/storage` | Get storage settings |
@@ -474,6 +497,8 @@ Contact lists answer at most 1000 rows per request (`limit`), and a bulk validat
 | `POST` | `/uploads/media` | Upload media for use in messages |
 
 ### Integrations (`/integrations`)
+
+The server's owner only: the integrations configuration comes from the server's environment.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|

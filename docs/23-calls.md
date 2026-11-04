@@ -112,7 +112,7 @@ The **Calls** page lists a profile's calls. Its **Answered** tab has the calls a
 
 ![An answered call on the Calls page, with its recording](./screenshots/calls/calls-page-recording.png)
 
-Every user of the organization, viewers too, can follow a call up: **Reply** sends the caller a text, **Call link** a WhatsApp call link, **Assign** gives the call to someone of the team, and **Done** and **Reopen** set its follow-up. **Reject** turns down a call that is still ringing. The API checks no role for these.
+Owners, admins and members can follow a call up: **Reply** sends the caller a text, **Call link** a WhatsApp call link, **Assign** gives the call to someone of the team (an owner, admin or member), and **Done** and **Reopen** set its follow-up. **Reject** turns down a call that is still ringing. A viewer sees the queue.
 
 For owners and admins, a call with a recording has:
 
@@ -263,7 +263,7 @@ Other problems:
 
 ## API keys
 
-The recordings, the call settings (`GET /calls/media/status` reads them) and the announcement are for owners and admins only, through an API key too: a key acts with its user's role. The rest of the calls API, the follow-up included, is open to every user of the organization. A key with an explicit scope list also needs:
+The recordings, the call settings (`GET /calls/media/status` reads them) and the announcement are for owners and admins only, through an API key too: a key acts with its user's role. The follow-up and the assignee (`PATCH /calls/:id`), Reject, Reply and the call link are for owners, admins and members: a viewer's key gets `403` on them, and reads the list, a call and the open count. A key with an explicit scope list also needs:
 
 | To | Scope (its name in the dashboard) |
 |---|---|

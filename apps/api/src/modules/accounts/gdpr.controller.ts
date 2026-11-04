@@ -2,7 +2,7 @@
 // apps/api/src/modules/accounts/gdpr.controller.ts
 
 import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
@@ -16,7 +16,6 @@ import { prisma } from '@multiwa/database';
  */
 @ApiTags('GDPR / Privacy')
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 @UseGuards(JwtAuthGuard)
 @Controller('account')

@@ -198,11 +198,13 @@ await client.calls.updateSettings(profileId, { recording: false });
 await client.calls.deleteAnnouncement(profileId);            // refused with 409 while recording is on
 ```
 
-Everything above `// Owners and admins` is open to every user of the
-organization; the rest is for owners and admins. An API key acts with its user's
-role, and a key with a scope list also needs `messages:write` for `reply()` and
-`sendCallLink()`, `recordings:read` to fetch a recording, `recordings:delete` to
-delete one, and `profiles:write` for the settings and the announcement, with
+Everything above `// Owners and admins` is for owners, admins and members (a
+viewer's key gets 403), except `list()`, `openCount()` and `get()`, which a
+viewer's key may call too; the rest is for owners and admins. An API key acts
+with its user's role, and a key with a scope list also needs `messages:write`
+for `reply()` and `sendCallLink()`, `recordings:read` to fetch a recording,
+`recordings:delete` to delete one, and `profiles:write` for the settings and the
+announcement, with
 `recordings:delete` too for `retentionDays`
 ([API keys](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md#api-keys)).
 The client's `timeout` covers a whole download: a long recording may need a
