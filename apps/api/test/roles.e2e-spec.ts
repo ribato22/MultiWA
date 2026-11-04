@@ -1,14 +1,16 @@
 // The four roles through the real app (HTTP → auth guard → role check → Prisma → Postgres): a viewer reads but changes
 // nothing, a member does the daily work but no configuration, an admin configures and manages members and viewers,
-// only the owner manages admins, and only the server's owner reaches the server settings. Plus the registration gate.
-// The unit specs pin the same rules with Prisma mocked.
-import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+// only the owner manages admins, and only the server's owner reaches the server settings. Plus the pairing QR on the
+// /ws socket, and the registration gate. The unit specs pin the same rules with Prisma mocked.
+import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { io, type Socket } from 'socket.io-client';
 import { prisma } from '@multiwa/database';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.factory';
 import { EngineManagerService } from '../src/modules/profiles/engine-manager.service';
+import { EventsGateway } from '../src/modules/events/events.gateway';
 
 const engineStub = { onModuleInit: () => undefined, onModuleDestroy: () => undefined, getEngine: () => null, getStatus: () => 'DISCONNECTED' };
 
@@ -26,6 +28,7 @@ describe('Roles (e2e)', () => {
   let member: Session;
   let viewer: Session;
   let profileId: string;
+  let origin: string; // where the app listens, for the /ws sockets
 
   const send = (method: 'GET' | 'POST' | 'PUT', url: string, auth: { token?: string; apiKey?: string }, payload?: object) =>
     app.inject({
@@ -33,6 +36,19 @@ describe('Roles (e2e)', () => {
       url: `/api/v1${url}`,
       headers: auth.apiKey ? { 'x-api-key': auth.apiKey } : { authorization: `Bearer ${auth.token}` },
       ...(payload ? { payload } : {}),
+    });
+
+  /** A socket on /ws with a JWT, connected; `got` lists every event it is sent, in order. */
+  const connectSocket = (token: string) =>
+    new Promise<{ socket: Socket; got: string[] }>((resolve, reject) => {
+      const socket = io(`${origin}/ws`, { auth: { token }, transports: ['websocket'], forceNew: true, reconnection: false });
+      const got: string[] = [];
+      socket.onAny((event: string) => got.push(event));
+      socket.once('connect', () => resolve({ socket, got }));
+      socket.once('connect_error', (e) => {
+        socket.close();
+        reject(e);
+      });
     });
 
   async function session(url: string, payload: object): Promise<Session> {
@@ -55,6 +71,8 @@ describe('Roles (e2e)', () => {
     await configureApp(app);
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
+    await app.listen(0, '127.0.0.1'); // an ephemeral port, for the sockets
+    origin = await app.getUrl();
 
     await register('early'); // so that `owner` below is never the oldest organization's owner, whatever ran before
     owner = await register('owner');
@@ -86,9 +104,26 @@ describe('Roles (e2e)', () => {
     expect((await send('POST', '/webhooks', member, { profileId, url: 'https://example.com/hook', events: ['message.received'] })).statusCode).toBe(403);
   });
 
+  it("a member's send passes the role check", async () => {
+    // Not 201: the engine is stubbed, so the profile has no live connection.
+    vi.stubEnv('ENGINE_HOST', 'api'); // ENGINE_HOST=worker (CI sets it) and DURABLE_SEND=true queue the send instead, and answer 201
+    vi.stubEnv('DURABLE_SEND', 'false');
+    try {
+      const sent = await send('POST', '/messages/text', member, { profileId, to: '628111000203', text: 'hi' });
+      expect(sent.statusCode).toBe(409);
+      expect(sent.json()).toMatchObject({ error: 'PROFILE_DISCONNECTED' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('an admin configures, and reads the webhooks', async () => {
     expect((await send('PUT', '/organizations/current', admin, { name: `${tag} renamed` })).statusCode).toBe(200);
     expect((await send('GET', `/webhooks?profileId=${profileId}`, admin)).statusCode).toBe(200);
+  });
+
+  it('an admin creates a webhook', async () => {
+    expect((await send('POST', '/webhooks', admin, { profileId, url: 'https://example.com/hook', events: ['message.received'] })).statusCode).toBe(201);
   });
 
   it('an admin manages members and viewers; only the owner manages admins; nobody changes their own role', async () => {
@@ -104,6 +139,24 @@ describe('Roles (e2e)', () => {
     expect((await send('GET', '/auth/me', owner)).json().isServerOwner).toBe(false);
   });
 
+  it("a viewer's socket gets no pairing QR, and an owner's does", async () => {
+    const [ownerWs, viewerWs] = await Promise.all([connectSocket(owner.token), connectSocket(viewer.token)]);
+    try {
+      for (const { socket } of [ownerWs, viewerWs]) expect(await socket.emitWithAck('join', { profileId })).toEqual({ success: true, profileId });
+
+      const gateway = app.get(EventsGateway);
+      await gateway.emitQrUpdate(profileId, 'data:image/png;base64,iVBORw0KGgo=');
+      await vi.waitFor(() => expect(ownerWs.got).toContain('qr:update'), { timeout: 5000 });
+      // A socket keeps its events in order: a viewer that has this status has had any QR before it.
+      gateway.emitConnectionStatus(profileId, 'connected', '628111000999');
+      await vi.waitFor(() => expect(viewerWs.got).toContain('connection:status'), { timeout: 5000 });
+      expect(viewerWs.got).toEqual(['connection:status']);
+    } finally {
+      ownerWs.socket.close();
+      viewerWs.socket.close();
+    }
+  });
+
   it('registration closes unless ALLOW_REGISTRATION=true', async () => {
     const before = process.env.ALLOW_REGISTRATION;
     process.env.ALLOW_REGISTRATION = 'false';
@@ -115,7 +168,9 @@ describe('Roles (e2e)', () => {
       });
       expect(refused.statusCode).toBe(403);
     } finally {
-      process.env.ALLOW_REGISTRATION = before;
+      // Assigning undefined would store the string "undefined".
+      if (before === undefined) delete process.env.ALLOW_REGISTRATION;
+      else process.env.ALLOW_REGISTRATION = before;
     }
     expect((await app.inject({ method: 'GET', url: '/api/v1/auth/registration' })).json()).toEqual({ open: true });
   });
