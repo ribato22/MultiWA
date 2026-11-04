@@ -15,7 +15,7 @@ import {
   CALL_FILTERS, FOLLOW_UP_LABEL, OUTCOME_LABEL, answeredFacts, callerLabel, filterQuery, fromPayload, knownOutcome, matchesFilter, upsertCall,
   type CallFilter, type CallUpdatePayload,
 } from '@/lib/calls';
-import { canManageCalls, currentUser } from '@/lib/current-user';
+import { canAct, canManageCalls, currentUser } from '@/lib/current-user';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -29,7 +29,7 @@ import { outcomeIcon } from '@/components/calls/outcome-icon';
 import { CallRecording } from '@/components/calls/call-recording';
 import { useToast } from '@/hooks/use-toast';
 
-type Member = { id: string; name: string; email: string; isActive: boolean };
+type Member = { id: string; name: string; email: string; role: string; isActive: boolean };
 // `open: false` keeps the content while the dialog fades out.
 type DialogState = { kind: 'reply' | 'link' | 'assign'; call: CallRecord; open: boolean } | null;
 const UNASSIGNED = '__none__';
@@ -60,6 +60,8 @@ export default function CallsPage() {
   const { toast } = useToast();
   // Owner and admin play, download and delete recordings; everyone sees the facts. The API checks it again.
   const [canManage] = useState(() => canManageCalls(currentUser()?.role));
+  // Owner, admin and member act on a call (reject, reply, assign, follow up); a viewer follows the queue.
+  const [agent] = useState(() => canAct(currentUser()?.role));
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileId, setProfileId] = useState('');
   const [filter, setFilter] = useState<CallFilter>('open');
@@ -274,10 +276,12 @@ export default function CallsPage() {
                     <p className="text-xs text-muted-foreground">Ringing · {call.isVideo ? 'video' : 'voice'} call</p>
                   </div>
                 </div>
-                <Button size="sm" variant="destructive" disabled={busy.includes(call.id)} onClick={() => run(call, () => api.rejectCall(call.id), 'Call rejected')}>
-                  {busy.includes(call.id) ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <PhoneOff className="w-4 h-4" aria-hidden="true" />}
-                  <span className="ml-1.5">Reject</span>
-                </Button>
+                {agent && (
+                  <Button size="sm" variant="destructive" disabled={busy.includes(call.id)} onClick={() => run(call, () => api.rejectCall(call.id), 'Call rejected')}>
+                    {busy.includes(call.id) ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <PhoneOff className="w-4 h-4" aria-hidden="true" />}
+                    <span className="ml-1.5">Reject</span>
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -330,7 +334,7 @@ export default function CallsPage() {
                           </Link>
                         </Button>
                       )}
-                      {!call.isGroup && (
+                      {agent && !call.isGroup && (
                         <>
                           <Button size="sm" variant="outline" disabled={disabled} onClick={() => openDialog('reply', call)}>
                             <MessageSquareText className="w-4 h-4" aria-hidden="true" />
@@ -342,20 +346,24 @@ export default function CallsPage() {
                           </Button>
                         </>
                       )}
-                      <Button size="sm" variant="outline" disabled={disabled} onClick={() => openDialog('assign', call)}>
-                        <UserPlus className="w-4 h-4" aria-hidden="true" />
-                        <span className="ml-1.5">Assign</span>
-                      </Button>
-                      {call.followUp === 'done' ? (
-                        <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setFollowUp(call, 'open')}>
-                          <RotateCcw className="w-4 h-4" aria-hidden="true" />
-                          <span className="ml-1.5">Reopen</span>
-                        </Button>
-                      ) : (
-                        <Button size="sm" disabled={disabled} onClick={() => setFollowUp(call, 'done')}>
-                          <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
-                          <span className="ml-1.5">Done</span>
-                        </Button>
+                      {agent && (
+                        <>
+                          <Button size="sm" variant="outline" disabled={disabled} onClick={() => openDialog('assign', call)}>
+                            <UserPlus className="w-4 h-4" aria-hidden="true" />
+                            <span className="ml-1.5">Assign</span>
+                          </Button>
+                          {call.followUp === 'done' ? (
+                            <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setFollowUp(call, 'open')}>
+                              <RotateCcw className="w-4 h-4" aria-hidden="true" />
+                              <span className="ml-1.5">Reopen</span>
+                            </Button>
+                          ) : (
+                            <Button size="sm" disabled={disabled} onClick={() => setFollowUp(call, 'done')}>
+                              <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+                              <span className="ml-1.5">Done</span>
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   </CardContent>
@@ -383,7 +391,8 @@ export default function CallsPage() {
               <SelectTrigger aria-label="Assignee"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={UNASSIGNED}>Unassigned</SelectItem>
-                {members.map((m) => (
+                {/* The API takes an agent only: a viewer takes no calls. */}
+                {members.filter((m) => canAct(m.role)).map((m) => (
                   <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
                 ))}
               </SelectContent>
