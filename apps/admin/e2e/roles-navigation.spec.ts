@@ -6,12 +6,25 @@ import type { Page } from '@playwright/test';
 const sidebarLink = (page: Page, name: string) =>
   page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name, exact: true });
 const storedUser = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem('user') ?? 'null'));
+/** The pages that create what a link everyone has lists: each with the title of its form. */
+const CREATE_PAGES = [
+  ['/dashboard/profiles/new', 'Add New Profile'],
+  ['/dashboard/automation/builder', 'Visual Flow Builder'],
+] as const;
 
 test('an admin has Webhooks and Audit in the sidebar', async ({ page }) => {
   await page.goto('/dashboard/api-keys');
   await expect(sidebarLink(page, 'Webhooks')).toBeVisible();
   await expect(sidebarLink(page, 'Audit')).toBeVisible();
 });
+
+for (const [path, title] of CREATE_PAGES) {
+  test(`an admin opens ${path} and gets its form`, async ({ page }) => {
+    await page.goto(path);
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Not available for your role' })).toHaveCount(0);
+  });
+}
 
 test.describe('a member made an admin since signing in', () => {
   test.use({ user: { ...ME, role: 'member' } });
@@ -62,6 +75,15 @@ for (const role of ['member', 'viewer']) {
         await expect(page.getByRole('link', { name: 'Back to the overview' })).toHaveAttribute('href', '/dashboard');
         expect(backend.requests.filter((r) => r.path === '/webhooks' || r.path.startsWith('/audit/')).map((r) => r.path)).toEqual([]);
         await expectAccessible(page, 'main > .p-6');
+      });
+    }
+
+    for (const [path, title] of CREATE_PAGES) {
+      test(`opening ${path} by its address says it is not for this role, and shows no form`, async ({ page }) => {
+        await page.goto(path);
+        await expect(page.getByRole('heading', { level: 1, name: 'Not available for your role' })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Back to the overview' })).toHaveAttribute('href', '/dashboard');
+        await expect(page.getByRole('heading', { name: title })).toHaveCount(0);
       });
     }
   });

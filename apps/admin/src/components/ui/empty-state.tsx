@@ -143,15 +143,7 @@ export function EmptyContacts() {
     <EmptyState
       icon={EmptyStateIcons.contacts}
       title="No contacts yet"
-      description="Add contacts manually or import from a CSV file."
-      action={{
-        label: "Add Contact",
-        href: "/dashboard/contacts/new",
-      }}
-      secondaryAction={{
-        label: "Import CSV",
-        href: "/dashboard/contacts/import",
-      }}
+      description="Contacts added by hand or synced from WhatsApp are listed here."
     />
   );
 }

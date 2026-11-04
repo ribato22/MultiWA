@@ -51,7 +51,8 @@ import { formatRelative, formatFull } from '@/lib/datetime';
 
 // `admin`: every read of the page is an owner's or admin's, so the other roles get neither its link nor the page.
 // `serverOwner`: the page is the server owner's alone, as what it sets comes from the server's environment.
-type MenuItem = { name: string; href: string; Icon: LucideIcon; admin?: boolean; serverOwner?: boolean };
+type Gated = { href: string; admin?: boolean; serverOwner?: boolean };
+type MenuItem = Gated & { name: string; Icon: LucideIcon };
 
 const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',              Icon: LayoutGrid },
@@ -70,6 +71,12 @@ const menuItems: MenuItem[] = [
   { name: 'API Keys',     href: '/dashboard/api-keys',     Icon: KeyRound },
   { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList, admin: true },
   { name: 'Settings',     href: '/dashboard/settings',     Icon: SettingsIcon },
+];
+
+// The pages that create what a link everyone has lists: the sidebar has no link to them, so only their address is shut.
+const createPages: Gated[] = [
+  { href: '/dashboard/profiles/new', admin: true },
+  { href: '/dashboard/automation/builder', admin: true },
 ];
 
 type NotifTypeInfo = { Icon: LucideIcon; tone: string };
@@ -258,8 +265,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const admin = canConfigure(user.role);
   const serverOwner = isServerOwner(user);
   // A page is shut to a user who is not what it asks for: the sidebar leaves its link out, and its address says so.
-  const shut = (item: MenuItem) => (item.admin && !admin) || (item.serverOwner && !serverOwner);
-  const blockedBy = menuItems.find((item) => shut(item) && pathname.startsWith(item.href));
+  const shut = (page: Gated) => (page.admin && !admin) || (page.serverOwner && !serverOwner);
+  const blockedBy = [...menuItems, ...createPages].find((page) => shut(page) && pathname.startsWith(page.href));
 
   const shell = (
     <div ref={shellRef} className="min-h-screen bg-background">

@@ -3,6 +3,7 @@ import { test, expect, get, ME } from './support/fixtures';
 
 const CONTACT = { id: 'ct-1', profileId: 'p-1', phone: '628111000111', name: 'Pak Joko', tags: ['vip'], createdAt: '2026-10-01T03:00:00.000Z' };
 const CONTACTS = { contacts: [CONTACT], total: 1, limit: 50, offset: 0 };
+const NO_CONTACTS = { contacts: [], total: 0, limit: 50, offset: 0 };
 
 test('an admin syncs and deletes contacts', async ({ page, backend }) => {
   backend.route(get('/contacts', CONTACTS));
@@ -27,6 +28,14 @@ test.describe('a viewer', () => {
     for (const name of ['Add Contact', 'Sync contacts from WhatsApp', 'Delete Pak Joko']) await expect(page.getByRole('button', { name })).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'Message Pak Joko' })).toHaveCount(0);
   });
+
+  test('with no contact yet, is offered neither to add nor to import one', async ({ page, backend }) => {
+    backend.route(get('/contacts', NO_CONTACTS));
+    await page.goto('/dashboard/contacts');
+    await expect(page.getByRole('heading', { name: 'No contacts yet' })).toBeVisible();
+    for (const name of ['Add Contact', 'Import CSV']) await expect(page.getByRole('link', { name })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add Contact' })).toHaveCount(0);
+  });
 });
 
 test.describe('a member', () => {
@@ -48,5 +57,13 @@ test.describe('a member', () => {
     await expect(page.getByRole('button', { name: 'Add Contact' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Message Pak Joko' })).toBeVisible();
     for (const name of ['Sync contacts from WhatsApp', 'Delete Pak Joko']) await expect(page.getByRole('button', { name })).toHaveCount(0);
+  });
+
+  test('with no contact yet, adds one from the header, and is offered no link to add or import', async ({ page, backend }) => {
+    backend.route(get('/contacts', NO_CONTACTS));
+    await page.goto('/dashboard/contacts');
+    await expect(page.getByRole('heading', { name: 'No contacts yet' })).toBeVisible();
+    for (const name of ['Add Contact', 'Import CSV']) await expect(page.getByRole('link', { name })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Add Contact' })).toHaveCount(1);
   });
 });
