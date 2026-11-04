@@ -35,18 +35,40 @@ x-api-key: YOUR_API_KEY
 
 The Swagger UI registers the API key under the `api-key` security scheme; the header name is lowercase `x-api-key`. Create keys in the dashboard, or with `POST /api-keys` while signed in: an API key cannot create another.
 
+### API-key scopes
+
+A key can carry a list of scopes. A route that asks for a scope answers `403` to a key whose list lacks it. A key with no scope list, or with `*`, keeps full access. A scope only narrows a key: it still acts with its user's role (see Roles below), so `messages:write` on a viewer's key sends nothing.
+
+| Scope (its name in the dashboard) | Routes it guards |
+|---|---|
+| `messages:read` (Read Messages) | `GET /conversations`, `GET /conversations/unread-count`, `GET /conversations/:id`, `GET /conversations/:id/messages`, `GET /messages/:id`, `GET /messages/profile/:profileId`, `GET /messages/conversation/:conversationId` and its `/load-older`, `GET /messages/schedule/:profileId` |
+| `messages:write` (Send Messages) | every `POST /messages/...` (the sends, `schedule` and `otp` included), `DELETE /messages/:id`, `DELETE /messages/schedule/:id`; `PUT /conversations/:id/read`, `/archive`, `/unarchive`, `/mute` and `/pin`, `DELETE /conversations/:id`, `DELETE /conversations/:id/messages`; `POST /calls/:id/reply` and `POST /calls/:id/call-link` |
+| `contacts:read` (Read Contacts) | `GET /contacts`, `GET /contacts/:id`, `GET /contacts/export/csv`, and the number checks `GET /contacts/profile/:profileId/validate/:phone` and `POST /contacts/profile/:profileId/validate` |
+| `contacts:write` (Manage Contacts) | the other contact routes: `POST /contacts`, `PUT` and `DELETE /contacts/:id`, `POST` and `DELETE /contacts/:id/tags`, `POST /contacts/import`, `/contacts/import/csv` and `/contacts/sync/whatsapp`, `POST /contacts/profile/:profileId/save-to-whatsapp`, `DELETE /contacts/profile/:profileId/whatsapp/:phone` |
+| `profiles:read` (Read Profiles) | `GET /profiles`, `GET /profiles/:id`, `GET /profiles/:id/status`, `GET /accounts/:accountId/profiles`, `GET /accounts/:accountId/profiles/:profileId` |
+| `profiles:write` (Manage Profiles) | `POST /profiles`, `PUT` and `DELETE /profiles/:id`, `POST /profiles/:id/connect` and `/disconnect`, `PUT /profiles/:id/calls-settings`, `POST`, `GET` and `DELETE /profiles/:id/calls-announcement`; under `/accounts/:accountId/profiles`: the create, the delete, `connect`, `disconnect` and `GET .../:profileId/qr`; and the pairing QR on the socket |
+| `webhooks:read` (Read Webhooks) | `GET /webhooks`, `GET /webhooks/:id` (they show each webhook's signing secret and custom headers) |
+| `webhooks:write` (Manage Webhooks) | `POST /webhooks`, `PUT` and `DELETE /webhooks/:id`, `POST /webhooks/:id/test` |
+| `broadcast:write` (Send Broadcasts) | `POST /broadcast`, `PUT` and `DELETE /broadcast/:id`, `POST /broadcast/:id/schedule`, `/start`, `/pause`, `/resume` and `/cancel`; `POST /bulk/send` and `POST /bulk/batch/:batchId/cancel`. Their reads ask for no scope |
+| `recordings:read` (Read Recordings) | `GET /calls/:id/recording` |
+| `recordings:delete` (Delete Recordings) | `DELETE /calls/:id/recording`, and, together with `profiles:write`, a `PUT /profiles/:id/calls-settings` that carries `retentionDays` |
+
+Every other route asks for no scope. On the socket, the pairing QR (`qr:update`) needs `profiles:write` too; the rest of the events need none ([WebSocket API](./08-websocket-api.md)).
+
 ### Roles
 
 Each organization member has one role. An API key acts with its user's role, at the time of each request.
 
 | Role | May |
 |---|---|
-| `viewer` | read; their own account, sessions, 2FA, notifications and API keys |
-| `member` | as a viewer, plus send messages, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, use the AI routes |
-| `admin` | as a member, plus configure profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, delete chats, read webhooks and audit logs, export contacts, and manage members and viewers |
+| `viewer` | read; their own account: sign-in and sign-out, password, preferences, sessions, 2FA, notifications, API keys, and deleting the account |
+| `member` | as a viewer, plus send messages one at a time, upload media, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, use the AI routes |
+| `admin` | as a member, plus configure the organization, accounts, profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, send and cancel bulk batches, delete chats, read webhooks and audit logs, export contacts, and manage members and viewers |
 | `owner` | as an admin, plus manage admins |
 
-The server-wide settings (`/settings/*`) are for the server's owner: the owner of the oldest organization. A role that may not call a route gets `403`. `scripts/api-roles.snapshot.json` lists each route's class; the CI checks it against the code.
+A viewer's reads include the lookups that are `POST`s: a template preview, an automation test, a number check and a knowledge-base search. A few reads are for owners and admins only (webhooks, audit logs, the exports, a group's invite link, the auto-reply hooks' settings, call recordings, the calls media status, a profile's call announcement and the QR route): the notes under each section below say which.
+
+The server-wide settings (`/settings/*`) and the integrations (`/integrations/*`) are for the server's owner: the owner of the oldest organization. A role that may not call a route gets `403`. `scripts/api-roles.snapshot.json` lists each route's class; the CI checks it against the code.
 
 ---
 
@@ -83,7 +105,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/auth/register` | Register an account and receive tokens |
+| `POST` | `/auth/register` | Register an account, with its organization, and receive tokens. Open to the first user of a new server; after that it answers `403` unless [`ALLOW_REGISTRATION`](./18-configuration-reference.md#allow_registration) is `true` |
 | `GET` | `/auth/registration` | Whether registration is open: `{ "open": boolean }` (public) |
 | `POST` | `/auth/login` | Log in and receive tokens |
 | `POST` | `/auth/2fa/verify` | Verify a 2FA challenge during login |
@@ -111,6 +133,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Accounts (`/accounts`)
 
+Every role reads, except the QR route, which is for owners and admins and also needs `profiles:write` on an API key with a scope list ([scopes](#api-key-scopes)). Owners and admins create, change and delete accounts, and create, delete, connect and disconnect their profiles.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/accounts` | List accounts |
@@ -121,12 +145,14 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/accounts/:accountId/profiles` | List profiles inside an account |
 | `POST` | `/accounts/:accountId/profiles` | Create a profile in an account |
 | `GET` | `/accounts/:accountId/profiles/:profileId` | Get profile (account-scoped) |
-| `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped; owner or admin) |
+| `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped) |
 | `POST` | `/accounts/:accountId/profiles/:profileId/connect` | Start WhatsApp connection |
 | `POST` | `/accounts/:accountId/profiles/:profileId/disconnect` | Disconnect |
 | `GET` | `/accounts/:accountId/profiles/:profileId/qr` | Retrieve current QR code |
 
 ### Profiles (`/profiles`) — flat alternative to the account-scoped routes
+
+Every role lists and reads profiles, and their status. Owners and admins create, change, delete, connect and disconnect profiles, set their call settings, and upload, listen to or remove their announcement.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -134,11 +160,11 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/profiles` | Create profile |
 | `GET` | `/profiles/:id` | Get profile |
 | `PUT` | `/profiles/:id` | Update profile |
-| `PUT` | `/profiles/:id/calls-settings` | The profile's call settings (owner or admin): `answerInDashboard`, `recording`, `retentionDays` (1-3650); 409 with `reasons` when one cannot be turned on |
-| `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (owner or admin; multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds; half a second more is allowed for encoders' padding) |
-| `GET` | `/profiles/:id/calls-announcement` | The profile's announcement, to listen to (owner or admin) |
-| `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (owner or admin; 409 while recording is on; its file goes at a nightly sweep once it is an hour old) |
-| `DELETE` | `/profiles/:id` | Delete profile (owner or admin) |
+| `PUT` | `/profiles/:id/calls-settings` | The profile's call settings: `answerInDashboard`, `recording`, `retentionDays` (1-3650); 409 with `reasons` when one cannot be turned on |
+| `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds; half a second more is allowed for encoders' padding) |
+| `GET` | `/profiles/:id/calls-announcement` | The profile's announcement, to listen to |
+| `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (409 while recording is on; its file goes at a nightly sweep once it is an hour old) |
+| `DELETE` | `/profiles/:id` | Delete profile |
 | `POST` | `/profiles/:id/connect` | Start WhatsApp connection |
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
 | `GET` | `/profiles/:id/status` | Get connection status |
@@ -188,6 +214,8 @@ Message lists answer at most 500 rows per request (`limit`).
 
 ### Bulk Messaging (`/bulk`)
 
+Every role reads batches. Sending a batch and cancelling one are for owners and admins, and an API key with a scope list needs `broadcast:write` for both. A member sends one message at a time ([Messages](#messages-messages)).
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/bulk/send` | Send bulk messages with variables |
@@ -213,6 +241,8 @@ Message lists answer at most 500 rows per request (`limit`).
 | `GET` | `/broadcast/:id/recipients` | Broadcast recipient list |
 
 ### Groups (`/groups`)
+
+Every role lists and reads groups. Everything else is for owners and admins, the invite link included: `GET /groups/:groupId/invite-link` is a read that only they may make.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -372,7 +402,7 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 
 ### Contacts (`/contacts`)
 
-Owners, admins and members add and edit contacts and tags; deleting, importing, syncing and exporting are for owners and admins.
+Owners, admins and members add and edit contacts and tags; deleting, importing, syncing and exporting, and saving contacts to or deleting them from the WhatsApp address book, are for owners and admins. Every role may validate numbers.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -438,6 +468,8 @@ Owner and admin only, reads included (they carry the signing secret). A key with
 | `POST` | `/automation/reorder` | Reorder the profile's flows (an id that is not one of them: `404`, nothing changes) |
 
 ### Auto-reply (`/autoreply`)
+
+Every role lists and reads the rules and the quick replies. Owners and admins create, change, toggle and delete them, configure the two hooks, and read the hooks' settings (`GET /autoreply/webhook-reply/:profileId` and `GET /autoreply/ai-hook/:profileId`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -520,6 +552,8 @@ The server's owner only: the integrations configuration comes from the server's 
 
 ### Audit (`/audit`)
 
+Owners and admins only.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/audit/logs` | List audit log entries |
@@ -555,24 +589,28 @@ The server's owner only: the integrations configuration comes from the server's 
 
 ### Workspaces (`/workspaces`)
 
+Every role reads. Owners and admins create, change and delete workspaces.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/workspaces` | List workspaces |
 | `POST` | `/workspaces` | Create workspace |
 | `GET` | `/workspaces/:id` | Get workspace |
 | `PUT` | `/workspaces/:id` | Update workspace |
-| `DELETE` | `/workspaces/:id` | Delete workspace (owner or admin) |
+| `DELETE` | `/workspaces/:id` | Delete workspace |
 
 ### GDPR (`/account`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/account/export` | Export personal data |
+| `GET` | `/account/export` | Export the caller's own data (user, sessions, notifications, push subscriptions, audit log) and the organization's profiles, messages (the newest 10000), contacts and automations. Owners and admins only |
 | `DELETE` | `/account/delete` | Delete account and personal data (the server's owner gets `403` while other organizations use the server: nobody else could take over the server-wide settings) |
 
 ---
 
 ## 7.5 Example: Send Bulk with Variables
+
+Bulk sends are for owners and admins: the key must be an owner's or an admin's, and, with a scope list, carry `broadcast:write`.
 
 ```bash
 curl -X POST http://localhost:3333/api/v1/bulk/send \

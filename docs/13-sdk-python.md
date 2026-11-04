@@ -181,7 +181,9 @@ client.profiles.disconnect(profile.id)
 
 There is no REST route for the QR code: after `connect()`, take it from the
 [WebSocket](./08-websocket-api.md) `qr:update` event or a `connection.qr`
-[webhook](./09-webhook-events.md). `profiles.get_qr()` is deprecated and raises
+[webhook](./09-webhook-events.md). The `qr:update` event reaches owners and admins
+only: a dashboard sign-in of one qualifies, and so does an API key of one with
+`profiles:write` (or no scope list). `profiles.get_qr()` is deprecated and raises
 `NotImplementedError`.
 
 ### Webhooks

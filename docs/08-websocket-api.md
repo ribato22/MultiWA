@@ -18,7 +18,7 @@ Credentials go in the handshake, as one of:
 - **JWT** — the `accessToken` from `POST /api/v1/auth/login`: `auth: { token }`, an `Authorization: Bearer <token>` header, or `?token=`.
 - **API key** — `auth: { apiKey }`, an `X-API-Key` header, or `?apiKey=`.
 
-The user must be active, a JWT's login session must still be live (as on the REST API, logging out or revoking the session ends it), and an API key must not have expired. API-key scopes are not checked here, except for the pairing QR (`qr:update`, in 8.3): any other valid key of the organization can listen.
+The user must be active, a JWT's login session must still be live (as on the REST API, logging out or revoking the session ends it), and an API key must not have expired. API-key scopes are not checked here, except that a key with a scope list needs `profiles:write` for the pairing QR (8.3); any valid key of the organization can listen to the rest.
 
 A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one. Its session is checked again every minute: a JWT socket whose session was logged out, revoked or has expired, or whose user was deactivated, is disconnected the same way, so a revoked device stops receiving calls within a minute.
 
@@ -35,7 +35,7 @@ Events are sent per profile, to the sockets that joined it. After every `connect
 | `join` (alias `subscribe:profile`) | `{ "profileId": "…" }` | `{ "success": true, "profileId": "…" }`, or `{ "success": false, "error": "Forbidden" }` when the profile is not in your organization, or `{ "success": false, "error": "Unavailable" }` when the server could not check the credentials (join again after the next `connect`) |
 | `unsubscribe:profile` | `{ "profileId": "…" }` | `{ "success": true, "profileId": "…" }` |
 
-A joined socket receives every event of that profile, except that the pairing QR (`qr:update`) reaches owners and admins only; there is no per-event filter. Socket.IO keeps the connection alive itself, so there is no application-level ping.
+A joined socket receives every event of that profile (you cannot pick events), except the pairing QR, which reaches owners and admins only. Socket.IO keeps the connection alive itself, so there is no application-level ping.
 
 ---
 
