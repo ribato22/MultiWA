@@ -13,7 +13,9 @@ export const API_KEY_SCOPE = 'multiwa_api_key_scope';
  * Backward-compat escape hatches: a key with NO scopes (`[]`) or a wildcard `*`
  * is full-access, and JWT-authenticated requests are unaffected (no apiKeyScopes).
  *
+ * The scopes are the values the dashboard issues to API keys (`apps/admin/src/app/dashboard/api-keys/page.tsx`).
+ *
  * @example
- * @RequireScope('message:send')
+ * @RequireScope('messages:write')
  */
 export const RequireScope = (...scopes: string[]) => SetMetadata(API_KEY_SCOPE, scopes);

@@ -25,7 +25,7 @@ export async function assertRole(reflector: Reflector, context: ExecutionContext
   if (!ANY_ROLES.includes(user?.role)) throw new ForbiddenException('Insufficient role for this action');
   if (allowed?.length) {
     if (!allowed.includes(user.role)) throw new ForbiddenException('Insufficient role for this action');
-  } else if (user?.role === 'viewer' && !READ_METHODS.has(req.method)) {
+  } else if (user.role === 'viewer' && !READ_METHODS.has(req.method)) {
     throw new ForbiddenException('This role is read-only');
   }
   if (reflector.getAllAndOverride<boolean | undefined>(SERVER_OWNER_KEY, targets) && !(await isServerOwner(user))) {

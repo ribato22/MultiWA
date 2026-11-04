@@ -7,8 +7,8 @@ import { API_KEY_SCOPE } from '../decorators/require-scope.decorator';
 
 /**
  * Whether `user` is an API key whose explicit scope list does not grant `scope`. A JWT login (no apiKeyScopes) never
- * lacks one: its authorization is the auth guards' role check and TenantGuard's. Backward-compat: an unscoped (`[]`) or wildcard
- * (`*`) key is full-access. Exported for the routes that need a scope for only some of their input.
+ * lacks one: its authorization is the auth guards' role check and TenantGuard's. Backward-compat: an unscoped (`[]`)
+ * or wildcard (`*`) key is full-access. Exported for the routes that need a scope for only some of their input.
  */
 export function apiKeyLacksScope(user: { apiKeyScopes?: string[] } | undefined, scope: string): boolean {
   const scopes = user?.apiKeyScopes;

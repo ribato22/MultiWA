@@ -6,9 +6,8 @@ import { SetMetadata } from '@nestjs/common';
 export const ROLES_KEY = 'roles';
 
 /**
- * Restrict a route (or controller) to callers whose organization role is one of
- * `roles`. Checked by JwtAuthGuard and JwtOrApiKeyGuard right after sign-in (role-check.ts). Org roles:
- * `owner`, `admin`, `member`, `viewer`.
+ * Restrict a route (or controller) to callers whose organization role is one of `roles`. Checked by JwtAuthGuard and
+ * JwtOrApiKeyGuard right after sign-in (role-check.ts). Org roles: `owner`, `admin`, `member`, `viewer`.
  *
  * Example: `@Roles('owner', 'admin')`
  */
