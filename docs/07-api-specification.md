@@ -158,7 +158,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/messages/:id` | Get a single message |
 | `DELETE` | `/messages/:id` | Delete a message locally |
 
-List routes answer at most 1000 rows per request (`limit`).
+Message lists answer at most 500 rows per request (`limit`).
 
 > **Disconnected profile.** The endpoints that deliver a message (`text`, `image`, `video`, `audio`, `document`, `location`, `contact`, `reaction`, `reply`, `poll`) answer **`409 Conflict`** when the profile has no live WhatsApp connection, instead of reporting success:
 >
@@ -372,7 +372,7 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 | `POST` | `/contacts/profile/:profileId/save-to-whatsapp` | Save a contact into the WhatsApp account addressbook (whatsapp-web-js only) |
 | `DELETE` | `/contacts/profile/:profileId/whatsapp/:phone` | Delete a contact from the WhatsApp account addressbook (whatsapp-web-js only) |
 
-List routes answer at most 1000 rows per request (`limit`); a bulk validation takes at most 1000 numbers.
+Contact lists answer at most 1000 rows per request (`limit`), and a bulk validation takes at most 1000 numbers.
 
 ### Templates (`/templates`)
 

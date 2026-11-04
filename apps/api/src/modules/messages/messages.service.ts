@@ -35,7 +35,7 @@ import {
   isDurableSend,
 } from './outbound-send';
 import { isWorkerEngine } from '../../common/engine-host';
-import { pageSize } from '../../common/page-size';
+import { clampMessagePage } from '../../common/page-size';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 
 
@@ -611,7 +611,7 @@ export class MessagesService {
     return prisma.message.findMany({
       where,
       orderBy: { timestamp: 'desc' },
-      take: pageSize(options.limit),
+      take: clampMessagePage(options.limit),
       skip: options.offset || 0,
       include: { conversation: true },
     });
@@ -634,11 +634,11 @@ export class MessagesService {
     const messages = await prisma.message.findMany({
       where,
       orderBy: { timestamp: 'desc' },
-      take: pageSize(options.limit),
+      take: clampMessagePage(options.limit),
     });
 
     messages.reverse();
-    return { messages, hasMore: messages.length === pageSize(options.limit) };
+    return { messages, hasMore: messages.length === clampMessagePage(options.limit) };
   }
 
   /**

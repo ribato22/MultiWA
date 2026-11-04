@@ -119,15 +119,15 @@ describe('MessagesService', () => {
     });
   });
 
-  // ?limit=1000000 would load a whole table into one answer: a page is at most 1000 rows, and a full one says there is
-  // more, whatever limit was asked for.
+  // ?limit=1000000 would load a whole table into one answer, and a message row can hold its media inline: a page is at
+  // most 500 rows, and a full one says there is more, whatever limit was asked for.
   describe('message lists', () => {
-    it('load at most 1000 rows, and a full page has more', async () => {
-      const findMany = vi.mocked(prisma.message.findMany).mockReset().mockResolvedValue(Array.from({ length: 1000 }, (_, i) => ({ id: `m${i}` })) as any);
+    it('load at most 500 rows, and a full page has more', async () => {
+      const findMany = vi.mocked(prisma.message.findMany).mockReset().mockResolvedValue(Array.from({ length: 500 }, (_, i) => ({ id: `m${i}` })) as any);
       await service.findByProfile('p', { limit: 1_000_000 });
-      expect(findMany.mock.calls[0][0]).toMatchObject({ take: 1000 });
+      expect(findMany.mock.calls[0][0]).toMatchObject({ take: 500 });
       expect((await service.findByConversation('c', { limit: 1_000_000 })).hasMore).toBe(true);
-      expect(findMany.mock.calls[1][0]).toMatchObject({ take: 1000 });
+      expect(findMany.mock.calls[1][0]).toMatchObject({ take: 500 });
     });
   });
 });

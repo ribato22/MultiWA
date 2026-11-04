@@ -27,7 +27,8 @@ vi.mock('@multiwa/database', () => ({
 vi.mock('../groups/groups.service', () => ({ GroupsService: class {} }));
 
 import { prisma } from '@multiwa/database';
-import { ConversationsService, clampMessagePage, MAX_MESSAGE_PAGE } from './conversations.service';
+import { ConversationsService } from './conversations.service';
+import { MAX_MESSAGE_PAGE } from '../../common/page-size';
 
 function makeService(groupsStub: any = { getById: vi.fn() }): ConversationsService {
   return new ConversationsService(groupsStub);
@@ -283,22 +284,8 @@ describe('ConversationsService', () => {
   // 39 MB — so an unbounded page is a heap-exhaustion vector, not a slow query.
   // Fixing the conversation LIST left these two single-conversation endpoints
   // open: `?messageLimit=100000` reopened the same hole.
+  // clampMessagePage itself is pinned in common/page-size.spec.ts.
   describe('message page clamping', () => {
-    it('clamps, floors and coerces', () => {
-      expect(clampMessagePage(100000)).toBe(MAX_MESSAGE_PAGE);
-      expect(clampMessagePage('100000')).toBe(MAX_MESSAGE_PAGE); // query params arrive as strings
-      expect(clampMessagePage(10)).toBe(10);
-      expect(clampMessagePage('10')).toBe(10);
-      expect(clampMessagePage(10.9)).toBe(10);
-      expect(clampMessagePage(MAX_MESSAGE_PAGE)).toBe(MAX_MESSAGE_PAGE);
-    });
-
-    it('falls back to the default for missing or nonsense values', () => {
-      for (const bad of [undefined, null, 0, -5, NaN, 'abc', '']) {
-        expect(clampMessagePage(bad as any)).toBe(50);
-      }
-    });
-
     it('findOne caps the included messages', async () => {
       vi.mocked(prisma.conversation.findUnique).mockResolvedValue({
         id: 'c1',
@@ -325,6 +312,17 @@ describe('ConversationsService', () => {
       expect(prisma.message.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: MAX_MESSAGE_PAGE }),
       );
+    });
+
+    // A capped page that came back full still has more, so hasMore compares with the page loaded, not with `limit`.
+    it('getMessages says a full capped page has more', async () => {
+      vi.mocked(prisma.message.findMany).mockResolvedValue(
+        Array.from({ length: MAX_MESSAGE_PAGE }, (_, i) => ({ id: `m${i}` })) as any,
+      );
+
+      const res = await makeService().getMessages('c1', { limit: 100000 });
+
+      expect(res.hasMore).toBe(true);
     });
   });
 });
