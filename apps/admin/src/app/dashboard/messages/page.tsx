@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import TemplatePicker from '@/components/templates/TemplatePicker';
 import { formatDateTime, formatRelative, formatFull } from '@/lib/datetime';
+import { canAct, canConfigure, currentUser } from '@/lib/current-user';
 
 interface Profile {
   id: string;
@@ -71,6 +72,8 @@ const MEDIA_ICON_MAP: Partial<Record<MessageType, LucideIcon>> = {
 };
 
 export default function MessagesPage() {
+  // Sending is an agent's, adding a profile an owner's or admin's; a viewer reads what was sent.
+  const [role] = useState(() => currentUser()?.role);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [recipient, setRecipient] = useState('');
@@ -585,14 +588,21 @@ export default function MessagesPage() {
           </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">No Connected Profiles</h3>
           <p className="text-muted-foreground mb-6">Connect a WhatsApp profile first</p>
-          <Link href="/dashboard/profiles/new" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors cursor-pointer">
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            Add Profile
-          </Link>
+          {canConfigure(role) && (
+            <Link href="/dashboard/profiles/new" className="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors cursor-pointer">
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              Add Profile
+            </Link>
+          )}
         </div>
       ) : (
         <div className="grid lg:grid-cols-3 gap-6">
-          {/* Send Message Form */}
+          {/* Send Message Form: an agent's */}
+          {!canAct(role) ? (
+            <p className="lg:col-span-2 bg-card rounded-2xl border border-border p-6 text-sm text-muted-foreground">
+              Your role can see what was sent but not send messages.
+            </p>
+          ) : (
           <div className="lg:col-span-2">
             <div className="bg-card rounded-2xl border border-border overflow-hidden">
               <div className="p-4 border-b border-border bg-primary/10">
@@ -1278,6 +1288,7 @@ export default function MessagesPage() {
               </div>
             </div>
           </div>
+          )}
 
           {/* Recent Messages */}
           <div className="lg:col-span-1">
