@@ -3,7 +3,6 @@ import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } f
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { WorkspacesService } from './workspaces.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
@@ -52,7 +51,6 @@ export class WorkspacesController {
   // Deleting a workspace deletes its profiles and their recordings (the cascade, then the nightly sweep), which only an
   // owner or admin may: so an owner or admin only. Logins only (JwtAuthGuard): no API key reaches it, so no scope.
   @Delete(':id')
-  @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @ApiOperation({ summary: 'Delete workspace' })
   @RequireTenant({ from: 'param', key: 'id', resource: 'workspace' })

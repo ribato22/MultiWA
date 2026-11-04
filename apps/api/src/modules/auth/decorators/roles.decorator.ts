@@ -7,7 +7,7 @@ export const ROLES_KEY = 'roles';
 
 /**
  * Restrict a route (or controller) to callers whose organization role is one of
- * `roles`. Enforced by RolesGuard, which reads `req.user.role`. Org roles:
+ * `roles`. Checked by JwtAuthGuard and JwtOrApiKeyGuard right after sign-in (role-check.ts). Org roles:
  * `owner`, `admin`, `member`, `viewer`.
  *
  * Example: `@Roles('owner', 'admin')`

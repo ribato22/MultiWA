@@ -7,7 +7,6 @@ import { ProfilesService } from './profiles.service';
 import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -61,7 +60,7 @@ export class ProfilesController {
   // Deleting a profile deletes every recording file of it, which only an owner or admin may: so an owner or admin only,
   // and an API key with a scope list needs profiles:write.
   @Delete(':id')
-  @UseGuards(ApiKeyScopeGuard, RolesGuard)
+  @UseGuards(ApiKeyScopeGuard)
   @Roles('owner', 'admin')
   @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })

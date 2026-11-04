@@ -7,7 +7,7 @@ import { API_KEY_SCOPE } from '../decorators/require-scope.decorator';
 
 /**
  * Whether `user` is an API key whose explicit scope list does not grant `scope`. A JWT login (no apiKeyScopes) never
- * lacks one: its authorization is RolesGuard/RbacGuard/TenantGuard's. Backward-compat: an unscoped (`[]`) or wildcard
+ * lacks one: its authorization is the auth guards' role check and TenantGuard's. Backward-compat: an unscoped (`[]`) or wildcard
  * (`*`) key is full-access. Exported for the routes that need a scope for only some of their input.
  */
 export function apiKeyLacksScope(user: { apiKeyScopes?: string[] } | undefined, scope: string): boolean {
@@ -23,7 +23,7 @@ export function apiKeyLacksScope(user: { apiKeyScopes?: string[] } | undefined, 
  * No-op unless BOTH: (a) the route declares `@RequireScope`, AND (b) the caller is
  * an API key with an explicit, non-wildcard scope list. This keeps every existing
  * key (`[]` -> full access) and every JWT login (no apiKeyScopes) working unchanged.
- * Mirrors RolesGuard — Reflector-only, so no provider/module registration is needed.
+ * Reflector-only, so no provider/module registration is needed.
  */
 @Injectable()
 export class ApiKeyScopeGuard implements CanActivate {

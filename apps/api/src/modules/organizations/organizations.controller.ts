@@ -3,14 +3,13 @@ import { Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request } f
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiForbiddenResponse } from '@nestjs/swagger';
 import { OrganizationsService } from './organizations.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { UpdateOrganizationDto, AddMemberDto, UpdateMemberRoleDto } from './dto';
 
 @ApiTags('Organizations')
 @Controller('organizations')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()

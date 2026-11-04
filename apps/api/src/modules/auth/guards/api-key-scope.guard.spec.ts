@@ -1,5 +1,5 @@
 // Unit tests for ApiKeyScopeGuard — proves the backward-compat decision matrix
-// without HTTP. Mirrors roles.guard.spec.ts (Reflector-stubbed).
+// without HTTP (Reflector-stubbed).
 
 import { describe, it, expect, vi } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';

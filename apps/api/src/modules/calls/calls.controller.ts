@@ -12,7 +12,6 @@ import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './d
 import { CallCountDto, CallDto, CallLinkResultDto, CallListDto, CallReplyResultDto, CallsMediaStatusDto, DeletedCallRecordingDto } from './dto/responses';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -56,7 +55,6 @@ export class CallsController {
   }
 
   @Get('media/status')
-  @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @ApiOperation({ summary: 'Readiness of answering calls in the dashboard: the media server and every profile of the organization' })
   @ApiResponse({ status: 200, description: 'The server, its recordings storage, and each profile with its call settings and readiness', type: CallsMediaStatusDto })
@@ -117,7 +115,6 @@ export class CallsController {
   // A recording is personal data: owner and admin only, an API key with a scope list needs recordings:read, and a play
   // or a download is audited before a byte is sent.
   @Get(':id/recording')
-  @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @RequireScope('recordings:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
@@ -139,7 +136,6 @@ export class CallsController {
   }
 
   @Delete(':id/recording')
-  @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @RequireScope('recordings:delete')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })

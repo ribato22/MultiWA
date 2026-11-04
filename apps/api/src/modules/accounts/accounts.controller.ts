@@ -7,7 +7,6 @@ import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/dec
 import { AccountsService } from './accounts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -102,7 +101,7 @@ export class AccountsController {
   // As the flat route: deleting a profile deletes every recording file of it, so an owner or admin only, and an API
   // key with a scope list needs profiles:write.
   @Delete(':accountId/profiles/:profileId')
-  @UseGuards(ApiKeyScopeGuard, RolesGuard)
+  @UseGuards(ApiKeyScopeGuard)
   @Roles('owner', 'admin')
   @RequireScope('profiles:write')
   @RequireTenant(

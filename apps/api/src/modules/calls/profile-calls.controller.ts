@@ -15,7 +15,6 @@ import { UpdateCallSettingsDto } from './dto';
 import { CallAnnouncementResultDto, CallsRefusalDto, CallsSettingsDto } from './dto/responses';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard, apiKeyLacksScope } from '../auth/guards/api-key-scope.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
@@ -60,7 +59,7 @@ export async function readUpload(request: FastifyRequest, maxBytes: number): Pro
 
 @ApiTags('Calls')
 @Controller('profiles')
-@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, RolesGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()

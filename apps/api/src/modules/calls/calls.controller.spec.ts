@@ -21,7 +21,6 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { API_KEY_SCOPE } from '../auth/decorators/require-scope.decorator';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuditInterceptor } from '../audit/audit.interceptor';
 import { CallsController } from './calls.controller';
 import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto, UpdateCallSettingsDto } from './dto';
@@ -66,11 +65,11 @@ describe('CallsController routes', () => {
     expect(served.sort()).toEqual(ROUTES.map(([name]) => name).sort());
   });
 
-  // A recording is personal data: owner and admin only (RolesGuard on the two routes, after the class's guards).
+  // A recording is personal data: owner and admin only. The class's auth guard checks @Roles, so the routes add no guard.
   it('the recording routes are for owners and admins only', () => {
     for (const name of ['recording', 'deleteRecording']) {
       expect(Reflect.getMetadata(ROLES_KEY, proto[name])).toEqual(['owner', 'admin']);
-      expect(Reflect.getMetadata(GUARDS_METADATA, proto[name])).toEqual([RolesGuard]);
+      expect(Reflect.getMetadata(GUARDS_METADATA, proto[name])).toBeUndefined();
     }
   });
 
