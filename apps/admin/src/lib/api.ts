@@ -29,6 +29,8 @@ export interface User {
   name: string;
   role: string;
   organizationId: string;
+  /** From `/auth/me` only: the owner of the server's oldest organization, who alone sets storage and SMTP. */
+  isServerOwner?: boolean;
 }
 
 export interface Profile {

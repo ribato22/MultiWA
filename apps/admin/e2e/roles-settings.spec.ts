@@ -82,3 +82,29 @@ for (const role of ['member', 'viewer']) {
     });
   });
 }
+
+test.describe('the server owner', () => {
+  test.use({ user: { ...ME, role: 'owner', isServerOwner: true } });
+
+  test('has the Storage tab and the SMTP settings, as the server stores them', async ({ page, backend }) => {
+    backend.route(get('/settings/storage', { type: 'local', source: 'database' }));
+    backend.route(get('/settings/smtp', { host: 'smtp.example.com', port: 587, user: '', pass: '', from: 'noreply@example.com', secure: false, source: 'database' }));
+    await page.goto('/dashboard/settings?tab=storage');
+    await expect(tab(page, 'Storage')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tabpanel')).toContainText('values stored in database');
+    await tab(page, 'Notifications').click();
+    await expect(page.getByRole('heading', { name: 'Email Server (SMTP)' })).toBeVisible();
+    await expect(page.getByPlaceholder('smtp.gmail.com')).toHaveValue('smtp.example.com');
+  });
+});
+
+test('an admin who is not the server owner has no Storage tab nor SMTP settings, and never reads them', async ({ page, backend }) => {
+  await page.goto('/dashboard/settings?tab=storage'); // a link to the tab opens Account
+  await expect(tab(page, 'Account')).toHaveAttribute('aria-selected', 'true');
+  await expect(page).toHaveURL(/\/dashboard\/settings\?tab=account$/);
+  await expect(tab(page, 'Storage')).toHaveCount(0);
+  await tab(page, 'Notifications').click();
+  await expect(page.getByRole('tabpanel')).toContainText('Notification Preferences');
+  await expect(page.getByRole('heading', { name: 'Email Server (SMTP)' })).toHaveCount(0);
+  expect(backend.requests.filter((r) => r.path.startsWith('/settings/')).map((r) => r.path)).toEqual([]);
+});

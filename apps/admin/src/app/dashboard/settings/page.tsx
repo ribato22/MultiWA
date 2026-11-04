@@ -108,9 +108,12 @@ export default function SettingsPage() {
   // A link to the Calls tab waits until the console knows whether there is one: it must not show Account, then switch.
   // Meanwhile the other tabs can be opened, and the Calls tab only keeps its place, unseen.
   const waiting = tab === 'calls' && !!calls && !calls.inUseKnown;
+  // Storage and SMTP are the server's, so its owner's only (`/auth/me` says who): until it answers, a link to the
+  // Storage tab waits.
+  const serverOwner = !!user?.isServerOwner;
   // A tab this page does not have, or not for this user, opens Account, and the URL says so: a later ring then leaves
   // the tab as it is.
-  const shown = waiting || (TABS.includes(tab) && (tab !== 'calls' || callsTab)) ? tab : 'account';
+  const shown = waiting || (TABS.includes(tab) && (tab !== 'calls' || callsTab) && (tab !== 'storage' || serverOwner || loading)) ? tab : 'account';
   useEffect(() => {
     if (shown !== tab) select(shown);
   }, [shown, tab]);
@@ -184,14 +187,12 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
-    fetchUser();
+    fetchUser(); // and, for the server owner, the storage and SMTP settings
     fetchMembers();
     loadPreferences();
     check2FAStatus();
     fetchSessions();
     fetchConnectedProfiles();
-    fetchStorageConfig();
-    fetchSmtpConfig();
   }, []);
 
   const fetchStorageConfig = async () => {
@@ -356,6 +357,10 @@ export default function SettingsPage() {
       const res = await api.me();
       if (res.data) {
         setUser(res.data);
+        if (res.data.isServerOwner) {
+          fetchStorageConfig();
+          fetchSmtpConfig();
+        }
         setSettings(prev => ({
           ...prev,
           name: res.data?.name || '',
@@ -516,7 +521,7 @@ export default function SettingsPage() {
           )}
           <TabsTrigger value="api">API & Webhooks</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="storage">Storage</TabsTrigger>
+          {serverOwner && <TabsTrigger value="storage">Storage</TabsTrigger>}
         </TabsList>
 
         {/* Account Tab */}
@@ -806,7 +811,8 @@ export default function SettingsPage() {
                 {saving ? 'Saving...' : 'Save Preferences'}
               </Button>
 
-              {/* ── SMTP Configuration ── */}
+              {/* ── SMTP Configuration: server-wide, so the server owner's only ── */}
+              {serverOwner && (
               <div className="space-y-4 pt-6 border-t border-border">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">Email Server (SMTP)</h3>
@@ -952,6 +958,7 @@ export default function SettingsPage() {
                   ) : 'Save SMTP Configuration'}
                 </Button>
               </div>
+              )}
             </div>
           </div>
         </TabsContent>

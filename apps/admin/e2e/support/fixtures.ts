@@ -9,7 +9,8 @@ import { installBrowserFakes } from './browser';
 
 export { expect };
 
-export const ME = { id: 'u-ada', name: 'Ada Agent', email: 'ada@example.com', role: 'admin', organizationId: 'org-1' };
+// An admin, not the server owner (the owner of the oldest organization, who alone sets storage and SMTP).
+export const ME = { id: 'u-ada', name: 'Ada Agent', email: 'ada@example.com', role: 'admin', organizationId: 'org-1', isServerOwner: false };
 export const PROFILE = {
   id: 'p-1',
   name: 'Line 1',
