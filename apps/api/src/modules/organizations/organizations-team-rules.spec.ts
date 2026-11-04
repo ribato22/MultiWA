@@ -29,6 +29,7 @@ describe('team rules', () => {
   it('an admin adds members and viewers, but not an admin', async () => {
     await expect(service.addMember('org-1', ADMIN, { email: 'v@x.io', name: 'V', role: 'viewer' })).resolves.toMatchObject({ role: 'viewer' });
     await expect(service.addMember('org-1', ADMIN, { email: 'a@x.io', name: 'A', role: 'admin' })).rejects.toThrow(ForbiddenException);
+    expect(users.findUnique).toHaveBeenCalledTimes(1);
     expect(users.create).toHaveBeenCalledTimes(1);
   });
 

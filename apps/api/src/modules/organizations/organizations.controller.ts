@@ -42,7 +42,7 @@ export class OrganizationsController {
   @Post('members')
   @Roles('owner', 'admin')
   @ApiOperation({ summary: 'Invite/create a new member' })
-  @ApiForbiddenResponse({ description: 'Requires owner or admin role' })
+  @ApiForbiddenResponse({ description: 'Requires owner or admin role; only the owner adds, changes or removes an admin, and nobody changes their own role' })
   @ApiValidationError()
   async addMember(@Request() req: any, @Body() dto: AddMemberDto) {
     return this.service.addMember(req.user.organizationId, req.user, dto);
@@ -51,7 +51,7 @@ export class OrganizationsController {
   @Put('members/:id/role')
   @Roles('owner', 'admin')
   @ApiOperation({ summary: 'Update member role' })
-  @ApiForbiddenResponse({ description: 'Requires owner or admin role' })
+  @ApiForbiddenResponse({ description: 'Requires owner or admin role; only the owner adds, changes or removes an admin, and nobody changes their own role' })
   @ApiValidationError()
   @ApiNotFound('Member')
   async updateMemberRole(
@@ -65,7 +65,7 @@ export class OrganizationsController {
   @Delete('members/:id')
   @Roles('owner', 'admin')
   @ApiOperation({ summary: 'Remove member from organization' })
-  @ApiForbiddenResponse({ description: 'Requires owner or admin role' })
+  @ApiForbiddenResponse({ description: 'Requires owner or admin role; only the owner removes an admin' })
   @ApiNotFound('Member')
   async removeMember(@Request() req: any, @Param('id') memberId: string) {
     return this.service.removeMember(req.user.organizationId, req.user, memberId);

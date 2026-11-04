@@ -302,6 +302,7 @@ describe('CallsService.update', () => {
     db.user.findFirst.mockResolvedValue(null);
     const t = make();
     await expect(t.svc.update('c1', { assignedUserId: 'u9' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(t.svc.update('c1', { assignedUserId: 'u9' })).rejects.toThrow('assignedUserId must be an active owner, admin or member of this organization');
     await expect(t.svc.update('c1', { followUp: 'later' })).rejects.toBeInstanceOf(BadRequestException);
     expect(db.call.update).not.toHaveBeenCalled();
     expectNothingAnnounced(t);
