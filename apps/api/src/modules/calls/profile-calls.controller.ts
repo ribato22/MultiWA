@@ -1,9 +1,9 @@
 // MultiWA Gateway - a profile's call settings and its call announcement
 // apps/api/src/modules/calls/profile-calls.controller.ts
 //
-// Their own routes, owner/admin only: the profile update (PUT /profiles/:id) checks no role, and these decide who can
-// talk to the callers, whether the calls are recorded, and what the callers hear first. So an API key with a scope
-// list needs profiles:write (the admin's "Manage Profiles") for any of them.
+// Owner/admin only, like the profile update (PUT /profiles/:id): these decide who can talk to the callers, whether the
+// calls are recorded, and what the callers hear first. So an API key with a scope list needs profiles:write (the
+// admin's "Manage Profiles") for any of them.
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, PayloadTooLargeException, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiProduces, ApiResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply, FastifyRequest } from 'fastify';

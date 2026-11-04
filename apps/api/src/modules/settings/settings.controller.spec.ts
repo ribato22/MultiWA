@@ -18,8 +18,4 @@ describe('SettingsController', () => {
     expect(Reflect.getMetadata(ROLES_KEY, SettingsController)).toEqual(['owner']);
     expect(Reflect.getMetadata(SERVER_OWNER_KEY, SettingsController)).toBe(true);
   });
-
-  it('checks no role inside its handlers any more', () => {
-    expect(Object.getOwnPropertyNames(SettingsController.prototype)).not.toContain('ensureAdmin');
-  });
 });

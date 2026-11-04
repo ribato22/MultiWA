@@ -1,5 +1,5 @@
 // Compose passes ALLOW_REGISTRATION to the api, closed by default. The api service lists its environment explicitly,
-// so a variable missing there never reaches the container: before this guard, ALLOW_REGISTRATION=true did nothing.
+// so a variable missing there never reaches the container, and ALLOW_REGISTRATION=true would do nothing.
 import { describe, it, expect } from 'vitest';
 import { composeService } from './testing/compose';
 
