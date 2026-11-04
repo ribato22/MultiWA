@@ -40,6 +40,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Profile, Automation } from '@/lib/api';
+import { canConfigure, currentUser } from '@/lib/current-user';
 import { formatRelative, formatFull } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -94,6 +95,8 @@ const ACTION_TYPES: ActionDef[] = [
 
 export default function AutomationPage() {
   const { toast } = useToast();
+  // Automations are configuration: an owner or admin builds, switches, edits and deletes them; everyone sees them.
+  const [admin] = useState(() => canConfigure(currentUser()?.role));
   const [loading, setLoading] = useState(true);
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -327,18 +330,20 @@ export default function AutomationPage() {
           <h1 className="text-2xl font-bold text-foreground">Automation</h1>
           <p className="text-muted-foreground mt-1">Create automated responses and workflows</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link href="/dashboard/automation/builder">
-            <Button variant="outline" className="gap-2 cursor-pointer">
-              <Wrench className="w-4 h-4" aria-hidden="true" />
-              Visual Builder
+        {admin && (
+          <div className="flex items-center gap-2">
+            <Link href="/dashboard/automation/builder">
+              <Button variant="outline" className="gap-2 cursor-pointer">
+                <Wrench className="w-4 h-4" aria-hidden="true" />
+                Visual Builder
+              </Button>
+            </Link>
+            <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              Create Automation
             </Button>
-          </Link>
-          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            Create Automation
-          </Button>
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Filters */}
@@ -413,10 +418,12 @@ export default function AutomationPage() {
           <p className="text-muted-foreground mb-6">
             Create automated workflows to respond to messages automatically
           </p>
-          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            Create Your First Automation
-          </Button>
+          {admin && (
+            <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              Create Your First Automation
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -471,7 +478,8 @@ export default function AutomationPage() {
                     </div>
                   </div>
 
-                  {/* Right side - Actions */}
+                  {/* Right side - Actions: an owner's or admin's (the badge says whether it is active) */}
+                  {admin && (
                   <div className="flex items-center gap-3 flex-shrink-0">
                     <Switch
                       checked={automation.isActive}
@@ -491,6 +499,7 @@ export default function AutomationPage() {
                       <Trash2 className="w-4 h-4" aria-hidden="true" />
                     </Button>
                   </div>
+                  )}
                 </div>
               </div>
             );

@@ -40,7 +40,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
-import { canConfigure, currentUser } from '@/lib/current-user';
+import { canConfigure, currentUser, isServerOwner } from '@/lib/current-user';
 import { EmptyState } from '@/components/ui/empty-state';
 import { DemoBanner } from '@/components/demo-banner';
 import { CallsProvider, forgetStoredCall } from '@/components/calls/calls-provider';
@@ -50,7 +50,8 @@ import { InCallBar } from '@/components/calls/in-call-bar';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
 // `admin`: every read of the page is an owner's or admin's, so the other roles get neither its link nor the page.
-type MenuItem = { name: string; href: string; Icon: LucideIcon; admin?: boolean };
+// `serverOwner`: the page is the server owner's alone, as what it sets comes from the server's environment.
+type MenuItem = { name: string; href: string; Icon: LucideIcon; admin?: boolean; serverOwner?: boolean };
 
 const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',              Icon: LayoutGrid },
@@ -64,7 +65,7 @@ const menuItems: MenuItem[] = [
   { name: 'Automation',   href: '/dashboard/automation',   Icon: Zap },
   { name: 'Analytics',    href: '/dashboard/analytics',    Icon: BarChart3 },
   { name: 'Webhooks',     href: '/dashboard/webhooks',     Icon: WebhookIcon, admin: true },
-  { name: 'Integrations', href: '/dashboard/integrations', Icon: Puzzle },
+  { name: 'Integrations', href: '/dashboard/integrations', Icon: Puzzle, serverOwner: true },
   { name: 'Knowledge',    href: '/dashboard/knowledge',    Icon: Brain },
   { name: 'API Keys',     href: '/dashboard/api-keys',     Icon: KeyRound },
   { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList, admin: true },
@@ -255,7 +256,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!user) return null;
 
   const admin = canConfigure(user.role);
-  const blocked = !admin && menuItems.some((item) => item.admin && pathname.startsWith(item.href));
+  const serverOwner = isServerOwner(user);
+  // A page is shut to a user who is not what it asks for: the sidebar leaves its link out, and its address says so.
+  const shut = (item: MenuItem) => (item.admin && !admin) || (item.serverOwner && !serverOwner);
+  const blockedBy = menuItems.find((item) => shut(item) && pathname.startsWith(item.href));
 
   const shell = (
     <div ref={shellRef} className="min-h-screen bg-background">
@@ -302,7 +306,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Menu */}
           <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto" aria-label="Dashboard sections">
-            {menuItems.filter((item) => admin || !item.admin).map((item) => {
+            {menuItems.filter((item) => !shut(item)).map((item) => {
               const Icon = item.Icon;
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
               const badge = item.href === '/dashboard/chat' ? chatUnread : item.href === '/dashboard/calls' ? callsOpen : 0;
@@ -541,12 +545,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Page Content */}
         <div className="p-6">
-          {blocked ? (
+          {blockedBy ? (
             <EmptyState
               icon={<Lock className="w-8 h-8" aria-hidden="true" />}
               title="Not available for your role"
               titleAs="h1"
-              description="Only an owner or an admin can open this page."
+              description={blockedBy.serverOwner ? 'Only the server owner can open this page.' : 'Only an owner or an admin can open this page.'}
               action={{ label: 'Back to the overview', href: '/dashboard' }}
             />
           ) : (
