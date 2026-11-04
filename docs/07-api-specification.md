@@ -33,7 +33,7 @@ Issued by `POST /auth/register` and `POST /auth/login`. Refresh with `POST /auth
 x-api-key: YOUR_API_KEY
 ```
 
-The Swagger UI registers the API key under the `api-key` security scheme; the header name is lowercase `x-api-key`. Create keys with `POST /api-keys`.
+The Swagger UI registers the API key under the `api-key` security scheme; the header name is lowercase `x-api-key`. Create keys in the dashboard, or with `POST /api-keys` while signed in: an API key cannot create another.
 
 ---
 
@@ -409,7 +409,7 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 | `PUT` | `/automation/:id/toggle` | Toggle active flag |
 | `POST` | `/automation/:id/test` | Test a flow with sample input |
 | `GET` | `/automation/:id/stats` | Flow execution stats |
-| `POST` | `/automation/reorder` | Reorder flows |
+| `POST` | `/automation/reorder` | Reorder the profile's flows (an id that is not one of them: `404`, nothing changes) |
 
 ### Auto-reply (`/autoreply`)
 
@@ -448,7 +448,7 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api-keys` | List API keys |
-| `POST` | `/api-keys` | Create API key |
+| `POST` | `/api-keys` | Create API key (signed in; a request made with an API key gets `403`) |
 | `DELETE` | `/api-keys/:id` | Revoke API key |
 
 ### Settings (`/settings`)
@@ -535,15 +535,17 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 
 ### RBAC (`/rbac`)
 
+Owner or admin only; any other role gets `403`.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/rbac/permissions` | List permissions |
 | `POST` | `/rbac/roles` | Create role |
 | `GET` | `/rbac/roles` | List roles |
-| `GET` | `/rbac/roles/:id` | Get role |
+| `GET` | `/rbac/roles/:id` | Get role, with its members' id, name, email, role and active state |
 | `PUT` | `/rbac/roles/:id` | Update role |
 | `DELETE` | `/rbac/roles/:id` | Delete role |
-| `POST` | `/rbac/assign` | Assign role to user |
+| `POST` | `/rbac/assign` | Assign role to a member of the organization (another organization's user: `404`) |
 | `DELETE` | `/rbac/users/:userId/organizations/:orgId` | Unassign user from organization |
 | `GET` | `/rbac/users/:userId/roles` | List user roles |
 | `GET` | `/rbac/users/:userId/permissions` | List user permissions |

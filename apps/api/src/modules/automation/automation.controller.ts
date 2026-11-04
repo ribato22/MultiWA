@@ -95,6 +95,7 @@ export class AutomationController {
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Reorder automation priorities' })
   @ApiValidationError()
+  @ApiNotFound('Automation')
   async reorder(@Body() body: { profileId: string; order: string[] }) {
     return this.service.reorder(body.profileId, body.order);
   }

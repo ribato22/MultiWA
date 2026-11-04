@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The RBAC routes (`/rbac/*`) are for owners and admins only. `GET /rbac/roles/:id` lists a role's members by id, name, email, role and active state, and `POST /rbac/assign` takes only a member of the role's organization.
+- `POST /api-keys` takes only a signed-in user: a request made with an API key gets `403`, so a key cannot create a wider one.
+- `POST /automation/reorder` orders only the rules of the profile it names. An order naming any other rule gets `404` and changes nothing.
+
 ## [1.4.0] - 2026-11-03
 
 ### Added

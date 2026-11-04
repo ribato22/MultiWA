@@ -177,7 +177,8 @@ export class RbacService {
   async getRole(id: string) {
     const role = await prisma.role.findUnique({
       where: { id },
-      include: { users: { include: { user: true } } },
+      // A member as OrganizationsService returns one: a User row also holds credentials.
+      include: { users: { include: { user: { select: { id: true, name: true, email: true, role: true, isActive: true } } } } },
     });
     if (!role) throw new NotFoundException('Role not found');
     return role;
@@ -217,6 +218,10 @@ export class RbacService {
     // Verify role exists
     const role = await prisma.role.findUnique({ where: { id: dto.roleId } });
     if (!role) throw new NotFoundException('Role not found');
+
+    // Only a member of the role's organization: another organization's user is not found here.
+    const user = await prisma.user.findFirst({ where: { id: dto.userId, organizationId: role.organizationId }, select: { id: true } });
+    if (!user) throw new NotFoundException('User not found');
 
     // Check if already assigned
     const existing = await prisma.userRole.findUnique({

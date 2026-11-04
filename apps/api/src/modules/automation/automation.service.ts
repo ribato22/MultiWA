@@ -178,9 +178,12 @@ export class AutomationService {
 
   // Reorder priorities
   async reorder(profileId: string, order: string[]) {
+    // The tenant guard checked the profile, so each rule named must be that profile's.
+    const owned = await prisma.automation.count({ where: { profileId, id: { in: order } } });
+    if (owned !== new Set(order).size) throw new NotFoundException('Automation not found');
     const updates = order.map((id, index) =>
-      prisma.automation.update({
-        where: { id },
+      prisma.automation.updateMany({
+        where: { id, profileId },
         data: { priority: index + 1 },
       })
     );
