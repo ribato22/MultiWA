@@ -15,6 +15,7 @@ import { AccountsController } from '../accounts/accounts.controller';
 import { BroadcastController } from '../broadcast/broadcast.controller';
 import { BulkController } from '../bulk/bulk.controller';
 import { ContactsController } from '../contacts/contacts.controller';
+import { ConversationsController } from '../conversations/conversations.controller';
 import { ProfilesController } from '../profiles/profiles.controller';
 import { WebhooksController } from '../webhooks/webhooks.controller';
 
@@ -46,6 +47,12 @@ const EXPECTED: Array<[any, Record<string, string[] | undefined>]> = [
     getProfiles: ['profiles:read'], getProfile: ['profiles:read'], getQr: ['profiles:write'],
     createProfile: ['profiles:write'], deleteProfile: ['profiles:write'], connectProfile: ['profiles:write'], disconnectProfile: ['profiles:write'],
     findAll: undefined, findOne: undefined, create: undefined, update: undefined, remove: undefined,
+  }],
+  // A conversation's reads answer its messages, as GET /messages/conversation/:id does.
+  [ConversationsController, {
+    findAll: ['messages:read'], unreadCount: ['messages:read'], findOne: ['messages:read'], getMessages: ['messages:read'],
+    markAsRead: ['messages:write'], archive: ['messages:write'], unarchive: ['messages:write'], toggleMute: ['messages:write'],
+    togglePin: ['messages:write'], clearMessages: ['messages:write'], delete: ['messages:write'],
   }],
 ];
 
