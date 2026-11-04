@@ -8,7 +8,7 @@ import { prisma } from '@multiwa/database';
 import { EventsGateway } from './events.gateway';
 
 const findMany = prisma.user.findMany as unknown as ReturnType<typeof vi.fn>;
-const socket = (principalUserId?: string) => ({ data: principalUserId ? { principalUserId } : {}, emit: vi.fn() });
+const socket = (qrUserId?: string) => ({ data: qrUserId ? { qrUserId } : {}, emit: vi.fn() });
 
 describe('EventsGateway.emitQrUpdate', () => {
   const admin = socket('u-admin');
@@ -43,11 +43,17 @@ describe('EventsGateway.emitQrUpdate', () => {
     expect(admin.emit).not.toHaveBeenCalled();
   });
 
-  it('a join records whose socket it is', async () => {
+  // A QR links a phone, which an API key may do only with profiles:write, as on GET .../qr.
+  it.each([
+    ['a dashboard login', undefined, 'u-member'],
+    ['an API key with profiles:write', ['profiles:write'], 'u-member'],
+    ['an API key with no scope list (full access)', [], 'u-member'],
+    ['an API key without profiles:write', ['messages:read'], undefined],
+  ])('a join by %s records whose QR the socket may get', async (_, apiKeyScopes, qrUserId) => {
     const client = { id: 's1', connected: true, data: {} as Record<string, unknown>, join: vi.fn() };
-    vi.spyOn(gateway as any, 'authOf').mockResolvedValue({ userId: 'u-member', organizationId: 'o1' });
+    vi.spyOn(gateway as any, 'authOf').mockResolvedValue({ userId: 'u-member', organizationId: 'o1', apiKeyScopes });
     vi.spyOn(gateway as any, 'ownsProfile').mockResolvedValue(true);
     await expect(gateway.handleJoin(client as any, { profileId: 'p1' })).resolves.toEqual({ success: true, profileId: 'p1' });
-    expect(client.data.principalUserId).toBe('u-member');
+    expect(client.data.qrUserId).toBe(qrUserId);
   });
 });

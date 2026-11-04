@@ -9,6 +9,8 @@ vi.mock('../profiles/engine-manager.service', () => ({ EngineManagerService: cla
 
 import { API_KEY_SCOPE } from './decorators/require-scope.decorator';
 import { ApiKeyScopeGuard } from './guards/api-key-scope.guard';
+import { JwtOrApiKeyGuard } from './guards/jwt-auth.guard';
+import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { AccountsController } from '../accounts/accounts.controller';
 import { BroadcastController } from '../broadcast/broadcast.controller';
 import { BulkController } from '../bulk/bulk.controller';
@@ -17,7 +19,8 @@ import { ProfilesController } from '../profiles/profiles.controller';
 import { WebhooksController } from '../webhooks/webhooks.controller';
 
 const scopeOf = (Ctrl: any, name: string) => Reflect.getMetadata(API_KEY_SCOPE, Ctrl.prototype[name]) ?? Reflect.getMetadata(API_KEY_SCOPE, Ctrl);
-const guarded = (Ctrl: any) => (Reflect.getMetadata(GUARDS_METADATA, Ctrl) ?? []).includes(ApiKeyScopeGuard);
+// The scope guard reads req.user, so it runs after the auth guard: before it, it would let every request through.
+const GUARDS = [JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard];
 
 const EXPECTED: Array<[any, Record<string, string[] | undefined>]> = [
   [ContactsController, {
@@ -47,8 +50,8 @@ const EXPECTED: Array<[any, Record<string, string[] | undefined>]> = [
 ];
 
 describe.each(EXPECTED)('%o', (Ctrl, routes) => {
-  it('checks API-key scopes for the whole controller', () => {
-    expect(guarded(Ctrl)).toBe(true);
+  it('checks API-key scopes for the whole controller, after sign-in and before the tenant check', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, Ctrl)).toEqual(GUARDS);
   });
 
   it('asks each route for the scopes the dashboard issues for it', () => {
