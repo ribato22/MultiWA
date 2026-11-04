@@ -14,6 +14,7 @@ import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { AGENT_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
@@ -72,6 +73,7 @@ export class CallsController {
   }
 
   @Patch(':id')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Update the follow-up status or the assignee' })
   @ApiResponse({ status: 200, description: 'The call as updated', type: CallDto })
@@ -82,6 +84,7 @@ export class CallsController {
   }
 
   @Post(':id/reject')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Reject a call that is still ringing' })
   @ApiResponse({ status: 201, description: 'The call, rejected', type: CallDto })
@@ -91,6 +94,7 @@ export class CallsController {
   }
 
   @Post(':id/reply')
+  @Roles(...AGENT_ROLES)
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Send a text to the caller (send-gated)' })
@@ -102,6 +106,7 @@ export class CallsController {
   }
 
   @Post(':id/call-link')
+  @Roles(...AGENT_ROLES)
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Create a WhatsApp call link and send it to the caller' })

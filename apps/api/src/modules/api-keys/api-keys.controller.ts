@@ -5,6 +5,8 @@ import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, ForbiddenEx
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiForbiddenResponse } from '@nestjs/swagger';
 import { ApiKeysService } from './api-keys.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ANY_ROLES } from '../auth/roles';
 import { AuditService, AuditAction } from '../audit/audit.service';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
@@ -27,6 +29,7 @@ export class ApiKeysController {
   }
 
   @Post()
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Create a new API key' })
   @ApiValidationError()
   @ApiForbiddenResponse({ description: 'Made with an API key: only a signed-in user creates API keys' })
@@ -48,6 +51,7 @@ export class ApiKeysController {
   }
 
   @Delete(':id')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Delete an API key' })
   @ApiNotFound('API key')
   async delete(@Req() req: any, @Param('id') id: string) {

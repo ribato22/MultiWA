@@ -4,6 +4,8 @@
 import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ANY_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
 import { prisma } from '@multiwa/database';
 
@@ -215,6 +217,7 @@ export class GdprController {
    * This action is IRREVERSIBLE. Cascade-deletes all user data.
    */
   @Delete('delete')
+  @Roles(...ANY_ROLES)
   @ApiOperation({
     summary: 'Delete account and all data (GDPR Art. 17)',
     description:

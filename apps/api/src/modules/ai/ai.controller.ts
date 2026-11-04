@@ -5,6 +5,8 @@ import { Controller, Post, Body, Get, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { AIService } from './ai.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { AGENT_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 
 class CompleteDto {
@@ -51,6 +53,7 @@ export class AIController {
   }
 
   @Post('complete')
+  @Roles(...AGENT_ROLES)
   @ApiOperation({
     summary: 'Generate AI completion',
     description:
@@ -67,6 +70,7 @@ export class AIController {
   }
 
   @Post('auto-reply')
+  @Roles(...AGENT_ROLES)
   @ApiOperation({
     summary: 'Generate automatic reply for customer message',
     description:
@@ -83,6 +87,7 @@ export class AIController {
   }
 
   @Post('sentiment')
+  @Roles(...AGENT_ROLES)
   @ApiOperation({
     summary: 'Analyze message sentiment',
     description: 'Classifies the sentiment (e.g. positive, neutral, negative) of a single message.',
@@ -93,6 +98,7 @@ export class AIController {
   }
 
   @Post('translate')
+  @Roles(...AGENT_ROLES)
   @ApiOperation({
     summary: 'Translate message to target language',
     description: 'Translates the given message into the requested target language (defaults to the service default when omitted).',

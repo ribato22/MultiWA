@@ -10,6 +10,8 @@ import { TwoFactorService } from './two-factor.service';
 import { SessionsService } from './sessions.service';
 import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Roles } from './decorators/roles.decorator';
+import { ANY_ROLES } from './roles';
 import { AllowInDemo } from '../../common/guards/demo.guard';
 
 @ApiTags('Authentication')
@@ -73,6 +75,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -110,6 +113,7 @@ export class AuthController {
   }
 
   @Patch('preferences')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -122,6 +126,7 @@ export class AuthController {
   }
 
   @Post('change-password')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -138,6 +143,7 @@ export class AuthController {
   }
 
   @Delete('account')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -158,6 +164,7 @@ export class AuthController {
   // ==========================================
 
   @Post('2fa/setup')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -169,6 +176,7 @@ export class AuthController {
   }
 
   @Post('2fa/enable')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -184,6 +192,7 @@ export class AuthController {
   }
 
   @Post('2fa/disable')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -196,6 +205,7 @@ export class AuthController {
   }
 
   @Post('2fa/backup-codes')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -222,6 +232,7 @@ export class AuthController {
   }
 
   @Delete('sessions/:id')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')
@@ -238,6 +249,7 @@ export class AuthController {
   }
 
   @Delete('sessions')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @ApiSecurity('api-key')

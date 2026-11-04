@@ -5,6 +5,8 @@ import { Controller, Get, Put, Delete, Param, Query, UseGuards, Request } from '
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES, AGENT_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
@@ -55,6 +57,7 @@ export class ConversationsController {
   }
 
   @Put(':id/read')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Mark conversation as read' })
   @ApiNotFound('Conversation')
@@ -63,6 +66,7 @@ export class ConversationsController {
   }
 
   @Put(':id/archive')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Archive conversation' })
   @ApiNotFound('Conversation')
@@ -71,6 +75,7 @@ export class ConversationsController {
   }
 
   @Put(':id/unarchive')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Unarchive conversation' })
   @ApiNotFound('Conversation')
@@ -79,6 +84,7 @@ export class ConversationsController {
   }
 
   @Put(':id/mute')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle mute conversation' })
   @ApiNotFound('Conversation')
@@ -87,6 +93,7 @@ export class ConversationsController {
   }
 
   @Put(':id/pin')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle pin conversation' })
   @ApiNotFound('Conversation')
@@ -95,6 +102,7 @@ export class ConversationsController {
   }
 
   @Delete(':id/messages')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Clear all messages in conversation' })
   @ApiNotFound('Conversation')
@@ -103,6 +111,7 @@ export class ConversationsController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Delete conversation and messages' })
   @ApiNotFound('Conversation')
