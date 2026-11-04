@@ -8,6 +8,7 @@ import { prisma } from '@multiwa/database';
 import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { TwoFactorService } from './two-factor.service';
 import { SessionsService } from './sessions.service';
+import { isServerOwner } from './server-owner';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 
@@ -226,6 +227,8 @@ export class AuthService {
       ...profile,
       twoFactorEnabled: user.twoFactorEnabled,
       backupCodesRemaining: user.twoFactorEnabled ? (backupCodes?.length ?? 0) : 0,
+      // The dashboard shows the server-wide settings (SMTP, storage) to the server's owner only.
+      isServerOwner: await isServerOwner(user),
     };
   }
 
@@ -336,6 +339,8 @@ export class AuthService {
         name: user.name,
         role: user.role,
         organizationId: user.organizationId,
+        // Stored by the dashboard with the role: it shows the server owner's pages to them only.
+        isServerOwner: await isServerOwner(user),
       },
     };
   }

@@ -34,7 +34,10 @@ vi.mock('@multiwa/database', () => ({
   },
 }));
 
+vi.mock('./server-owner', () => ({ isServerOwner: vi.fn().mockResolvedValue(false) }));
+
 import { prisma } from '@multiwa/database';
+import { isServerOwner } from './server-owner';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
@@ -86,6 +89,8 @@ describe('AuthService', () => {
 
     mockConfigService.get.mockClear();
     allowRegistration = undefined;
+    // Calls only: the factory's default answer (false) stays.
+    vi.mocked(isServerOwner).mockClear();
 
     authService = new AuthService(
       mockJwtService as any,
@@ -152,6 +157,16 @@ describe('AuthService', () => {
       await expect(authService.registrationOpen()).resolves.toBe(false);
       allowRegistration = 'true';
       await expect(authService.registrationOpen()).resolves.toBe(true);
+    });
+
+    it("the sign-in answer's user says whether they are the server's owner", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce(null);
+      vi.mocked(prisma.organization.create).mockResolvedValueOnce({ id: 'org-1' } as any);
+      vi.mocked(prisma.workspace.create).mockResolvedValueOnce({ id: 'ws-1' } as any);
+      vi.mocked(prisma.user.create).mockResolvedValueOnce({ id: 'u1', email: 'first@test.com', name: 'First', role: 'owner', organizationId: 'org-1' } as any);
+      vi.mocked(isServerOwner).mockResolvedValueOnce(true);
+      const result = await authService.register({ email: 'first@test.com', password: 'password123', name: 'First', organizationName: 'FirstOrg' });
+      expect(result.user).toMatchObject({ id: 'u1', role: 'owner', isServerOwner: true });
     });
   });
 
@@ -288,6 +303,15 @@ describe('AuthService', () => {
       expect(profile).not.toHaveProperty('passwordHash');
       expect(profile).not.toHaveProperty('twoFactorSecret');
       expect(profile).toHaveProperty('email', 'test@test.com');
+    });
+
+    it("getProfile says whether the caller is the server's owner, for the dashboard's server settings", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ id: 'u1', role: 'owner', organizationId: 'org-1', passwordHash: 'h', twoFactorSecret: null, backupCodes: [], twoFactorEnabled: false, organization: { id: 'org-1' } } as any);
+      vi.mocked(isServerOwner).mockResolvedValueOnce(true);
+      const me = await authService.getProfile('u1');
+      expect(me).toMatchObject({ id: 'u1', isServerOwner: true });
+      expect(me).not.toHaveProperty('passwordHash');
+      expect(isServerOwner).toHaveBeenCalledWith(expect.objectContaining({ role: 'owner', organizationId: 'org-1' }));
     });
   });
 });
