@@ -38,6 +38,7 @@ import { EngineManagerService } from '../profiles/engine-manager.service';
 import { MessagesService } from '../messages/messages.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { AGENT_ROLES } from '../auth/roles';
 import { CALLS_MAX_LIMIT, UpdateCallSettingsDto } from './dto';
 import { CallRecordingsService } from './recordings/call-recordings.service';
 import { announcementOf, mergeProfileSettings, mergeProfileSettingsIfAnnounced, recordingOn, retentionDaysOf } from '../profiles/profile-settings';
@@ -304,13 +305,14 @@ export class CallsService {
     };
   }
 
+  // A call is followed up by an agent: a viewer reads the queue but never holds a call.
   private async assignableUser(profileId: string, userId: string): Promise<string> {
     const profile = await prisma.profile.findUnique({ where: { id: profileId }, select: { workspace: { select: { organizationId: true } } } });
     const organizationId = profile?.workspace?.organizationId;
     const user = organizationId
-      ? await prisma.user.findFirst({ where: { id: userId, organizationId, isActive: true }, select: { id: true } })
+      ? await prisma.user.findFirst({ where: { id: userId, organizationId, isActive: true, role: { in: [...AGENT_ROLES] } }, select: { id: true } })
       : null;
-    if (!user) throw new BadRequestException('assignedUserId must be an active user of this organization');
+    if (!user) throw new BadRequestException('assignedUserId must be an active owner, admin or member of this organization');
     return user.id;
   }
 

@@ -245,7 +245,7 @@ describe('CallsService.update', () => {
     db.call.update.mockResolvedValue(row({ assignedUserId: 'u2' }));
     const t = make();
     await t.svc.update('c1', { assignedUserId: 'u2' });
-    expect(db.user.findFirst).toHaveBeenCalledWith({ where: { id: 'u2', organizationId: 'o1', isActive: true }, select: { id: true } });
+    expect(db.user.findFirst).toHaveBeenCalledWith({ where: { id: 'u2', organizationId: 'o1', isActive: true, role: { in: ['owner', 'admin', 'member'] } }, select: { id: true } });
     expect(db.call.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'c1' }, data: { assignedUserId: 'u2' } }));
     expectAnnounced(t, { assignedUserId: 'u2' });
   });
