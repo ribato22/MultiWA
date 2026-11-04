@@ -23,6 +23,13 @@ class AdminRoutes {
   inherits() {}
 }
 
+// As the server-wide controllers are written: on the class, for every route in it.
+@Roles('owner')
+@ServerOwnerOnly()
+class ServerOwnerRoutes {
+  settings() {}
+}
+
 const reflector = new Reflector();
 const check = (Controller: any, handler: string, method: string, role?: string) =>
   assertRole(reflector, {
@@ -82,6 +89,13 @@ describe('assertRole', () => {
     await expect(check(Routes, 'serverSettings', 'PUT', 'owner')).resolves.toBeUndefined();
     await expect(check(Routes, 'serverSettings', 'PUT', 'admin')).rejects.toThrow('Insufficient role');
     expect(isServerOwner).toHaveBeenCalledTimes(2); // the admin was refused on the role, before any lookup
+  });
+
+  it("asks for the server's owner when the controller names it, even for a read", async () => {
+    vi.mocked(isServerOwner).mockResolvedValueOnce(false);
+    await expect(check(ServerOwnerRoutes, 'settings', 'GET', 'owner')).rejects.toThrow("Only the server's owner");
+    vi.mocked(isServerOwner).mockResolvedValueOnce(true);
+    await expect(check(ServerOwnerRoutes, 'settings', 'GET', 'owner')).resolves.toBeUndefined();
   });
 });
 

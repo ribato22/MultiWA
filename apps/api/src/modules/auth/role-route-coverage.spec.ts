@@ -1,19 +1,21 @@
 // Role route-coverage meta-test: who may call each route, read from the real Nest metadata as the auth guards read
-// it, and held to scripts/api-roles.snapshot.json. It fails when
+// it, and held to scripts/api-roles.snapshot.json. The controllers are the ones Nest serves: those of every module
+// AppModule reaches through its imports, whatever file they sit in. It fails when
 //   1. a signed-in route that changes something (any method but the reads of READ_METHODS) names no role class with @Roles,
 //      or a route names a role (@Roles, @ServerOwnerOnly) with no auth guard to check it,
 //   2. a route's class differs from the snapshot, a route is missing from it or extra in it, or the file is not what
 //      UPDATE_ROLE_SNAPSHOT=1 writes, or
-//   3. a controller sits outside a *.controller.ts file, where this walk does not look, or two handlers make one route.
+//   3. two handlers make one route.
 // A change to who may call a route is then a change to the snapshot, and shows in the pull request's diff. After
 // reviewing such a change: UPDATE_ROLE_SNAPSHOT=1 pnpm --filter api test:meta
 import 'reflect-metadata';
-import { readdirSync, readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { RequestMethod } from '@nestjs/common';
-import { CONTROLLER_WATERMARK, GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { GUARDS_METADATA, METHOD_METADATA, MODULE_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { MetadataScanner } from '@nestjs/core';
+import { AppModule } from '../../app.module';
 import { ROLES_KEY } from './decorators/roles.decorator';
 import { SERVER_OWNER_KEY } from './decorators/server-owner.decorator';
 import { JwtAuthGuard, JwtOrApiKeyGuard } from './guards/jwt-auth.guard';
@@ -33,13 +35,23 @@ const AUTH_GUARDS = [JwtAuthGuard, JwtOrApiKeyGuard];
 
 type Controller = { name: string; prototype: Record<string, object> };
 
-// Every .ts file but the specs and the declarations.
-function sourceFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const p = path.join(dir, entry.name);
-    if (entry.isDirectory()) return sourceFiles(p);
-    return entry.name.endsWith('.ts') && !/\.(spec|d)\.ts$/.test(entry.name) ? [p] : [];
-  });
+// The controllers of every module AppModule reaches, found as Nest's scanner finds them. An import may be a promise
+// (ConfigModule.forRoot), a forwardRef(() => Module), or a dynamic module ({ module, controllers, imports }), whose
+// own lists add to its class's. Each module is visited once: forwardRef imports go round in circles.
+async function servedControllers(): Promise<Set<Controller>> {
+  const controllers = new Set<Controller>();
+  const seen = new Set<unknown>();
+  const visit = async (entry: any): Promise<void> => {
+    let mod = await entry;
+    if (mod.forwardRef) mod = mod.forwardRef();
+    if (seen.has(mod)) return;
+    seen.add(mod);
+    const listed = (key: string): any[] => [...(Reflect.getMetadata(key, mod.module ?? mod) ?? []), ...(mod[key] ?? [])];
+    for (const controller of listed(MODULE_METADATA.CONTROLLERS)) controllers.add(controller);
+    for (const imported of listed(MODULE_METADATA.IMPORTS)) await visit(imported);
+  };
+  await visit(AppModule);
+  return controllers;
 }
 
 const segment = (p: unknown) => String((Array.isArray(p) ? p[0] : p) ?? '').replace(/^\/+|\/+$/g, '');
@@ -55,11 +67,15 @@ function classOf(controller: Controller, handler: object, method: string): strin
   const roles: readonly string[] | undefined = read(ROLES_KEY);
   const serverOwner = Boolean(read(SERVER_OWNER_KEY));
   const guards = [...(Reflect.getMetadata(GUARDS_METADATA, controller) ?? []), ...(Reflect.getMetadata(GUARDS_METADATA, handler) ?? [])];
-  // A subclass of an auth guard inherits its role check. A role with no auth guard is a forgotten guard, not Public.
+  // A subclass of an auth guard is taken to keep its role check. A role with no auth guard is a forgotten guard, not Public.
   if (!guards.some((g) => AUTH_GUARDS.some((A) => g === A || g?.prototype instanceof A))) {
     return roles || serverOwner ? 'UNGUARDED' : 'Public';
   }
-  if (serverOwner) return 'Server owner';
+  if (serverOwner) {
+    // Server owner is @Roles('owner') with @ServerOwnerOnly(). Any other role list is spelled out, so a change shows.
+    const named = roles ? [...roles].sort().join(',') : 'no role';
+    return named === 'owner' ? 'Server owner' : `Server owner + ${named}`;
+  }
   if (!roles?.length) return READ_METHODS.has(method) ? 'Any' : 'UNSET';
   return CLASSES.find(([, r]) => sameRoles(r, roles))?.[0] ?? [...roles].sort().join(',');
 }
@@ -67,26 +83,20 @@ function classOf(controller: Controller, handler: object, method: string): strin
 async function walk() {
   const routes: Record<string, string> = {};
   const handlers: Record<string, string[]> = {};
-  const controllers = new Set<Controller>();
   const scanner = new MetadataScanner();
-  for (const file of sourceFiles(SRC).filter((f) => f.endsWith('.controller.ts'))) {
-    for (const exported of Object.values(await import(/* @vite-ignore */ file))) {
-      if (typeof exported !== 'function' || !Reflect.getMetadata(CONTROLLER_WATERMARK, exported) || controllers.has(exported)) continue;
-      const controller = exported as unknown as Controller;
-      controllers.add(controller);
-      const base = segment(Reflect.getMetadata(PATH_METADATA, controller));
-      // Inherited handlers too: Nest finds a controller's routes with this same scanner.
-      for (const name of scanner.getAllMethodNames(controller.prototype)) {
-        const handler = controller.prototype[name];
-        if (Reflect.getMetadata(PATH_METADATA, handler) === undefined) continue;
-        const method = RequestMethod[Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod];
-        const route = `${method} /${[base, segment(Reflect.getMetadata(PATH_METADATA, handler))].filter(Boolean).join('/')}`;
-        routes[route] = classOf(controller, handler, method);
-        (handlers[route] ??= []).push(`${controller.name}.${name}`);
-      }
+  for (const controller of await servedControllers()) {
+    const base = segment(Reflect.getMetadata(PATH_METADATA, controller));
+    // Inherited handlers too: Nest finds a controller's routes with this same scanner.
+    for (const name of scanner.getAllMethodNames(controller.prototype)) {
+      const handler = controller.prototype[name];
+      if (Reflect.getMetadata(PATH_METADATA, handler) === undefined) continue;
+      const method = RequestMethod[Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod];
+      const route = `${method} /${[base, segment(Reflect.getMetadata(PATH_METADATA, handler))].filter(Boolean).join('/')}`;
+      routes[route] = classOf(controller, handler, method);
+      (handlers[route] ??= []).push(`${controller.name}.${name}`);
     }
   }
-  return { routes, handlers, controllers: controllers.size };
+  return { routes, handlers };
 }
 
 function snapshotText(routes: Record<string, string>): string {
@@ -97,10 +107,9 @@ function snapshotText(routes: Record<string, string>): string {
 describe('role route coverage', () => {
   let routes: Record<string, string>;
   let handlers: Record<string, string[]>;
-  let controllers: number;
 
   beforeAll(async () => {
-    ({ routes, handlers, controllers } = await walk());
+    ({ routes, handlers } = await walk());
     if (process.env.UPDATE_ROLE_SNAPSHOT === '1') {
       // CI holds the routes to the committed file; rewriting it there would pass any change.
       if (process.env.CI) {
@@ -120,12 +129,6 @@ describe('role route coverage', () => {
 
   it('scripts/api-roles.snapshot.json is exactly what UPDATE_ROLE_SNAPSHOT=1 writes (note, routeCount, order)', () => {
     expect(readFileSync(SNAPSHOT, 'utf8')).toBe(snapshotText(routes));
-  });
-
-  it('every controller is in a *.controller.ts file, where this walk finds it', () => {
-    // Decorators at the start of a line, so a mention in a comment (`// @Controller(`, ` * @Controller(`) is not counted.
-    const decorators = sourceFiles(SRC).reduce((n, f) => n + (readFileSync(f, 'utf8').match(/^[ \t]*@Controller\(/gm)?.length ?? 0), 0);
-    expect(decorators, '@Controller( decorators under src, against the controllers found in *.controller.ts files').toBe(controllers);
   });
 
   it('no two handlers make the same route', () => {

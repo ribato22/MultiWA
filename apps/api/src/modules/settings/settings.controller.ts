@@ -1,5 +1,5 @@
 import { Controller, Get, Put, Post, Body, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiQuery, ApiForbiddenResponse } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiForbiddenResponse } from '@nestjs/swagger';
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -15,7 +15,6 @@ import { EmailService } from '@multiwa/engine-runtime';
 @Roles('owner')
 @ServerOwnerOnly()
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 @ApiForbiddenResponse({ description: "Only the server's owner manages server-wide settings" })
 export class SettingsController {
