@@ -16,7 +16,8 @@ import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/dec
 
 @ApiTags('Profiles')
 @Controller('profiles')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
+@RequireScope('profiles:write')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -24,6 +25,7 @@ export class ProfilesController {
   constructor(private readonly profilesService: ProfilesService) {}
 
   @Get()
+  @RequireScope('profiles:read')
   @RequireTenant({ from: 'query', key: 'workspaceId', resource: 'workspace', optional: true })
   @ApiOperation({ summary: 'List all profiles in workspace' })
   @ApiResponse({ status: 200, description: 'List of profiles' })
@@ -32,6 +34,7 @@ export class ProfilesController {
   }
 
   @Get(':id')
+  @RequireScope('profiles:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get profile by ID' })
   @ApiResponse({ status: 200, description: 'Profile details' })
@@ -63,9 +66,7 @@ export class ProfilesController {
   // Deleting a profile deletes every recording file of it, which only an owner or admin may: so an owner or admin only,
   // and an API key with a scope list needs profiles:write.
   @Delete(':id')
-  @UseGuards(ApiKeyScopeGuard)
   @Roles('owner', 'admin')
-  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Delete profile' })
   @ApiResponse({ status: 200, description: 'Profile deleted' })
@@ -99,6 +100,7 @@ export class ProfilesController {
   // SSE endpoint removed in favor of WebSocket for real-time updates
 
   @Get(':id/status')
+  @RequireScope('profiles:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get connection status' })
   @ApiResponse({ status: 200, description: 'Connection status' })

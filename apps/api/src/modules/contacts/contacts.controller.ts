@@ -7,7 +7,9 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@ne
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { ContactsService } from './contacts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { ADMIN_ROLES, AGENT_ROLES, ANY_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
@@ -15,7 +17,8 @@ import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto, Va
 
 @ApiTags('Contacts')
 @Controller('contacts')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
+@RequireScope('contacts:write')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -32,6 +35,7 @@ export class ContactsController {
   }
 
   @Get()
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List contacts with filtering' })
   @ApiQuery({ name: 'profileId', required: true })
@@ -52,6 +56,7 @@ export class ContactsController {
   }
 
   @Get(':id')
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Get contact by ID' })
   @ApiNotFound('Contact')
@@ -100,6 +105,7 @@ export class ContactsController {
   // Export endpoints
   @Get('export/csv')
   @Roles(...ADMIN_ROLES)
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Export contacts to CSV' })
   @ApiQuery({ name: 'profileId', required: true })
@@ -145,6 +151,7 @@ export class ContactsController {
 
   // Validation endpoints
   @Get('profile/:profileId/validate/:phone')
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Validate single phone number' })
   @ApiNotFound('Profile')
@@ -157,6 +164,8 @@ export class ContactsController {
 
   @Post('profile/:profileId/validate')
   @Roles(...ANY_ROLES)
+  // A read, though a POST: it looks the numbers up and changes nothing.
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Bulk validate phone numbers' })
   @ApiValidationError()

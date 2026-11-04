@@ -16,7 +16,7 @@ import { CreateAccountDto, UpdateAccountDto, CreateProfileDto } from './dto';
 
 @ApiTags('Accounts')
 @Controller('accounts')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -69,6 +69,7 @@ export class AccountsController {
   // Nested profiles endpoints. Both the account and the profile are tenant-checked
   // so a caller can't pair their own account id with another org's profile id.
   @Get(':accountId/profiles')
+  @RequireScope('profiles:read')
   @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Get all profiles for account' })
   @ApiNotFound('Account')
@@ -78,6 +79,7 @@ export class AccountsController {
 
   @Post(':accountId/profiles')
   @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Create profile for account' })
   @ApiValidationError()
@@ -90,6 +92,7 @@ export class AccountsController {
   }
 
   @Get(':accountId/profiles/:profileId')
+  @RequireScope('profiles:read')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -106,7 +109,6 @@ export class AccountsController {
   // As the flat route: deleting a profile deletes every recording file of it, so an owner or admin only, and an API
   // key with a scope list needs profiles:write.
   @Delete(':accountId/profiles/:profileId')
-  @UseGuards(ApiKeyScopeGuard)
   @Roles('owner', 'admin')
   @RequireScope('profiles:write')
   @RequireTenant(
@@ -124,6 +126,7 @@ export class AccountsController {
 
   @Post(':accountId/profiles/:profileId/connect')
   @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:write')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -138,6 +141,7 @@ export class AccountsController {
 
   @Post(':accountId/profiles/:profileId/disconnect')
   @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:write')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -152,6 +156,7 @@ export class AccountsController {
 
   @Get(':accountId/profiles/:profileId/qr')
   @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:read')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
