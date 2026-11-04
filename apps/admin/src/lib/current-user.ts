@@ -22,8 +22,8 @@ export function currentUser(): CurrentUser | null {
 export const canAct = (role?: string) => role === 'owner' || role === 'admin' || role === 'member';
 export const canConfigure = (role?: string) => role === 'owner' || role === 'admin';
 
-/** The owner of the server's oldest organization: alone sets what comes from the server's environment (the integrations). */
-export const isServerOwner = (user: CurrentUser | null = currentUser()) => user?.isServerOwner === true;
+/** The owner of the server's oldest organization: alone sets what is server-wide, the storage, the SMTP and the integrations. */
+export const isServerOwner = (user?: CurrentUser | null) => user?.isServerOwner === true;
 
 /** Owner, admin and member answer calls; a viewer does not. */
 export const canAnswerCalls = canAct;

@@ -3,12 +3,20 @@ import { test, expect, get, requestEnded, ME, PROFILE } from './support/fixtures
 
 /** The QR panel of a connection attempt: its heading, and the buttons to start it again or give it up. */
 const QR_PANEL = { heading: 'Scan QR with WhatsApp', buttons: ['Refresh QR', 'Cancel'] };
+const READ_ONLY_NOTE = 'Your role can read these guardrails but not change them.';
 
 test('an admin gets the QR panel of a profile that is connecting, to refresh or cancel', async ({ page, backend }) => {
   backend.route(get('/accounts/acc-1/profiles/p-1', { ...PROFILE, status: 'connecting' }));
   await page.goto('/dashboard/profiles/p-1');
   await expect(page.getByRole('heading', { name: QR_PANEL.heading })).toBeVisible();
   for (const name of QR_PANEL.buttons) await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+});
+
+test('an admin changes the guardrails: the fields are enabled and nothing says they are read-only', async ({ page }) => {
+  await page.goto('/dashboard/profiles/p-1');
+  const guardrails = page.getByRole('group', { name: 'Sending guardrails' });
+  await expect(guardrails.getByLabel('Daily message limit')).toBeEnabled();
+  await expect(page.getByText(READ_ONLY_NOTE)).toHaveCount(0);
 });
 
 for (const role of ['member', 'viewer']) {
@@ -18,6 +26,8 @@ for (const role of ['member', 'viewer']) {
     test("reads a profile's guardrails but cannot change them, disconnect or delete the profile", async ({ page }) => {
       await page.goto('/dashboard/profiles/p-1');
       const guardrails = page.getByRole('region', { name: 'Sending guardrails' });
+      await expect(page.getByRole('group', { name: 'Sending guardrails' })).toBeVisible();
+      await expect(guardrails.getByText(READ_ONLY_NOTE)).toBeVisible();
       await expect(guardrails.getByLabel('Daily message limit')).toHaveValue('1000');
       await expect(guardrails.getByLabel('Daily message limit')).toBeDisabled();
       // The fieldset disables its fields on its own: `data-disabled` is the select's own disabled.

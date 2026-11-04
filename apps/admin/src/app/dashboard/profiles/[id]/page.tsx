@@ -931,16 +931,17 @@ export default function ProfileDetailPage() {
         aria-label="Sending guardrails"
         className="rounded-xl border border-slate-800 bg-slate-900/50 p-5"
       >
-        <fieldset disabled={!admin} className="min-w-0 space-y-4">
+        <fieldset disabled={!admin} aria-labelledby="guardrails-title" className="min-w-0 space-y-4">
         <div className="flex items-center gap-2">
           <Gauge className="w-4 h-4 text-slate-400" />
-          <h2 className="text-sm font-semibold text-slate-100">Sending guardrails</h2>
+          <h2 id="guardrails-title" className="text-sm font-semibold text-slate-100">Sending guardrails</h2>
         </div>
         <p className="text-xs text-slate-400 max-w-2xl">
           Pace outbound messages and cap daily volume to lower the risk of WhatsApp
           rate-locks (error 463). The send gate applies these per message; a recently
           rate-locked number should stay conservative.
         </p>
+        {!admin && <p className="text-xs text-slate-300">Your role can read these guardrails but not change them.</p>}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="delay" className="text-xs text-slate-300">
