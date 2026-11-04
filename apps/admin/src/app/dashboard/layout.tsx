@@ -40,6 +40,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
+import { canConfigure } from '@/lib/current-user';
+import { EmptyState } from '@/components/ui/empty-state';
 import { DemoBanner } from '@/components/demo-banner';
 import { CallsProvider, forgetStoredCall } from '@/components/calls/calls-provider';
 import { AvailabilityToggle } from '@/components/calls/availability-toggle';
@@ -47,7 +49,8 @@ import { IncomingCallBanner } from '@/components/calls/incoming-call-banner';
 import { InCallBar } from '@/components/calls/in-call-bar';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
-type MenuItem = { name: string; href: string; Icon: LucideIcon };
+// `admin`: every read of the page is an owner's or admin's, so the other roles get neither its link nor the page.
+type MenuItem = { name: string; href: string; Icon: LucideIcon; admin?: boolean };
 
 const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',              Icon: LayoutGrid },
@@ -60,11 +63,11 @@ const menuItems: MenuItem[] = [
   { name: 'Broadcast',    href: '/dashboard/broadcast',    Icon: Megaphone },
   { name: 'Automation',   href: '/dashboard/automation',   Icon: Zap },
   { name: 'Analytics',    href: '/dashboard/analytics',    Icon: BarChart3 },
-  { name: 'Webhooks',     href: '/dashboard/webhooks',     Icon: WebhookIcon },
+  { name: 'Webhooks',     href: '/dashboard/webhooks',     Icon: WebhookIcon, admin: true },
   { name: 'Integrations', href: '/dashboard/integrations', Icon: Puzzle },
   { name: 'Knowledge',    href: '/dashboard/knowledge',    Icon: Brain },
   { name: 'API Keys',     href: '/dashboard/api-keys',     Icon: KeyRound },
-  { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList },
+  { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList, admin: true },
   { name: 'Settings',     href: '/dashboard/settings',     Icon: SettingsIcon },
 ];
 
@@ -242,6 +245,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
+  const admin = canConfigure(user.role);
+  const blocked = !admin && menuItems.some((item) => item.admin && pathname.startsWith(item.href));
+
   const shell = (
     <div ref={shellRef} className="min-h-screen bg-background">
       {/* Demo Mode Banner */}
@@ -287,7 +293,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Menu */}
           <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto" aria-label="Dashboard sections">
-            {menuItems.map((item) => {
+            {menuItems.filter((item) => admin || !item.admin).map((item) => {
               const Icon = item.Icon;
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
               const badge = item.href === '/dashboard/chat' ? chatUnread : item.href === '/dashboard/calls' ? callsOpen : 0;
@@ -526,7 +532,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Page Content */}
         <div className="p-6">
-          {children}
+          {blocked ? (
+            <EmptyState
+              icon={<Lock className="w-8 h-8" aria-hidden="true" />}
+              title="Not available for your role"
+              description="Only an owner or an admin can open this page."
+              action={{ label: 'Back to the overview', href: '/dashboard' }}
+            />
+          ) : (
+            children
+          )}
         </div>
       </main>
       <IncomingCallBanner />

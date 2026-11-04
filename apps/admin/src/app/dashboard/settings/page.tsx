@@ -32,6 +32,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, User, Profile } from '@/lib/api';
+import { canConfigure } from '@/lib/current-user';
 import { formatRelative, formatFull } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -986,19 +987,22 @@ export default function SettingsPage() {
                   </div>
                   <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
                 </Link>
-                <Link
-                  href="/dashboard/webhooks"
-                  className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/30 hover:border-primary/30 transition-colors group"
-                >
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
-                    <Link2 className="w-5 h-5" aria-hidden="true" />
-                  </span>
-                  <div className="flex-1">
-                    <div className="font-medium text-foreground">Webhooks</div>
-                    <div className="text-sm text-muted-foreground">Configure event webhooks</div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
-                </Link>
+                {/* An owner's or admin's: every read of the Webhooks page is theirs. */}
+                {canConfigure(user?.role) && (
+                  <Link
+                    href="/dashboard/webhooks"
+                    className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/30 hover:border-primary/30 transition-colors group"
+                  >
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
+                      <Link2 className="w-5 h-5" aria-hidden="true" />
+                    </span>
+                    <div className="flex-1">
+                      <div className="font-medium text-foreground">Webhooks</div>
+                      <div className="text-sm text-muted-foreground">Configure event webhooks</div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
+                  </Link>
+                )}
               </div>
               <div className="bg-secondary/20 rounded-xl p-4">
                 <h4 className="font-medium text-foreground mb-2">API Documentation</h4>
