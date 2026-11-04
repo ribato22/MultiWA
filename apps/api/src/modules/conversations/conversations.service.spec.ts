@@ -122,6 +122,16 @@ describe('ConversationsService', () => {
 
       expect(prisma.conversation.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 100 }));
     });
+
+    // Prisma truncates a fractional `take`, so 0.5 would load an empty page.
+    it('falls back to the default page for a limit below 1', async () => {
+      vi.mocked(prisma.conversation.findMany).mockResolvedValueOnce([] as any);
+      vi.mocked(prisma.conversation.count).mockResolvedValueOnce(0 as any);
+
+      await makeService().findAll('prof-1', { limit: 0.5 });
+
+      expect(prisma.conversation.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 50 }));
+    });
   });
 
   describe('findAll (last message loading)', () => {

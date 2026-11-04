@@ -4,7 +4,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { GroupsService } from '../groups/groups.service';
-import { clampMessagePage } from '../../common/page-size';
+import { clampMessagePage, pageSize } from '../../common/page-size';
 
 @Injectable()
 export class ConversationsService {
@@ -51,7 +51,7 @@ export class ConversationsService {
     const [conversations, total] = await Promise.all([
       prisma.conversation.findMany({
         where,
-        take: Math.min(options.limit || 50, 100),
+        take: Math.min(pageSize(options.limit), 100),
         skip: options.offset || 0,
         orderBy: { lastMessageAt: 'desc' },
         include: {

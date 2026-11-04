@@ -4,6 +4,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { EmailService, PushService } from '@multiwa/engine-runtime';
+import { pageSize } from '../../common/page-size';
 
 export enum NotificationType {
   MESSAGE = 'message',
@@ -93,7 +94,7 @@ export class NotificationsService {
    * Get notifications for a user
    */
   async getAll(userId: string, options?: { unreadOnly?: boolean; limit?: number; offset?: number }) {
-    const { unreadOnly = false, limit = 50, offset = 0 } = options || {};
+    const { unreadOnly = false, limit, offset = 0 } = options || {};
 
     const where: any = { userId };
     if (unreadOnly) {
@@ -104,7 +105,7 @@ export class NotificationsService {
       prisma.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: limit,
+        take: pageSize(limit),
         skip: offset,
       }),
       prisma.notification.count({ where }),
