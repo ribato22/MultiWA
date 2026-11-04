@@ -1,39 +1,35 @@
-import { Controller, Get, Put, Post, Body, Query, UseGuards, Request, ForbiddenException } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
+import { Controller, Get, Put, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiQuery, ApiForbiddenResponse } from '@nestjs/swagger';
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ServerOwnerOnly } from '../auth/decorators/server-owner.decorator';
 import { SettingsService, StorageConfig, SmtpConfig } from './settings.service';
 import { EmailService } from '@multiwa/engine-runtime';
 
+// Storage and SMTP are the server's, shared by every organization on it: only the server's owner (the owner of the
+// oldest organization) reads or changes them.
 @ApiTags('Settings')
 @Controller('settings')
 @UseGuards(JwtAuthGuard)
+@Roles('owner')
+@ServerOwnerOnly()
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
+@ApiForbiddenResponse({ description: "Only the server's owner manages server-wide settings" })
 export class SettingsController {
   constructor(
     private readonly settingsService: SettingsService,
     private readonly emailService: EmailService,
   ) {}
 
-  /**
-   * Admin-only guard: only owner/admin can access settings
-   */
-  private ensureAdmin(req: any) {
-    const role = req.user?.role;
-    if (!role || !['owner', 'admin'].includes(role)) {
-      throw new ForbiddenException('Only admins can manage system settings');
-    }
-  }
-
   // ======= Storage endpoints =======
 
   @Get('storage')
   @ApiOperation({ summary: 'Get storage configuration (secrets masked)' })
   @ApiResponse({ status: 200, description: 'Storage configuration' })
-  async getStorageConfig(@Request() req: any) {
-    this.ensureAdmin(req);
+  async getStorageConfig() {
     return this.settingsService.getStorageConfigMasked();
   }
 
@@ -41,8 +37,7 @@ export class SettingsController {
   @ApiOperation({ summary: 'Update storage configuration' })
   @ApiValidationError()
   @ApiResponse({ status: 200, description: 'Storage config updated' })
-  async updateStorageConfig(@Request() req: any, @Body() body: StorageConfig) {
-    this.ensureAdmin(req);
+  async updateStorageConfig(@Body() body: StorageConfig) {
     await this.settingsService.updateStorageConfig(body);
     return { success: true, message: 'Storage configuration updated' };
   }
@@ -52,13 +47,7 @@ export class SettingsController {
   @ApiQuery({ name: 'createBucket', required: false, description: 'Auto-create bucket if missing' })
   @ApiValidationError()
   @ApiResponse({ status: 200, description: 'Connection test result' })
-  async testStorageConnection(
-    @Request() req: any,
-    @Body() body: StorageConfig,
-    @Query('createBucket') createBucket?: string,
-  ) {
-    this.ensureAdmin(req);
-
+  async testStorageConnection(@Body() body: StorageConfig, @Query('createBucket') createBucket?: string) {
     // If testing with masked keys, use saved config instead
     const hasRealKeys = body.s3AccessKey && !body.s3AccessKey.includes('••••');
     const config = hasRealKeys ? body : undefined;
@@ -73,8 +62,7 @@ export class SettingsController {
   @Get('smtp')
   @ApiOperation({ summary: 'Get SMTP configuration (secrets masked)' })
   @ApiResponse({ status: 200, description: 'SMTP configuration' })
-  async getSmtpConfig(@Request() req: any) {
-    this.ensureAdmin(req);
+  async getSmtpConfig() {
     return this.settingsService.getSmtpConfigMasked();
   }
 
@@ -82,8 +70,7 @@ export class SettingsController {
   @ApiOperation({ summary: 'Update SMTP configuration' })
   @ApiValidationError()
   @ApiResponse({ status: 200, description: 'SMTP config updated' })
-  async updateSmtpConfig(@Request() req: any, @Body() body: SmtpConfig) {
-    this.ensureAdmin(req);
+  async updateSmtpConfig(@Body() body: SmtpConfig) {
     await this.settingsService.updateSmtpConfig(body);
     // Hot-reload the email transporter with new config
     const reloadResult = await this.emailService.reconfigure();
@@ -95,13 +82,7 @@ export class SettingsController {
   @ApiQuery({ name: 'sendTo', required: false, description: 'Send test email to this address' })
   @ApiValidationError()
   @ApiResponse({ status: 200, description: 'SMTP test result' })
-  async testSmtpConnection(
-    @Request() req: any,
-    @Body() body: SmtpConfig,
-    @Query('sendTo') sendTo?: string,
-  ) {
-    this.ensureAdmin(req);
-
+  async testSmtpConnection(@Body() body: SmtpConfig, @Query('sendTo') sendTo?: string) {
     // If testing with masked password, use saved config
     const hasRealPass = body.pass && !body.pass.includes('••••');
     const config = hasRealPass ? body : undefined;
