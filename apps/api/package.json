@@ -11,8 +11,8 @@
     "lint": "eslint src",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:cov": "vitest run --coverage --exclude '**/tenant-route-coverage.spec.ts'",
-    "test:meta": "vitest run src/common/tenant/tenant-route-coverage.spec.ts",
+    "test:cov": "vitest run --coverage --exclude '**/tenant-route-coverage.spec.ts' --exclude '**/role-route-coverage.spec.ts'",
+    "test:meta": "vitest run src/common/tenant/tenant-route-coverage.spec.ts src/modules/auth/role-route-coverage.spec.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "typecheck": "tsc --noEmit"
   },
