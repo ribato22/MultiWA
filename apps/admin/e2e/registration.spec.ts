@@ -24,11 +24,13 @@ test('the landing page offers Sign in instead once registration is closed', asyn
   backend.route(get('/auth/registration', { open: false }));
   const asked = requestEnded(page, '/auth/registration');
   await page.goto('/');
-  const signIn = page.getByRole('link', { name: 'Sign in' });
-  await expect(signIn).toHaveCount(2); // in place of each of them, while it asks too
+  const signIn = page.getByRole('main').getByRole('link', { name: 'Sign in' });
+  await expect(signIn).toHaveAttribute('href', '/auth/login'); // while it asks too
   await asked;
   await rendered(page);
-  for (const link of await signIn.all()) await expect(link).toHaveAttribute('href', '/auth/login');
+  await expect(signIn).toHaveAttribute('href', '/auth/login');
+  // The header has its own Login link: no second one beside it.
+  await expect(page.getByRole('navigation', { name: 'Primary' }).getByRole('link')).toHaveText(['Login']);
   await expect(page.locator('a[href="/auth/register"]')).toHaveCount(0);
 });
 

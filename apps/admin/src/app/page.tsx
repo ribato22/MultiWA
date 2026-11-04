@@ -89,6 +89,7 @@ export default function HomePage() {
             </Link>
             <SignUpLink
               label="Get Started"
+              hideWhenClosed
               className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
               iconClassName="w-4 h-4"
             />
