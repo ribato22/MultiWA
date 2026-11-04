@@ -4,6 +4,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagg
 import { WorkspacesService } from './workspaces.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
@@ -25,6 +26,7 @@ export class WorkspacesController {
   }
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Create workspace' })
   @ApiValidationError()
   async create(@Request() req: any, @Body() dto: CreateWorkspaceDto) {
@@ -40,6 +42,7 @@ export class WorkspacesController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Update workspace' })
   @RequireTenant({ from: 'param', key: 'id', resource: 'workspace' })
   @ApiValidationError()

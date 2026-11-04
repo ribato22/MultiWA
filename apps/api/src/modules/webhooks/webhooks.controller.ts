@@ -5,14 +5,18 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } fro
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateWebhookDto, UpdateWebhookDto } from './dto';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
+// Owners and admins only, reads included: a webhook carries its signing secret and custom headers.
 @ApiTags('Webhooks')
 @Controller('webhooks')
 @UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@Roles(...ADMIN_ROLES)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()

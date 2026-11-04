@@ -8,6 +8,7 @@ import { AccountsService } from './accounts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
@@ -38,6 +39,7 @@ export class AccountsController {
   }
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Create new account' })
   @ApiValidationError()
   async create(@Body() dto: CreateAccountDto, @Req() req: any) {
@@ -46,6 +48,7 @@ export class AccountsController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Update account' })
   @ApiValidationError()
@@ -55,6 +58,7 @@ export class AccountsController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Delete account' })
   @ApiNotFound('Account')
@@ -73,6 +77,7 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Create profile for account' })
   @ApiValidationError()
@@ -118,6 +123,7 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles/:profileId/connect')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -131,6 +137,7 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles/:profileId/disconnect')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -144,6 +151,7 @@ export class AccountsController {
   }
 
   @Get(':accountId/profiles/:profileId/qr')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },

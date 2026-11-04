@@ -5,7 +5,7 @@ import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException 
 import { ApiTags, ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ANY_ROLES } from '../auth/roles';
+import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
 import { prisma } from '@multiwa/database';
 
@@ -28,6 +28,7 @@ export class GdprController {
    * and audit logs associated with the authenticated user.
    */
   @Get('export')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({
     summary: 'Export all personal data (GDPR Art. 15)',
     description:

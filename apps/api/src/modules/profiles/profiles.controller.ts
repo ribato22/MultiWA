@@ -8,6 +8,7 @@ import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
@@ -40,6 +41,7 @@ export class ProfilesController {
   }
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Create a new WhatsApp profile' })
   @ApiResponse({ status: 201, description: 'Profile created' })
   @ApiValidationError()
@@ -48,6 +50,7 @@ export class ProfilesController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Update profile' })
   @ApiResponse({ status: 200, description: 'Profile updated' })
@@ -73,6 +76,7 @@ export class ProfilesController {
 
   // WhatsApp Connection
   @Post(':id/connect')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Connect WhatsApp profile (QR code sent via WebSocket)' })
   @ApiResponse({ status: 200, description: 'Connection initiated - listen on WebSocket /ws namespace for qr:update event' })
@@ -82,6 +86,7 @@ export class ProfilesController {
   }
 
   @Post(':id/disconnect')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Disconnect WhatsApp profile' })
   @ApiResponse({ status: 200, description: 'Disconnected' })

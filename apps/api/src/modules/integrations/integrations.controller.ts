@@ -8,6 +8,8 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TypeBotService } from './typebot.service';
 import { ChatwootService } from './chatwoot.service';
 import { ConfigService } from '@nestjs/config';
@@ -63,6 +65,7 @@ export class IntegrationsController {
   }
 
   @Put('config')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Update integration configuration (env-based, restart required)' })
   @ApiResponse({ status: 200, description: 'Configuration noted, restart needed' })
   @ApiValidationError()
@@ -77,6 +80,7 @@ export class IntegrationsController {
   }
 
   @Post('test')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Test integration connection' })
   @ApiResponse({ status: 200, description: 'Connection test result' })
   @ApiValidationError()

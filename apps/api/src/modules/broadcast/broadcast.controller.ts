@@ -6,6 +6,8 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@ne
 import { ApiAuthErrors, ApiValidationError, ApiRateLimited, ApiNotFound } from '../../common/decorators/api-responses';
 import { BroadcastService } from './broadcast.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateBroadcastDto, UpdateBroadcastDto, ScheduleBroadcastDto } from './dto';
@@ -24,6 +26,7 @@ export class BroadcastController {
   ) {}
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create a broadcast', description: 'Creates a broadcast in draft state. Sending begins only when the broadcast is scheduled or started.' })
   @ApiValidationError()
@@ -61,6 +64,7 @@ export class BroadcastController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Update broadcast (draft only)' })
   @ApiValidationError()
@@ -70,6 +74,7 @@ export class BroadcastController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Delete broadcast' })
   @ApiNotFound('Broadcast')
@@ -86,6 +91,7 @@ export class BroadcastController {
   }
 
   @Post(':id/schedule')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Schedule broadcast', description: 'Queues the broadcast to begin sending at the scheduled time.' })
   @ApiValidationError()
@@ -95,6 +101,7 @@ export class BroadcastController {
   }
 
   @Post(':id/start')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Start broadcast immediately', description: 'Begins sending the broadcast to all recipients right away. Subject to WhatsApp send-rate limits.' })
   @ApiNotFound('Broadcast')
@@ -112,6 +119,7 @@ export class BroadcastController {
   }
 
   @Post(':id/pause')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Pause running broadcast' })
   @ApiNotFound('Broadcast')
@@ -120,6 +128,7 @@ export class BroadcastController {
   }
 
   @Post(':id/resume')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Resume paused broadcast' })
   @ApiNotFound('Broadcast')
@@ -128,6 +137,7 @@ export class BroadcastController {
   }
 
   @Post(':id/cancel')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'broadcast' })
   @ApiOperation({ summary: 'Cancel broadcast' })
   @ApiNotFound('Broadcast')

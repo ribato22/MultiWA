@@ -14,6 +14,8 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiParam, ApiQuery }
 import { BulkService } from './bulk.service';
 import { SendBulkDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import {
@@ -33,6 +35,7 @@ export class BulkController {
   constructor(private readonly bulkService: BulkService) {}
 
   @Post('send')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({
     summary: 'Send bulk messages with variable substitution',
@@ -66,6 +69,7 @@ export class BulkController {
   }
 
   @Post('batch/:batchId/cancel')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Cancel a batch in progress' })
   @ApiParam({ name: 'batchId', description: 'Batch ID to cancel' })
