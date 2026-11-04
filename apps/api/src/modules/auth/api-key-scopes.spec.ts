@@ -40,7 +40,7 @@ const EXPECTED: Array<[any, Record<string, string[] | undefined>]> = [
     create: ['profiles:write'], update: ['profiles:write'], delete: ['profiles:write'], connect: ['profiles:write'], disconnect: ['profiles:write'],
   }],
   [AccountsController, {
-    getProfiles: ['profiles:read'], getProfile: ['profiles:read'], getQr: ['profiles:read'],
+    getProfiles: ['profiles:read'], getProfile: ['profiles:read'], getQr: ['profiles:write'],
     createProfile: ['profiles:write'], deleteProfile: ['profiles:write'], connectProfile: ['profiles:write'], disconnectProfile: ['profiles:write'],
     findAll: undefined, findOne: undefined, create: undefined, update: undefined, remove: undefined,
   }],

@@ -154,9 +154,10 @@ export class AccountsController {
     return this.accountsService.disconnectProfile(accountId, profileId);
   }
 
+  // Scanning this QR links a phone to the profile, so a key that may only read profiles must not get it.
   @Get(':accountId/profiles/:profileId/qr')
   @Roles(...ADMIN_ROLES)
-  @RequireScope('profiles:read')
+  @RequireScope('profiles:write')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
