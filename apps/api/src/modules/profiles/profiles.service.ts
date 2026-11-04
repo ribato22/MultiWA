@@ -92,7 +92,7 @@ export class ProfilesService {
       throw new BadRequestException('Workspace not found');
     }
 
-    return prisma.profile.create({
+    return publicProfile(await prisma.profile.create({
       data: {
         workspaceId: dto.workspaceId,
         displayName: dto.name,
@@ -100,7 +100,7 @@ export class ProfilesService {
         webhookUrl: dto.webhookUrl,
         webhookSecret: dto.webhookSecret,
       },
-    });
+    }));
   }
 
   async update(id: string, dto: UpdateProfileDto) {

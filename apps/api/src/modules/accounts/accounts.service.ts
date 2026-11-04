@@ -167,7 +167,7 @@ export class AccountsService {
     const requestedEngine = dto.settings?.engine ?? dto.engine;
     const engine = VALID_ENGINES.includes(requestedEngine) ? requestedEngine : 'whatsapp-web-js';
 
-    return prisma.profile.create({
+    return publicProfile(await prisma.profile.create({
       data: {
         accountId: accountId,
         workspaceId: account.workspaceId,
@@ -177,7 +177,7 @@ export class AccountsService {
         engine,
         settings: {},
       },
-    });
+    }));
   }
 
   async getProfile(accountId: string, profileId: string) {

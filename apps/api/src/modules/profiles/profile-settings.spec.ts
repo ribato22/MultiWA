@@ -119,3 +119,15 @@ describe('the settings the API answers with', () => {
     });
   });
 });
+
+describe('publicProfile', () => {
+  it('answers whether a webhook secret is set, never the secret', () => {
+    const answered = publicProfile({ id: 'p1', settings: {}, webhookSecret: 's3cr3t' });
+    expect(answered).toEqual({ id: 'p1', settings: {}, hasWebhookSecret: true });
+    expect(publicProfile({ id: 'p2', settings: {}, webhookSecret: null })).toEqual({ id: 'p2', settings: {}, hasWebhookSecret: false });
+  });
+
+  it('adds nothing to a row read without the secret', () => {
+    expect(publicProfile({ id: 'p3', settings: {} })).toEqual({ id: 'p3', settings: {} });
+  });
+});

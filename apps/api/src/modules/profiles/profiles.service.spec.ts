@@ -5,7 +5,7 @@ import 'reflect-metadata';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ValidationPipe } from '@nestjs/common';
 
-vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), findMany: vi.fn(), update: vi.fn(), delete: vi.fn() }, workspace: { findMany: vi.fn() } } }));
+vi.mock('@multiwa/database', () => ({ prisma: { profile: { findUnique: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() }, workspace: { findMany: vi.fn(), findFirst: vi.fn() } } }));
 vi.mock('./engine-manager.service', () => ({ EngineManagerService: class {} }));
 vi.mock('./profile-settings', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./profile-settings')>()),
@@ -126,5 +126,17 @@ describe('ProfilesService answers without the announcement storage key', () => {
   it('an update, and one that changes the engine', async () => {
     expect((await service().update('p1', { name: 'Renamed' })).settings).toEqual(SHOWN);
     expect((await service().update('p1', { engine: EngineType.BAILEYS })).settings).toEqual(SHOWN);
+  });
+});
+
+// The webhook secret is write-only: even the profile just created answers whether one is set, never the secret.
+describe('ProfilesService.create', () => {
+  it('answers whether a webhook secret is set, never the secret', async () => {
+    db.workspace.findFirst.mockReset().mockResolvedValue({ id: 'w1' });
+    db.profile.create.mockReset().mockImplementation(async ({ data }: any) => ({ id: 'p1', settings: {}, ...data }));
+    const created = await new ProfilesService({} as any, {} as any, {} as any).create({ workspaceId: 'w1', name: 'Line 1', webhookSecret: 's3cr3t' }, { organizationId: 'o1' });
+    expect(db.profile.create.mock.calls[0][0].data.webhookSecret).toBe('s3cr3t');
+    expect(created).not.toHaveProperty('webhookSecret');
+    expect(created).toMatchObject({ id: 'p1', hasWebhookSecret: true });
   });
 });
