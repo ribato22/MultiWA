@@ -76,6 +76,8 @@ services:
       JWT_SECRET: ${JWT_SECRET:-}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      # Sign-up is open only to the first account (the server's owner), unless exactly true.
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3001,http://localhost:3333}
       # The API port is published, so no proxy is trusted unless set (behind nginx: 172.16.0.0/12).
       TRUST_PROXY: ${TRUST_PROXY:-}

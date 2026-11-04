@@ -5,8 +5,10 @@ import {
   Controller, Post, Get, Delete, Body, Param,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { KnowledgeBaseService } from './knowledge-base.service';
@@ -16,12 +18,12 @@ import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/dec
 @Controller('ai/knowledge')
 @UseGuards(JwtAuthGuard, TenantGuard)
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 export class KnowledgeBaseController {
   constructor(private readonly kbService: KnowledgeBaseService) {}
 
   @Post(':profileId/text')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({
     summary: 'Add text content to the knowledge base',
@@ -52,6 +54,7 @@ export class KnowledgeBaseController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'knowledgeDocument' })
   @ApiOperation({
     summary: 'Delete a document from the knowledge base',
@@ -66,6 +69,7 @@ export class KnowledgeBaseController {
   }
 
   @Post(':profileId/search')
+  @Roles(...ANY_ROLES)
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({
     summary: 'Search the knowledge base',

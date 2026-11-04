@@ -77,8 +77,6 @@ export class TenantGuard implements CanActivate {
           where: { id, workspace: { organizationId } },
           select,
         }));
-      case 'role':
-        return !!(await prisma.role.findFirst({ where: { id, organizationId }, select }));
 
       // --- Resources that chain through Profile -> Workspace -> Organization ---
       case 'profile':

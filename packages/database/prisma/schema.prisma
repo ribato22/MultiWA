@@ -461,6 +461,7 @@ model Automation {
 // RBAC (Role-Based Access Control)
 // ============================================
 
+// Unused since the /rbac routes were removed; kept so that the boot-time prisma db push drops no data.
 model Role {
   id             String   @id @default(uuid())
   organizationId String

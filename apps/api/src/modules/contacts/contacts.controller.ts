@@ -7,13 +7,18 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@ne
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { ContactsService } from './contacts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
+import { ADMIN_ROLES, AGENT_ROLES, ANY_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto, ValidateBulkDto, SaveWhatsAppContactDto } from './dto';
 
 @ApiTags('Contacts')
 @Controller('contacts')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
+@RequireScope('contacts:write')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -21,6 +26,7 @@ export class ContactsController {
   constructor(private readonly service: ContactsService) {}
 
   @Post()
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create a contact' })
   @ApiValidationError()
@@ -29,6 +35,7 @@ export class ContactsController {
   }
 
   @Get()
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List contacts with filtering' })
   @ApiQuery({ name: 'profileId', required: true })
@@ -49,6 +56,7 @@ export class ContactsController {
   }
 
   @Get(':id')
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Get contact by ID' })
   @ApiNotFound('Contact')
@@ -57,6 +65,7 @@ export class ContactsController {
   }
 
   @Put(':id')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Update contact' })
   @ApiValidationError()
@@ -66,6 +75,7 @@ export class ContactsController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Delete contact' })
   @ApiNotFound('Contact')
@@ -75,6 +85,7 @@ export class ContactsController {
 
   // Import endpoints
   @Post('import')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Bulk import contacts (JSON array)' })
   @ApiValidationError()
@@ -83,6 +94,7 @@ export class ContactsController {
   }
 
   @Post('import/csv')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Import contacts from CSV data' })
   @ApiValidationError()
@@ -92,6 +104,8 @@ export class ContactsController {
 
   // Export endpoints
   @Get('export/csv')
+  @Roles(...ADMIN_ROLES)
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Export contacts to CSV' })
   @ApiQuery({ name: 'profileId', required: true })
@@ -116,6 +130,7 @@ export class ContactsController {
 
   // Tags endpoints
   @Post(':id/tags')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Add tags to contact' })
   @ApiValidationError()
@@ -125,6 +140,7 @@ export class ContactsController {
   }
 
   @Delete(':id/tags')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'contact' })
   @ApiOperation({ summary: 'Remove tags from contact' })
   @ApiValidationError()
@@ -135,6 +151,7 @@ export class ContactsController {
 
   // Validation endpoints
   @Get('profile/:profileId/validate/:phone')
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Validate single phone number' })
   @ApiNotFound('Profile')
@@ -146,6 +163,9 @@ export class ContactsController {
   }
 
   @Post('profile/:profileId/validate')
+  @Roles(...ANY_ROLES)
+  // A read, though a POST: it looks the numbers up and changes nothing.
+  @RequireScope('contacts:read')
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Bulk validate phone numbers' })
   @ApiValidationError()
@@ -159,6 +179,7 @@ export class ContactsController {
 
   // Sync from WhatsApp
   @Post('sync/whatsapp')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Sync contacts from WhatsApp profile - fetches contacts exactly as saved in WhatsApp' })
   @ApiQuery({ name: 'profileId', required: false })
@@ -177,6 +198,7 @@ export class ContactsController {
   // Writes to WhatsApp itself (not just the MultiWA DB), turning an unknown number
   // into a known contact.
   @Post('profile/:profileId/save-to-whatsapp')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: "Save a contact into the WhatsApp account's addressbook (whatsapp-web-js only)" })
   @ApiValidationError()
@@ -189,6 +211,7 @@ export class ContactsController {
   }
 
   @Delete('profile/:profileId/whatsapp/:phone')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: "Delete a contact from the WhatsApp account's addressbook (whatsapp-web-js only)" })
   @ApiNotFound('Profile')

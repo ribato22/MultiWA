@@ -10,7 +10,6 @@ import { API_KEY_SCOPE } from '../auth/decorators/require-scope.decorator';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { AccountsController } from '../accounts/accounts.controller';
 import { ProfilesController } from './profiles.controller';
 
@@ -25,13 +24,12 @@ const ROUTES: Array<[string, { prototype: object }, string, TenantCheck[]]> = [
 describe.each(ROUTES)('%s', (_route, controller, name, tenantChecks) => {
   const handler = (controller.prototype as Record<string, object>)[name];
 
-  // @Roles and @RequireScope check nothing without their guards: these run after the class's authentication and
-  // tenant check.
+  // The class's auth guard checks @Roles, and its ApiKeyScopeGuard the route's @RequireScope, or else the class's.
   it('owner and admin only, and an API key with a scope list needs profiles:write', () => {
-    expect(Reflect.getMetadata(GUARDS_METADATA, controller)).toEqual([JwtOrApiKeyGuard, TenantGuard]);
-    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([ApiKeyScopeGuard, RolesGuard]);
+    expect(Reflect.getMetadata(GUARDS_METADATA, controller)).toEqual([JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard]);
+    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toBeUndefined();
     expect(Reflect.getMetadata(ROLES_KEY, handler)).toEqual(['owner', 'admin']);
-    expect(Reflect.getMetadata(API_KEY_SCOPE, handler)).toEqual(['profiles:write']);
+    expect(Reflect.getMetadata(API_KEY_SCOPE, handler) ?? Reflect.getMetadata(API_KEY_SCOPE, controller)).toEqual(['profiles:write']);
   });
 
   it('on a profile of their organization', () => {

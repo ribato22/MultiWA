@@ -1,4 +1,4 @@
-import { test, expect, get, on, ringing, ME, PROFILE } from './support/fixtures';
+import { test, expect, get, on, ringing, toasts, ME, PROFILE } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
@@ -92,7 +92,7 @@ test('a refused toggle changes nothing, and says so', async ({ page, backend }) 
   await page.goto('/dashboard/calls');
   await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
   await toggle(page).click();
-  await expect(page.getByRole('region', { name: /^Notifications/ }).getByText('Your availability did not change')).toBeVisible();
+  await expect(toasts(page).getByText('Your availability did not change')).toBeVisible();
   await expect(toggle(page)).toHaveAttribute('aria-checked', 'true');
   const sent = backend.commands('call:availability').length;
   await page.reload();

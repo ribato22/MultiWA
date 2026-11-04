@@ -29,6 +29,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Contact, Profile } from '@/lib/api';
+import { canConfigure, currentUser } from '@/lib/current-user';
 import { formatRelative, formatFull } from '@/lib/datetime';
 import TemplatePicker from '@/components/templates/TemplatePicker';
 import { Button } from '@/components/ui/button';
@@ -99,6 +100,8 @@ const MEDIA_ICON_MAP: Record<MessageType, LucideIcon> = {
 
 export default function BroadcastPage() {
   const { toast } = useToast();
+  // Broadcasts are an owner's or admin's to create, send and delete; everyone sees them.
+  const [admin] = useState(() => canConfigure(currentUser()?.role));
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [loading, setLoading] = useState(true);
@@ -596,6 +599,7 @@ export default function BroadcastPage() {
             Send bulk messages to multiple contacts
           </p>
         </div>
+        {admin && (
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2 cursor-pointer" disabled={profiles.length === 0}>
@@ -940,6 +944,7 @@ export default function BroadcastPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        )}
       </div>
 
       {/* No connected profiles warning */}
@@ -954,9 +959,11 @@ export default function BroadcastPage() {
               <p className="text-sm text-amber-200/80 mt-1">
                 You need at least one connected WhatsApp profile to send broadcasts.
               </p>
-              <Button variant="outline" size="sm" className="mt-3 cursor-pointer" asChild>
-                <Link href="/dashboard/profiles/new">Connect Profile</Link>
-              </Button>
+              {admin && (
+                <Button variant="outline" size="sm" className="mt-3 cursor-pointer" asChild>
+                  <Link href="/dashboard/profiles/new">Connect Profile</Link>
+                </Button>
+              )}
             </div>
           </div>
         </div>
@@ -1182,7 +1189,7 @@ export default function BroadcastPage() {
                     )}
                   </div>
                   {getStatusBadge(broadcast.status)}
-                  {broadcast.status === 'draft' && (
+                  {admin && broadcast.status === 'draft' && (
                     <Button
                       variant="default"
                       size="sm"
@@ -1195,7 +1202,7 @@ export default function BroadcastPage() {
                       Send
                     </Button>
                   )}
-                  {['completed', 'failed'].includes(broadcast.status) && (
+                  {admin && ['completed', 'failed'].includes(broadcast.status) && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -1208,15 +1215,17 @@ export default function BroadcastPage() {
                       Resend
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleDelete}
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
-                    aria-label={`Delete broadcast ${broadcast.name}`}
-                  >
-                    <Trash2 className="w-4 h-4" aria-hidden="true" />
-                  </Button>
+                  {admin && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDelete}
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                      aria-label={`Delete broadcast ${broadcast.name}`}
+                    >
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    </Button>
+                  )}
                 </div>
               </div>
               );

@@ -61,6 +61,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ProfileCallsSettings } from '@/components/calls/profile-calls-settings';
+import { canConfigure, currentUser } from '@/lib/current-user';
 
 // "628…, 628…" → ['628…', '628…'] for the quiet-profile alarm recipients. Only commas, semicolons and newlines
 // separate: a number may hold spaces or dashes ("+62 812-3456-7890").
@@ -239,7 +240,10 @@ export default function ProfileDetailPage() {
   const [savingGuardrails, setSavingGuardrails] = useState(false);
 
   const profileId = params.id as string;
-  const autoConnect = searchParams.get('action') === 'connect';
+  // Connecting, disconnecting, deleting and the guardrails are an owner's or admin's; everyone else reads the profile.
+  const [admin] = useState(() => canConfigure(currentUser()?.role));
+  // A link to connect (`?action=connect`) starts nothing for a role that may not connect.
+  const autoConnect = admin && searchParams.get('action') === 'connect';
 
   // WebSocket connection for real-time updates
   useEffect(() => {
@@ -822,8 +826,9 @@ export default function ProfileDetailPage() {
           </div>
         )}
 
-        {/* QR section (visible when connecting or QR ready, and not connected) */}
-        {(qrCode || isConnecting) && !isConnected && (
+        {/* QR section (visible when connecting or QR ready, and not connected). Owner's and admin's only: the server
+            sends the QR to their sockets alone, and only they connect. */}
+        {admin && (qrCode || isConnecting) && !isConnected && (
           <div className="px-6 pb-6">
             <div
               className="rounded-xl border border-slate-800 bg-slate-950/40 p-6"
@@ -920,26 +925,29 @@ export default function ProfileDetailPage() {
         </DetailCell>
       </section>
 
-      {/* Sending guardrails */}
+      {/* Sending guardrails: an owner or admin changes them, everyone else reads them. The disabled fieldset disables
+          every field in it; the two selects are told too. */}
       <section
         aria-label="Sending guardrails"
-        className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 space-y-4"
+        className="rounded-xl border border-slate-800 bg-slate-900/50 p-5"
       >
+        <fieldset disabled={!admin} aria-labelledby="guardrails-title" className="min-w-0 space-y-4">
         <div className="flex items-center gap-2">
           <Gauge className="w-4 h-4 text-slate-400" />
-          <h2 className="text-sm font-semibold text-slate-100">Sending guardrails</h2>
+          <h2 id="guardrails-title" className="text-sm font-semibold text-slate-100">Sending guardrails</h2>
         </div>
         <p className="text-xs text-slate-400 max-w-2xl">
           Pace outbound messages and cap daily volume to lower the risk of WhatsApp
           rate-locks (error 463). The send gate applies these per message; a recently
           rate-locked number should stay conservative.
         </p>
+        {!admin && <p className="text-xs text-slate-300">Your role can read these guardrails but not change them.</p>}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="delay" className="text-xs text-slate-300">
               Inter-message delay
             </Label>
-            <Select value={String(delayMs)} onValueChange={(v) => setDelayMs(Number(v))}>
+            <Select value={String(delayMs)} onValueChange={(v) => setDelayMs(Number(v))} disabled={!admin}>
               <SelectTrigger
                 id="delay"
                 className="bg-slate-950/40 border-slate-800 text-slate-100"
@@ -964,7 +972,7 @@ export default function ProfileDetailPage() {
             <Label htmlFor="jitter" className="text-xs text-slate-300">
               Delay jitter
             </Label>
-            <Select value={String(jitterMs)} onValueChange={(v) => setJitterMs(Number(v))}>
+            <Select value={String(jitterMs)} onValueChange={(v) => setJitterMs(Number(v))} disabled={!admin}>
               <SelectTrigger
                 id="jitter"
                 className="bg-slate-950/40 border-slate-800 text-slate-100"
@@ -1241,30 +1249,35 @@ export default function ProfileDetailPage() {
               </>
             )}
           </p>
-          <Button
-            onClick={handleSaveGuardrails}
-            disabled={savingGuardrails || !guardrailsDirty}
-            className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium disabled:opacity-50"
-          >
-            {savingGuardrails ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
-                Saving…
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4 mr-2" />
-                Save guardrails
-              </>
-            )}
-          </Button>
+          {admin && (
+            <Button
+              onClick={handleSaveGuardrails}
+              disabled={savingGuardrails || !guardrailsDirty}
+              className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium disabled:opacity-50"
+            >
+              {savingGuardrails ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Save guardrails
+                </>
+              )}
+            </Button>
+          )}
         </div>
+        </fieldset>
       </section>
 
       {/* Its checklist names the connection and auto-reject (above): a change of either here reads it again. */}
       <ProfileCallsSettings profileId={profileId} refreshKey={`${profile.status} ${!!profile.settings?.autoRejectCalls}`} />
 
-      {/* Actions bar */}
+      {/* Actions bar: connecting, disconnecting and deleting are an owner's or admin's; Open Chat is everyone's, so a
+          disconnected profile has no bar below admin. */}
+      {(admin || isConnected) && (
       <section
         aria-label="Profile actions"
         className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 flex flex-wrap items-center gap-3"
@@ -1277,24 +1290,26 @@ export default function ProfileDetailPage() {
                 Open Chat
               </Button>
             </Link>
-            <Button
-              variant="outline"
-              onClick={handleDisconnect}
-              disabled={disconnecting}
-              className="border-slate-700 text-slate-200 hover:bg-slate-800"
-            >
-              {disconnecting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
-                  Disconnecting…
-                </>
-              ) : (
-                <>
-                  <WifiOff className="w-4 h-4 mr-2" />
-                  Disconnect
-                </>
-              )}
-            </Button>
+            {admin && (
+              <Button
+                variant="outline"
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                className="border-slate-700 text-slate-200 hover:bg-slate-800"
+              >
+                {disconnecting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
+                    Disconnecting…
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-4 h-4 mr-2" />
+                    Disconnect
+                  </>
+                )}
+              </Button>
+            )}
           </>
         ) : (
           <Button
@@ -1316,15 +1331,18 @@ export default function ProfileDetailPage() {
           </Button>
         )}
 
-        <Button
-          variant="outline"
-          onClick={() => setShowDeleteDialog(true)}
-          className="ml-auto border-red-500/40 text-red-300 hover:bg-red-500/10"
-        >
-          <Trash2 className="w-4 h-4 mr-2" />
-          Delete profile
-        </Button>
+        {admin && (
+          <Button
+            variant="outline"
+            onClick={() => setShowDeleteDialog(true)}
+            className="ml-auto border-red-500/40 text-red-300 hover:bg-red-500/10"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete profile
+          </Button>
+        )}
       </section>
+      )}
 
       {/* Quick tips (only when connected) */}
       {isConnected && (

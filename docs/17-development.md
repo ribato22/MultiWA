@@ -93,7 +93,7 @@ pnpm --filter "api^..." build
 `pnpm test` runs the unit tests of every package, through Turbo. Each package has its own checks too:
 
 ```bash
-# API: the unit tests with the coverage gate CI enforces, and the tenant route-coverage check
+# API: the unit tests with the coverage gate CI enforces, and the tenant and role route-coverage checks
 pnpm --filter api run test:cov
 pnpm --filter api run test:meta
 

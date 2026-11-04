@@ -8,6 +8,8 @@ import { MessagesService } from './messages.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES, AGENT_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import {
@@ -64,6 +66,7 @@ export class MessagesController {
 
   // Send text message
   @Post('text')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send text message', 'Queue a plain-text WhatsApp message.')
   async sendText(@Body() dto: SendTextDto, @Req() req: any) {
@@ -80,6 +83,7 @@ export class MessagesController {
 
   // Send OTP with delivery-confirmed failover to a secondary channel.
   @Post('otp')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend(
     'Send an OTP with failover',
@@ -107,6 +111,7 @@ export class MessagesController {
 
   // Send image
   @Post('image')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send image message', 'Queue an image by URL or base64, with an optional caption.')
   async sendImage(@Body() dto: SendImageDto) {
@@ -115,6 +120,7 @@ export class MessagesController {
 
   // Send video
   @Post('video')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send video message', 'Queue a video by URL or base64, with an optional caption.')
   async sendVideo(@Body() dto: SendVideoDto) {
@@ -123,6 +129,7 @@ export class MessagesController {
 
   // Send audio/voice note
   @Post('audio')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send audio/voice note', 'Queue an audio clip; set ptt=true for a push-to-talk voice note.')
   async sendAudio(@Body() dto: SendAudioDto) {
@@ -131,6 +138,7 @@ export class MessagesController {
 
   // Send document
   @Post('document')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send document/file', 'Queue a document (PDF, DOCX, …) by URL or base64.')
   async sendDocument(@Body() dto: SendDocumentDto) {
@@ -139,6 +147,7 @@ export class MessagesController {
 
   // Send location
   @Post('location')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send location', 'Queue a location pin (latitude/longitude, optional name/address).')
   async sendLocation(@Body() dto: SendLocationDto) {
@@ -147,6 +156,7 @@ export class MessagesController {
 
   // Send contact card
   @Post('contact')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send contact card (vCard)', 'Queue one or more contacts as vCards.')
   async sendContact(@Body() dto: SendContactDto) {
@@ -155,6 +165,7 @@ export class MessagesController {
 
   // Send reaction
   @Post('reaction')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('React to a message', 'Add or change an emoji reaction on a message.')
   async sendReaction(@Body() dto: SendReactionDto) {
@@ -163,6 +174,7 @@ export class MessagesController {
 
   // Reply to message
   @Post('reply')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Reply to a message', 'Send a message that quotes an existing one.')
   async sendReply(@Body() dto: SendReplyDto) {
@@ -171,6 +183,7 @@ export class MessagesController {
 
   // Send poll
   @Post('poll')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiSend('Send interactive poll', 'Queue a poll with options and single/multi-select.')
   async sendPoll(@Body() dto: SendPollDto) {
@@ -179,6 +192,7 @@ export class MessagesController {
 
   // ========== Typing Indicator ==========
   @Post('typing')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Send typing indicator (composing/recording)', description: 'Show typing or recording state in WhatsApp chat. Optionally auto-clears after a given duration.' })
   @ApiValidationError()
@@ -188,6 +202,7 @@ export class MessagesController {
 
   // ========== Read Receipt Control ==========
   @Post('mark-read')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Mark messages/chat as read', description: 'Send read receipts (blue ticks) for specific messages or entire chat.' })
   @ApiValidationError()
@@ -197,6 +212,7 @@ export class MessagesController {
 
   // ========== Delete for Everyone ==========
   @Post('delete-for-everyone')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Delete message for everyone', description: 'Delete a sent message from WhatsApp for all participants. Only works for messages sent by you.' })
   @ApiValidationError()
@@ -206,6 +222,7 @@ export class MessagesController {
 
   // ========== Message Scheduling ==========
   @Post('schedule')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Schedule a message for future delivery', description: 'Persist a message to be sent at scheduledAt (ISO 8601). Manage via the schedule endpoints below.' })
   @ApiValidationError()
@@ -226,6 +243,7 @@ export class MessagesController {
   }
 
   @Delete('schedule/:id')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'scheduledMessage' })
   @ApiOperation({ summary: 'Cancel a scheduled message' })
   async cancelScheduledMessage(@Param('id') id: string) {
@@ -292,6 +310,7 @@ export class MessagesController {
 
   // Delete message (from local database)
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'message' })
   @ApiOperation({ summary: 'Delete message from database' })
   async delete(@Param('id') id: string) {

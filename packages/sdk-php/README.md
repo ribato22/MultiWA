@@ -164,8 +164,10 @@ The QR code is not part of the REST API: it is pushed as the `qr:update` event o
 the [WebSocket API](https://github.com/ribato22/MultiWA/blob/main/docs/08-websocket-api.md).
 A Socket.IO client connects to `https://your-multiwa-instance.com/ws` with the API
 key, emits `join` with the profile id, and shows each event's `qrCode` (a
-`data:image/png;base64,…` URL) until it is scanned. You can also scan it in the
-admin dashboard. Afterwards `status()` reports `connected`. A profile that is
+`data:image/png;base64,…` URL) until it is scanned. The event reaches owners and
+admins only: a dashboard sign-in of one qualifies, and so does an API key of one
+with `profiles:write` (or no scope list). You can also scan it in the admin
+dashboard. Afterwards `status()` reports `connected`. A profile that is
 already linked answers `['status' => 'already_connected', …]`.
 
 ## Webhooks

@@ -5,6 +5,8 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } fro
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { TemplatesService } from './templates.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateTemplateDto, UpdateTemplateDto, PreviewTemplateDto } from './dto';
@@ -20,6 +22,7 @@ export class TemplatesController {
   constructor(private readonly service: TemplatesService) {}
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({
     summary: 'Create a message template',
@@ -56,6 +59,7 @@ export class TemplatesController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'template' })
   @ApiOperation({ summary: 'Update template' })
   @ApiValidationError()
@@ -65,6 +69,7 @@ export class TemplatesController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'template' })
   @ApiOperation({ summary: 'Delete template' })
   @ApiNotFound('Template')
@@ -73,6 +78,7 @@ export class TemplatesController {
   }
 
   @Post(':id/preview')
+  @Roles(...ANY_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'template' })
   @ApiOperation({
     summary: 'Preview template with variables',
@@ -85,6 +91,7 @@ export class TemplatesController {
   }
 
   @Post(':id/duplicate')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'template' })
   @ApiOperation({
     summary: 'Duplicate a template',

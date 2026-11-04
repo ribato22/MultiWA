@@ -7,6 +7,7 @@ import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto } f
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { pageSize } from '../../common/page-size';
 
 @Injectable()
 export class ContactsService {
@@ -70,14 +71,14 @@ export class ContactsService {
     const [contacts, total] = await Promise.all([
       prisma.contact.findMany({
         where,
-        take: options.limit || 50,
+        take: pageSize(options.limit),
         skip: options.offset || 0,
         orderBy: { updatedAt: 'desc' },
       }),
       prisma.contact.count({ where }),
     ]);
 
-    return { contacts, total, limit: options.limit || 50, offset: options.offset || 0 };
+    return { contacts, total, limit: pageSize(options.limit), offset: options.offset || 0 };
   }
 
   // Get contact by ID

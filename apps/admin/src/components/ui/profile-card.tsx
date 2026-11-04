@@ -106,7 +106,8 @@ export function ProfileCard({
 
       {/* Actions */}
       <div className="flex items-center gap-3 mt-6 pt-4 border-t border-border">
-        {status === 'offline' ? (
+        {/* The connection button needs its handlers: a page gives none to a role that may not connect profiles. */}
+        {(onConnect || onDisconnect) && (status === 'offline' ? (
           <Button
             className="flex-1 gap-2 cursor-pointer"
             onClick={() => onConnect?.(id)}
@@ -134,7 +135,7 @@ export function ProfileCard({
             <X className="w-4 h-4" aria-hidden="true" />
             Cancel
           </Button>
-        )}
+        ))}
 
         <Button
           variant="ghost"

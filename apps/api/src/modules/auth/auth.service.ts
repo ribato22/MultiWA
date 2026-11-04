@@ -1,15 +1,19 @@
 // MultiWA Gateway API - Auth Service
 // apps/api/src/modules/auth/auth.service.ts
 
-import { Injectable, UnauthorizedException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { prisma } from '@multiwa/database';
 import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { TwoFactorService } from './two-factor.service';
 import { SessionsService } from './sessions.service';
+import { assertServerOwnerMayLeave, isServerOwner } from './server-owner';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
+
+/** The advisory lock every registration takes first: any fixed key no other lock uses. */
+const REGISTRATION_LOCK = 4_726_310_001n;
 
 @Injectable()
 export class AuthService {
@@ -29,55 +33,89 @@ export class AuthService {
     return this.config.get<string>('JWT_REFRESH_SECRET') as string;
   }
 
+  /**
+   * Whether anyone may create an account (and an organization with it): the first person on a new server always may,
+   * since they become its owner; after that only when ALLOW_REGISTRATION=true. Otherwise an admin adds people.
+   */
+  async registrationOpen(db: Pick<typeof prisma, 'user'> = prisma): Promise<boolean> {
+    if (this.config.get<string>('ALLOW_REGISTRATION') === 'true') return true;
+    return (await db.user.count()) === 0;
+  }
+
   async register(dto: RegisterDto): Promise<TokenResponseDto> {
-    // Check if user exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-
-    if (existingUser) {
-      throw new ConflictException('Email already registered');
-    }
-
-    // Create organization and user
-    const organization = await prisma.organization.create({
-      data: {
-        name: dto.organizationName,
-        slug: this.generateSlug(dto.organizationName),
-      },
-    });
-
-    // Create default workspace
-    const workspace = await prisma.workspace.create({
-      data: {
-        organizationId: organization.id,
-        name: 'Default',
-        slug: 'default',
-      },
-    });
-
-    await prisma.account.create({
-      data: {
-        workspaceId: workspace.id,
-        name: 'Default Account',
-        description: 'Automatically created for WhatsApp profiles',
-        settings: {},
-      },
-    });
-
-    // Create user
+    // Before any lookup: a closed registration tells nothing about which emails exist. Checked again under the lock;
+    // answering here spares a closed server the hash and the lock.
+    await this.assertRegistrationOpen();
+    // Hashed before the lock, which every registration waits for.
     const passwordHash = await this.hashPassword(dto.password);
-    const user = await prisma.user.create({
-      data: {
-        organizationId: organization.id,
-        email: dto.email,
-        passwordHash,
-        name: dto.name,
-        role: 'owner',
-      },
+
+    // One transaction: a failure leaves no organization without its owner. Registrations queue on the lock, and each
+    // statement after it sees what the earlier ones committed (READ COMMITTED): two first sign-ups cannot both find
+    // the server empty, nor two sign-ups the same email free.
+    const user = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${REGISTRATION_LOCK})`;
+      await this.assertRegistrationOpen(tx);
+
+      // Check if user exists
+      const existingUser = await tx.user.findUnique({
+        where: { email: dto.email },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('Email already registered');
+      }
+
+      // Create organization and user
+      const organization = await tx.organization.create({
+        data: {
+          name: dto.organizationName,
+          slug: this.generateSlug(dto.organizationName),
+        },
+      });
+
+      // Create default workspace
+      const workspace = await tx.workspace.create({
+        data: {
+          organizationId: organization.id,
+          name: 'Default',
+          slug: 'default',
+        },
+      });
+
+      await tx.account.create({
+        data: {
+          workspaceId: workspace.id,
+          name: 'Default Account',
+          description: 'Automatically created for WhatsApp profiles',
+          settings: {},
+        },
+      });
+
+      // Create user
+      try {
+        return await tx.user.create({
+          data: {
+            organizationId: organization.id,
+            email: dto.email,
+            passwordHash,
+            name: dto.name,
+            role: 'owner',
+          },
+        });
+      } catch (e) {
+        // A member added with this email since the check: adding members does not take the lock.
+        if ((e as { code?: string }).code === 'P2002') throw new ConflictException('Email already registered');
+        throw e;
+      }
     });
 
     return this.generateTokens(user);
+  }
+
+  private async assertRegistrationOpen(db?: Pick<typeof prisma, 'user'>): Promise<void> {
+    if (!(await this.registrationOpen(db))) {
+      throw new ForbiddenException('Registration is closed: ask an admin to add you');
+    }
   }
 
   async login(dto: LoginDto, ipAddress?: string, userAgent?: string): Promise<TokenResponseDto | { requires2FA: true; userId: string }> {
@@ -212,6 +250,8 @@ export class AuthService {
       ...profile,
       twoFactorEnabled: user.twoFactorEnabled,
       backupCodesRemaining: user.twoFactorEnabled ? (backupCodes?.length ?? 0) : 0,
+      // The dashboard shows the server-wide settings (SMTP, storage) to the server's owner only.
+      isServerOwner: await isServerOwner(user),
     };
   }
 
@@ -261,6 +301,9 @@ export class AuthService {
 
     const isValid = await this.verifyPassword(password, user.passwordHash);
     if (!isValid) throw new BadRequestException('Password is incorrect');
+
+    // Deleting an owner deletes their organization: never the server owner's while others use this server.
+    await assertServerOwnerMayLeave(user);
 
     // If user is org owner, delete the entire organization (cascades)
     if (user.role === 'owner') {
@@ -322,6 +365,8 @@ export class AuthService {
         name: user.name,
         role: user.role,
         organizationId: user.organizationId,
+        // Stored by the dashboard with the role: it shows the server owner's pages to them only.
+        isServerOwner: await isServerOwner(user),
       },
     };
   }

@@ -80,8 +80,20 @@ export function publicSettings(settings: unknown): unknown {
   return { ...(settings as ProfileSettings), callsAnnouncement: announcement && { mimeType: announcement.mimeType, durationSec: announcement.durationSec } };
 }
 
-/** A profile row as the API answers with it: its settings through publicSettings. */
-export const publicProfile = <T extends { settings?: unknown }>(profile: T): T => ({ ...profile, settings: publicSettings(profile.settings) });
+/**
+ * A profile row as the API answers with it: its settings through publicSettings, and its webhook secret write-only
+ * (whether one is set, never the secret itself).
+ */
+export function publicProfile<T extends { settings?: unknown; webhookSecret?: string | null }>(
+  profile: T,
+): Omit<T, 'webhookSecret'> & { hasWebhookSecret?: boolean } {
+  const { webhookSecret, ...rest } = profile;
+  return {
+    ...rest,
+    settings: publicSettings(profile.settings),
+    ...(webhookSecret !== undefined ? { hasWebhookSecret: !!webhookSecret } : {}),
+  } as Omit<T, 'webhookSecret'> & { hasWebhookSecret?: boolean };
+}
 
 /** Days a recording of the profile is kept. */
 export function retentionDaysOf(settings: unknown): number {

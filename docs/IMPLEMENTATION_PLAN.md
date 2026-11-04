@@ -218,7 +218,7 @@ export interface IWhatsAppEngine {
 
 ## 🏢 Phase 5: Enterprise
 
-- RBAC with custom roles
+- Four organization roles (owner, admin, member, viewer)
 - Audit logging
 - Analytics dashboard
 - Visual Flow Builder (React Flow)

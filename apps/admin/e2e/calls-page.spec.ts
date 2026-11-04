@@ -1,4 +1,4 @@
-import { test, expect, gate, on, rendered, requestEnded, ME, PROFILE, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, on, rendered, requestEnded, toasts, ME, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { sineWav } from './support/audio';
 import type { Locator, Page } from '@playwright/test';
@@ -103,7 +103,7 @@ test('Download keeps the focus while its file comes, and after; a screen reader 
   await expect(download).toBeFocused();
   const [file] = await Promise.all([page.waitForEvent('download'), slow.open()]);
   expect(file.suggestedFilename()).toBe('call-call-9.webm');
-  await expect(page.getByRole('status').filter({ hasText: 'Recording downloaded' }).first()).toBeVisible();
+  await expect(toasts(page).getByText('Recording downloaded')).toBeVisible();
   await expect(download).toHaveAccessibleName('Download the recording of the call from Pak Joko');
   await expect(download).toBeEnabled();
   await expect(download).toBeFocused();
@@ -176,7 +176,7 @@ test('after a delete the focus stays on the row, and a toast says the recording 
   await deleteRecording(page);
   await expect(rowOf(page)).toContainText('Recording deleted by an admin');
   await expect.poll(() => focused(page)).toBe('Recording deleted by an admin');
-  await expect(page.getByRole('status').filter({ hasText: 'Recording deleted' }).first()).toBeVisible();
+  await expect(toasts(page).getByText('Recording deleted')).toBeVisible();
   await expectAccessible(page, 'ul[aria-label="Calls"]');
 });
 
@@ -206,7 +206,7 @@ test('closed without a delete, the dialog gives the focus back to Delete: Cancel
   await rendered(page);
   await expect(deleting).toBeFocused(); // while the delete runs
   slow.open();
-  await expect(page.getByText('Could not delete the recording')).toBeVisible();
+  await expect(toasts(page).getByText('Could not delete the recording')).toBeVisible();
   await expect(confirm).toHaveCount(0);
   await expect(del).toBeFocused();
 });
@@ -326,7 +326,7 @@ test('a recording that cannot be loaded now (a 503) says why, and Play stays: on
   backend.route(on('GET', '/calls/call-9/recording', { status: 503, json: { message: 'The recordings storage did not answer; try again' } }));
   await openAnswered(page);
   await rowOf(page).getByRole('button', { name: 'Play' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Could not load the recording' }).first()).toContainText('The recordings storage did not answer; try again');
+  await expect(toasts(page).getByRole('listitem').filter({ hasText: 'Could not load the recording' })).toContainText('The recordings storage did not answer; try again');
   await expect(rowOf(page).getByRole('button', { name: 'Play the recording of the call from Pak Joko' })).toBeEnabled();
   expect(backend.requests.filter((r) => r.path === '/calls/call-9').map((r) => r.method)).toEqual([]);
 });
@@ -421,6 +421,13 @@ test('a call not shown yet, read for its chat, takes the recording stored for it
   await expect(rowOf(page)).toContainText('Recording 3:10');
 });
 
+/** A missed call still to follow up (the Open tab lists it), and a call ringing now. */
+const MISSED = { ...ANSWERED, id: 'call-7', waCallId: 'W7', outcome: 'missed', followUp: 'open', recording: null };
+const RINGING = {
+  ...ANSWERED, id: 'call-8', waCallId: 'W8', fromJid: '628111000222@s.whatsapp.net', outcome: 'ringing', followUp: 'open', endedAt: null,
+  conversationId: null, conversation: null, recording: null,
+};
+
 test.describe('a member', () => {
   test.use({ user: { ...ME, role: 'member' } });
 
@@ -430,5 +437,35 @@ test.describe('a member', () => {
     const row = rowOf(page);
     await expect(row).toContainText('Recording 3:10');
     for (const name of ['Play', 'Download the recording', 'Delete the recording']) await expect(row.getByRole('button', { name })).toHaveCount(0);
+  });
+
+  test('acts on a call, and assigns it to an agent only: the picker leaves the viewers out', async ({ page, backend }) => {
+    listing(backend, () => MISSED);
+    backend.route(on('GET', '/organizations/members', { json: [
+      { id: ME.id, name: ME.name, email: ME.email, role: 'member', isActive: true },
+      { id: 'u-jane', name: 'Jane', email: 'jane@example.com', role: 'admin', isActive: true },
+      { id: 'u-vic', name: 'Vic Viewer', email: 'vic@example.com', role: 'viewer', isActive: true },
+    ] }));
+    await page.goto('/dashboard/calls');
+    const row = rowOf(page);
+    for (const name of ['Reply', 'Call link', 'Done']) await expect(row.getByRole('button', { name, exact: true })).toBeVisible();
+    await row.getByRole('button', { name: 'Assign', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Assign call' }).getByRole('combobox', { name: 'Assignee' }).click();
+    await expect(page.getByRole('option')).toHaveText(['Unassigned', ME.name, 'Jane']);
+  });
+});
+
+test.describe('a viewer', () => {
+  test.use({ user: { ...ME, role: 'viewer' } });
+
+  test('follows the calls, a ringing one too, but takes no action on them', async ({ page, backend }) => {
+    listing(backend, () => [MISSED, RINGING]);
+    await page.goto('/dashboard/calls');
+    await expect(page.getByRole('region', { name: 'Ringing now' })).toContainText('+628111000222');
+    await expect(rowOf(page)).toContainText('Missed');
+    await expect(rowOf(page).getByRole('link', { name: 'Open chat with Pak Joko' })).toBeVisible();
+    for (const name of ['Reject', 'Reply', 'Call link', 'Assign', 'Done', 'Reopen']) {
+      await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0);
+    }
   });
 });

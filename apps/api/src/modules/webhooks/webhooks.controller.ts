@@ -5,14 +5,21 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } fro
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateWebhookDto, UpdateWebhookDto } from './dto';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
+// Owners and admins only, reads included: a webhook carries its signing secret and custom headers.
 @ApiTags('Webhooks')
 @Controller('webhooks')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
+@Roles(...ADMIN_ROLES)
+@RequireScope('webhooks:write')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -33,6 +40,7 @@ export class WebhooksController {
   }
 
   @Get()
+  @RequireScope('webhooks:read')
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List webhooks for a profile' })
   @ApiQuery({ name: 'profileId', required: true })
@@ -41,6 +49,7 @@ export class WebhooksController {
   }
 
   @Get(':id')
+  @RequireScope('webhooks:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'webhook' })
   @ApiOperation({ summary: 'Get webhook by ID' })
   @ApiNotFound('Webhook')

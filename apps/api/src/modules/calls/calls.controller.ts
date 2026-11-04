@@ -12,9 +12,9 @@ import { CallLinkDto, ListCallsQueryDto, ReplyCallDto, UpdateCallDto } from './d
 import { CallCountDto, CallDto, CallLinkResultDto, CallListDto, CallReplyResultDto, CallsMediaStatusDto, DeletedCallRecordingDto } from './dto/responses';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { AGENT_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound, ApiValidationError } from '../../common/decorators/api-responses';
@@ -56,7 +56,6 @@ export class CallsController {
   }
 
   @Get('media/status')
-  @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @ApiOperation({ summary: 'Readiness of answering calls in the dashboard: the media server and every profile of the organization' })
   @ApiResponse({ status: 200, description: 'The server, its recordings storage, and each profile with its call settings and readiness', type: CallsMediaStatusDto })
@@ -74,6 +73,7 @@ export class CallsController {
   }
 
   @Patch(':id')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Update the follow-up status or the assignee' })
   @ApiResponse({ status: 200, description: 'The call as updated', type: CallDto })
@@ -84,6 +84,7 @@ export class CallsController {
   }
 
   @Post(':id/reject')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Reject a call that is still ringing' })
   @ApiResponse({ status: 201, description: 'The call, rejected', type: CallDto })
@@ -93,6 +94,7 @@ export class CallsController {
   }
 
   @Post(':id/reply')
+  @Roles(...AGENT_ROLES)
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Send a text to the caller (send-gated)' })
@@ -104,6 +106,7 @@ export class CallsController {
   }
 
   @Post(':id/call-link')
+  @Roles(...AGENT_ROLES)
   @RequireScope('messages:write')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
   @ApiOperation({ summary: 'Create a WhatsApp call link and send it to the caller' })
@@ -117,7 +120,6 @@ export class CallsController {
   // A recording is personal data: owner and admin only, an API key with a scope list needs recordings:read, and a play
   // or a download is audited before a byte is sent.
   @Get(':id/recording')
-  @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @RequireScope('recordings:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })
@@ -139,7 +141,6 @@ export class CallsController {
   }
 
   @Delete(':id/recording')
-  @UseGuards(RolesGuard)
   @Roles('owner', 'admin')
   @RequireScope('recordings:delete')
   @RequireTenant({ from: 'param', key: 'id', resource: 'call' })

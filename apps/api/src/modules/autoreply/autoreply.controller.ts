@@ -5,6 +5,8 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } fro
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { AutoreplyService } from './autoreply.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateAutoreplyDto, UpdateAutoreplyDto, QuickReplyDto } from './dto';
@@ -23,6 +25,7 @@ export class AutoreplyController {
 
   // Quick Replies (preset responses)
   @Post('quick-replies')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create quick reply preset' })
   @ApiValidationError()
@@ -39,6 +42,7 @@ export class AutoreplyController {
   }
 
   @Delete('quick-replies/:id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Delete quick reply' })
   @ApiNotFound('Quick reply')
@@ -48,6 +52,7 @@ export class AutoreplyController {
 
   // Keyword Autoreplies (simple version of automation)
   @Post()
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create keyword autoreply' })
   @ApiValidationError()
@@ -72,6 +77,7 @@ export class AutoreplyController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Update autoreply' })
   @ApiNotFound('Autoreply')
@@ -81,6 +87,7 @@ export class AutoreplyController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Delete autoreply' })
   @ApiNotFound('Autoreply')
@@ -89,6 +96,7 @@ export class AutoreplyController {
   }
 
   @Put(':id/toggle')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Toggle autoreply on/off' })
   @ApiNotFound('Autoreply')
@@ -98,6 +106,7 @@ export class AutoreplyController {
 
   // Webhook Dynamic Reply
   @Post('webhook-reply')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Configure webhook for dynamic replies' })
   @ApiValidationError()
@@ -106,6 +115,7 @@ export class AutoreplyController {
   }
 
   @Get('webhook-reply/:profileId')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get webhook reply configuration' })
   @ApiNotFound('Profile')
@@ -115,6 +125,7 @@ export class AutoreplyController {
 
   // AI Bot Hook
   @Post('ai-hook')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Configure AI bot hook (Dialogflow, GPT, etc)' })
   @ApiValidationError()
@@ -128,6 +139,7 @@ export class AutoreplyController {
   }
 
   @Get('ai-hook/:profileId')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get AI hook configuration' })
   @ApiNotFound('Profile')

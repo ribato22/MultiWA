@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { api, Profile } from '@/lib/api';
+import { canConfigure, currentUser } from '@/lib/current-user';
 import { formatDateTime } from '@/lib/datetime';
 
 interface KnowledgeDoc {
@@ -38,6 +39,8 @@ interface SearchResult {
 
 export default function KnowledgePage() {
   const { toast } = useToast();
+  // Adding and deleting documents are an owner's or admin's; a search changes nothing, so it is everyone's.
+  const [admin] = useState(() => canConfigure(currentUser()?.role));
 
   // State
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -187,10 +190,12 @@ export default function KnowledgePage() {
             <option key={p.id} value={p.id}>{p.name} {p.phone ? `(${p.phone})` : ''}</option>
           ))}
         </select>
-        <Button onClick={() => setShowAdd(true)} className="gap-2 ml-auto cursor-pointer">
-          <Plus className="w-4 h-4" aria-hidden="true" />
-          Add Document
-        </Button>
+        {admin && (
+          <Button onClick={() => setShowAdd(true)} className="gap-2 ml-auto cursor-pointer">
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            Add Document
+          </Button>
+        )}
       </div>
 
       {/* Add Document Dialog */}
@@ -313,7 +318,7 @@ export default function KnowledgePage() {
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs tabular-nums">{formatDateTime(doc.createdAt)}</td>
                     <td className="px-4 py-3 text-center">
-                      {deletingId === doc.id ? (
+                      {admin && (deletingId === doc.id ? (
                         <div className="flex items-center justify-center gap-2">
                           <button
                             type="button"
@@ -339,7 +344,7 @@ export default function KnowledgePage() {
                         >
                           <Trash2 className="w-4 h-4" aria-hidden="true" />
                         </button>
-                      )}
+                      ))}
                     </td>
                   </tr>
                 ))}

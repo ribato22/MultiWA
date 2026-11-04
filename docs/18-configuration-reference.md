@@ -10,6 +10,7 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `REDIS_URL` | ✅ | - | Redis connection string |
 | `JWT_SECRET` | ✅ | - | Secret key for JWT access tokens |
 | `JWT_REFRESH_SECRET` | ✅ | - | Secret key for JWT refresh tokens |
+| `ALLOW_REGISTRATION` | ❌ | `false` | Anyone may register (create an organization) after the first owner |
 | `SESSIONS_DIR` | ❌ | `/data/sessions` (Docker) | WhatsApp session storage path (env name in compose is `SESSIONS_DIR`) |
 | `API_PORT` | ❌ | `3000` (code) / `3333` (Docker compose) | API server port |
 | `API_HOST` | ❌ | `0.0.0.0` | API bind address |
@@ -107,6 +108,10 @@ Key for encrypting sensitive data (API keys, credentials).
 # Generate 32-character key
 openssl rand -hex 16
 ```
+
+### `ALLOW_REGISTRATION`
+
+Whether anyone may create an account, and with it a new organization. The first person on a new server always may: they become its owner, and the owner of the server's settings (SMTP, storage, integrations). Until that first account exists, anyone who reaches the server can claim it, so create it before you expose the server. After that, registration is closed unless `ALLOW_REGISTRATION=true`, and owners and admins add people in Settings → Team. The value must be exactly `true`: any other value (`TRUE`, `1`, `yes`) keeps registration closed. Set it to `true` only for a server that hosts many organizations on purpose.
 
 ---
 

@@ -32,6 +32,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, User, Profile } from '@/lib/api';
+import { canConfigure } from '@/lib/current-user';
 import { formatRelative, formatFull } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -83,6 +84,13 @@ const ROLES = [
   { value: 'viewer', label: 'Viewer', color: 'bg-muted-foreground/60' },
 ];
 
+// The API's team rules, mirrored: an owner or admin manages the team, an admin its members and viewers only; the
+// owner and your own row are never changed here.
+const manages = (me: User | null, member: Member) =>
+  !!me && member.id !== me.id && member.role !== 'owner' && (me.role === 'owner' || (me.role === 'admin' && member.role !== 'admin'));
+// Only the owner makes someone an admin.
+const rolesFor = (me: User | null) => (me?.role === 'owner' ? ROLES : ROLES.filter((r) => r.value !== 'admin'));
+
 export default function SettingsPage() {
   const { toast } = useToast();
   const [user, setUser] = useState<User | null>(null);
@@ -100,9 +108,12 @@ export default function SettingsPage() {
   // A link to the Calls tab waits until the console knows whether there is one: it must not show Account, then switch.
   // Meanwhile the other tabs can be opened, and the Calls tab only keeps its place, unseen.
   const waiting = tab === 'calls' && !!calls && !calls.inUseKnown;
+  // Storage and SMTP are the server's, so its owner's only (`/auth/me` says who): until it answers, a link to the
+  // Storage tab waits.
+  const serverOwner = !!user?.isServerOwner;
   // A tab this page does not have, or not for this user, opens Account, and the URL says so: a later ring then leaves
   // the tab as it is.
-  const shown = waiting || (TABS.includes(tab) && (tab !== 'calls' || callsTab)) ? tab : 'account';
+  const shown = waiting || (TABS.includes(tab) && (tab !== 'calls' || callsTab) && (tab !== 'storage' || serverOwner || loading)) ? tab : 'account';
   useEffect(() => {
     if (shown !== tab) select(shown);
   }, [shown, tab]);
@@ -176,14 +187,12 @@ export default function SettingsPage() {
   });
 
   useEffect(() => {
-    fetchUser();
+    fetchUser(); // and, for the server owner, the storage and SMTP settings
     fetchMembers();
     loadPreferences();
     check2FAStatus();
     fetchSessions();
     fetchConnectedProfiles();
-    fetchStorageConfig();
-    fetchSmtpConfig();
   }, []);
 
   const fetchStorageConfig = async () => {
@@ -211,33 +220,32 @@ export default function SettingsPage() {
     }
   };
 
+  // api.request never throws: a refusal (the server's owner changed, say) comes back as `error`, and is said as such.
   const handleSaveSmtp = async () => {
     setSavingSmtp(true);
-    try {
-      await api.updateSmtpConfig(smtpConfig);
-      setSmtpTestResult({ success: true, message: 'SMTP configuration saved and applied' });
-      fetchSmtpConfig();
-    } catch (err: any) {
-      setSmtpTestResult({ success: false, message: err.message || 'Failed to save SMTP config' });
-    } finally {
-      setSavingSmtp(false);
+    const res = await api.updateSmtpConfig(smtpConfig);
+    setSavingSmtp(false);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setSmtpTestResult({ success: true, message: 'SMTP configuration saved and applied' });
+    fetchSmtpConfig();
   };
 
   const handleTestSmtp = async (sendEmail?: boolean) => {
     setTestingSmtp(true);
     setSmtpTestResult(null);
-    try {
-      const res = await api.testSmtpConnection(
-        smtpConfig,
-        sendEmail && testEmailAddress ? { sendTo: testEmailAddress } : undefined,
-      );
-      setSmtpTestResult(res.data || res);
-    } catch (err: any) {
-      setSmtpTestResult({ success: false, message: err.message || 'SMTP test failed' });
-    } finally {
-      setTestingSmtp(false);
+    const res = await api.testSmtpConnection(
+      smtpConfig,
+      sendEmail && testEmailAddress ? { sendTo: testEmailAddress } : undefined,
+    );
+    setTestingSmtp(false);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setSmtpTestResult(res.data);
   };
 
   const fetchConnectedProfiles = async () => {
@@ -348,6 +356,8 @@ export default function SettingsPage() {
       const res = await api.me();
       if (res.data) {
         setUser(res.data);
+        // Read before the page shows: a Save meanwhile would write the defaults over the stored settings.
+        if (res.data.isServerOwner) await Promise.all([fetchStorageConfig(), fetchSmtpConfig()]);
         setSettings(prev => ({
           ...prev,
           name: res.data?.name || '',
@@ -432,45 +442,44 @@ export default function SettingsPage() {
     }
   };
 
+  // api.request never throws: a refusal (the team rules, a taken email) comes back as `error`, and is said as such.
   const handleInviteMember = async () => {
     if (!inviteData.name.trim() || !inviteData.email.trim()) {
       toast({ title: 'Name and email are required', variant: 'destructive' });
       return;
     }
     setInviting(true);
-    try {
-      const res = await api.addMember(inviteData);
-      const member = res.data || res;
-      setTempPassword(member.temporaryPassword || '');
-      fetchMembers();
-      toast({ title: `Member ${inviteData.name} added successfully` });
-      setInviteData({ name: '', email: '', role: 'member' });
-    } catch (error: any) {
-      toast({ title: error?.message || 'Failed to add member', variant: 'destructive' });
-    } finally {
-      setInviting(false);
+    const res = await api.addMember(inviteData);
+    setInviting(false);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setTempPassword(res.data?.temporaryPassword || '');
+    fetchMembers();
+    toast({ title: `Member ${inviteData.name} added successfully` });
+    setInviteData({ name: '', email: '', role: 'member' });
   };
 
   const handleChangeRole = async (memberId: string, role: string) => {
-    try {
-      await api.updateMemberRole(memberId, role);
-      setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
-      toast({ title: 'Role updated' });
-    } catch (error: any) {
-      toast({ title: error?.message || 'Failed to update role', variant: 'destructive' });
+    const res = await api.updateMemberRole(memberId, role);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role } : m));
+    toast({ title: 'Role updated' });
   };
 
   const handleRemoveMember = async (member: Member) => {
     if (!confirm(`Remove ${member.name} from your organization?`)) return;
-    try {
-      await api.removeMember(member.id);
-      setMembers(prev => prev.filter(m => m.id !== member.id));
-      toast({ title: `${member.name} removed` });
-    } catch (error: any) {
-      toast({ title: error?.message || 'Failed to remove member', variant: 'destructive' });
+    const res = await api.removeMember(member.id);
+    if (res.error) {
+      toast({ title: res.error, variant: 'destructive' });
+      return;
     }
+    setMembers(prev => prev.filter(m => m.id !== member.id));
+    toast({ title: `${member.name} removed` });
   };
 
   if (loading) {
@@ -509,7 +518,7 @@ export default function SettingsPage() {
           )}
           <TabsTrigger value="api">API & Webhooks</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="storage">Storage</TabsTrigger>
+          {serverOwner && <TabsTrigger value="storage">Storage</TabsTrigger>}
         </TabsList>
 
         {/* Account Tab */}
@@ -570,7 +579,7 @@ export default function SettingsPage() {
                 <h2 className="font-semibold text-foreground">Team Members</h2>
                 <p className="text-sm text-muted-foreground">Manage who has access to your organization</p>
               </div>
-              {user?.role === 'owner' && (
+              {canConfigure(user?.role) && (
                 <Button size="sm" onClick={() => { setTempPassword(''); setShowInviteDialog(true); }}>
                   + Invite Member
                 </Button>
@@ -602,13 +611,13 @@ export default function SettingsPage() {
                     <div className="flex items-center gap-2">
                       {member.role === 'owner' ? (
                         <Badge className="bg-amber-500/15 text-amber-300 border border-amber-500/30">Owner</Badge>
-                      ) : user?.role === 'owner' ? (
+                      ) : manages(user, member) ? (
                         <Select value={member.role} onValueChange={(val) => handleChangeRole(member.id, val)}>
-                          <SelectTrigger className="w-28 h-8 text-xs">
+                          <SelectTrigger className="w-28 h-8 text-xs" aria-label={`Role of ${member.name}`}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {ROLES.map(r => (
+                            {rolesFor(user).map(r => (
                               <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
                             ))}
                           </SelectContent>
@@ -616,7 +625,7 @@ export default function SettingsPage() {
                       ) : (
                         <Badge variant="secondary">{member.role}</Badge>
                       )}
-                      {user?.role === 'owner' && member.role !== 'owner' && (
+                      {manages(user, member) && (
                         <Button
                           variant="ghost"
                           size="sm"
@@ -673,11 +682,11 @@ export default function SettingsPage() {
                   <div className="space-y-2">
                     <Label>Role</Label>
                     <Select value={inviteData.role} onValueChange={(val) => setInviteData(prev => ({ ...prev, role: val }))}>
-                      <SelectTrigger>
+                      <SelectTrigger aria-label="Role">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {ROLES.map(r => (
+                        {rolesFor(user).map(r => (
                           <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
                         ))}
                       </SelectContent>
@@ -799,7 +808,8 @@ export default function SettingsPage() {
                 {saving ? 'Saving...' : 'Save Preferences'}
               </Button>
 
-              {/* ── SMTP Configuration ── */}
+              {/* ── SMTP Configuration: server-wide, so the server owner's only ── */}
+              {serverOwner && (
               <div className="space-y-4 pt-6 border-t border-border">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground uppercase tracking-wider">Email Server (SMTP)</h3>
@@ -945,6 +955,7 @@ export default function SettingsPage() {
                   ) : 'Save SMTP Configuration'}
                 </Button>
               </div>
+              )}
             </div>
           </div>
         </TabsContent>
@@ -986,19 +997,22 @@ export default function SettingsPage() {
                   </div>
                   <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
                 </Link>
-                <Link
-                  href="/dashboard/webhooks"
-                  className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/30 hover:border-primary/30 transition-colors group"
-                >
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
-                    <Link2 className="w-5 h-5" aria-hidden="true" />
-                  </span>
-                  <div className="flex-1">
-                    <div className="font-medium text-foreground">Webhooks</div>
-                    <div className="text-sm text-muted-foreground">Configure event webhooks</div>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
-                </Link>
+                {/* An owner's or admin's: every read of the Webhooks page is theirs. */}
+                {canConfigure(user?.role) && (
+                  <Link
+                    href="/dashboard/webhooks"
+                    className="flex items-center gap-3 p-4 border border-border rounded-xl hover:bg-secondary/30 hover:border-primary/30 transition-colors group"
+                  >
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/15 text-sky-300">
+                      <Link2 className="w-5 h-5" aria-hidden="true" />
+                    </span>
+                    <div className="flex-1">
+                      <div className="font-medium text-foreground">Webhooks</div>
+                      <div className="text-sm text-muted-foreground">Configure event webhooks</div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />
+                  </Link>
+                )}
               </div>
               <div className="bg-secondary/20 rounded-xl p-4">
                 <h4 className="font-medium text-foreground mb-2">API Documentation</h4>

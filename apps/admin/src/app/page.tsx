@@ -11,9 +11,9 @@ import {
   Webhook as WebhookIcon,
   BarChart3,
   Github,
-  ArrowRight,
   type LucideIcon,
 } from 'lucide-react';
+import { SignUpLink } from '@/components/sign-up-link';
 
 type Feature = { Icon: LucideIcon; tone: string; title: string; description: string };
 
@@ -87,13 +87,12 @@ export default function HomePage() {
             >
               Login
             </Link>
-            <Link
-              href="/auth/register"
+            <SignUpLink
+              label="Get Started"
+              hideWhenClosed
               className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
-            >
-              Get Started
-              <ArrowRight className="w-4 h-4" aria-hidden="true" />
-            </Link>
+              iconClassName="w-4 h-4"
+            />
           </nav>
         </div>
       </header>
@@ -118,13 +117,11 @@ export default function HomePage() {
           </p>
 
           <div className="flex flex-wrap justify-center gap-4">
-            <Link
-              href="/auth/register"
+            <SignUpLink
+              label="Start Free Trial"
               className="inline-flex items-center gap-2 px-8 py-4 bg-primary text-primary-foreground font-semibold rounded-2xl hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/25 transform hover:-translate-y-0.5 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
-            >
-              Start Free Trial
-              <ArrowRight className="w-5 h-5" aria-hidden="true" />
-            </Link>
+              iconClassName="w-5 h-5"
+            />
             <a
               href="https://github.com/ribato22/MultiWA"
               target="_blank"

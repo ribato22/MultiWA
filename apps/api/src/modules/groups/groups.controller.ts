@@ -23,6 +23,8 @@ import {
   DemoteParticipantsDto,
 } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 
@@ -57,6 +59,7 @@ export class GroupsController {
   }
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create a new WhatsApp group' })
   @ApiValidationError()
@@ -65,6 +68,7 @@ export class GroupsController {
   }
 
   @Patch(':groupId')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Update group info (name, description)' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
@@ -78,6 +82,7 @@ export class GroupsController {
   }
 
   @Post(':groupId/participants/add')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Add participants to a group' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
@@ -91,6 +96,7 @@ export class GroupsController {
   }
 
   @Post(':groupId/participants/remove')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Remove participants from a group' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
@@ -104,6 +110,7 @@ export class GroupsController {
   }
 
   @Post(':groupId/participants/promote')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Promote participants to group admin' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
@@ -117,6 +124,7 @@ export class GroupsController {
   }
 
   @Post(':groupId/participants/demote')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Demote participants from group admin' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
@@ -130,6 +138,7 @@ export class GroupsController {
   }
 
   @Post(':groupId/leave')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Leave a group' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
@@ -143,6 +152,7 @@ export class GroupsController {
   }
 
   @Get(':groupId/invite-link')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Get group invite link' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })
@@ -156,6 +166,7 @@ export class GroupsController {
   }
 
   @Post(':groupId/invite-link/revoke')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Revoke and regenerate group invite link' })
   @ApiParam({ name: 'groupId', description: 'Group ID' })

@@ -5,6 +5,7 @@ export interface CurrentUser {
   email: string;
   role: string;
   organizationId?: string;
+  isServerOwner?: boolean;
 }
 
 export function currentUser(): CurrentUser | null {
@@ -16,8 +17,16 @@ export function currentUser(): CurrentUser | null {
   }
 }
 
+// The API's role classes, mirrored for what the UI shows. Agent: owner, admin and member do the daily work (send,
+// chat, calls, contacts); a viewer only reads. Admin: owner and admin change the configuration.
+export const canAct = (role?: string) => role === 'owner' || role === 'admin' || role === 'member';
+export const canConfigure = (role?: string) => role === 'owner' || role === 'admin';
+
+/** The owner of the server's oldest organization: alone sets what is server-wide, the storage, the SMTP and the integrations. */
+export const isServerOwner = (user?: CurrentUser | null) => user?.isServerOwner === true;
+
 /** Owner, admin and member answer calls; a viewer does not. */
-export const canAnswerCalls = (role?: string) => role === 'owner' || role === 'admin' || role === 'member';
+export const canAnswerCalls = canAct;
 
 /** Owner and admin manage a profile's calls settings and its recordings. */
-export const canManageCalls = (role?: string) => role === 'owner' || role === 'admin';
+export const canManageCalls = canConfigure;

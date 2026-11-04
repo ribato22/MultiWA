@@ -3,6 +3,7 @@
 
 import { Injectable } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { pageSize } from '../../common/page-size';
 
 export enum AuditAction {
   // Auth
@@ -147,10 +148,11 @@ export class AuditService {
       if (options.endDate) where.timestamp.lte = options.endDate;
     }
 
+    const limit = pageSize(options.limit);
     const [logs, total] = await Promise.all([
       prisma.auditLog.findMany({
         where,
-        take: options.limit || 50,
+        take: limit,
         skip: options.offset || 0,
         orderBy: { timestamp: 'desc' },
         include: {
@@ -163,7 +165,7 @@ export class AuditService {
     return {
       logs,
       total,
-      limit: options.limit || 50,
+      limit,
       offset: options.offset || 0,
     };
   }

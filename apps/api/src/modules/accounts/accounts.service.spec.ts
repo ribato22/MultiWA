@@ -110,6 +110,11 @@ describe('AccountsService', () => {
       await service.createProfile('a1', { displayName: 'x' });
       expect(createdEngine()).toBe('whatsapp-web-js');
     });
+
+    it('answers whether a webhook secret is set, never the secret', async () => {
+      vi.mocked(prisma.profile.create).mockResolvedValue({ id: 'p1', settings: {}, webhookSecret: null } as any);
+      expect(await service.createProfile('a1', { displayName: 'x' })).toEqual({ id: 'p1', settings: {}, hasWebhookSecret: false });
+    });
   });
 
   describe('deleteProfile', () => {

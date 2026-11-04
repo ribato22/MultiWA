@@ -152,6 +152,8 @@ profiles = client.profiles.list()
 The QR code to link a profile is not available over REST: after `connect()`,
 take it from the [WebSocket](https://github.com/ribato22/MultiWA/blob/main/docs/08-websocket-api.md) `qr:update` event
 or a `connection.qr` [webhook](https://github.com/ribato22/MultiWA/blob/main/docs/09-webhook-events.md).
+The `qr:update` event reaches owners and admins only: a dashboard sign-in of one
+qualifies, and so does an API key of one with `profiles:write` (or no scope list).
 `profiles.get_qr()` is deprecated and raises `NotImplementedError`.
 
 ### Webhooks

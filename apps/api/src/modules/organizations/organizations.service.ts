@@ -10,6 +10,9 @@ import * as crypto from 'crypto';
 // owner via addMember/updateMemberRole.
 const ASSIGNABLE_ROLES = ['admin', 'member', 'viewer'];
 
+/** Who asks for a team change: their id and role, from the request. */
+type Requester = { id: string; role: string };
+
 @Injectable()
 export class OrganizationsService {
   private assertAssignableRole(role: string | undefined) {
@@ -54,8 +57,11 @@ export class OrganizationsService {
     });
   }
 
-  async addMember(organizationId: string, dto: { email: string; name: string; role?: string }) {
+  async addMember(organizationId: string, requester: Requester, dto: { email: string; name: string; role?: string }) {
     this.assertAssignableRole(dto.role);
+    if (dto.role === 'admin' && requester.role !== 'owner') {
+      throw new ForbiddenException('Only the owner can add an admin');
+    }
 
     // Check if email already used
     const existing = await prisma.user.findUnique({ where: { email: dto.email } });
@@ -90,8 +96,11 @@ export class OrganizationsService {
     return { ...user, temporaryPassword: tempPassword };
   }
 
-  async updateMemberRole(organizationId: string, memberId: string, role: string) {
+  async updateMemberRole(organizationId: string, requester: Requester, memberId: string, role: string) {
     this.assertAssignableRole(role);
+    if (requester.id === memberId) {
+      throw new BadRequestException('You cannot change your own role');
+    }
 
     const member = await prisma.user.findFirst({
       where: { id: memberId, organizationId },
@@ -99,6 +108,9 @@ export class OrganizationsService {
     if (!member) throw new NotFoundException('Member not found');
     if (member.role === 'owner') {
       throw new ForbiddenException('Cannot change the role of the organization owner');
+    }
+    if ((member.role === 'admin' || role === 'admin') && requester.role !== 'owner') {
+      throw new ForbiddenException('Only the owner can make someone admin or change an admin');
     }
 
     return prisma.user.update({
@@ -108,8 +120,8 @@ export class OrganizationsService {
     });
   }
 
-  async removeMember(organizationId: string, requesterId: string, memberId: string) {
-    if (requesterId === memberId) {
+  async removeMember(organizationId: string, requester: Requester, memberId: string) {
+    if (requester.id === memberId) {
       throw new BadRequestException('You cannot remove yourself');
     }
     const member = await prisma.user.findFirst({
@@ -118,6 +130,9 @@ export class OrganizationsService {
     if (!member) throw new NotFoundException('Member not found');
     if (member.role === 'owner') {
       throw new ForbiddenException('Cannot remove the organization owner');
+    }
+    if (member.role === 'admin' && requester.role !== 'owner') {
+      throw new ForbiddenException('Only the owner can remove an admin');
     }
 
     await prisma.user.delete({ where: { id: memberId } });

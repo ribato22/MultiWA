@@ -82,13 +82,16 @@ Replace `http://localhost:3333` with your API base if you are not using the defa
 
 ### 1. Register an account
 
+The first account becomes the server's owner, and until it exists anyone who reaches the server can claim it: create it before you expose the server.
+
 ```bash
 curl -X POST http://localhost:3333/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@example.com",
-    "password": "ChangeMe1!",
-    "name": "Admin"
+    "password": "ChangeMe1234!",
+    "name": "Admin",
+    "organizationName": "My Company"
   }'
 ```
 

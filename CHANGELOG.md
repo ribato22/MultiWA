@@ -7,10 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `GET /auth/registration` tells whether registration is open.
+- `GET /auth/me` and the `user` of the sign-in answer carry `isServerOwner`, which says whether the caller is the server's owner.
+
+### Changed
+
+- **Roles are enforced in the API, the socket and the dashboard.** A viewer reads; a member does the daily work (messages, chats, calls, contacts); an admin configures and manages members and viewers; the owner also manages admins. A route a role may not call answers `403`. `scripts/api-roles.snapshot.json` lists each route's class, and CI holds the code to it. See docs/07 § Roles.
+- **Breaking:**
+  - a viewer's changes, including those made with a viewer's API keys, now get `403`; move integrations that send onto a member's or admin's key. A viewer keeps their own account and the lookups that are `POST`s:
+    - the account: `POST /auth/logout`, `POST /auth/change-password`, `PATCH /auth/preferences`, `DELETE /auth/sessions` and `DELETE /auth/sessions/:id`, `POST /auth/2fa/setup`, `/enable`, `/disable` and `/backup-codes`, `DELETE /auth/account`, `DELETE /account/delete`, the notification routes (mark read, delete, push subscribe, unsubscribe and test), `POST /api-keys` and `DELETE /api-keys/:id`;
+    - the lookups: `POST /templates/:id/preview`, `POST /automation/:id/test`, `POST /contacts/profile/:profileId/validate` and `POST /ai/knowledge/:profileId/search`;
+  - a member's configuration calls now get `403`: accounts, profiles, workspaces, broadcasts, bulk sends, automation, auto-replies, webhooks, templates, groups, the knowledge base, deleting, importing and syncing contacts (and saving them to, or deleting them from, the WhatsApp address book), and deleting chats and stored messages; a member still sends one message at a time;
+  - an admin no longer adds, promotes, demotes or removes another admin (only the owner does), and nobody changes their own role;
+  - these reads are now for owners and admins only: `GET /webhooks`, `GET /webhooks/:id`, `GET /audit/logs`, `GET /audit/summary`, `GET /audit/actions`, `GET /contacts/export/csv`, `GET /account/export`, `GET /groups/:groupId/invite-link`, `GET /autoreply/webhook-reply/:profileId`, `GET /autoreply/ai-hook/:profileId` and `GET /accounts/:accountId/profiles/:profileId/qr`;
+  - an API key with a scope list needs the scope of every route that asks for one:
+    - `contacts:read|write`, `webhooks:read|write`, `broadcast:write` (broadcasts and bulk sends) and `profiles:read|write` (profiles, an account's profiles, the pairing QR) are now enforced;
+    - the conversations routes ask for `messages:read|write`;
+    - a socket gets the pairing QR only with `profiles:write`;
+    - a key with no scope list keeps full access;
+    - the TypeScript SDK's `conversations.archive`, `unarchive` and `markAsRead` read the conversation back, so on a key with a scope list they need both `messages:write` and `messages:read`;
+  - registration is open only to the first user of a new server, unless `ALLOW_REGISTRATION=true`;
+  - the server-wide settings (`/settings/*`) are for the server's owner, the owner of the oldest organization;
+  - the server's owner cannot delete their account (`DELETE /auth/account`, `DELETE /account/delete`) while other organizations use the server;
+  - profile responses carry `hasWebhookSecret` instead of `webhookSecret`;
+  - the pairing QR (`qr:update`) reaches owners and admins only;
+  - a call's assignee must be an owner, admin or member;
+  - the contacts, audit-log and notification lists answer at most 1000 rows per request and the message lists at most 500 (a message row can carry its media), and a bulk validation takes at most 1000 numbers;
+  - the integrations routes (`/integrations/*`) are for the server's owner: their configuration is the server's.
+
+### Removed
+
+- The unused RBAC routes (`/rbac/*`).
+
 ### Security
 
-- The RBAC routes (`/rbac/*`) are for owners and admins only. `GET /rbac/roles/:id` lists a role's members by id, name, email, role and active state, and `POST /rbac/assign` takes only a member of the role's organization.
-- `POST /api-keys` takes only a signed-in user: a request made with an API key gets `403`, so a key cannot create a wider one.
+- `POST /api-keys` takes only a signed-in user: a request made with an API key gets `403`.
 - `POST /automation/reorder` orders only the rules of the profile it names. An order naming any other rule gets `404` and changes nothing.
 
 ## [1.4.0] - 2026-11-03

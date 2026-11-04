@@ -19,6 +19,7 @@ import { runCallMediaSignal, type CallMediaEngine, type CallMediaHandle, type Ca
 import { EngineManagerService } from '../../profiles/engine-manager.service';
 import { EventsGateway, type SocketPrincipal } from '../../events/events.gateway';
 import { AuditService } from '../../audit/audit.service';
+import { AGENT_ROLES } from '../../auth/roles';
 import { CallMediaService } from '../media/call-media.service';
 import type { CallMediaRoom } from '../media/call-media-room';
 import { InternalEvents, type CallEngineSignalPayload, type CallMediaFailureReason, type CallsSessionPayload, type WsUserPayload } from '../../../metrics/internal-events';
@@ -31,9 +32,6 @@ import { claimCall, findCallForAnswer, markAnswered, markEnded, reconcileAfterRe
 // CodeQL js/log-injection: only `.replace(/[\r\n]/g, '')` counts as a sanitizer.
 const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const message = (e: unknown) => clean((e as Error)?.message ?? e);
-
-/** Who may answer calls: never a viewer. */
-const AGENT_ROLES = ['owner', 'admin', 'member'];
 
 // Bounds on the page calls: a hung page would otherwise hold each of them for puppeteer's protocol timeout (240 s).
 const ATTACH_MS = 8_000; // attachCaller itself waits up to 5 s for the caller's audio
@@ -432,7 +430,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     const online = this.gateway.onlineUserIds();
     if (!online.length) return [];
     const users = await prisma.user.findMany({
-      where: { id: { in: online }, organizationId, isActive: true, role: { in: AGENT_ROLES } },
+      where: { id: { in: online }, organizationId, isActive: true, role: { in: [...AGENT_ROLES] } },
       select: { id: true },
     });
     return users.map((u) => u.id).filter((id) => !this.unavailable.has(id) && !this.busy(id));

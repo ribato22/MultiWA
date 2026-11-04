@@ -2,7 +2,7 @@
 // can act on, and that the others should not read, names its roles.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('@multiwa/database', () => ({ prisma: { user: { findMany: vi.fn() }, notification: { create: vi.fn() } } }));
+vi.mock('@multiwa/database', () => ({ prisma: { user: { findMany: vi.fn() }, notification: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() } } }));
 
 import { prisma } from '@multiwa/database';
 import { NotificationsService, NotificationType } from './notifications.service';
@@ -27,5 +27,19 @@ describe('NotificationsService.createForOrg', () => {
   it('only the active users of the roles given', async () => {
     await service.createForOrg('o1', NotificationType.SYSTEM, 'Title', 'Body', { kind: 'k' }, ['owner', 'admin']);
     expect(db.user.findMany).toHaveBeenCalledWith({ where: { organizationId: 'o1', isActive: true, role: { in: ['owner', 'admin'] } }, select: SELECT });
+  });
+});
+
+// GET /notifications passes its `limit` through: NaN for one that is not a number.
+describe('NotificationsService.getAll', () => {
+  const service = new NotificationsService({ enabled: false } as any, { enabled: false } as any);
+  beforeEach(() => {
+    db.notification.findMany.mockReset().mockResolvedValue([]);
+    db.notification.count.mockReset().mockResolvedValue(0);
+  });
+
+  it.each([[undefined, 50], [20, 20], [100_000, 1000], [Number.NaN, 50]])('a limit of %s loads a page of %i', async (limit, take) => {
+    await service.getAll('u1', { limit });
+    expect(db.notification.findMany).toHaveBeenCalledWith(expect.objectContaining({ take }));
   });
 });

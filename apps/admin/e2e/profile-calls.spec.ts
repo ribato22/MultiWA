@@ -1,4 +1,4 @@
-import { test, expect, gate, get, on, rendered, requestEnded, ME, PROFILE, STATUS, type FakeBackend, type Reply } from './support/fixtures';
+import { test, expect, gate, get, on, rendered, requestEnded, toasts, ME, PROFILE, STATUS, type FakeBackend, type Reply } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { sineWav } from './support/audio';
 import type { Page } from '@playwright/test';
@@ -300,7 +300,7 @@ test('the retention’s Save keeps the focus while it saves and once saved, pres
     await expect(save).toBeFocused(); // while it saves
     slow.open();
     await answered;
-    await expect(page.getByRole('status').filter({ hasText: `Recordings are kept for ${value} days` }).first()).toBeVisible(); // read
+    await expect(toasts(page).getByText(`Recordings are kept for ${value} days`)).toBeVisible(); // read
     await expect(save).toBeDisabled(); // saved: nothing left to save
     await expect(save).toBeFocused();
   }
@@ -430,7 +430,7 @@ test('a screen reader hears what went through: an upload and a saved retention a
   backend.route(on('PUT', '/profiles/p-1/calls-settings', (r) => ({ json: settings({ announcement: ANNOUNCEMENT, retentionDays: JSON.parse(r.body!.toString()).retentionDays }) })));
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
-  const said = (text: string) => page.getByRole('status').filter({ hasText: text }).first();
+  const said = (text: string) => toasts(page).getByText(text);
   await s.locator('input[type="file"]').setInputFiles({ name: 'notice.wav', mimeType: 'audio/wav', buffer: sineWav(2) });
   await expect(said('Announcement uploaded')).toBeVisible();
   await s.getByLabel('Keep recordings for (days)').fill('120');
@@ -485,7 +485,7 @@ test('an announcement that cannot be loaded now (a 503) says why, and nothing pl
   await page.goto('/dashboard/profiles/p-1');
   const s = section(page);
   await s.getByRole('button', { name: 'Listen' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Could not load the announcement' }).first()).toContainText('Another announcement is being read; try again in a moment');
+  await expect(toasts(page).getByRole('listitem').filter({ hasText: 'Could not load the announcement' })).toContainText('Another announcement is being read; try again in a moment');
   await expect(s.getByLabel('The announcement')).toHaveCount(0);
   await expect(s.getByRole('button', { name: 'Listen' })).toBeEnabled();
 });
@@ -693,7 +693,7 @@ test('closed by a save that failed or was refused, the shorter retention’s dia
   const days = s.getByLabel('Keep recordings for (days)');
   const save = s.getByRole('button', { name: 'Save retention' });
   const confirm = page.getByRole('alertdialog', { name: 'Keep recordings for 30 days?' });
-  const failed = (description: string) => page.getByRole('status').filter({ hasText: 'Could not save' }).filter({ hasText: description }).first();
+  const failed = (description: string) => toasts(page).getByRole('listitem').filter({ hasText: 'Could not save' }).filter({ hasText: description });
   await days.fill('30');
   await save.click(); // asked from Save
   await confirm.getByRole('button', { name: 'Keep for 30 days' }).click();
@@ -752,7 +752,7 @@ test.describe('a member', () => {
 
   test('does not see the calls settings', async ({ page }) => {
     await page.goto('/dashboard/profiles/p-1');
-    await expect(page.getByRole('button', { name: 'Save guardrails' })).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Sending guardrails' })).toBeVisible(); // the page is in
     await expect(section(page)).toHaveCount(0);
   });
 });

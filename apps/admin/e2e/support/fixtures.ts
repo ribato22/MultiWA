@@ -9,7 +9,8 @@ import { installBrowserFakes } from './browser';
 
 export { expect };
 
-export const ME = { id: 'u-ada', name: 'Ada Agent', email: 'ada@example.com', role: 'admin', organizationId: 'org-1' };
+// An admin, not the server owner (the owner of the oldest organization, who alone sets storage and SMTP).
+export const ME = { id: 'u-ada', name: 'Ada Agent', email: 'ada@example.com', role: 'admin', organizationId: 'org-1', isServerOwner: false };
 export const PROFILE = {
   id: 'p-1',
   name: 'Line 1',
@@ -75,6 +76,11 @@ export const requestEnded = (page: Page, part: string) =>
  */
 export const rendered = (page: Page) =>
   page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+/**
+ * The toasts' region, each toast a list item in it. Radix also announces a toast in a `role="status"` copy of its text,
+ * outside the region and gone after a second: a locator on the whole page matches that copy too, or only it.
+ */
+export const toasts = (page: Page) => page.getByRole('region', { name: 'Notifications (F8)' });
 /** A gate for a reply to wait at: what awaits `passed` goes on once the test calls `open()`. */
 export function gate() {
   let open!: () => void;

@@ -190,10 +190,10 @@ jobs:
       - name: Build API workspace dependencies
         run: pnpm --filter "api^..." build
 
-      # Coverage gate. Excludes the tenant route-coverage meta-test: it imports
-      # every controller to reflect route metadata, which would pull untested
+      # Coverage gate. Excludes the tenant and role route-coverage meta-tests: they
+      # import every controller to reflect route metadata, which would pull untested
       # controller/service methods into the coverage denominator and skew the
-      # number. It runs as its own structural check below.
+      # number. They run as their own structural check below.
       - name: Run API tests (with coverage gate)
         run: pnpm --filter api run test:cov
         env:
@@ -206,7 +206,8 @@ jobs:
           PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
       # Structural IDOR guard: every tenant-scoped route must carry @RequireTenant.
-      - name: Tenant route-coverage check
+      # Role guard: who may call each route matches scripts/api-roles.snapshot.json.
+      - name: Tenant and role route-coverage checks
         run: pnpm --filter api run test:meta
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test

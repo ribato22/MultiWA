@@ -1,4 +1,4 @@
-import { test, expect, gate, get, rendered, ringing, PROFILE, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, get, rendered, ringing, toasts, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { holdMics } from './support/browser';
 import type { Locator, Page } from '@playwright/test';
@@ -176,7 +176,7 @@ test('an answer or a change of availability on a socket the server could not che
   await banner(page).getByRole('button', { name: 'Answer' }).click();
   await expect(banner(page)).toContainText('The server is unavailable: try again in a moment');
   await page.getByRole('switch', { name: 'Available for calls' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Your availability did not change' }).first()).toContainText('The server is unavailable: try again in a moment');
+  await expect(toasts(page).getByRole('listitem').filter({ hasText: 'Your availability did not change' })).toContainText('The server is unavailable: try again in a moment');
 });
 
 test('an answer the server did not run (it could not check the socket) leaves the call ringing, saying why, and Answer works once the socket is back', async ({ page, backend }) => {

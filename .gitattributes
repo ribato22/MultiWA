@@ -1,0 +1,2 @@
+# The snapshots are compared as text: keep them LF on every checkout.
+scripts/*.snapshot.json text eol=lf

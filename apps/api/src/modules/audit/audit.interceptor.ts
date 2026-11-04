@@ -82,12 +82,6 @@ const ACTION_MAP: Record<string, AuditAction | string> = {
   'GroupsController.addParticipants': 'group.add_participant',
   'GroupsController.removeParticipants': 'group.remove_participant',
   'GroupsController.leave': 'group.leave',
-  
-  // RBAC
-  'RbacController.assignRole': 'user.role_change',
-  'RbacController.removeRole': 'user.role_change',
-  'RbacController.inviteMember': AuditAction.USER_INVITE,
-  'RbacController.removeMember': AuditAction.USER_REMOVE,
 
   // Bulk
   'BulkController.send': AuditAction.MESSAGE_BULK_SEND,

@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { Fragment, useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -40,6 +40,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
+import { canConfigure, currentUser, isServerOwner } from '@/lib/current-user';
+import { EmptyState } from '@/components/ui/empty-state';
 import { DemoBanner } from '@/components/demo-banner';
 import { CallsProvider, forgetStoredCall } from '@/components/calls/calls-provider';
 import { AvailabilityToggle } from '@/components/calls/availability-toggle';
@@ -47,7 +49,10 @@ import { IncomingCallBanner } from '@/components/calls/incoming-call-banner';
 import { InCallBar } from '@/components/calls/in-call-bar';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
-type MenuItem = { name: string; href: string; Icon: LucideIcon };
+// `admin`: every read of the page is an owner's or admin's, so the other roles get neither its link nor the page.
+// `serverOwner`: the page is the server owner's alone, as what it sets comes from the server's environment.
+type Gated = { href: string; admin?: boolean; serverOwner?: boolean };
+type MenuItem = Gated & { name: string; Icon: LucideIcon };
 
 const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',              Icon: LayoutGrid },
@@ -60,12 +65,18 @@ const menuItems: MenuItem[] = [
   { name: 'Broadcast',    href: '/dashboard/broadcast',    Icon: Megaphone },
   { name: 'Automation',   href: '/dashboard/automation',   Icon: Zap },
   { name: 'Analytics',    href: '/dashboard/analytics',    Icon: BarChart3 },
-  { name: 'Webhooks',     href: '/dashboard/webhooks',     Icon: WebhookIcon },
-  { name: 'Integrations', href: '/dashboard/integrations', Icon: Puzzle },
+  { name: 'Webhooks',     href: '/dashboard/webhooks',     Icon: WebhookIcon, admin: true },
+  { name: 'Integrations', href: '/dashboard/integrations', Icon: Puzzle, serverOwner: true },
   { name: 'Knowledge',    href: '/dashboard/knowledge',    Icon: Brain },
   { name: 'API Keys',     href: '/dashboard/api-keys',     Icon: KeyRound },
-  { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList },
+  { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList, admin: true },
   { name: 'Settings',     href: '/dashboard/settings',     Icon: SettingsIcon },
+];
+
+// The pages that create what a link everyone has lists: the sidebar has no link to them, so only their address is shut.
+const createPages: Gated[] = [
+  { href: '/dashboard/profiles/new', admin: true },
+  { href: '/dashboard/automation/builder', admin: true },
 ];
 
 type NotifTypeInfo = { Icon: LucideIcon; tone: string };
@@ -126,11 +137,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
-    if (userData) {
-      setUser(JSON.parse(userData));
-    } else {
+    if (!userData) {
       router.push('/auth/login');
+      return;
     }
+    setUser(JSON.parse(userData));
+    // A role changed since sign-in reaches the UI without signing out: the server's answer updates the stored user.
+    api.me().then(({ data }) => {
+      const stored = currentUser();
+      if (!data?.role || !stored || stored.id !== data.id) return; // failed, or signed out or in as someone else since
+      if (data.role === stored.role && !!data.isServerOwner === !!stored.isServerOwner) return;
+      const next = { ...stored, role: data.role, isServerOwner: data.isServerOwner };
+      localStorage.setItem('user', JSON.stringify(next));
+      setUser(next);
+    });
   }, [router]);
 
   // Fetch unread count periodically
@@ -242,6 +262,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
+  const admin = canConfigure(user.role);
+  const serverOwner = isServerOwner(user);
+  // A page is shut to a user who is not what it asks for: the sidebar leaves its link out, and its address says so.
+  const shut = (page: Gated) => (page.admin && !admin) || (page.serverOwner && !serverOwner);
+  const blockedBy = [...menuItems, ...createPages].find((page) => shut(page) && pathname.startsWith(page.href));
+
   const shell = (
     <div ref={shellRef} className="min-h-screen bg-background">
       {/* Demo Mode Banner */}
@@ -287,7 +313,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Menu */}
           <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto" aria-label="Dashboard sections">
-            {menuItems.map((item) => {
+            {menuItems.filter((item) => !shut(item)).map((item) => {
               const Icon = item.Icon;
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
               const badge = item.href === '/dashboard/chat' ? chatUnread : item.href === '/dashboard/calls' ? callsOpen : 0;
@@ -526,7 +552,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Page Content */}
         <div className="p-6">
-          {children}
+          {blockedBy ? (
+            <EmptyState
+              icon={<Lock className="w-8 h-8" aria-hidden="true" />}
+              title="Not available for your role"
+              titleAs="h1"
+              description={blockedBy.serverOwner ? 'Only the server owner can open this page.' : 'Only an owner or an admin can open this page.'}
+              action={{ label: 'Back to the overview', href: '/dashboard' }}
+            />
+          ) : (
+            // A page reads the role once: a role changed since sign-in mounts it afresh, with the controls of the new one.
+            <Fragment key={`${user.role}:${serverOwner}`}>{children}</Fragment>
+          )}
         </div>
       </main>
       <IncomingCallBanner />

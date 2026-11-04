@@ -8,6 +8,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Plus, RefreshCw, Lightbulb, Smartphone, Wifi, WifiOff } from 'lucide-react';
 import { api, Profile } from '@/lib/api';
+import { canConfigure, currentUser } from '@/lib/current-user';
 import { ProfileCard, ProfileGrid } from '@/components/ui/profile-card';
 import { Button } from '@/components/ui/button';
 import { EmptyProfiles } from '@/components/ui/empty-state';
@@ -15,6 +16,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 export default function ProfilesPage() {
   const router = useRouter();
+  // Adding, connecting and disconnecting profiles are an owner's or admin's; everyone sees them.
+  const [admin] = useState(() => canConfigure(currentUser()?.role));
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -110,12 +113,14 @@ export default function ProfilesPage() {
             />
             Refresh
           </Button>
-          <Link href="/dashboard/profiles/new">
-            <Button className="gap-2">
-              <Plus className="w-5 h-5" aria-hidden="true" />
-              Add Profile
-            </Button>
-          </Link>
+          {admin && (
+            <Link href="/dashboard/profiles/new">
+              <Button className="gap-2">
+                <Plus className="w-5 h-5" aria-hidden="true" />
+                Add Profile
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -148,7 +153,7 @@ export default function ProfilesPage() {
       {loading ? (
         <LoadingGrid />
       ) : profiles.length === 0 ? (
-        <EmptyProfiles />
+        <EmptyProfiles canAdd={admin} />
       ) : (
         <ProfileGrid>
           {profiles.map((profile) => (
@@ -163,8 +168,8 @@ export default function ProfilesPage() {
                 profile.status === 'connecting' ? 'connecting' : 'offline'
               }
               messageCount={profile.messageCount || 0}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
+              onConnect={admin ? handleConnect : undefined}
+              onDisconnect={admin ? handleDisconnect : undefined}
               onView={handleView}
             />
           ))}

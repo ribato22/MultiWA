@@ -7,8 +7,8 @@ import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/dec
 import { AccountsService } from './accounts.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
@@ -16,7 +16,7 @@ import { CreateAccountDto, UpdateAccountDto, CreateProfileDto } from './dto';
 
 @ApiTags('Accounts')
 @Controller('accounts')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -39,6 +39,7 @@ export class AccountsController {
   }
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Create new account' })
   @ApiValidationError()
   async create(@Body() dto: CreateAccountDto, @Req() req: any) {
@@ -47,6 +48,7 @@ export class AccountsController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Update account' })
   @ApiValidationError()
@@ -56,6 +58,7 @@ export class AccountsController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'account' })
   @ApiOperation({ summary: 'Delete account' })
   @ApiNotFound('Account')
@@ -66,6 +69,7 @@ export class AccountsController {
   // Nested profiles endpoints. Both the account and the profile are tenant-checked
   // so a caller can't pair their own account id with another org's profile id.
   @Get(':accountId/profiles')
+  @RequireScope('profiles:read')
   @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Get all profiles for account' })
   @ApiNotFound('Account')
@@ -74,6 +78,8 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles')
+  @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:write')
   @RequireTenant({ from: 'param', key: 'accountId', resource: 'account' })
   @ApiOperation({ summary: 'Create profile for account' })
   @ApiValidationError()
@@ -86,6 +92,7 @@ export class AccountsController {
   }
 
   @Get(':accountId/profiles/:profileId')
+  @RequireScope('profiles:read')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -102,7 +109,6 @@ export class AccountsController {
   // As the flat route: deleting a profile deletes every recording file of it, so an owner or admin only, and an API
   // key with a scope list needs profiles:write.
   @Delete(':accountId/profiles/:profileId')
-  @UseGuards(ApiKeyScopeGuard, RolesGuard)
   @Roles('owner', 'admin')
   @RequireScope('profiles:write')
   @RequireTenant(
@@ -119,6 +125,8 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles/:profileId/connect')
+  @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:write')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -132,6 +140,8 @@ export class AccountsController {
   }
 
   @Post(':accountId/profiles/:profileId/disconnect')
+  @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:write')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
@@ -144,7 +154,10 @@ export class AccountsController {
     return this.accountsService.disconnectProfile(accountId, profileId);
   }
 
+  // Scanning this QR links a phone to the profile, so a key that may only read profiles must not get it.
   @Get(':accountId/profiles/:profileId/qr')
+  @Roles(...ADMIN_ROLES)
+  @RequireScope('profiles:write')
   @RequireTenant(
     { from: 'param', key: 'accountId', resource: 'account' },
     { from: 'param', key: 'profileId', resource: 'profile' },
