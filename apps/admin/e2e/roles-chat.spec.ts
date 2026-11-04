@@ -37,6 +37,18 @@ test.describe('a viewer', () => {
     await page.waitForTimeout(500); // a mark-read would be out by now
     expect(markedRead(backend)).toBe(false);
   });
+
+  test('leaves a message that comes into the open chat unread too', async ({ page, backend }) => {
+    await openChat(page, backend);
+    await expect.poll(() => backend.joined).toContain(PROFILE.id);
+    const reloaded = requestEnded(page, '/conversations?'); // the list, read again for the message
+    const incoming = { ...SENT, id: 'm-2', messageId: 'wa-2', profileId: PROFILE.id, content: { text: 'Are you there?' }, direction: 'incoming' };
+    backend.emitToProfile(PROFILE.id, 'message', { type: 'message:received', message: incoming, conversation: CONV });
+    await expect(page.getByText('Are you there?', { exact: true })).toBeVisible();
+    await reloaded;
+    await page.waitForTimeout(500); // a mark-read would be out by now
+    expect(markedRead(backend)).toBe(false);
+  });
 });
 
 test.describe('a member', () => {

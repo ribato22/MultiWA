@@ -1,4 +1,4 @@
-import { test, expect, gate, on, rendered, requestEnded, ME, PROFILE, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, on, rendered, requestEnded, toasts, ME, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { sineWav } from './support/audio';
 import type { Locator, Page } from '@playwright/test';
@@ -103,7 +103,7 @@ test('Download keeps the focus while its file comes, and after; a screen reader 
   await expect(download).toBeFocused();
   const [file] = await Promise.all([page.waitForEvent('download'), slow.open()]);
   expect(file.suggestedFilename()).toBe('call-call-9.webm');
-  await expect(page.getByRole('status').filter({ hasText: 'Recording downloaded' }).first()).toBeVisible();
+  await expect(toasts(page).getByText('Recording downloaded')).toBeVisible();
   await expect(download).toHaveAccessibleName('Download the recording of the call from Pak Joko');
   await expect(download).toBeEnabled();
   await expect(download).toBeFocused();
@@ -176,7 +176,7 @@ test('after a delete the focus stays on the row, and a toast says the recording 
   await deleteRecording(page);
   await expect(rowOf(page)).toContainText('Recording deleted by an admin');
   await expect.poll(() => focused(page)).toBe('Recording deleted by an admin');
-  await expect(page.getByRole('status').filter({ hasText: 'Recording deleted' }).first()).toBeVisible();
+  await expect(toasts(page).getByText('Recording deleted')).toBeVisible();
   await expectAccessible(page, 'ul[aria-label="Calls"]');
 });
 
@@ -206,7 +206,7 @@ test('closed without a delete, the dialog gives the focus back to Delete: Cancel
   await rendered(page);
   await expect(deleting).toBeFocused(); // while the delete runs
   slow.open();
-  await expect(page.getByText('Could not delete the recording')).toBeVisible();
+  await expect(toasts(page).getByText('Could not delete the recording')).toBeVisible();
   await expect(confirm).toHaveCount(0);
   await expect(del).toBeFocused();
 });
@@ -326,7 +326,7 @@ test('a recording that cannot be loaded now (a 503) says why, and Play stays: on
   backend.route(on('GET', '/calls/call-9/recording', { status: 503, json: { message: 'The recordings storage did not answer; try again' } }));
   await openAnswered(page);
   await rowOf(page).getByRole('button', { name: 'Play' }).click();
-  await expect(page.getByRole('status').filter({ hasText: 'Could not load the recording' }).first()).toContainText('The recordings storage did not answer; try again');
+  await expect(toasts(page).getByRole('listitem').filter({ hasText: 'Could not load the recording' })).toContainText('The recordings storage did not answer; try again');
   await expect(rowOf(page).getByRole('button', { name: 'Play the recording of the call from Pak Joko' })).toBeEnabled();
   expect(backend.requests.filter((r) => r.path === '/calls/call-9').map((r) => r.method)).toEqual([]);
 });

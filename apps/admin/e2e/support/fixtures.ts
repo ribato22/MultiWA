@@ -76,6 +76,11 @@ export const requestEnded = (page: Page, part: string) =>
  */
 export const rendered = (page: Page) =>
   page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+/**
+ * The toasts' region, each toast a list item in it. Radix also announces a toast in a `role="status"` copy of its text,
+ * outside the region and gone after a second: a locator on the whole page matches that copy too, or only it.
+ */
+export const toasts = (page: Page) => page.getByRole('region', { name: 'Notifications (F8)' });
 /** A gate for a reply to wait at: what awaits `passed` goes on once the test calls `open()`. */
 export function gate() {
   let open!: () => void;

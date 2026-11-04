@@ -1,5 +1,5 @@
 // Settings by role: the team under the team rules, and the server-wide settings for the server owner.
-import { test, expect, gate, get, on, rendered, ME, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, get, on, rendered, toasts, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
@@ -49,7 +49,7 @@ test.describe('an admin', () => {
     await page.goto('/dashboard/settings?tab=team');
     await roleOf(page, MEMBER.name).click();
     await page.getByRole('option', { name: 'Viewer' }).click();
-    await expect(page.getByRole('status').filter({ hasText: 'An admin manages members and viewers only' }).first()).toBeVisible();
+    await expect(toasts(page).getByText('An admin manages members and viewers only')).toBeVisible();
     await expect(roleOf(page, MEMBER.name)).toHaveText('Member');
   });
 });

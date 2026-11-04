@@ -38,6 +38,17 @@ test('the login page offers "Create one" while registration is open', async ({ p
   await expect(page.getByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/auth/register');
 });
 
+test('the login page offers no "Create one" while it asks', async ({ page, backend }) => {
+  const slow = held(backend, true);
+  await page.goto('/auth/login');
+  await untilAsked(backend);
+  await rendered(page);
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByText("Don't have an account?")).toHaveCount(0);
+  slow.open();
+  await expect(page.getByRole('link', { name: 'Create one' })).toBeVisible();
+});
+
 test('the login page leaves "Create one" out once registration is closed', async ({ page, backend }) => {
   backend.route(get('/auth/registration', { open: false }));
   const asked = requestEnded(page, '/auth/registration');
