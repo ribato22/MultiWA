@@ -19,6 +19,7 @@ import { prisma } from '@multiwa/database';
 import type { RealtimeEmitter } from '@multiwa/core';
 import * as crypto from 'crypto';
 import { InternalEvents } from '../../metrics/internal-events';
+import { ADMIN_ROLES } from '../auth/roles';
 
 // CORS origins are driven by env so production isn't pinned to localhost.
 const WS_CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:3001,http://localhost:3000')
@@ -211,6 +212,8 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
     this.logger.log(`Client ${client.id} joining profile room: ${clean(profileId)}`);
     client.join(`profile:${profileId}`);
+    // Whose socket it is, dashboard or API key: the QR goes only to the owners and admins among them (emitQrUpdate).
+    client.data.principalUserId = auth!.userId;
 
     if (!this.clients.has(profileId)) {
       this.clients.set(profileId, new Set());
@@ -357,10 +360,21 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
     }
   }
 
-  // Emit QR code update (frontend: socket.on('qr:update', data))
-  emitQrUpdate(profileId: string, qrCode: string) {
-    this.logger.log(`Emitting qr:update for profile: ${profileId}`);
-    this.server.to(`profile:${profileId}`).emit('qr:update', { profileId, qrCode });
+  // Emit QR code update (frontend: socket.on('qr:update', data)). A QR links a phone to the profile: only the owners
+  // and admins in the profile's room get it, by their role now, not when they joined.
+  async emitQrUpdate(profileId: string, qrCode: string): Promise<void> {
+    try {
+      const sockets = await this.server.in(`profile:${profileId}`).fetchSockets();
+      const userIds = [...new Set(sockets.map((s) => s.data?.principalUserId).filter((id): id is string => typeof id === 'string'))];
+      if (userIds.length === 0) return;
+      const admins = new Set(
+        (await prisma.user.findMany({ where: { id: { in: userIds }, isActive: true, role: { in: [...ADMIN_ROLES] } }, select: { id: true } })).map((u) => u.id),
+      );
+      this.logger.log(`Emitting qr:update for profile: ${clean(profileId)}`);
+      for (const s of sockets) if (admins.has(s.data?.principalUserId)) s.emit('qr:update', { profileId, qrCode });
+    } catch (e) {
+      this.logger.warn(`Failed to emit 'qr:update': ${clean((e as Error)?.message ?? e)}`);
+    }
   }
 
   // Emit connection status (frontend: socket.on('connection:status', data))
