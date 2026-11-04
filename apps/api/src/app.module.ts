@@ -24,7 +24,6 @@ import { TemplatesModule } from './modules/templates/templates.module';
 import { BroadcastModule } from './modules/broadcast/broadcast.module';
 import { AutomationModule } from './modules/automation/automation.module';
 import { AutoreplyModule } from './modules/autoreply/autoreply.module';
-import { RbacModule } from './modules/rbac/rbac.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
@@ -107,7 +106,6 @@ import { MetricsModule } from './metrics/metrics.module';
     AIModule,
     
     // Enterprise modules
-    RbacModule,
     AuditModule,
     NotificationsModule,
     StatisticsModule,

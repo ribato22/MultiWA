@@ -1,8 +1,5 @@
-// Who may do what around roles, API keys and automation order, through the real app (HTTP → guards → Prisma →
+// Who may do what around API keys and automation order, through the real app (HTTP → guards → Prisma →
 // Postgres), tried as someone inside one organization would try them:
-//   - a viewer on the RBAC routes;
-//   - an admin reading the members of a role;
-//   - an assignment naming another organization's user;
 //   - an API key making a wider key;
 //   - an order naming another organization's rule.
 // The unit specs pin the same rules with Prisma mocked.
@@ -31,7 +28,6 @@ const nextAddress = () => `10.77.${Math.floor(++clientSeq / 254) % 254}.${(clien
 describe('Access boundaries (e2e)', () => {
   let app: NestFastifyApplication;
   let owner: Session;
-  let viewer: Session;
   let stranger: Session; // the owner of another organization
 
   const send = (method: 'GET' | 'POST', url: string, auth: { token?: string; apiKey?: string }, payload?: object) =>
@@ -70,36 +66,10 @@ describe('Access boundaries (e2e)', () => {
 
     owner = await register('owner');
     stranger = await register('stranger');
-    const added = await send('POST', '/organizations/members', owner, { email: `${tag}-viewer@test.local`, name: 'viewer', role: 'viewer' });
-    expect(added.statusCode).toBe(201);
-    viewer = await session('/auth/login', { email: `${tag}-viewer@test.local`, password: added.json().temporaryPassword });
   }, 60_000);
 
   afterAll(async () => {
     await app?.close();
-  });
-
-  it('refuses a viewer on the RBAC routes', async () => {
-    expect((await send('POST', '/rbac/roles', viewer, { name: `${tag} mine`, permissions: [] })).statusCode).toBe(403);
-    expect((await send('GET', '/rbac/roles', viewer)).statusCode).toBe(403);
-  });
-
-  it("gives an owner a role's members as the team list shows them", async () => {
-    const role = await send('POST', '/rbac/roles', owner, { name: `${tag} support`, permissions: ['message:read'] });
-    expect(role.statusCode).toBe(201);
-    const roleId = role.json().id;
-    expect((await send('POST', '/rbac/assign', owner, { userId: viewer.user.id, roleId })).statusCode).toBe(201);
-
-    const read = await send('GET', `/rbac/roles/${roleId}`, owner);
-    expect(read.statusCode).toBe(200);
-    expect(read.json().users.map((u: { user: object }) => Object.keys(u.user).sort())).toEqual([['email', 'id', 'isActive', 'name', 'role']]);
-  });
-
-  it("does not find another organization's user to assign, and assigns nothing", async () => {
-    const role = await send('POST', '/rbac/roles', owner, { name: `${tag} outsiders`, permissions: [] });
-    const res = await send('POST', '/rbac/assign', owner, { userId: stranger.user.id, roleId: role.json().id });
-    expect(res.statusCode).toBe(404);
-    expect(await prisma.userRole.count({ where: { userId: stranger.user.id } })).toBe(0);
   });
 
   it('lets a signed-in user create an API key, and refuses that key making another', async () => {

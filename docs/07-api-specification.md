@@ -533,24 +533,6 @@ The announcement upload answers `413` past 2 MB, `415` for another format or a f
 | `PUT` | `/workspaces/:id` | Update workspace |
 | `DELETE` | `/workspaces/:id` | Delete workspace (owner or admin) |
 
-### RBAC (`/rbac`)
-
-Owner or admin only; any other role gets `403`.
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/rbac/permissions` | List permissions |
-| `POST` | `/rbac/roles` | Create role |
-| `GET` | `/rbac/roles` | List roles |
-| `GET` | `/rbac/roles/:id` | Get role, with its members' id, name, email, role and active state |
-| `PUT` | `/rbac/roles/:id` | Update role |
-| `DELETE` | `/rbac/roles/:id` | Delete role |
-| `POST` | `/rbac/assign` | Assign role to a member of the organization (another organization's user: `404`) |
-| `DELETE` | `/rbac/users/:userId/organizations/:orgId` | Unassign user from organization |
-| `GET` | `/rbac/users/:userId/roles` | List user roles |
-| `GET` | `/rbac/users/:userId/permissions` | List user permissions |
-| `POST` | `/rbac/organizations/:id/seed` | Seed default roles for an organization |
-
 ### GDPR (`/account`)
 
 | Method | Endpoint | Description |

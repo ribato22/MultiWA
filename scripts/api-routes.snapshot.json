@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 231,
+  "routeCount": 220,
   "routes": [
     {
       "method": "DELETE",
@@ -760,50 +760,6 @@
     {
       "method": "GET",
       "path": "/api/v1/profiles/:id/status"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/rbac/assign"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/rbac/organizations/:id/seed"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/permissions"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/roles"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/rbac/roles"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/v1/rbac/roles/:id"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/roles/:id"
-    },
-    {
-      "method": "PUT",
-      "path": "/api/v1/rbac/roles/:id"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/v1/rbac/users/:userId/organizations/:orgId"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/users/:userId/permissions"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/users/:userId/roles"
     },
     {
       "method": "GET",

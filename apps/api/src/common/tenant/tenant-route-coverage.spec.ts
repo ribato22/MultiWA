@@ -34,7 +34,6 @@ import { ConversationsController } from '../../modules/conversations/conversatio
 import { GroupsController } from '../../modules/groups/groups.controller';
 import { MessagesController } from '../../modules/messages/messages.controller';
 import { ProfilesController } from '../../modules/profiles/profiles.controller';
-import { RbacController } from '../../modules/rbac/rbac.controller';
 import { StatisticsController } from '../../modules/statistics/statistics.controller';
 import { TemplatesController } from '../../modules/templates/templates.controller';
 import { WebhooksController } from '../../modules/webhooks/webhooks.controller';
@@ -43,7 +42,7 @@ import { WorkspacesController } from '../../modules/workspaces/workspaces.contro
 const TENANT_CONTROLLERS = [
   AccountsController, KnowledgeBaseController, AutomationController, AutoreplyController,
   BroadcastController, BulkController, CallsController, ContactsController, ConversationsController,
-  GroupsController, MessagesController, ProfileCallsController, ProfilesController, RbacController,
+  GroupsController, MessagesController, ProfileCallsController, ProfilesController,
   StatisticsController, TemplatesController, WebhooksController, WorkspacesController,
 ];
 
@@ -60,15 +59,6 @@ const ORG_DERIVED_ALLOWLIST = new Set<string>([
   'CallsController.openCount',
   'CallsController.mediaStatus',
   'StatisticsController.getDashboard',
-  // RbacController derives org from the token and never trusts client-supplied
-  // ids (see the controller header) — every route is org-scoped internally.
-  'RbacController.getPermissions',
-  'RbacController.createRole',
-  'RbacController.listRoles',
-  'RbacController.removeRole',
-  'RbacController.getUserRoles',
-  'RbacController.getUserPermissions',
-  'RbacController.seedRoles',
 ]);
 
 function hasTenantGuard(Ctrl: any): boolean {
