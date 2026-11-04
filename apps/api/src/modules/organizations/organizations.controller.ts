@@ -45,7 +45,7 @@ export class OrganizationsController {
   @ApiForbiddenResponse({ description: 'Requires owner or admin role' })
   @ApiValidationError()
   async addMember(@Request() req: any, @Body() dto: AddMemberDto) {
-    return this.service.addMember(req.user.organizationId, dto);
+    return this.service.addMember(req.user.organizationId, req.user, dto);
   }
 
   @Put('members/:id/role')
@@ -59,7 +59,7 @@ export class OrganizationsController {
     @Param('id') memberId: string,
     @Body() dto: UpdateMemberRoleDto,
   ) {
-    return this.service.updateMemberRole(req.user.organizationId, memberId, dto.role);
+    return this.service.updateMemberRole(req.user.organizationId, req.user, memberId, dto.role);
   }
 
   @Delete('members/:id')
@@ -68,6 +68,6 @@ export class OrganizationsController {
   @ApiForbiddenResponse({ description: 'Requires owner or admin role' })
   @ApiNotFound('Member')
   async removeMember(@Request() req: any, @Param('id') memberId: string) {
-    return this.service.removeMember(req.user.organizationId, req.user.id, memberId);
+    return this.service.removeMember(req.user.organizationId, req.user, memberId);
   }
 }

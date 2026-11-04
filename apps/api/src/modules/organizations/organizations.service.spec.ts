@@ -34,6 +34,8 @@ import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
 import { OrganizationsService } from './organizations.service';
 
+const OWNER = { id: 'u-owner', role: 'owner' };
+
 describe('OrganizationsService — member-management invariants', () => {
   let service: OrganizationsService;
 
@@ -50,7 +52,7 @@ describe('OrganizationsService — member-management invariants', () => {
   describe('assertAssignableRole (via addMember / updateMemberRole)', () => {
     it('addMember rejects the "owner" role — ownership is not mintable here', async () => {
       await expect(
-        service.addMember('org-1', { email: 'a@x.io', name: 'A', role: 'owner' }),
+        service.addMember('org-1', OWNER, { email: 'a@x.io', name: 'A', role: 'owner' }),
       ).rejects.toThrow(BadRequestException);
       // Bailed out before any DB lookup / write.
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
@@ -59,14 +61,14 @@ describe('OrganizationsService — member-management invariants', () => {
 
     it('addMember rejects an unknown role', async () => {
       await expect(
-        service.addMember('org-1', { email: 'a@x.io', name: 'A', role: 'superadmin' }),
+        service.addMember('org-1', OWNER, { email: 'a@x.io', name: 'A', role: 'superadmin' }),
       ).rejects.toThrow(/Invalid role/);
       expect(prisma.user.create).not.toHaveBeenCalled();
     });
 
     it('updateMemberRole rejects the "owner" role before touching the member', async () => {
       await expect(
-        service.updateMemberRole('org-1', 'm-1', 'owner'),
+        service.updateMemberRole('org-1', OWNER, 'm-1', 'owner'),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.findFirst).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
@@ -77,7 +79,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('rejects a duplicate email and never creates a user', async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ id: 'dupe' } as any);
       await expect(
-        service.addMember('org-1', { email: 'taken@x.io', name: 'Dup' }),
+        service.addMember('org-1', OWNER, { email: 'taken@x.io', name: 'Dup' }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.create).not.toHaveBeenCalled();
     });
@@ -93,7 +95,7 @@ describe('OrganizationsService — member-management invariants', () => {
         createdAt: new Date(0),
       } as any);
 
-      const result = await service.addMember('org-1', { email: 'new@x.io', name: 'New' });
+      const result = await service.addMember('org-1', OWNER, { email: 'new@x.io', name: 'New' });
 
       // A temp password is returned to the caller...
       expect(typeof result.temporaryPassword).toBe('string');
@@ -114,8 +116,8 @@ describe('OrganizationsService — member-management invariants', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
       vi.mocked(prisma.user.create).mockResolvedValue({ id: 'x' } as any);
 
-      const a = await service.addMember('org-1', { email: 'a@x.io', name: 'A' });
-      const b = await service.addMember('org-1', { email: 'b@x.io', name: 'B' });
+      const a = await service.addMember('org-1', OWNER, { email: 'a@x.io', name: 'A' });
+      const b = await service.addMember('org-1', OWNER, { email: 'b@x.io', name: 'B' });
       expect(a.temporaryPassword).not.toBe(b.temporaryPassword);
     });
   });
@@ -124,7 +126,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('throws NotFound when the member is absent', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
       await expect(
-        service.updateMemberRole('org-1', 'ghost', 'admin'),
+        service.updateMemberRole('org-1', OWNER, 'ghost', 'admin'),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
@@ -132,7 +134,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('refuses to re-role an existing owner (Forbidden) even for a valid target role', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'owner-1', role: 'owner' } as any);
       await expect(
-        service.updateMemberRole('org-1', 'owner-1', 'admin'),
+        service.updateMemberRole('org-1', OWNER, 'owner-1', 'admin'),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
@@ -140,7 +142,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('updates a normal member to a valid role', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
       vi.mocked(prisma.user.update).mockResolvedValueOnce({ id: 'm-1', role: 'admin' } as any);
-      const out = await service.updateMemberRole('org-1', 'm-1', 'admin');
+      const out = await service.updateMemberRole('org-1', OWNER, 'm-1', 'admin');
       expect(out).toEqual({ id: 'm-1', role: 'admin' });
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'm-1' }, data: { role: 'admin' } }),
@@ -151,7 +153,7 @@ describe('OrganizationsService — member-management invariants', () => {
   describe('removeMember', () => {
     it('refuses self-removal before any DB read', async () => {
       await expect(
-        service.removeMember('org-1', 'me', 'me'),
+        service.removeMember('org-1', { id: 'me', role: 'owner' }, 'me'),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.findFirst).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
@@ -160,7 +162,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('refuses to remove the organization owner (Forbidden)', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'owner-1', role: 'owner' } as any);
       await expect(
-        service.removeMember('org-1', 'admin-1', 'owner-1'),
+        service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'owner-1'),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.user.delete).not.toHaveBeenCalled();
     });
@@ -168,7 +170,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('deletes a normal member and returns success', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
       vi.mocked(prisma.user.delete).mockResolvedValueOnce({ id: 'm-1' } as any);
-      const out = await service.removeMember('org-1', 'admin-1', 'm-1');
+      const out = await service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'm-1');
       expect(out).toEqual({ success: true });
       expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
     });
