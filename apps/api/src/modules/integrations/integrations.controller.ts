@@ -5,11 +5,11 @@ import {
   Controller, Get, Put, Post, Body,
   UseGuards, Logger,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity, ApiForbiddenResponse } from '@nestjs/swagger';
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { ADMIN_ROLES } from '../auth/roles';
+import { ServerOwnerOnly } from '../auth/decorators/server-owner.decorator';
 import { TypeBotService } from './typebot.service';
 import { ChatwootService } from './chatwoot.service';
 import { ConfigService } from '@nestjs/config';
@@ -29,12 +29,16 @@ interface IntegrationConfig {
   };
 }
 
+// Configured from the server's environment, like SMTP and storage: only the server's owner reads or changes it.
 @ApiTags('Integrations')
 @Controller('integrations')
 @UseGuards(JwtAuthGuard)
+@Roles('owner')
+@ServerOwnerOnly()
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
+@ApiForbiddenResponse({ description: "Only the server's owner manages server-wide settings" })
 export class IntegrationsController {
   private readonly logger = new Logger(IntegrationsController.name);
 
@@ -65,7 +69,6 @@ export class IntegrationsController {
   }
 
   @Put('config')
-  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Update integration configuration (env-based, restart required)' })
   @ApiResponse({ status: 200, description: 'Configuration noted, restart needed' })
   @ApiValidationError()
@@ -80,7 +83,6 @@ export class IntegrationsController {
   }
 
   @Post('test')
-  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Test integration connection' })
   @ApiResponse({ status: 200, description: 'Connection test result' })
   @ApiValidationError()
