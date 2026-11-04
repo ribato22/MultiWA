@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
+import { assertServerOwnerMayLeave } from '../auth/server-owner';
 import { prisma } from '@multiwa/database';
 
 /**
@@ -225,6 +226,7 @@ export class GdprController {
       'Irreversibly erases the authenticated user and their push subscriptions, notifications, audit logs, sessions, API keys, and role assignments. Remaining data cascades via FK constraints.',
   })
   @ApiResponse({ status: 200, description: 'Account and all data permanently deleted' })
+  @ApiResponse({ status: 403, description: "The server's owner, while other organizations use this server" })
   @ApiResponse({ status: 404, description: 'User not found' })
   @ApiNotFound('User')
   async deleteAccount(@Req() req: any) {
@@ -236,6 +238,8 @@ export class GdprController {
     if (!userId) {
       throw new UnauthorizedException('Authenticated user id is required');
     }
+    // Before anything is erased: the server's owner may not leave while other organizations use this server.
+    await assertServerOwnerMayLeave(req.user);
     this.logger.warn(`GDPR account deletion requested by user ${userId}`);
 
     const deletionLog: Record<string, number> = {};

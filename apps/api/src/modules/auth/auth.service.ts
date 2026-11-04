@@ -8,7 +8,7 @@ import { prisma } from '@multiwa/database';
 import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { TwoFactorService } from './two-factor.service';
 import { SessionsService } from './sessions.service';
-import { isServerOwner } from './server-owner';
+import { assertServerOwnerMayLeave, isServerOwner } from './server-owner';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 
@@ -278,6 +278,9 @@ export class AuthService {
 
     const isValid = await this.verifyPassword(password, user.passwordHash);
     if (!isValid) throw new BadRequestException('Password is incorrect');
+
+    // Deleting an owner deletes their organization: never the server owner's while others use this server.
+    await assertServerOwnerMayLeave(user);
 
     // If user is org owner, delete the entire organization (cascades)
     if (user.role === 'owner') {

@@ -156,6 +156,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Delete user account' })
+  @ApiResponse({ status: 403, description: "The server's owner, while other organizations use this server" })
   @ApiResponse({ status: 200, description: 'Account deleted' })
   @ApiResponse({ status: 400, description: 'Password incorrect' })
   @ApiValidationError()

@@ -80,7 +80,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/auth/preferences` | Get user preferences |
 | `PATCH` | `/auth/preferences` | Update user preferences |
 | `POST` | `/auth/change-password` | Change the current user's password |
-| `DELETE` | `/auth/account` | Delete the current user account |
+| `DELETE` | `/auth/account` | Delete the current user account (an owner's deletes their organization; the server's owner gets `403` while other organizations use the server) |
 | `POST` | `/auth/2fa/setup` | Begin 2FA enrollment |
 | `POST` | `/auth/2fa/enable` | Confirm and enable 2FA |
 | `POST` | `/auth/2fa/disable` | Disable 2FA |
@@ -543,7 +543,7 @@ Contact lists answer at most 1000 rows per request (`limit`), and a bulk validat
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/account/export` | Export personal data |
-| `DELETE` | `/account/delete` | Delete account and personal data |
+| `DELETE` | `/account/delete` | Delete account and personal data (the server's owner gets `403` while other organizations use the server) |
 
 ---
 

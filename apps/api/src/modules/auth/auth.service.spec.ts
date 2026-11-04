@@ -34,10 +34,13 @@ vi.mock('@multiwa/database', () => ({
   },
 }));
 
-vi.mock('./server-owner', () => ({ isServerOwner: vi.fn().mockResolvedValue(false) }));
+vi.mock('./server-owner', () => ({
+  isServerOwner: vi.fn().mockResolvedValue(false),
+  assertServerOwnerMayLeave: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { prisma } from '@multiwa/database';
-import { isServerOwner } from './server-owner';
+import { assertServerOwnerMayLeave, isServerOwner } from './server-owner';
 import { AuthService } from './auth.service';
 
 describe('AuthService', () => {
@@ -89,8 +92,9 @@ describe('AuthService', () => {
 
     mockConfigService.get.mockClear();
     allowRegistration = undefined;
-    // Calls only: the factory's default answer (false) stays.
+    // Calls only: the factory's default answers stay.
     vi.mocked(isServerOwner).mockClear();
+    vi.mocked(assertServerOwnerMayLeave).mockClear();
 
     authService = new AuthService(
       mockJwtService as any,
@@ -312,6 +316,24 @@ describe('AuthService', () => {
       expect(me).toMatchObject({ id: 'u1', isServerOwner: true });
       expect(me).not.toHaveProperty('passwordHash');
       expect(isServerOwner).toHaveBeenCalledWith(expect.objectContaining({ role: 'owner', organizationId: 'org-1' }));
+    });
+  });
+
+  // ──────────── deleteAccount ────────────
+  describe('deleteAccount', () => {
+    it("refuses the server's owner while other organizations use the server, and deletes nothing", async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ id: 'u1', role: 'owner', organizationId: 'org-1', passwordHash: await bcrypt.hash('pw', 4) } as any);
+      vi.mocked(assertServerOwnerMayLeave).mockRejectedValueOnce(new ForbiddenException("The server's owner cannot delete their account while other organizations use this server"));
+      await expect(authService.deleteAccount('u1', 'pw')).rejects.toThrow(ForbiddenException);
+      expect(prisma.organization.delete).not.toHaveBeenCalled();
+    });
+
+    it('an owner who may leave deletes their organization', async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ id: 'u1', role: 'owner', organizationId: 'org-1', passwordHash: await bcrypt.hash('pw', 4) } as any);
+      vi.mocked(prisma.organization.delete).mockResolvedValueOnce({} as any);
+      await expect(authService.deleteAccount('u1', 'pw')).resolves.toEqual({ success: true });
+      expect(assertServerOwnerMayLeave).toHaveBeenCalledWith(expect.objectContaining({ role: 'owner', organizationId: 'org-1' }));
+      expect(prisma.organization.delete).toHaveBeenCalledWith({ where: { id: 'org-1' } });
     });
   });
 });
