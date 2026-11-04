@@ -16,7 +16,7 @@ export async function isServerOwner(user: { role?: string; organizationId?: stri
 
 /**
  * The server's owner may not delete their account while other organizations use the server: server ownership would
- * pass to the owner of the next-oldest organization, whom nobody chose.
+ * pass to the owner of the next-oldest organization, whom nobody chose, or to nobody.
  */
 export async function assertServerOwnerMayLeave(user: { role?: string; organizationId?: string } | undefined): Promise<void> {
   if (!(await isServerOwner(user))) return;

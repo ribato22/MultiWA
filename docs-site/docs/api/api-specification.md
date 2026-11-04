@@ -548,7 +548,7 @@ Contact lists answer at most 1000 rows per request (`limit`), and a bulk validat
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/account/export` | Export personal data |
-| `DELETE` | `/account/delete` | Delete account and personal data (the server's owner gets `403` while other organizations use the server) |
+| `DELETE` | `/account/delete` | Delete account and personal data (the server's owner gets `403` while other organizations use the server: nobody else could take over the server-wide settings) |
 
 ---
 

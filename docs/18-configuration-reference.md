@@ -111,7 +111,7 @@ openssl rand -hex 16
 
 ### `ALLOW_REGISTRATION`
 
-Whether anyone may create an account, and with it a new organization. The first person on a new server always may: they become its owner, and the owner of the server's settings (SMTP, storage). After that, registration is closed unless `ALLOW_REGISTRATION=true`, and owners and admins add people in Settings → Team. Set it to `true` only for a server that hosts many organizations on purpose.
+Whether anyone may create an account, and with it a new organization. The first person on a new server always may: they become its owner, and the owner of the server's settings (SMTP, storage). Until that first account exists, anyone who reaches the server can claim it, so create it before you expose the server. After that, registration is closed unless `ALLOW_REGISTRATION=true`, and owners and admins add people in Settings → Team. The value must be exactly `true`: any other value (`TRUE`, `1`, `yes`) keeps registration closed. Set it to `true` only for a server that hosts many organizations on purpose.
 
 ---
 
