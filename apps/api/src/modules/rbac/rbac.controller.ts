@@ -6,6 +6,8 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagg
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { RbacService } from './rbac.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateRoleDto, UpdateRoleDto, AssignRoleDto } from './dto';
@@ -14,9 +16,11 @@ import { CreateRoleDto, UpdateRoleDto, AssignRoleDto } from './dto';
 // from the authenticated principal (req.user.organizationId) — never trusted from
 // a client-supplied query/body/param. Role ids are tenant-checked against the
 // caller's org so one tenant cannot read/modify/assign another tenant's roles.
+// Owners and admins only, checked before the tenant guard's lookups.
 @ApiTags('RBAC')
 @Controller('rbac')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, RolesGuard, TenantGuard)
+@Roles('owner', 'admin')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()

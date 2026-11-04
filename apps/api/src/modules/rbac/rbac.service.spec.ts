@@ -25,6 +25,9 @@ vi.mock('@multiwa/database', () => ({
       update: vi.fn(),
       deleteMany: vi.fn(),
     },
+    user: {
+      findFirst: vi.fn(),
+    },
   },
 }));
 
@@ -33,6 +36,7 @@ import { RbacService } from './rbac.service';
 
 const R = prisma.role as any;
 const UR = prisma.userRole as any;
+const U = prisma.user as any;
 
 describe('RbacService', () => {
   let service: RbacService;
@@ -98,7 +102,32 @@ describe('RbacService', () => {
     });
   });
 
+  describe('getRole — the users it returns', () => {
+    // A role's users are shown to admins as the team list shows them: a User row also holds credentials.
+    it('reads only the member fields the team list shows', async () => {
+      R.findUnique.mockResolvedValueOnce({ id: 'r1', users: [] });
+      await service.getRole('r1');
+      expect(R.findUnique).toHaveBeenCalledWith({
+        where: { id: 'r1' },
+        include: { users: { include: { user: { select: { id: true, name: true, email: true, role: true, isActive: true } } } } },
+      });
+    });
+  });
+
   describe('assignRole — cross-org invariant', () => {
+    beforeEach(() => U.findFirst.mockResolvedValue({ id: 'u1' }));
+
+    it("refuses a user outside the role's organization, and writes nothing", async () => {
+      R.findUnique.mockResolvedValueOnce({ id: 'role-1', organizationId: 'org-A' });
+      U.findFirst.mockResolvedValueOnce(null);
+      await expect(
+        service.assignRole({ userId: 'u-of-org-B', roleId: 'role-1' } as any),
+      ).rejects.toThrow(NotFoundException);
+      expect(U.findFirst).toHaveBeenCalledWith({ where: { id: 'u-of-org-B', organizationId: 'org-A' }, select: { id: true } });
+      expect(UR.create).not.toHaveBeenCalled();
+      expect(UR.update).not.toHaveBeenCalled();
+    });
+
     it('throws NotFound when the target role does not exist', async () => {
       R.findUnique.mockResolvedValueOnce(null);
       await expect(
