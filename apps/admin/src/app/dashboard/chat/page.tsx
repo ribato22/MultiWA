@@ -9,6 +9,7 @@ import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
 import { api, Profile, Conversation, type CallRecord } from '@/lib/api';
 import { fromPayload, isCallEntry, mergeTimeline, type CallUpdatePayload } from '@/lib/calls';
+import { canAct, canConfigure, currentUser } from '@/lib/current-user';
 import { CallTimelineRow } from '@/components/calls/call-timeline-row';
 import { formatRelative, formatFull, formatTime, formatDate, formatDateTime, formatDaySeparator, dayBucket } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
@@ -183,6 +184,9 @@ export default function ChatPage() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
+  // A viewer reads the chats: no composer, no chat actions, and opening one leaves it unread (the count is the team's).
+  const [role] = useState(() => currentUser()?.role);
+  const agent = canAct(role);
   const [mobileView, setMobileView] = useState<'list' | 'messages'>('list');
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -333,7 +337,7 @@ export default function ChatPage() {
           // If this message belongs to the currently open conversation, 
           // mark it as read immediately so badge doesn't increment
           setSelectedConversation(current => {
-            if (current && msg.conversationId === current.id) {
+            if (agent && current && msg.conversationId === current.id) {
               api.markAsRead(current.id).catch(() => {});
               // Also clear badge in conversation list
               setConversations(prev => prev.map(c =>
@@ -362,8 +366,8 @@ export default function ChatPage() {
   useEffect(() => {
     if (selectedConversation) {
       loadMessages(selectedConversation);
-      // Mark as read when opening a conversation
-      if (selectedConversation.unreadCount > 0) {
+      // Mark as read when opening a conversation: an agent's, a viewer leaves it unread for the team
+      if (agent && selectedConversation.unreadCount > 0) {
         api.markAsRead(selectedConversation.id).catch(() => {});
         // Clear unread badge in local state
         setConversations(prev => prev.map(c =>
@@ -931,6 +935,9 @@ export default function ChatPage() {
                     <button onClick={() => { setShowThreeDotMenu(false); setShowContactInfo(!showContactInfo); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
                       <User className="w-4 h-4 inline mr-1.5 -mt-0.5" /> Contact Info
                     </button>
+                    {/* Mute and pin are an agent's; clearing the chat an owner's or admin's. */}
+                    {agent && (
+                    <>
                     <button onClick={() => { setShowThreeDotMenu(false); handleToggleMute(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
                       {(selectedConversation as any)?.metadata?.isMuted
                         ? <Bell className="w-4 h-4" aria-hidden="true" />
@@ -941,10 +948,16 @@ export default function ChatPage() {
                       <span>📌</span>
                       {(selectedConversation as any)?.metadata?.isPinned ? 'Unpin Chat' : 'Pin Chat'}
                     </button>
+                    </>
+                    )}
+                    {canConfigure(role) && (
+                    <>
                     <hr className="my-1 border-border" />
                     <button onClick={() => { setShowThreeDotMenu(false); handleClearChat(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary text-red-500 flex items-center gap-3">
                       <span>🗑️</span> Clear Chat
                     </button>
+                    </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1005,8 +1018,8 @@ export default function ChatPage() {
                   <div
                     className={`flex group ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                   >
-                    {/* Delete button for outgoing messages (appears on hover) */}
-                    {msg.direction === 'outgoing' && (
+                    {/* Delete button for outgoing messages (appears on hover): an agent's */}
+                    {agent && msg.direction === 'outgoing' && (
                       <div className="flex items-center mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {showDeleteConfirm === (msg.messageId || msg.id) ? (
                           <div className="flex items-center gap-1 bg-card rounded-lg shadow-lg border border-border p-1">
@@ -1244,7 +1257,12 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Message Input */}
+            {/* Message Input: an agent's; a viewer reads the chat */}
+            {!agent ? (
+              <p className="p-4 border-t border-border bg-secondary/30 text-sm text-muted-foreground">
+                Your role can read this chat but not send messages.
+              </p>
+            ) : (
             <div className="p-4 border-t border-border bg-secondary/30 pb-safe">
               <div className="flex items-center gap-3">
                 {/* Emoji Button */}
@@ -1420,6 +1438,7 @@ export default function ChatPage() {
                 </Button>
               </div>
             </div>
+            )}
           </>
         ) : (
           /* No Conversation Selected */
