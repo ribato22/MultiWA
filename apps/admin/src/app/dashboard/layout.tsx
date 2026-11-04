@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { Fragment, useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -561,7 +561,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               action={{ label: 'Back to the overview', href: '/dashboard' }}
             />
           ) : (
-            children
+            // A page reads the role once: a role changed since sign-in mounts it afresh, with the controls of the new one.
+            <Fragment key={`${user.role}:${serverOwner}`}>{children}</Fragment>
           )}
         </div>
       </main>

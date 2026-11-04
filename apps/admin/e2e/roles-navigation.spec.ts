@@ -1,5 +1,5 @@
 // Which dashboard pages each role gets: every read of Webhooks and Audit is an owner's or admin's.
-import { test, expect, gate, on, rendered, requestEnded, ME } from './support/fixtures';
+import { test, expect, gate, get, on, rendered, requestEnded, ME } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import type { Page } from '@playwright/test';
 
@@ -41,6 +41,20 @@ test.describe('a member made an admin since signing in', () => {
     slow.open();
     await expect(sidebarLink(page, 'Webhooks')).toBeVisible();
     expect(await storedUser(page)).toEqual({ ...ME, role: 'admin' });
+  });
+
+  test('gets the admin controls on the page already open too', async ({ page, backend }) => {
+    const slow = gate();
+    backend.route(on('GET', '/auth/me', async () => {
+      await slow.passed;
+      return { json: { ...ME, role: 'admin' } };
+    }));
+    backend.route(get('/templates', [{ id: 't-1', profileId: 'p-1', name: 'Welcome', category: 'greeting', messageType: 'text', content: { text: 'Hi' }, variables: [], usageCount: 0, createdAt: '2026-10-01T03:00:00.000Z' }]));
+    await page.goto('/dashboard/templates');
+    await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create Template' })).toHaveCount(0); // the role it signed in with
+    slow.open();
+    await expect(page.getByRole('button', { name: 'Create Template' })).toBeVisible();
   });
 
   test('keeps the role it signed in with when /auth/me fails', async ({ page, backend }) => {
