@@ -22,6 +22,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Profile, Template } from '@/lib/api';
+import { canConfigure, currentUser } from '@/lib/current-user';
 import { formatTime, formatDate } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -74,6 +75,8 @@ const VARIABLE_HINTS = [
 
 export default function TemplatesPage() {
   const { toast } = useToast();
+  // Templates are configuration: an owner or admin writes them, everyone reads them.
+  const [admin] = useState(() => canConfigure(currentUser()?.role));
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -242,10 +245,12 @@ export default function TemplatesPage() {
           <h1 className="text-2xl font-bold text-foreground">Templates</h1>
           <p className="text-muted-foreground mt-1">Create and manage message templates</p>
         </div>
-        <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
-          <Plus className="w-4 h-4" aria-hidden="true" />
-          Create Template
-        </Button>
+        {admin && (
+          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+            <Plus className="w-4 h-4" aria-hidden="true" />
+            Create Template
+          </Button>
+        )}
       </div>
 
       {/* Filters */}
@@ -334,10 +339,12 @@ export default function TemplatesPage() {
           <p className="text-muted-foreground mb-6">
             Create message templates to save time and ensure consistency
           </p>
-          <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
-            <Plus className="w-4 h-4" aria-hidden="true" />
-            Create Your First Template
-          </Button>
+          {admin && (
+            <Button onClick={openCreateModal} className="gap-2 cursor-pointer">
+              <Plus className="w-4 h-4" aria-hidden="true" />
+              Create Your First Template
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -357,6 +364,7 @@ export default function TemplatesPage() {
                     <CategoryIcon className={`w-3.5 h-3.5 ${category.tone}`} aria-hidden="true" />
                     {category.label}
                   </Badge>
+                  {admin && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button
@@ -387,6 +395,7 @@ export default function TemplatesPage() {
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
+                  )}
                 </div>
 
                 {/* Name */}
