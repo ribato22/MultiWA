@@ -48,7 +48,9 @@ describe('assertRole', () => {
     ['a role in another case', 'POST', 'Viewer'],
     ['a role that is not one of the four', 'GET', 'superadmin'],
   ])('refuses %s, even on a route that names no role', async (_who, method, role) => {
-    await expect(check(Routes, 'open', method, role)).rejects.toThrow(ForbiddenException);
+    const refused = check(Routes, 'open', method, role);
+    await expect(refused).rejects.toThrow(ForbiddenException);
+    await expect(refused).rejects.toThrow('Insufficient role for this action');
   });
 
   it('keeps a route that names no role read-only for a viewer, and open to the other roles', async () => {
@@ -63,7 +65,9 @@ describe('assertRole', () => {
   });
 
   it('refuses a caller without a role on a route that names roles', async () => {
-    await expect(check(Routes, 'admins', 'GET')).rejects.toThrow(ForbiddenException);
+    const refused = check(Routes, 'admins', 'GET');
+    await expect(refused).rejects.toThrow(ForbiddenException);
+    await expect(refused).rejects.toThrow('Insufficient role for this action');
   });
 
   it("takes the method's roles over the controller's, and the controller's when the method names none", async () => {

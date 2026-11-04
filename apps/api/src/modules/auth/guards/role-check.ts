@@ -24,7 +24,7 @@ export async function assertRole(reflector: Reflector, context: ExecutionContext
   const user = req.user;
   if (!ANY_ROLES.includes(user?.role)) throw new ForbiddenException('Insufficient role for this action');
   if (allowed?.length) {
-    if (!user?.role || !allowed.includes(user.role)) throw new ForbiddenException('Insufficient role for this action');
+    if (!allowed.includes(user.role)) throw new ForbiddenException('Insufficient role for this action');
   } else if (user?.role === 'viewer' && !READ_METHODS.has(req.method)) {
     throw new ForbiddenException('This role is read-only');
   }
