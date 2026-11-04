@@ -63,7 +63,7 @@ for (const role of ['member', 'viewer']) {
 }
 
 test.describe('the server owner', () => {
-  test.use({ user: { ...ME, isServerOwner: true } });
+  test.use({ user: { ...ME, role: 'owner', isServerOwner: true } });
 
   test('has the integrations, enabled, with Save and Test', async ({ page, backend }) => {
     backend.route(get('/integrations/config', INTEGRATIONS));
@@ -83,6 +83,7 @@ for (const [who, user] of [['an admin who is not the server owner', ME], ['a mem
     test('has no Integrations link, and opening them by their address says they are not for this role and reads nothing', async ({ page, backend }) => {
       await page.goto('/dashboard/integrations');
       await expect(page.getByRole('heading', { level: 1, name: 'Not available for your role' })).toBeVisible();
+      await expect(page.getByText('Only the server owner can open this page.')).toBeVisible();
       await expect(page.getByRole('link', { name: 'Back to the overview' })).toHaveAttribute('href', '/dashboard');
       await expect(sidebarLink(page, 'Chat')).toBeVisible();
       await expect(sidebarLink(page, 'Integrations')).toHaveCount(0);

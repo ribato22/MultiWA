@@ -37,7 +37,7 @@ for (const role of ['member', 'viewer']) {
     test('searches the knowledge base but cannot add or delete a document', async ({ page, backend }) => {
       backend.route(get('/ai/knowledge/p-1', [DOC]));
       await page.goto('/dashboard/knowledge');
-      await expect(page.getByRole('cell', { name: 'FAQ' })).toBeVisible();
+      await expect(page.getByRole('cell', { name: 'FAQ', exact: true })).toBeVisible();
       for (const name of ['Add Document', 'Delete FAQ']) await expect(page.getByRole('button', { name })).toHaveCount(0);
       await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeVisible();
     });
