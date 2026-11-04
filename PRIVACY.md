@@ -51,8 +51,8 @@ You have the following rights regarding your personal data:
 
 | Right | Description | How to Exercise |
 |-------|-------------|-----------------|
-| **Access** (Art. 15) | Export all your data | `GET /api/v1/account/export` |
-| **Erasure** (Art. 17) | Delete your account and all data | `DELETE /api/v1/account/delete` |
+| **Access** (Art. 15) | Export all your data | `GET /api/v1/account/export`, for owners and admins: it exports the organization's data too. A member or viewer asks an owner or admin |
+| **Erasure** (Art. 17) | Delete your account and all data | `DELETE /api/v1/account/delete`. An owner uses `DELETE /api/v1/auth/account`, which deletes the organization too |
 | **Rectification** (Art. 16) | Correct inaccurate data | Edit via Admin Dashboard |
 | **Portability** (Art. 20) | Download data in machine-readable format | JSON export via API |
 | **Object** (Art. 21) | Object to data processing | Contact DPO |
