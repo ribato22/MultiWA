@@ -76,7 +76,11 @@ test.describe('the server owner', () => {
   });
 });
 
-for (const [who, user] of [['an admin who is not the server owner', ME], ['a member', { ...ME, role: 'member' }]] as const) {
+for (const [who, user] of [
+  ['the owner of another organization', { ...ME, role: 'owner', isServerOwner: false }],
+  ['an admin who is not the server owner', ME],
+  ['a member', { ...ME, role: 'member' }],
+] as const) {
   test.describe(who, () => {
     test.use({ user });
 
