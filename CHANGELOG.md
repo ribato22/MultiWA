@@ -7,9 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Roles are enforced in the API, the socket and the dashboard.** A viewer reads; a member does the daily work (messages, chats, calls, contacts); an admin configures and manages members and viewers; the owner also manages admins. A route a role may not call answers `403`. `scripts/api-roles.snapshot.json` lists each route's class, and CI holds the code to it. See docs/07 § Roles.
+- **Breaking:**
+  - a viewer's write calls, including those made with a viewer's API keys, now get `403`; move integrations that send onto a member's or admin's key;
+  - a member's configuration calls (profiles, broadcasts, automation, webhooks, templates, groups, knowledge base, contact import, deleting chats) now get `403`;
+  - an API key with a scope list needs the scope of each route it calls:
+    - `contacts:read|write`, `webhooks:read|write`, `broadcast:write` (broadcasts and bulk sends) and `profiles:read|write` (profiles, an account's profiles, the pairing QR) are now enforced;
+    - the conversations routes ask for `messages:read|write`;
+    - a socket gets the pairing QR only with `profiles:write`;
+    - a key with no scope list keeps full access;
+    - the TypeScript SDK's `conversations.archive`, `unarchive` and `markAsRead` read the conversation back, so on a key with a scope list they need both `messages:write` and `messages:read`;
+  - registration is open only to the first user of a new server, unless `ALLOW_REGISTRATION=true`;
+  - the server-wide settings (`/settings/*`) are for the server's owner, the owner of the oldest organization;
+  - the server's owner cannot delete their account (`DELETE /auth/account`, `DELETE /account/delete`) while other organizations use the server;
+  - profile responses carry `hasWebhookSecret` instead of `webhookSecret`;
+  - the pairing QR (`qr:update`) reaches owners and admins only;
+  - a call's assignee must be an owner, admin or member;
+  - the contacts list answers at most 1000 rows per request and the message lists at most 500 (a message row can carry its media), and a bulk validation takes at most 1000 numbers;
+  - the integrations routes (`/integrations/*`) are for the server's owner: their configuration is the server's;
+  - the unused `/rbac` routes are removed.
+- `GET /auth/registration` tells whether registration is open; `GET /auth/me` carries `isServerOwner`.
+
 ### Security
 
-- The RBAC routes (`/rbac/*`) are for owners and admins only. `GET /rbac/roles/:id` lists a role's members by id, name, email, role and active state, and `POST /rbac/assign` takes only a member of the role's organization.
+- The unused RBAC routes (`/rbac/*`) are removed.
 - `POST /api-keys` takes only a signed-in user: a request made with an API key gets `403`, so a key cannot create a wider one.
 - `POST /automation/reorder` orders only the rules of the profile it names. An order naming any other rule gets `404` and changes nothing.
 
