@@ -9,7 +9,7 @@ import { isServerOwner } from '../server-owner';
 import { Roles } from '../decorators/roles.decorator';
 import { ServerOwnerOnly } from '../decorators/server-owner.decorator';
 import { ADMIN_ROLES, AGENT_ROLES } from '../roles';
-import { assertRole } from './role-check';
+import { assertRole, READ_METHODS } from './role-check';
 
 class Routes {
   open() {}
@@ -34,8 +34,21 @@ const check = (Controller: any, handler: string, method: string, role?: string) 
 describe('assertRole', () => {
   beforeEach(() => vi.mocked(isServerOwner).mockReset());
 
-  it('lets every role read a route that names no role', async () => {
+  it('lets the four roles read a route that names no role', async () => {
     for (const role of ['owner', 'admin', 'member', 'viewer']) await expect(check(Routes, 'open', 'GET', role)).resolves.toBeUndefined();
+  });
+
+  it('lets a viewer make every kind of read', async () => {
+    expect(READ_METHODS).toEqual(new Set(['GET', 'HEAD', 'OPTIONS']));
+    for (const method of ['HEAD', 'OPTIONS']) await expect(check(Routes, 'open', method, 'viewer')).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['no caller', 'GET', undefined],
+    ['a role in another case', 'POST', 'Viewer'],
+    ['a role that is not one of the four', 'GET', 'superadmin'],
+  ])('refuses %s, even on a route that names no role', async (_who, method, role) => {
+    await expect(check(Routes, 'open', method, role)).rejects.toThrow(ForbiddenException);
   });
 
   it('keeps a route that names no role read-only for a viewer, and open to the other roles', async () => {
@@ -65,5 +78,11 @@ describe('assertRole', () => {
     await expect(check(Routes, 'serverSettings', 'PUT', 'owner')).resolves.toBeUndefined();
     await expect(check(Routes, 'serverSettings', 'PUT', 'admin')).rejects.toThrow('Insufficient role');
     expect(isServerOwner).toHaveBeenCalledTimes(2); // the admin was refused on the role, before any lookup
+  });
+});
+
+describe('@Roles', () => {
+  it('cannot be written without a role, which would read as naming none', () => {
+    expect(() => Roles()).toThrow('@Roles() needs at least one role');
   });
 });

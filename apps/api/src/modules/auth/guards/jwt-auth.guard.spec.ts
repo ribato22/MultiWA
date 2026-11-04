@@ -7,27 +7,35 @@ vi.mock('@multiwa/database', () => ({ prisma: {} }));
 
 import { JwtAuthGuard, JwtOrApiKeyGuard } from './jwt-auth.guard';
 
-const post = (role: string) =>
-  ({
+// One request for the whole call, with no user until sign-in sets one: the role check sees only the user Passport set.
+const post = () => {
+  const request = { method: 'POST' };
+  return {
     getHandler: () => function route() {},
     getClass: () => class Routes {},
-    switchToHttp: () => ({ getRequest: () => ({ method: 'POST', user: { role } }) }),
-  }) as unknown as ExecutionContext;
+    switchToHttp: () => ({ getRequest: () => request }),
+  } as unknown as ExecutionContext;
+};
 
 describe.each([['JwtAuthGuard', JwtAuthGuard], ['JwtOrApiKeyGuard', JwtOrApiKeyGuard]] as const)('%s', (_name, Guard) => {
-  // The sign-in itself is Passport's: stubbed here, so the test is about what follows it.
-  const signedIn = () => vi.spyOn(Object.getPrototypeOf(Guard.prototype), 'canActivate').mockResolvedValue(true);
+  // The sign-in itself is Passport's: stubbed here to set the user on the request as Passport does, so the test is
+  // about what follows it.
+  const signedInAs = (role: string) =>
+    vi.spyOn(Object.getPrototypeOf(Guard.prototype), 'canActivate').mockImplementation(async (ctx: ExecutionContext) => {
+      ctx.switchToHttp().getRequest().user = { role };
+      return true;
+    });
   afterEach(() => vi.restoreAllMocks());
 
   it('refuses a viewer on a route that changes something, after signing them in', async () => {
-    const signIn = signedIn();
-    const viewer = post('viewer');
-    await expect(new Guard(new Reflector()).canActivate(viewer)).rejects.toThrow(ForbiddenException);
-    expect(signIn).toHaveBeenCalledWith(viewer);
+    const signIn = signedInAs('viewer');
+    const context = post();
+    await expect(new Guard(new Reflector()).canActivate(context)).rejects.toThrow(ForbiddenException);
+    expect(signIn).toHaveBeenCalledWith(context);
   });
 
   it('lets a member through the same route', async () => {
-    signedIn();
-    await expect(new Guard(new Reflector()).canActivate(post('member'))).resolves.toBe(true);
+    signedInAs('member');
+    await expect(new Guard(new Reflector()).canActivate(post())).resolves.toBe(true);
   });
 });

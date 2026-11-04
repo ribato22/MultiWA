@@ -20,9 +20,14 @@ describe('isServerOwner', () => {
     await expect(isServerOwner({ role: 'owner', organizationId: 'org-later' })).resolves.toBe(false);
   });
 
-  it('is never an admin or a caller without a role, and looks nothing up for them', async () => {
+  it('is never an admin or a missing caller, and looks nothing up for them', async () => {
     await expect(isServerOwner({ role: 'admin', organizationId: 'org-first' })).resolves.toBe(false);
     await expect(isServerOwner(undefined)).resolves.toBe(false);
     expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('is never an owner without an organization, and looks nothing up for them', async () => {
+    await expect(isServerOwner({ role: 'owner' })).resolves.toBe(false);
+    expect(findFirst).toHaveBeenCalledTimes(0);
   });
 });
