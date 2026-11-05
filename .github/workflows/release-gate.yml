@@ -41,6 +41,11 @@ jobs:
       - name: Verify no whitespace errors or conflict markers
         run: git diff --check
 
+      - name: Self-test the public boundary scan
+        # Proves the scan can find things: a scan that silently reads nothing
+        # would otherwise report green.
+        run: bash scripts/check-public-boundary.test.sh
+
       - name: Public boundary scan
         run: pnpm run check:public-boundary
 
