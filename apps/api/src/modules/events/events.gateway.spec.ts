@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 vi.mock('@multiwa/database', () => ({
   prisma: {
     user: { findUnique: vi.fn() },
-    apiKey: { findUnique: vi.fn() },
+    apiKey: { findUnique: vi.fn(), findMany: vi.fn() },
     profile: { findFirst: vi.fn() },
     session: { findUnique: vi.fn(), findMany: vi.fn() },
   },
@@ -112,6 +112,15 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     verify.mockReturnValueOnce(new Promise((resolve) => (finish = () => resolve({ sub: 'u1' }))));
     return finish;
   };
+  // socket.io's room operator: `in(room)` (less `.except(other)`) selects sockets, and disconnectSockets closes them
+  const inRoom = (room: string, except?: string): any => ({
+    except: (other: string) => inRoom(room, other),
+    disconnectSockets: (close?: boolean) => {
+      for (const id of rooms.get(room) ?? []) if (!except || !rooms.get(except)?.has(id)) sockets.get(id)?.disconnect(close);
+    },
+  });
+  /** The ids, of these sockets, that were disconnected. */
+  const closed = (...list: any[]) => list.filter((s) => s.disconnect.mock.calls.length).map((s) => s.id);
 
   beforeEach(() => {
     rooms.clear();
@@ -120,9 +129,16 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     bus = { emit: vi.fn() };
     verify = vi.fn().mockResolvedValue({ sub: 'u1' });
     gateway = new EventsGateway({ verifyAsync: verify } as any, bus as any);
-    gateway.server = { adapter: { rooms }, sockets, to: vi.fn(() => ({ emit: emitted })) } as any;
+    gateway.server = {
+      adapter: { rooms },
+      sockets,
+      to: vi.fn(() => ({ emit: emitted })),
+      in: inRoom,
+      fetchSockets: async () => [...sockets.values()],
+    } as any;
     db.user.findUnique.mockReset().mockResolvedValue({ id: 'u1', organizationId: 'o1', isActive: true });
     db.apiKey.findUnique.mockReset().mockResolvedValue(null);
+    db.apiKey.findMany.mockReset();
     db.session.findUnique.mockReset().mockResolvedValue(liveSession());
     db.session.findMany.mockReset();
   });
@@ -178,9 +194,11 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     expect(gateway.isUserOnline('u1')).toBe(false);
   });
 
-  it('an API-key socket carries its key\'s scopes; a JWT socket none', async () => {
-    db.apiKey.findUnique.mockResolvedValue({ expiresAt: null, permissions: ['messages:read'], user: { id: 'u2', organizationId: 'o1', isActive: true } });
-    expect(await gateway.authOf(socket('s3', { apiKey: 'k' }))).toEqual({ userId: 'u2', organizationId: 'o1', apiKeyScopes: ['messages:read'] });
+  it('an API-key socket carries its key\'s id and scopes, never the key; a JWT socket neither', async () => {
+    db.apiKey.findUnique.mockResolvedValue({ id: 'k2', expiresAt: null, permissions: ['messages:read'], user: { id: 'u2', organizationId: 'o1', isActive: true } });
+    const principal = await gateway.authOf(socket('s3', { apiKey: 'mwa_the-raw-key' }));
+    expect(principal).toEqual({ userId: 'u2', organizationId: 'o1', apiKeyScopes: ['messages:read'], apiKeyId: 'k2' });
+    expect(JSON.stringify(principal)).not.toContain('mwa_the-raw-key');
   });
 
   it("emits once to every socket of several users, and to nobody for none", () => {
@@ -361,7 +379,7 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     db.apiKey.findUnique.mockResolvedValue({ expiresAt: null, permissions: [], user: { id: 'u1', organizationId: 'o1', isActive: true } });
     const integration = socket('s5', { apiKey: 'k' });
     await gateway.handleConnection(integration);
-    expect(integration.join).not.toHaveBeenCalled();
+    expect(integration.join).not.toHaveBeenCalledWith('user:u1');
     expect(integration.disconnect).not.toHaveBeenCalled();
     expect(gateway.isUserOnline('u1')).toBe(false);
     // ...yet it still gets its profiles' events
@@ -384,11 +402,11 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
   });
 
   it('a key whose scopes column is NULL still makes an API-key socket: it joins no user room', async () => {
-    db.apiKey.findUnique.mockResolvedValue({ expiresAt: null, permissions: null, user: { id: 'u1', organizationId: 'o1', isActive: true } });
+    db.apiKey.findUnique.mockResolvedValue({ id: 'k9', expiresAt: null, permissions: null, user: { id: 'u1', organizationId: 'o1', isActive: true } });
     const s = socket('s9', { apiKey: 'k' });
-    expect(await gateway.authOf(s)).toEqual({ userId: 'u1', organizationId: 'o1', apiKeyScopes: [] });
+    expect(await gateway.authOf(s)).toEqual({ userId: 'u1', organizationId: 'o1', apiKeyScopes: [], apiKeyId: 'k9' });
     await gateway.handleConnection(s);
-    expect(s.join).not.toHaveBeenCalled();
+    expect(s.join).not.toHaveBeenCalledWith('user:u1');
     expect(gateway.isUserOnline('u1')).toBe(false);
   });
 
@@ -438,41 +456,230 @@ describe('EventsGateway users: one authentication per socket, a room per user, p
     ]);
   });
 
-  it("the sweep disconnects exactly the dashboard sockets whose session is gone or whose user was deactivated, with one query", async () => {
-    const sweep = () => (gateway as any).sweepSessions();
-    await sweep();
-    expect(db.session.findMany).not.toHaveBeenCalled(); // nobody to check
-    // s2 is the same login's second tab
-    const tokens: Record<string, string> = { s1: 'live', s2: 'live', s3: 'revoked', s4: 'deactivated' };
-    const dashboards = Object.entries(tokens).map(([id, token]) => socket(id, { token }));
-    for (const s of dashboards) await gateway.handleConnection(s);
-    db.apiKey.findUnique.mockResolvedValue({ expiresAt: null, permissions: [], user: { id: 'u1', organizationId: 'o1', isActive: true } });
-    const integration = socket('s5', { apiKey: 'k' });
-    await gateway.handleConnection(integration);
-    db.session.findMany.mockResolvedValue([{ tokenHash: hash('live') }]);
-    await sweep();
-    expect(db.session.findMany.mock.calls).toEqual([[{
-      where: { tokenHash: { in: [hash('live'), hash('revoked'), hash('deactivated')] }, expiresAt: { gt: expect.any(Date) }, user: { isActive: true } },
-      select: { tokenHash: true },
-    }]]);
-    expect(Object.fromEntries([...dashboards, integration].map((s) => [s.id, s.disconnect.mock.calls]))).toEqual({
-      s1: [], s2: [], s3: [[true]], s4: [[true]], s5: [],
+  describe('a revoked credential closes its sockets at once', () => {
+    const U1 = { id: 'u1', organizationId: 'o1', isActive: true };
+    const U2 = { id: 'u2', organizationId: 'o1', isActive: true };
+    // The raw API keys of these fixtures, as a handshake sends them.
+    const KEYS: Record<string, { id: string; user: typeof U1 }> = { 'key-a': { id: 'k1', user: U1 }, 'key-b': { id: 'k2', user: U1 }, 'key-c': { id: 'k3', user: U2 } };
+
+    beforeEach(() => {
+      // A token reads `<user>-<login>`: a user's two logins are two sessions.
+      verify.mockImplementation(async (token: string) => ({ sub: token.split('-')[0] }));
+      db.user.findUnique.mockImplementation(async ({ where }: any) => ({ u1: U1, u2: U2 })[where.id as 'u1' | 'u2'] ?? null);
+      db.apiKey.findUnique.mockImplementation(async ({ where }: any) => {
+        const key = Object.entries(KEYS).find(([raw]) => hash(raw) === where.keyHash)?.[1];
+        return key ? { id: key.id, expiresAt: null, permissions: [], user: key.user } : null;
+      });
+    });
+    const dashboard = async (id: string, token: string) => {
+      const s = socket(id, { token });
+      await gateway.handleConnection(s);
+      return s;
+    };
+    const integration = async (id: string, apiKey: string) => {
+      const s = socket(id, { apiKey });
+      await gateway.handleConnection(s);
+      return s;
+    };
+
+    it("every socket joins its user's room for revocation; a dashboard socket also its session's, an API-key socket also its key's", async () => {
+      await dashboard('d1', 'u1-a');
+      await dashboard('d2', 'u1-b');
+      await integration('i1', 'key-a');
+      expect(rooms.get('principal:u1')).toEqual(new Set(['d1', 'd2', 'i1']));
+      expect(rooms.get(`session:${hash('u1-a')}`)).toEqual(new Set(['d1']));
+      expect(rooms.get(`session:${hash('u1-b')}`)).toEqual(new Set(['d2']));
+      expect(rooms.get('apikey:k1')).toEqual(new Set(['i1']));
+      // presence is the dashboard's alone: the API-key socket is in no `user:` room
+      expect(rooms.get('user:u1')).toEqual(new Set(['d1', 'd2']));
+    });
+
+    it("a deleted API key's sockets are closed, and no other socket", async () => {
+      const [a1, a2, b, c, login] = [await integration('a1', 'key-a'), await integration('a2', 'key-a'), await integration('b', 'key-b'), await integration('c', 'key-c'), await dashboard('d', 'u1-a')];
+      gateway.disconnectApiKey('k1');
+      expect(closed(a1, a2, b, c, login)).toEqual(['a1', 'a2']);
+      expect(a1.disconnect).toHaveBeenCalledWith(true);
+    });
+
+    it("a removed user's sockets, a login's and an API key's, are closed; another user's are not", async () => {
+      const [d1, d2, k1, d3, k3] = [await dashboard('d1', 'u1-a'), await dashboard('d2', 'u1-b'), await integration('k1', 'key-a'), await dashboard('d3', 'u2-a'), await integration('k3', 'key-c')];
+      gateway.disconnectUser('u1');
+      expect(closed(d1, d2, k1, d3, k3)).toEqual(['d1', 'd2', 'k1']);
+      expect(d1.disconnect).toHaveBeenCalledWith(true);
+    });
+
+    it("a logged-out or revoked session's sockets are closed, every tab of it; the user's other session and API key keep theirs", async () => {
+      const [tab1, tab2, other, key] = [await dashboard('t1', 'u1-a'), await dashboard('t2', 'u1-a'), await dashboard('o', 'u1-b'), await integration('k', 'key-a')];
+      gateway.disconnectSession(hash('u1-a'));
+      expect(closed(tab1, tab2, other, key)).toEqual(['t1', 't2']);
+      expect(tab1.disconnect).toHaveBeenCalledWith(true);
+    });
+
+    it("revoking a user's other sessions closes their dashboard sockets but the current session's: no API-key socket, no one else's", async () => {
+      const [cur1, cur2, old, key, someone] = [
+        await dashboard('c1', 'u1-a'), await dashboard('c2', 'u1-a'), await dashboard('old', 'u1-b'), await integration('k', 'key-a'), await dashboard('x', 'u2-a'),
+      ];
+      gateway.disconnectOtherSessions('u1', hash('u1-a'));
+      expect(closed(cur1, cur2, old, key, someone)).toEqual(['old']);
+      expect(old.disconnect).toHaveBeenCalledWith(true);
+    });
+
+    it("with no current session, revoking a user's sessions closes every dashboard socket of theirs, and still no API-key socket", async () => {
+      const [a, b, key, someone] = [await dashboard('a', 'u1-a'), await dashboard('b', 'u1-b'), await integration('k', 'key-a'), await dashboard('x', 'u2-a')];
+      gateway.disconnectOtherSessions('u1');
+      expect(closed(a, b, key, someone)).toEqual(['a', 'b']);
+    });
+
+    it('each revocation leaves one line with its reason; no token, session hash or key, and no forged line', () => {
+      const log = vi.spyOn((gateway as any).logger, 'log').mockImplementation(() => undefined);
+      gateway.disconnectApiKey('k1\nforged line');
+      gateway.disconnectUser('u1\r\nforged line');
+      gateway.disconnectSession(hash('u1-a'));
+      gateway.disconnectOtherSessions('u1', hash('u1-a'));
+      const lines = log.mock.calls.map(([line]) => line as string);
+      expect(lines).toEqual([
+        'Disconnecting the sockets of API key k1forged line: the key was deleted',
+        'Disconnecting the sockets of user u1forged line: the user was removed',
+        'Disconnecting the sockets of a session: it was logged out or revoked',
+        "Disconnecting the dashboard sockets of user u1: their other sessions were revoked",
+      ]);
+      expect(lines.join('\n')).not.toContain(hash('u1-a'));
+    });
+
+    it('an adapter that fails never breaks the request that revoked: it warns, on one line, and the sweep is left to close them', () => {
+      const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+      (gateway.server as any).in = () => {
+        throw new Error('adapter down\nforged line');
+      };
+      expect(() => gateway.disconnectApiKey('k1')).not.toThrow();
+      expect(() => gateway.disconnectUser('u1')).not.toThrow();
+      expect(() => gateway.disconnectSession('h')).not.toThrow();
+      expect(() => gateway.disconnectOtherSessions('u1')).not.toThrow();
+      expect(warn).toHaveBeenCalledTimes(4);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/adapter downforged line$/));
     });
   });
 
-  it('a sweep whose query fails disconnects nobody, and says why on one line', async () => {
-    const s = socket('s1', { token: 'live' });
-    await gateway.handleConnection(s);
-    db.session.findMany.mockRejectedValue(new Error('connection refused\nforged line'));
-    const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
-    await expect((gateway as any).sweepSessions()).resolves.toBeUndefined();
-    expect(s.disconnect).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('connection refusedforged line'));
+  describe('every minute the sweep closes the sockets whose credentials no longer hold', () => {
+    const sweep = () => (gateway as any).sweepSockets();
+    const past = () => new Date(Date.now() - 1_000);
+    const later = () => new Date(Date.now() + 3_600_000);
+    const keyRow = (row: Record<string, unknown>) => ({ id: 'k1', expiresAt: null, user: { isActive: true }, ...row });
+    const sessionRow = (row: Record<string, unknown>) => ({ tokenHash: hash('t1'), expiresAt: later(), user: { isActive: true }, ...row });
+    const keyed = async () => {
+      db.apiKey.findUnique.mockResolvedValue({ id: 'k1', expiresAt: null, permissions: [], user: { id: 'u1', organizationId: 'o1', isActive: true } });
+      const s = socket('i1', { apiKey: 'k' });
+      await gateway.handleConnection(s);
+      return s;
+    };
+    const login = async () => {
+      const s = socket('d1', { token: 't1' });
+      await gateway.handleConnection(s);
+      return s;
+    };
+
+    it.each([
+      ['closes the socket of an API key that was deleted', undefined, true],
+      ['closes the socket of an API key that has expired', keyRow({ expiresAt: past() }), true],
+      ["closes the socket of an API key whose user is inactive", keyRow({ user: { isActive: false } }), true],
+      ['keeps the socket of a valid API key', keyRow({}), false],
+      ['keeps the socket of an API key that expires later', keyRow({ expiresAt: later() }), false],
+    ])('%s', async (_rule, row, closes) => {
+      const s = await keyed();
+      db.apiKey.findMany.mockResolvedValue(row ? [row] : []);
+      await sweep();
+      expect(s.disconnect.mock.calls).toEqual(closes ? [[true]] : []);
+    });
+
+    it.each([
+      ['closes the socket of a session that is gone (logged out, revoked, or its user deleted)', undefined, true],
+      ['closes the socket of a session that has expired', sessionRow({ expiresAt: past() }), true],
+      ['closes the socket of a session whose user is inactive', sessionRow({ user: { isActive: false } }), true],
+      ['keeps the socket of a live session', sessionRow({}), false],
+    ])('%s', async (_rule, row, closes) => {
+      const s = await login();
+      db.session.findMany.mockResolvedValue(row ? [row] : []);
+      await sweep();
+      expect(s.disconnect.mock.calls).toEqual(closes ? [[true]] : []);
+    });
+
+    it('asks one question per kind, however many sockets, and none for a kind with no socket', async () => {
+      await sweep();
+      expect(db.session.findMany).not.toHaveBeenCalled();
+      expect(db.apiKey.findMany).not.toHaveBeenCalled(); // nobody to check
+      // d1 and d2 share a login (two tabs); i1 and i2 share a key
+      db.user.findUnique.mockResolvedValue({ id: 'u1', organizationId: 'o1', isActive: true });
+      db.apiKey.findUnique.mockImplementation(async ({ where }: any) => ({
+        id: where.keyHash === hash('key-a') ? 'k1' : 'k2', expiresAt: null, permissions: [], user: { id: 'u1', organizationId: 'o1', isActive: true },
+      }));
+      const dashboards = [socket('d1', { token: 'live' }), socket('d2', { token: 'live' }), socket('d3', { token: 'revoked' })];
+      const integrations = [socket('i1', { apiKey: 'key-a' }), socket('i2', { apiKey: 'key-a' }), socket('i3', { apiKey: 'key-b' })];
+      for (const s of [...dashboards, ...integrations]) await gateway.handleConnection(s);
+      db.session.findMany.mockResolvedValue([sessionRow({ tokenHash: hash('live') })]);
+      db.apiKey.findMany.mockResolvedValue([keyRow({ id: 'k1' })]);
+      await sweep();
+      expect(db.session.findMany).toHaveBeenCalledTimes(1);
+      expect(db.session.findMany.mock.calls[0][0].where).toEqual({ tokenHash: { in: [hash('live'), hash('revoked')] } });
+      expect(db.apiKey.findMany).toHaveBeenCalledTimes(1);
+      expect(db.apiKey.findMany.mock.calls[0][0].where).toEqual({ id: { in: ['k1', 'k2'] } });
+      expect(closed(...dashboards, ...integrations)).toEqual(['d3', 'i3']);
+    });
+
+    it("reads the namespace's sockets through fetchSockets, so it reaches those of other nodes (a Redis adapter) too", async () => {
+      // A socket of another node is in no local map: only fetchSockets returns it.
+      const remote = { id: 'r1', data: { apiKeyId: 'k9' }, disconnect: vi.fn() };
+      (gateway.server as any).fetchSockets = async () => [remote];
+      db.apiKey.findMany.mockResolvedValue([]);
+      await sweep();
+      expect(remote.disconnect).toHaveBeenCalledWith(true);
+    });
+
+    it("a remote socket's id cannot forge a line of the log", async () => {
+      const log = vi.spyOn((gateway as any).logger, 'log').mockImplementation(() => undefined);
+      (gateway.server as any).fetchSockets = async () => [{ id: 'r1\nforged line', data: { apiKeyId: 'k9' }, disconnect: vi.fn() }];
+      db.apiKey.findMany.mockResolvedValue([]);
+      await sweep();
+      expect(log.mock.calls).toEqual([['Closing socket r1forged line: its API key is gone']]);
+    });
+
+    it('leaves one line for each socket it closes, with its reason; no token, session hash or key', async () => {
+      const log = vi.spyOn((gateway as any).logger, 'log').mockImplementation(() => undefined);
+      const [dashboardSocket, keySocket] = [await login(), await keyed()];
+      log.mockClear(); // the connection lines
+      db.session.findMany.mockResolvedValue([]);
+      db.apiKey.findMany.mockResolvedValue([keyRow({ expiresAt: past() })]);
+      await sweep();
+      expect(log.mock.calls.map(([line]) => line)).toEqual([
+        'Closing socket d1: its session is gone',
+        'Closing socket i1: its API key has expired',
+      ]);
+      expect(closed(dashboardSocket, keySocket)).toEqual(['d1', 'i1']);
+    });
+
+    it('a user who is inactive is the reason, when the credential itself holds', async () => {
+      const log = vi.spyOn((gateway as any).logger, 'log').mockImplementation(() => undefined);
+      await keyed();
+      log.mockClear();
+      db.apiKey.findMany.mockResolvedValue([keyRow({ user: { isActive: false } })]);
+      await sweep();
+      expect(log).toHaveBeenCalledWith('Closing socket i1: its user is inactive');
+    });
+
+    it.each(['session', 'apiKey'])('a sweep whose %s query fails disconnects nobody, and says why on one line', async (table) => {
+      const sockets = [await login(), await keyed()];
+      db.session.findMany.mockResolvedValue([sessionRow({})]);
+      db.apiKey.findMany.mockResolvedValue([keyRow({})]);
+      db[table].findMany.mockRejectedValue(new Error('connection refused\nforged line'));
+      const warn = vi.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+      await expect(sweep()).resolves.toBeUndefined();
+      expect(closed(...sockets)).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/connection refusedforged line$/));
+    });
   });
 
   it('sweeps once a minute from module init to module destroy, on a timer that does not hold the process open', async () => {
     vi.useFakeTimers();
-    const sweep = vi.spyOn(gateway as any, 'sweepSessions').mockResolvedValue(undefined);
+    const sweep = vi.spyOn(gateway as any, 'sweepSockets').mockResolvedValue(undefined);
     gateway.onModuleInit();
     expect((gateway as any).sweepTimer.hasRef()).toBe(false);
     await vi.advanceTimersByTimeAsync(60_000);

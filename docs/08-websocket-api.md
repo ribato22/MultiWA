@@ -20,7 +20,15 @@ Credentials go in the handshake, as one of:
 
 The user must be active, a JWT's login session must still be live (as on the REST API, logging out or revoking the session ends it), and an API key must not have expired. API-key scopes are not checked here, except that a key with a scope list needs `profiles:write` for the pairing QR (8.3); any valid key of the organization can listen to the rest.
 
-A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one. Its session is checked again every minute: a JWT socket whose session was logged out, revoked or has expired, or whose user was deactivated, is disconnected the same way, so a revoked device stops receiving calls within a minute.
+A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token itself is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one.
+
+A socket does not outlive its credentials. It is disconnected the same way (`io server disconnect`) when:
+
+- its API key is deleted, or expires;
+- its JWT's login session is logged out, revoked (`DELETE /auth/sessions/:id`, or `DELETE /auth/sessions`, which ends every session but the caller's) or expires;
+- its user is removed from the organization (`DELETE /organizations/members/:id`), deleted or deactivated.
+
+Deleting an API key, logging out, revoking a session and removing a member close their sockets at once. The server also checks every socket's credentials again every minute, which covers the rest (an expiry, a deactivated user, a user who erased their own account): a revoked device or integration stops receiving events, and calls, within a minute.
 
 If the server cannot check the credentials (its database is unavailable), it closes the connection after a few seconds instead: the client sees `disconnect` with the reason `transport close`, and Socket.IO then reconnects by itself. Until then the socket gets no events, a `join` answers `Unavailable` and a [call command](#calls-answered-in-the-dashboard) `unavailable`: send them again after the next `connect`.
 
@@ -150,7 +158,7 @@ socket.on('connect', () => {
     if (!res?.success) console.error('join refused:', res?.error);
   });
 });
-socket.on('disconnect', (reason) => console.log('disconnected:', reason)); // 'io server disconnect' = bad credentials
+socket.on('disconnect', (reason) => console.log('disconnected:', reason)); // 'io server disconnect' = bad or revoked credentials
 
 socket.on('message', ({ message, conversation }) => console.log(conversation.jid, message.content));
 socket.on('message:ack', ({ messageId, status }) => console.log(messageId, status));

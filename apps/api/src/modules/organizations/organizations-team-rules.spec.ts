@@ -9,6 +9,7 @@ vi.mock('@multiwa/database', () => ({
 vi.mock('bcrypt', () => ({ hash: vi.fn().mockResolvedValue('hash') }));
 
 import { prisma } from '@multiwa/database';
+import type { EventsGateway } from '../events/events.gateway';
 import { OrganizationsService } from './organizations.service';
 
 const users = prisma.user as unknown as Record<'findUnique' | 'findFirst' | 'create' | 'update' | 'delete', ReturnType<typeof vi.fn>>;
@@ -16,9 +17,11 @@ const OWNER = { id: 'u-owner', role: 'owner' };
 const ADMIN = { id: 'u-admin', role: 'admin' };
 
 describe('team rules', () => {
-  const service = new OrganizationsService();
+  const gateway = { disconnectUser: vi.fn() };
+  const service = new OrganizationsService(gateway as unknown as EventsGateway);
 
   beforeEach(() => {
+    gateway.disconnectUser.mockReset();
     for (const fn of Object.values(users)) fn.mockReset();
     users.findUnique.mockResolvedValue(null);
     users.create.mockImplementation(async ({ data }: any) => ({ id: 'u-new', role: data.role }));
@@ -63,5 +66,6 @@ describe('team rules', () => {
     users.findFirst.mockResolvedValueOnce({ id: 'u-admin-2', role: 'admin' });
     await expect(service.removeMember('org-1', OWNER, 'u-admin-2')).resolves.toEqual({ success: true });
     expect(users.delete).toHaveBeenCalledTimes(1);
+    expect(gateway.disconnectUser.mock.calls).toEqual([['u-admin-2']]); // the refused removal closed no socket
   });
 });

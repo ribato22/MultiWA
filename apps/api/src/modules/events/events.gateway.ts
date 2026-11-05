@@ -11,7 +11,7 @@ import {
   MessageBody,
   GatewayMetadata,
 } from '@nestjs/websockets';
-import { Namespace, Socket } from 'socket.io';
+import { Namespace, RemoteSocket, Socket } from 'socket.io';
 import { Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -34,8 +34,8 @@ const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 /** An access token's key in the sessions table: the same hash as SessionsService.hashToken (the token is never stored). */
 const sessionTokenHash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
-/** How often the dashboard sockets' sessions are checked again: a revoked device stops being rung within this. */
-const SESSION_SWEEP_MS = 60_000;
+/** How often the credentials of every socket are checked again: a revoked device or integration is gone within this. */
+const SOCKET_SWEEP_MS = 60_000;
 
 /** A socket whose credentials could not be checked is closed after this long, plus up to the jitter (see handleConnection). */
 const UNCHECKED_HOLD_MS = 5_000;
@@ -61,7 +61,14 @@ export interface SocketPrincipal {
   apiKeyScopes?: string[];
   /** A dashboard login's session (`sessions.tokenHash`, never the token itself): its sockets last only as long as it does. */
   sessionTokenHash?: string;
+  /** An API-key socket's key (`apiKeys.id`, never the key itself): its sockets last only as long as it does. */
+  apiKeyId?: string;
 }
+
+/** What a sweep needs of a socket: `fetchSockets` gives these for the sockets of every node. */
+type SweptSocket = Pick<RemoteSocket<any, any>, 'id' | 'data' | 'disconnect'>;
+/** A credential's row (a session, an API key) with its user, as a sweep reads it. */
+type CredentialRow = { expiresAt: Date | null; user: { isActive: boolean } | null };
 
 @WebSocketGateway(WS_GATEWAY_OPTIONS)
 export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy, RealtimeEmitter {
@@ -76,7 +83,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   constructor(private readonly jwt: JwtService, private readonly eventEmitter: EventEmitter2) {}
 
   onModuleInit(): void {
-    this.sweepTimer = setInterval(() => void this.sweepSessions(), SESSION_SWEEP_MS).unref();
+    this.sweepTimer = setInterval(() => void this.sweepSockets(), SOCKET_SWEEP_MS).unref();
   }
 
   onModuleDestroy(): void {
@@ -118,12 +125,20 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       client.disconnect(true);
       return;
     }
+    // Every socket joins the rooms through which a revocation reaches it at once: its user's, and the one of the API key
+    // or session that opened it (disconnectUser, disconnectApiKey, disconnectSession).
+    client.join(this.principalRoom(auth.userId));
+    if (auth.apiKeyId) {
+      client.join(this.apiKeyRoom(auth.apiKeyId));
+      client.data.apiKeyId = auth.apiKeyId; // checked again by the sweep
+    }
     // A dashboard login joins its user's room: the call coordinator rings, and talks to, a user on every dashboard socket
     // they have open, and the room is their presence. An API-key socket joins none: an integration that stays connected
     // would keep its user online for ever, always rung and never lost.
     if (auth.apiKeyScopes === undefined) {
       const room = this.userRoom(auth.userId);
       client.join(room);
+      if (auth.sessionTokenHash) client.join(this.sessionRoom(auth.sessionTokenHash));
       client.data.userId = auth.userId; // read by handleDisconnect: only a socket that joined can take its user offline
       client.data.sessionTokenHash = auth.sessionTokenHash; // checked again by the sweep
       if (this.server?.adapter?.rooms.get(room)?.size === 1) this.emitInternal(InternalEvents.WS_USER_ONLINE, { userId: auth.userId });
@@ -297,7 +312,7 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
       });
       if (key && (!key.expiresAt || new Date() <= key.expiresAt) && key.user?.isActive) {
         // Always an array for an API key, also when its column holds NULL: its absence is what marks a dashboard login.
-        return { userId: key.user.id, organizationId: key.user.organizationId, apiKeyScopes: key.permissions ?? [] };
+        return { userId: key.user.id, organizationId: key.user.organizationId, apiKeyScopes: key.permissions ?? [], apiKeyId: key.id };
       }
     }
 
@@ -305,23 +320,93 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
   }
 
   /**
-   * A socket is authenticated once, at its handshake. Every minute, the dashboard sockets whose session is gone
-   * (logged out, revoked, expired) or whose user was deactivated are disconnected, in one query for all of them: a
-   * revoked device stops being rung within a minute. Their disconnect runs the usual path: the user goes offline, and
-   * the call coordinator hangs up the call of an agent lost for longer than its grace. A sweep that fails changes nothing.
+   * A socket is authenticated once, at its handshake. Deleting its API key, logging out or revoking its session, and
+   * removing its user disconnect it at once (disconnectApiKey, disconnectSession, disconnectUser); this is the safety net
+   * for every other change. Every minute the credentials of every socket on /ws are checked again, in one query per
+   * kind: a dashboard socket's session, an API-key socket's key. A socket whose credential is gone (a key deleted; a
+   * session logged out, revoked, or its user deleted), has expired, or whose user was deactivated is disconnected, which
+   * runs the usual path: the user goes offline, and the call coordinator hangs up the call of an agent lost for longer
+   * than its grace. A sweep that fails changes nothing.
    */
-  private async sweepSessions(): Promise<void> {
+  private async sweepSockets(): Promise<void> {
     try {
-      const sockets = [...(this.server?.sockets?.values() ?? [])].filter((s) => s.data?.sessionTokenHash);
-      if (!sockets.length) return;
-      const live = await prisma.session.findMany({
-        where: { tokenHash: { in: [...new Set(sockets.map((s) => s.data.sessionTokenHash as string))] }, expiresAt: { gt: new Date() }, user: { isActive: true } },
-        select: { tokenHash: true },
-      });
-      const kept = new Set(live.map((s) => s.tokenHash));
-      for (const s of sockets) if (!kept.has(s.data.sessionTokenHash)) s.disconnect(true);
+      // Through the adapter: with one that spans nodes, the sockets of the other nodes too.
+      const sockets: SweptSocket[] = await this.server.fetchSockets();
+      const dashboards = sockets.filter((s) => s.data?.sessionTokenHash);
+      if (dashboards.length) {
+        const rows = await prisma.session.findMany({
+          where: { tokenHash: { in: [...new Set(dashboards.map((s) => s.data.sessionTokenHash as string))] } },
+          select: { tokenHash: true, expiresAt: true, user: { select: { isActive: true } } },
+        });
+        const byHash = new Map(rows.map((r) => [r.tokenHash, r] as const));
+        for (const s of dashboards) this.closeIfLapsed(s, 'session', byHash.get(s.data.sessionTokenHash));
+      }
+      const integrations = sockets.filter((s) => s.data?.apiKeyId);
+      if (integrations.length) {
+        const rows = await prisma.apiKey.findMany({
+          where: { id: { in: [...new Set(integrations.map((s) => s.data.apiKeyId as string))] } },
+          select: { id: true, expiresAt: true, user: { select: { isActive: true } } },
+        });
+        const byId = new Map(rows.map((r) => [r.id, r] as const));
+        for (const s of integrations) this.closeIfLapsed(s, 'API key', byId.get(s.data.apiKeyId));
+      }
     } catch (e) {
-      this.logger.warn(`Could not check the sockets' sessions: ${clean((e as Error)?.message ?? e)}`);
+      this.logger.warn(`Could not check the sockets' credentials: ${clean((e as Error)?.message ?? e)}`);
+    }
+  }
+
+  /** Disconnects a socket whose credential's row is gone (undefined), has expired, or belongs to a user who is inactive. */
+  private closeIfLapsed(socket: SweptSocket, what: string, row: CredentialRow | undefined): void {
+    const why = !row
+      ? `its ${what} is gone`
+      : row.expiresAt && row.expiresAt <= new Date()
+        ? `its ${what} has expired`
+        : !row.user?.isActive
+          ? 'its user is inactive'
+          : undefined;
+    if (!why) return;
+    this.logger.log(`Closing socket ${clean(socket.id)}: ${why}`);
+    socket.disconnect(true);
+  }
+
+  /** A deleted API key: every socket it opened is disconnected at once. */
+  disconnectApiKey(apiKeyId: string): void {
+    this.disconnectRoom(this.apiKeyRoom(apiKeyId), `Disconnecting the sockets of API key ${clean(apiKeyId)}: the key was deleted`);
+  }
+
+  /** A logged-out or revoked session: the sockets it opened (a dashboard's tabs). */
+  disconnectSession(tokenHash: string): void {
+    this.disconnectRoom(this.sessionRoom(tokenHash), 'Disconnecting the sockets of a session: it was logged out or revoked');
+  }
+
+  /**
+   * Every session of a user revoked but one (all, with none given): their dashboard sockets, less that session's. An API
+   * key is no session, and keeps its sockets.
+   */
+  disconnectOtherSessions(userId: string, keepTokenHash?: string): void {
+    this.disconnectRoom(
+      this.userRoom(userId),
+      `Disconnecting the dashboard sockets of user ${clean(userId)}: their other sessions were revoked`,
+      keepTokenHash ? this.sessionRoom(keepTokenHash) : undefined,
+    );
+  }
+
+  /** A removed user: every socket of theirs, a dashboard login's and an API key's. */
+  disconnectUser(userId: string): void {
+    this.disconnectRoom(this.principalRoom(userId), `Disconnecting the sockets of user ${clean(userId)}: the user was removed`);
+  }
+
+  /**
+   * Disconnects the sockets in a room, less those also in `except`, on every node. Never throws: it runs after the
+   * change it follows was made, and the sweep closes what this could not.
+   */
+  private disconnectRoom(room: string, logLine: string, except?: string): void {
+    try {
+      this.logger.log(logLine);
+      const sockets = this.server.in(room);
+      (except ? sockets.except(except) : sockets).disconnectSockets(true);
+    } catch (e) {
+      this.logger.warn(`Could not disconnect the sockets of a revoked credential (the next sweep will): ${clean((e as Error)?.message ?? e)}`);
     }
   }
 
@@ -351,6 +436,19 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect, 
 
   private userRoom(userId: string): string {
     return `user:${userId}`;
+  }
+
+  /** Every socket of a user, whatever it logged in with: the `user:` room holds dashboard sockets only, as their presence. */
+  private principalRoom(userId: string): string {
+    return `principal:${userId}`;
+  }
+
+  private apiKeyRoom(apiKeyId: string): string {
+    return `apikey:${apiKeyId}`;
+  }
+
+  private sessionRoom(tokenHash: string): string {
+    return `session:${tokenHash}`;
   }
 
   /** The internal bus never breaks a socket hook. */

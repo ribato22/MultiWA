@@ -4,6 +4,7 @@ import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { withoutLookupSecret } from '../customers/customer-settings';
+import { EventsGateway } from '../events/events.gateway';
 
 // Roles that may be assigned through member-management endpoints. `owner` is
 // deliberately excluded: ownership is set when the org is created and is not
@@ -16,6 +17,8 @@ type Requester = { id: string; role: string };
 
 @Injectable()
 export class OrganizationsService {
+  constructor(private readonly gateway: EventsGateway) {}
+
   private assertAssignableRole(role: string | undefined) {
     if (role !== undefined && !ASSIGNABLE_ROLES.includes(role)) {
       throw new BadRequestException(
@@ -149,6 +152,8 @@ export class OrganizationsService {
     }
 
     await prisma.user.delete({ where: { id: memberId } });
+    // After the delete: a socket closed before it could reconnect as the member.
+    this.gateway.disconnectUser(memberId);
     return { success: true };
   }
 }
