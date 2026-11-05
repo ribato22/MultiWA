@@ -7,6 +7,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { prisma } from '@multiwa/database';
 import { SessionsService } from '../sessions.service';
+import { withoutLookupSecret } from '../../customers/customer-settings';
 
 export interface JwtPayload {
   sub: string;
@@ -57,7 +58,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       name: user.name,
       role: user.role,
       organizationId: user.organizationId,
-      organization: user.organization,
+      organization: withoutLookupSecret(user.organization),
     };
   }
 }
