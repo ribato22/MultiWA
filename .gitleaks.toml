@@ -15,10 +15,12 @@ useDefault = true
 # so no real key can match. Its mediasoup file replays the transport parameters
 # of a local test call, whose ICE credentials were good for that call only.
 # The tests' ENCRYPTION_KEY is `0123456789abcdef` four times, the same key CI
-# runs with: the unit specs pin ciphertexts under it.
+# runs with: the unit specs pin ciphertexts under it. The public-boundary scan's
+# self-test writes secret-shaped lines into a throwaway repo on purpose: they are
+# what that scan must catch.
 [allowlist]
-description = "Test fixtures: made-up API keys, the tests' fixed ENCRYPTION_KEY, and a replayed test call's mediasoup parameters"
-paths = ['''^apps/admin/e2e/support/mediasoup\.json$''']
+description = "Test fixtures: made-up API keys, the tests' fixed ENCRYPTION_KEY, the boundary scan's self-test, and a replayed test call's mediasoup parameters"
+paths = ['''^apps/admin/e2e/support/mediasoup\.json$''', '''^scripts/check-public-boundary\.test\.sh$''']
 regexes = ['''^mwa_live_\d{4}$''', '''^(?:0123456789abcdef){4}$''']
 
 [[rules]]
