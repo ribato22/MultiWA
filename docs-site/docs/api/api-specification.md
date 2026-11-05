@@ -156,7 +156,7 @@ Every role reads, except the QR route, which is for owners and admins and also n
 | `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped) |
 | `POST` | `/accounts/:accountId/profiles/:profileId/connect` | Start WhatsApp connection |
 | `POST` | `/accounts/:accountId/profiles/:profileId/disconnect` | Disconnect |
-| `GET` | `/accounts/:accountId/profiles/:profileId/qr` | Retrieve current QR code |
+| `GET` | `/accounts/:accountId/profiles/:profileId/qr` | A placeholder: answers `{ "qr": null, "status": "pending" }` whatever the profile's state. The QR arrives over the WebSocket as `qr:update`, to owners and admins ([WebSocket API](<websocket-api.md>)), and the dashboard shows it on the profile's page |
 
 ### Profiles (`/profiles`) — flat alternative to the account-scoped routes
 
@@ -177,7 +177,7 @@ Every role lists and reads profiles, and their status. Owners and admins create,
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
 | `GET` | `/profiles/:id/status` | Get connection status |
 
-> The QR endpoint lives under the account-scoped `/accounts/.../qr` route, not on the flat `/profiles` resource.
+> No `/profiles` route returns the QR either: after `POST /profiles/:id/connect` it arrives over the WebSocket as `qr:update` ([WebSocket API](<websocket-api.md>)), to the owners and admins that joined the profile.
 
 ### Messages (`/messages`)
 
