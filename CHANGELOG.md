@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-05
+
 ### Added
 
 - **Customer profile.** An agent sees the customer behind a WhatsApp number in a one-to-one chat's Contact Info and under a one-to-one call on the Calls page, and on a new Customers page:
