@@ -127,6 +127,7 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 ### Admin Dashboard
 - 🖥️ **Modern UI** — Next.js 14 with dark mode, responsive design
 - 💬 **Live Chat** — Real-time chat interface with message history
+- 👤 **Customer Profile** — the customer behind a number, beside the chat and in calls: your ID, live data from your system, notes and tags
 - 📊 **Analytics** — Message volume, delivery rates, session metrics
 - 🔍 **Audit Trail** — Complete logging of all operations
 

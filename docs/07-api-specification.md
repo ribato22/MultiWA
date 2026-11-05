@@ -93,6 +93,7 @@ An error has its HTTP status, and a body with the status, a message and the stat
 ```
 
 - On the routes of your workspaces' resources (profiles, contacts, conversations, calls and the like), an id outside your organization, or of nothing at all, is this `403`: the API does not say which.
+- The customer routes (`/customers/...`) answer `404` instead, for an id outside your organization as for an id of nothing.
 - A validation error (`400`) lists every problem in `message`.
 - Some errors carry a code of their own in `error`: a send through a disconnected profile is `409` `PROFILE_DISCONNECTED`, and the send gate's `429` is `{ "error": "DAILY_LIMIT_REACHED", … }` without `statusCode` (see [Messaging](./10-messaging.md)).
 - A refusal with reasons is `409` `{ "message": "…", "reasons": ["…"] }`, from the call settings and the announcement (see [Calls](#calls-calls)).
@@ -427,6 +428,8 @@ Owners, admins and members add and edit contacts and tags; deleting, importing, 
 Contact lists answer at most 1000 rows per request (`limit`), and a bulk validation takes at most 1000 numbers.
 
 ### Customers (`/customers`)
+
+The guide, with the lookup contract and an example endpoint: [Customers](./24-customers.md).
 
 A customer is an ID in the organization's own system, linked to WhatsApp numbers. Every role reads. Owners, admins and members link numbers, write notes and change tags; a note is changed by its author, an owner or an admin. Owners and admins delete customers and change the lookup settings. Another organization's customer, link or note answers `404`.
 

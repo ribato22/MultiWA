@@ -127,6 +127,8 @@ For owners and admins, a call with a recording has:
 
 Every play, download and delete is in the audit log (`call.recording.play`, `call.recording.download`, `call.recording.delete`, with the user, the address and the browser). Members and viewers see that a call was recorded, but cannot play, download or delete it. A browser that cannot play WebM/Opus, such as an older Safari, offers the download only.
 
+The **Customer** button of a one-to-one call opens the caller's customer profile under the call: the linked ID, the live lookup, notes and tags ([Customers](<customers.md>)).
+
 ---
 
 ## For agents
