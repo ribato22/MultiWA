@@ -98,7 +98,9 @@ export default function CallsPage() {
       if (res.error) toast({ title: 'Could not load profiles', description: res.error, variant: 'destructive' });
       const list = Array.isArray(res.data) ? res.data : [];
       setProfiles(list);
-      setProfileId((current) => current || list[0]?.id || '');
+      // A link can name the profile to open, as a customer's history does: one of this user's, else the first.
+      const wanted = new URLSearchParams(window.location.search).get('profile');
+      setProfileId((current) => current || list.find((p) => p.id === wanted)?.id || list[0]?.id || '');
       if (!list.length) setLoading(false);
     });
     api.getUsers().then((res) => {

@@ -2,6 +2,7 @@
 // The customer behind a WhatsApp number, in a chat's Contact Info and a call's detail: the IDs linked to the number
 // (its default first), linking another, and the details of the one shown.
 import { useEffect, useId, useState } from 'react';
+import Link from 'next/link';
 import { api, type ApiResponse, type CustomerByPhoneItem, type CustomerView, type LookupResult } from '@/lib/api';
 import { canAct, currentUser } from '@/lib/current-user';
 import { Button } from '@/components/ui/button';
@@ -133,7 +134,14 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
 
   return (
     <section aria-labelledby={headingId} className="rounded-xl border border-border bg-secondary/20 p-3 space-y-3">
-      <h3 id={headingId} className="text-sm font-semibold text-foreground">Customer</h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 id={headingId} className="text-sm font-semibold text-foreground">Customer</h3>
+        {customer && (
+          <Link href={`/dashboard/customers/${customer.id}`} className="text-xs text-primary hover:underline">
+            Open the customer page
+          </Link>
+        )}
+      </div>
       {failed && <p role="alert" className="text-xs text-red-400">{failed}</p>}
       {linked === null ? (
         <p role="status" className="text-xs text-muted-foreground">Loading…</p>
