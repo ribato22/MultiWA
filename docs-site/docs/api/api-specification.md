@@ -69,8 +69,8 @@ Each organization member has one role. An API key acts with its user's role, at 
 | Role | May |
 |---|---|
 | `viewer` | read; their own account: sign-in and sign-out, password, preferences, sessions, 2FA, notifications, API keys, and deleting the account |
-| `member` | as a viewer, plus send messages one at a time, upload media, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, use the AI routes |
-| `admin` | as a member, plus configure the organization, accounts, profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, send and cancel bulk batches, delete chats, read webhooks and audit logs, export contacts, and manage members and viewers |
+| `member` | as a viewer, plus send messages one at a time, upload media, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, link numbers to customers and write their notes and tags, use the AI routes |
+| `admin` | as a member, plus configure the organization, accounts, profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, send and cancel bulk batches, delete chats, delete customers and set the customer lookup, read webhooks and audit logs, export contacts, and manage members and viewers |
 | `owner` | as an admin, plus manage admins |
 
 A viewer's reads include the lookups that are `POST`s: a template preview, an automation test, a number check and a knowledge-base search. A few reads are for owners and admins only (webhooks, audit logs, the exports, a group's invite link, the auto-reply hooks' settings, call recordings, the calls media status, a profile's call announcement and the QR route): the notes under each section below say which.
@@ -616,7 +616,7 @@ Owners and admins only.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/organizations/current` | Get current organization |
-| `PUT` | `/organizations/current` | Update current organization |
+| `PUT` | `/organizations/current` | Update current organization. It keeps `settings.customers` whatever `settings` it is sent: only `PUT /customers/config` changes it |
 | `GET` | `/organizations/members` | List members |
 | `POST` | `/organizations/members` | Invite a member |
 | `PUT` | `/organizations/members/:id/role` | Change member role |

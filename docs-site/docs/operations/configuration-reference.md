@@ -30,7 +30,7 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `SEND_TIMEOUT_MS` | ❌ | `60000` | The longest one WhatsApp send may take before it fails with `504 SEND_TIMEOUT` |
 | `WWEBJS_MEMORY_LIMIT_MB` | ❌ | `2500` | Memory (MB) above which a profile's Chromium is restarted from its session; `0` = off |
 | `WEBHOOK_TIMEOUT_MS` | ❌ | `30000` | Webhook delivery timeout |
-| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook, AI and customer lookup targets on private networks (SSRF guard) |
 | `QUIET_ALARM_ACTIVE_HOURS` | ❌ | `07:00-22:00` | Daily window in which a connected profile's silence counts toward its quiet-profile alarm |
 | `QUIET_ALARM_TIMEZONE` | ❌ | `Asia/Jakarta` | Time zone of that window |
 | `CALL_RING_TIMEOUT_MS` | ❌ | `90000` | A call still ringing after this long is closed as `unknown` |
@@ -318,13 +318,16 @@ historical fixed policy of 30s.
 ### `WEBHOOK_ALLOW_PRIVATE_TARGETS`
 **Optional** | Boolean | Default: `false`
 
-SSRF guard for tenant-controlled URLs (webhook targets, custom-AI endpoints).
-By default targets that resolve to loopback, private, link-local or reserved
-addresses are **blocked** (cloud metadata `169.254.169.254` is always blocked,
-even when this is `true`). Self-hosted deployments that deliver to internal
-services on the same network (Chatwoot, Typebot, n8n, localhost) set this to
-`true` to allow private targets. Leave `false` for public / multi-tenant
-deployments.
+SSRF guard for tenant-controlled URLs (webhook targets, custom-AI endpoints,
+the customer lookup URL). By default targets that resolve to loopback, private,
+link-local or reserved addresses are **blocked** (cloud metadata
+`169.254.169.254` is always blocked, even when this is `true`). Self-hosted
+deployments that deliver to internal services on the same network (Chatwoot,
+Typebot, n8n, localhost) set this to `true` to allow private targets. With it
+set, a `localhost` or `127.0.0.1` host is first rewritten to
+`host.docker.internal`, which must resolve from MultiWA's containers: under
+Docker, name the target by its service name or LAN address instead. Leave
+`false` for public / multi-tenant deployments.
 
 ```env
 # Allow webhooks to reach internal services on the same network

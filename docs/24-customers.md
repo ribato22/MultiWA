@@ -21,6 +21,7 @@ The ID can be letters, digits, `.`, `_` and `-`, up to 64 characters. A number i
 |---|---|---|---|---|
 | See profiles, lookups, notes, history; search customers | ✓ | ✓ | ✓ | ✓ |
 | Link and unlink numbers, pick the default ID, check an ID before linking it, write notes, edit tags | ✓ | ✓ | ✓ | |
+| Type a customer's name and fields by hand, while no lookup is set | ✓ | ✓ | ✓ | |
 | Edit or delete someone else's note | ✓ | ✓ | | |
 | Delete a customer; set up the lookup (Settings → Customers) | ✓ | ✓ | | |
 
@@ -45,7 +46,7 @@ The answer is `201` with the new link, or `200` when the number was already link
 Set it up in **Settings → Customers**:
 
 - **ID label**: what the ID is called in your organization ("Customer ID" by default), shown wherever the ID appears;
-- **Lookup URL**: your endpoint;
+- **Lookup URL**: your endpoint. Credentials go in the Secret field, never in the URL: every role can read the URL, through `GET /customers/config` and the settings tab;
 - **Secret**: sent as `Authorization: Bearer <secret>`. It is stored encrypted and never shown again, and no API answer carries it (`GET /customers/config` only says whether one is set); replace or clear it;
 - **Timeout (ms)**: 1000 to 15000 (1 to 15 seconds), 5000 by default.
 
@@ -89,9 +90,11 @@ Your endpoint answers `200` with:
 | `404` | "Not found: the lookup has no customer with this ID", with Refresh |
 | anything else, a redirect, a timeout, too large, not this format | "The lookup is unavailable right now", with Retry |
 
-Values are shown as plain text. MultiWA keeps an answer for 60 seconds (**Refresh** asks again) and stores only the `name`, so the Customers page can list and search names. Everything else stays in your system.
+Values are shown as plain text. MultiWA keeps a found or a not-found answer for 60 seconds. An "unavailable" answer is not kept, so the next request asks your endpoint again. **Refresh** skips the kept answer, up to 30 times a minute for each user; past that it answers from the kept answer.
 
-The lookup URL follows the webhooks' rule: a private or local address is refused unless the server sets `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` ([Configuration](./18-configuration-reference.md)).
+MultiWA stores only the `name`, so the Customers page can list and search names; everything else stays in your system. The name is stored when someone opens the customer's profile: a customer that a bot linked through the API shows "—" in the list, and cannot be found by name, until its profile has been opened.
+
+The lookup URL follows the webhooks' rule: a private or local address is refused unless the server sets `WEBHOOK_ALLOW_PRIVATE_TARGETS=true` ([Configuration](./18-configuration-reference.md)). With it set, MultiWA rewrites a host of `localhost` or `127.0.0.1` to `host.docker.internal`, and the URL's host must resolve when you press Save (and at each lookup): Save answers `400` with, for example, `Webhook host "host.docker.internal" could not be resolved`. The stock compose files do not define that name, so under Docker point the URL at the endpoint's service name or its LAN address, not at `localhost`.
 
 ### An example endpoint
 
@@ -112,6 +115,8 @@ http.createServer((req, res) => {
   res.end(JSON.stringify({ id, ...customer }));
 }).listen(8099);
 ```
+
+Under Docker, reach this server by its service name or LAN address, for example `http://lookup:8099/`, not `http://localhost:8099/` (see above).
 
 ## The API
 
