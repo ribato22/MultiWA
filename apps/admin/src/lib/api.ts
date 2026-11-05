@@ -234,6 +234,39 @@ export interface PushTestResult {
   results?: Array<{ success?: boolean; error?: string; statusCode?: number }>;
 }
 
+// Customers: an ID of the organization's own system (an ID Pelanggan, say), linked to WhatsApp numbers. MultiWA keeps
+// the links, notes and tags; the organization's lookup endpoint answers the rest live, in a fixed format.
+export type LookupState = 'ok' | 'not_found' | 'unavailable' | 'not_configured';
+export interface LookupField { label: string; value: string }
+export interface LookupSection { title: string; rows: LookupField[] }
+export interface LookupData { id?: string; name?: string; fields: LookupField[]; sections: LookupSection[] }
+export interface LookupResult { state: LookupState; data: LookupData | null; fetchedAt: string; cached: boolean }
+export interface LookupTestResult extends LookupResult { latencyMs: number }
+
+/** Who made a link or wrote a note: a user, or a system through an API key. */
+export interface ActorView { type: 'user' | 'apiKey'; id: string; name: string }
+export interface CustomerLinkView { id: string; phone: string; lastUsedAt: string; createdAt: string; linkedBy: ActorView | null }
+export interface CustomerNoteView { id: string; body: string; createdAt: string; updatedAt: string; author: ActorView | null }
+export interface CustomerView {
+  id: string; externalId: string; displayName: string | null; tags: string[]; manualFields: LookupField[];
+  lastLookupAt: string | null; createdAt: string; updatedAt: string;
+  links: CustomerLinkView[];
+  /** The 20 newest, newest first. */
+  notes: CustomerNoteView[];
+}
+export interface CustomerListItem {
+  id: string; externalId: string; displayName: string | null; linkCount: number; noteCount: number; lastActivityAt: string | null;
+}
+export interface CustomerListPage { items: CustomerListItem[]; total: number; page: number; pageSize: number }
+/** A customer linked to a number: the number's default comes first. */
+export interface CustomerByPhoneItem { id: string; externalId: string; displayName: string | null; linkId: string; lastUsedAt: string }
+export interface CustomerHistoryItem {
+  kind: 'conversation' | 'call'; id: string; profileId: string; profileName: string; phone: string; at: string; summary: string;
+}
+/** The organization's customer settings: whether there is a secret, never the secret. */
+export interface CustomerConfigView { idLabel: string; lookupUrl: string | null; hasSecret: boolean; timeoutMs: number; configured: boolean }
+export interface LinkResult { created: boolean; customer: CustomerView; link: CustomerLinkView }
+
 /** A failed request's message. A validation 400 lists every rule the request broke: one line, for a toast. */
 function errorOf(data: any, status: number): string {
   const message = data?.message || data?.error;
@@ -1120,6 +1153,89 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ type }),
     });
+  }
+
+  // ─── Customers ─────────────────────────────────
+  async getCustomers(query: { q?: string; page?: number; pageSize?: number } = {}) {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== '') params.set(k, String(v));
+    const qs = params.toString();
+    return this.request<CustomerListPage>(`/customers${qs ? `?${qs}` : ''}`);
+  }
+
+  async getCustomer(id: string) {
+    return this.request<CustomerView>(`/customers/${id}`);
+  }
+
+  /** The customers linked to a number, its default first. */
+  async getCustomersByPhone(phone: string) {
+    return this.request<CustomerByPhoneItem[]>(`/customers/by-phone/${encodeURIComponent(phone)}`);
+  }
+
+  /** A customer's live lookup; `refresh` asks past the server's cache. */
+  async lookupCustomer(id: string, refresh = false) {
+    return this.request<LookupResult>(`/customers/${id}/lookup${refresh ? '?refresh=true' : ''}`);
+  }
+
+  /** What the lookup says of an ID not linked yet; the server stores nothing. */
+  async previewCustomerLookup(externalId: string) {
+    return this.request<LookupResult>(`/customers/lookup?${new URLSearchParams({ externalId })}`);
+  }
+
+  /** The chats and calls of the customer's numbers, newest first. */
+  async getCustomerHistory(id: string, limit?: number) {
+    return this.request<CustomerHistoryItem[]>(`/customers/${id}/history${limit ? `?limit=${limit}` : ''}`);
+  }
+
+  /** Links an ID to a number. A new ID makes the customer (201); a link that exists answers as it is (200). */
+  async linkCustomer(body: { externalId: string; phone: string }) {
+    return this.request<LinkResult>('/customers/links', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  /** Makes a link its number's default ID. */
+  async setDefaultCustomerLink(linkId: string) {
+    return this.request<CustomerLinkView>(`/customers/links/${linkId}/use`, { method: 'POST' });
+  }
+
+  /** Removes one number's link: the customer, its notes and its tags stay. */
+  async unlinkCustomer(linkId: string) {
+    return this.request<{ success: boolean }>(`/customers/links/${linkId}`, { method: 'DELETE' });
+  }
+
+  /** `displayName` and `manualFields` only while no lookup endpoint is configured: the server answers 409 otherwise. */
+  async updateCustomer(id: string, body: { tags?: string[]; displayName?: string; manualFields?: LookupField[] }) {
+    return this.request<CustomerView>(`/customers/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+  }
+
+  async deleteCustomer(id: string) {
+    return this.request<{ success: boolean }>(`/customers/${id}`, { method: 'DELETE' });
+  }
+
+  async addCustomerNote(customerId: string, body: string) {
+    return this.request<CustomerNoteView>(`/customers/${customerId}/notes`, { method: 'POST', body: JSON.stringify({ body }) });
+  }
+
+  /** Its author, or an owner or admin, changes a note; anyone else gets 403. */
+  async updateCustomerNote(customerId: string, noteId: string, body: string) {
+    return this.request<CustomerNoteView>(`/customers/${customerId}/notes/${noteId}`, { method: 'PATCH', body: JSON.stringify({ body }) });
+  }
+
+  async deleteCustomerNote(customerId: string, noteId: string) {
+    return this.request<{ success: boolean }>(`/customers/${customerId}/notes/${noteId}`, { method: 'DELETE' });
+  }
+
+  async getCustomerConfig() {
+    return this.request<CustomerConfigView>('/customers/config');
+  }
+
+  /** An empty `lookupUrl` turns the lookup off; a `secret` left out keeps the stored one, and an empty one clears it. */
+  async updateCustomerConfig(body: { idLabel?: string; lookupUrl?: string; secret?: string; timeoutMs?: number }) {
+    return this.request<CustomerConfigView>('/customers/config', { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  /** One lookup with the saved settings, past the cache. */
+  async testCustomerConfig(externalId: string) {
+    return this.request<LookupTestResult>('/customers/config/test', { method: 'POST', body: JSON.stringify({ externalId }) });
   }
 }
 
