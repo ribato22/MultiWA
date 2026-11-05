@@ -2,7 +2,7 @@
 
 ## 1.1 Executive Summary
 
-**MultiWA** (formerly MultiWA Gateway) is a free, open-source, self-hosted WhatsApp API Gateway designed for developers and businesses who need full control over their messaging infrastructure—without vendor lock-in or hidden paywalls.
+**MultiWA** (formerly MultiWA Gateway) is a free, open-source, self-hosted WhatsApp API gateway with a built-in team inbox, designed for developers and businesses who need full control over their messaging infrastructure—without vendor lock-in or hidden paywalls.
 
 ### Core Values
 

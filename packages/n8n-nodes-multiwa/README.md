@@ -1,6 +1,6 @@
 # n8n-nodes-multiwa
 
-Custom n8n community nodes for [MultiWA](https://github.com/ribato22/multiwa) - WhatsApp Business API Gateway.
+Custom n8n community nodes for [MultiWA](https://github.com/ribato22/multiwa), the self-hosted WhatsApp API gateway with a built-in team inbox.
 
 ## Features
 

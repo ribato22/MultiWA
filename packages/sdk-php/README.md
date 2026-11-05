@@ -1,6 +1,6 @@
 # MultiWA PHP SDK
 
-Official PHP SDK for [MultiWA](https://github.com/ribato22/MultiWA), the self-hosted WhatsApp API gateway.
+Official PHP SDK for [MultiWA](https://github.com/ribato22/MultiWA), the self-hosted WhatsApp API gateway with a built-in team inbox.
 
 ## Requirements
 

@@ -5,8 +5,7 @@
 <h1 align="center">MultiWA</h1>
 
 <p align="center">
-  <strong>Open Source WhatsApp Business API Gateway</strong><br />
-  Multi-engine • Self-hosted • Enterprise-ready
+  <strong>Self-hosted WhatsApp API gateway with a built-in team inbox</strong>
 </p>
 
 <p align="center">
@@ -35,6 +34,9 @@
 </p>
 
 ---
+
+> [!WARNING]
+> MultiWA is not affiliated with WhatsApp or Meta. It connects through WhatsApp Web, and WhatsApp can block or log out numbers that break its terms. Use a number you can afford to lose, and follow [WhatsApp's policies](https://www.whatsapp.com/legal).
 
 ## 🎯 What is MultiWA?
 

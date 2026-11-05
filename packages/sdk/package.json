@@ -1,7 +1,7 @@
 {
   "name": "@multiwa/sdk",
   "version": "2.0.0",
-  "description": "Official TypeScript SDK for the MultiWA WhatsApp Business API Gateway. Send messages, manage profiles, automate flows, and consume webhooks against a self-hosted MultiWA server.",
+  "description": "Official TypeScript SDK for MultiWA, the self-hosted WhatsApp API gateway with a built-in team inbox. Send messages, manage profiles, automate flows, and consume webhooks.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",

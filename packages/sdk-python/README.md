@@ -1,6 +1,6 @@
 # MultiWA Python SDK
 
-Official Python SDK for [MultiWA](https://github.com/ribato22/multiwa) - WhatsApp Business API Gateway.
+Official Python SDK for [MultiWA](https://github.com/ribato22/multiwa), the self-hosted WhatsApp API gateway with a built-in team inbox.
 
 ## Installation
 

@@ -63,9 +63,6 @@ function HomepageHeader() {
           {siteConfig.title}
         </Heading>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
-        <p style={{fontSize: '1.1rem', opacity: 0.9}}>
-          Multi-engine • Self-hosted • Enterprise-ready
-        </p>
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
@@ -87,8 +84,8 @@ function HomepageHeader() {
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="Open Source WhatsApp API Gateway"
-      description="MultiWA is a fully self-hosted, open-source WhatsApp API gateway. Connect multiple WhatsApp numbers through a single unified API.">
+      title="Self-hosted WhatsApp API gateway with a built-in team inbox"
+      description="MultiWA is a self-hosted, open-source WhatsApp API gateway with a built-in team inbox. Connect multiple WhatsApp numbers through a single unified API.">
       <HomepageHeader />
       <main>
         <section style={{padding: '4rem 0'}}>

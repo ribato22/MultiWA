@@ -8,7 +8,8 @@
  *
  * with the internal `./NN-*.md` cross-links rewritten to paths that resolve
  * within docs-site/docs/ (Docusaurus resolves relative links against the
- * current page's directory).
+ * current page's directory), and GitHub alerts (`> [!WARNING]`) turned into
+ * Docusaurus admonitions (`:::warning`), which is the syntax it renders.
  *
  * Usage:
  *   node scripts/sync-docsite.mjs            # rewrite docs-site/docs from docs/
@@ -103,6 +104,16 @@ function rewriteLinks(body, currentDst) {
   return body;
 }
 
+/**
+ * `> [!WARNING]` plus the `>` lines after it → `:::warning`. GitHub draws the first; Docusaurus has no such syntax and
+ * would print the literal `[!WARNING]` inside a plain blockquote.
+ */
+const ALERTS = { NOTE: 'note', TIP: 'tip', IMPORTANT: 'info', WARNING: 'warning', CAUTION: 'danger' };
+function rewriteAlerts(body) {
+  return body.replace(/^> \[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\n((?:>.*\n?)+)/gm, (m, kind, text) =>
+    `:::${ALERTS[kind]}\n\n${text.replace(/^> ?/gm, '').trimEnd()}\n\n:::\n`);
+}
+
 function render(p) {
   const src = path.join(SRC_ROOT, p.src);
   if (!fs.existsSync(src)) {
@@ -110,7 +121,7 @@ function render(p) {
     return null;
   }
   const body = fs.readFileSync(src, 'utf8');
-  return frontmatter(p) + rewriteLinks(body, p.dst);
+  return frontmatter(p) + rewriteAlerts(rewriteLinks(body, p.dst));
 }
 
 let failures = 0;
