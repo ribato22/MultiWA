@@ -3,6 +3,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { withoutLookupSecret } from '../customers/customer-settings';
 
 // Roles that may be assigned through member-management endpoints. `owner` is
 // deliberately excluded: ownership is set when the org is created and is not
@@ -12,14 +13,6 @@ const ASSIGNABLE_ROLES = ['admin', 'member', 'viewer'];
 
 /** Who asks for a team change: their id and role, from the request. */
 type Requester = { id: string; role: string };
-
-/** An organization as the API answers it: without its customer lookup's encrypted secret (GET /customers/config says whether one is set). */
-function withoutLookupSecret<T extends { settings: unknown }>(org: T): T {
-  const customers = (org.settings as Record<string, any> | null)?.customers;
-  if (!customers || typeof customers !== 'object' || !('lookupSecretEnc' in customers)) return org;
-  const { lookupSecretEnc: _secret, ...rest } = customers;
-  return { ...org, settings: { ...(org.settings as object), customers: rest } };
-}
 
 @Injectable()
 export class OrganizationsService {

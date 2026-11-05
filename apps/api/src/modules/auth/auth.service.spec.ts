@@ -363,6 +363,18 @@ describe('AuthService', () => {
       expect(me).not.toHaveProperty('passwordHash');
       expect(isServerOwner).toHaveBeenCalledWith(expect.objectContaining({ role: 'owner', organizationId: 'org-1' }));
     });
+
+    it("never carries the customer lookup's encrypted secret, and keeps the organization's other settings", async () => {
+      const customers = { idLabel: 'ID Pelanggan', lookupUrl: 'https://crm.example.com/lookup', timeoutMs: 3000 };
+      vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({
+        id: 'u1', role: 'viewer', organizationId: 'org-1', passwordHash: 'h', twoFactorSecret: null, backupCodes: [], twoFactorEnabled: false,
+        organization: { id: 'org-1', name: 'Org', settings: { theme: 'dark', customers: { ...customers, lookupSecretEnc: 'aa:bb:cc' } } },
+      } as any);
+      const me = await authService.getProfile('u1');
+      expect(JSON.stringify(me)).not.toContain('lookupSecretEnc');
+      expect(JSON.stringify(me)).not.toContain('aa:bb:cc');
+      expect(me.organization).toEqual({ id: 'org-1', name: 'Org', settings: { theme: 'dark', customers } });
+    });
   });
 
   // ──────────── deleteAccount ────────────

@@ -218,6 +218,18 @@ describe('Customers (e2e)', () => {
     expect((await send('POST', '/customers/config/test', member, { externalId: 'CUST-OK' })).statusCode).toBe(403);
   });
 
+  it("a viewer's /auth/me carries the organization's settings, but never the lookup's stored secret", async () => {
+    const row = await prisma.organization.findUniqueOrThrow({ where: { id: owner.user.organizationId } });
+    const stored = (row.settings as { customers: { lookupSecretEnc: string } }).customers.lookupSecretEnc;
+    expect(stored).toMatch(/^[0-9a-f]+:[0-9a-f]+:[0-9a-f]+$/); // the secret is in the row, encrypted
+    const me = await send('GET', '/auth/me', viewer);
+    expect(me.statusCode).toBe(200);
+    expect(me.body).not.toContain('lookupSecretEnc');
+    expect(me.body).not.toContain(stored);
+    expect(me.body).not.toContain(SECRET);
+    expect(me.json().organization.settings.customers).toEqual({ idLabel: 'ID Pelanggan', lookupUrl, timeoutMs: 3000 });
+  });
+
   it('the lookup comes through found, not found and unavailable; a found customer keeps its name', async () => {
     const id = await customerId('CUST-OK');
     expect((await send('GET', `/customers/${id}/lookup`, viewer)).json()).toMatchObject({ state: 'ok', cached: false, data: FOUND });
