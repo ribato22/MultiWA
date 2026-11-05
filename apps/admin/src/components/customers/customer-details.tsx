@@ -65,6 +65,8 @@ export function CustomerDetails({ customer, onChange, contactTags, headingLevel 
   contactTags?: string[];
   headingLevel?: Heading;
 }) {
+  // A save answered after the page moved on to another customer is dropped, not applied to the one shown now.
+  const change: SetCustomer = (next) => onChange((c) => (c?.id === customer.id ? (typeof next === 'function' ? next(c) : next) : c));
   // null until the first answer: a Refresh keeps what is shown until the next one comes.
   const [lookup, setLookup] = useState<LookupResult | 'failed' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -104,7 +106,7 @@ export function CustomerDetails({ customer, onChange, contactTags, headingLevel 
           {ask('Refresh', true)}
         </div>
       ) : lookup.state === 'not_configured' ? (
-        <ManualFields customer={customer} onChange={onChange} />
+        <ManualFields customer={customer} onChange={change} />
       ) : (
         <div className="space-y-2">
           <div className="flex items-start justify-between gap-2">
@@ -121,8 +123,8 @@ export function CustomerDetails({ customer, onChange, contactTags, headingLevel 
           ))}
         </div>
       )}
-      <CustomerTags customer={customer} onChange={onChange} contactTags={contactTags} H={headingLevel} />
-      <CustomerNotes customer={customer} onChange={onChange} H={headingLevel} />
+      <CustomerTags customer={customer} onChange={change} contactTags={contactTags} H={headingLevel} />
+      <CustomerNotes customer={customer} onChange={change} H={headingLevel} />
     </div>
   );
 }

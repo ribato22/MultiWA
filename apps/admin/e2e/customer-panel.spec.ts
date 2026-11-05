@@ -6,7 +6,7 @@ import { expectAccessible } from './support/axe';
 import {
   ADA, CONV, CUSTOMER, LOOKUP_DATA, LOOKUP_OK, MANUAL, NOW, PHONE, customerBackend, lookupAnswer, openContactInfo, sentBody,
 } from './support/customers';
-import type { Locator } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 const picker = (panel: Locator) => panel.getByRole('combobox', { name: 'ID Pelanggan' });
 const linkField = (panel: Locator) => panel.getByRole('textbox', { name: 'New ID Pelanggan' });
@@ -15,6 +15,18 @@ const notes = (panel: Locator) => panel.getByRole('list', { name: 'Notes' }).get
 const lookups = (backend: FakeBackend, id = CUSTOMER.id) =>
   backend.requests.filter((r) => r.path === `/customers/${id}/lookup`).map((r) => r.query.toString());
 const json = (body: Buffer | null) => JSON.parse(String(body));
+const sentTo = (backend: FakeBackend, method: string, path: string) => backend.requests.some((r) => r.method === method && r.path === path);
+/** The agent picks the second ID while `slow` holds a save of the first; the save is answered once its details are shown. */
+async function answerAfterPicking(page: Page, panel: Locator, slow: ReturnType<typeof gate>, saved: string) {
+  await picker(panel).click();
+  await page.getByRole('option', { name: '9876543210 · Siti Rahayu' }).click();
+  await expect(picker(panel)).toHaveText('9876543210 · Siti Rahayu');
+  await expect(panel.getByText('Siti Rahayu', { exact: true })).toBeVisible(); // its details, with the lookup's name
+  const answered = requestEnded(page, saved);
+  slow.open();
+  await answered;
+  await rendered(page);
+}
 
 test('shows the number’s default ID and what the lookup says of it, every value as text', async ({ page, backend }) => {
   const markup = '<img src=x onerror="window.__injected=1">';
@@ -108,6 +120,26 @@ test('follows the open chat: another chat’s number shows its own customer', as
   await expect(picker(panel)).toHaveCount(0);
 });
 
+test('another chat starts the panel over: nothing typed to link, nothing of the last chat’s customer, while its number is read', async ({ page, backend }) => {
+  const other = { ...CONV, id: 'conv-2', jid: '6281100000002@s.whatsapp.net', contactId: 'ct-2', name: 'Bu Siti' };
+  const slow = gate();
+  customerBackend(backend);
+  backend.route(on('GET', '/customers/by-phone/6281100000002', async () => {
+    await slow.passed;
+    return { json: [] };
+  }));
+  const panel = await openContactInfo(page, backend, [CONV, other]);
+  await expect(panel.getByText('R1 / 1300 VA')).toBeVisible();
+  await linkField(panel).fill('5550001111'); // typed, not linked
+  await page.getByRole('heading', { name: 'Bu Siti' }).first().click();
+  await expect(panel.getByText('Loading…')).toBeVisible();
+  await expect(linkField(panel)).toHaveValue('');
+  await expect(panel.getByText('R1 / 1300 VA')).toHaveCount(0);
+  await expect(picker(panel)).toHaveCount(0);
+  slow.open();
+  await expect(panel.getByText('No ID Pelanggan is linked to this number yet.')).toBeVisible();
+});
+
 for (const [what, conv] of [
   ['a group chat', { ...CONV, jid: '120363000000000001@g.us', type: 'group', name: 'Grup Pelanggan' }],
   ['a chat with a number WhatsApp hides', { ...CONV, jid: '200000000000001@lid' }],
@@ -140,6 +172,39 @@ test('an admin edits and deletes another’s note too, and Cancel on the questio
   page.once('dialog', (d) => d.accept());
   await theirs.getByRole('button', { name: 'Delete note' }).click();
   await expect(theirs).toHaveCount(0);
+});
+
+test('a note answered after the agent picked another ID stays out of that ID’s notes', async ({ page, backend }) => {
+  const slow = gate();
+  customerBackend(backend);
+  backend.route(on('POST', '/customers/cus-1/notes', async (r) => {
+    await slow.passed;
+    return { status: 201, json: { id: 'note-3', body: json(r.body).body, createdAt: NOW, updatedAt: NOW, author: ADA } };
+  }));
+  const panel = await openContactInfo(page, backend);
+  await panel.getByRole('textbox', { name: 'New note' }).fill('Called back about the meter');
+  await panel.getByRole('button', { name: 'Add note' }).click();
+  await expect.poll(() => sentTo(backend, 'POST', '/customers/cus-1/notes')).toBe(true);
+  await answerAfterPicking(page, panel, slow, '/customers/cus-1/notes');
+  await expect(panel.getByText('No notes yet.')).toBeVisible();
+  await expect(panel.getByText('Called back about the meter')).toHaveCount(0);
+});
+
+test('tags answered after the agent picked another ID leave that ID’s details as they are', async ({ page, backend }) => {
+  const slow = gate();
+  customerBackend(backend);
+  backend.route(on('PATCH', '/customers/cus-1', async (r) => {
+    await slow.passed;
+    return { json: { ...CUSTOMER, tags: json(r.body).tags } };
+  }));
+  const panel = await openContactInfo(page, backend);
+  await panel.getByRole('textbox', { name: 'New tag' }).fill('billing');
+  await panel.getByRole('button', { name: 'Add tag' }).click();
+  await expect.poll(() => sentTo(backend, 'PATCH', '/customers/cus-1')).toBe(true);
+  await answerAfterPicking(page, panel, slow, '/customers/cus-1');
+  await expect(picker(panel)).toHaveText('9876543210 · Siti Rahayu');
+  await expect(panel.getByText('No tags yet.')).toBeVisible();
+  await expect(panel.getByText('R1 / 1300 VA')).toHaveCount(0); // Budi Santoso's lookup
 });
 
 test.describe('a member', () => {
