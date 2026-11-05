@@ -99,16 +99,17 @@ The lookup URL follows the webhooks' rule: a private or local address is refused
 // node lookup.js  — answers MultiWA's lookups from a small in-memory table
 const http = require('http');
 const SECRET = process.env.LOOKUP_SECRET;
-const customers = {
-  '1234567890': { name: 'Budi Santoso', fields: [{ label: 'Address', value: 'Jl. Contoh 1' }] },
-};
+const customers = new Map([
+  ['1234567890', { name: 'Budi Santoso', fields: [{ label: 'Address', value: 'Jl. Contoh 1' }] }],
+]);
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   if (SECRET && req.headers.authorization !== `Bearer ${SECRET}`) { res.writeHead(401).end(); return; }
-  const customer = customers[url.searchParams.get('id')];
+  const id = url.searchParams.get('id');
+  const customer = customers.get(id);
   if (!customer) { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ id: url.searchParams.get('id'), ...customer }));
+  res.end(JSON.stringify({ id, ...customer }));
 }).listen(8099);
 ```
 

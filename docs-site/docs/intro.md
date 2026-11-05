@@ -29,6 +29,7 @@ Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp AP
 - [11 - Groups](<features/groups.md>) - Group management API
 - [12 - Automation](<features/automation.md>) - Auto-reply and flow builder
 - [23 - Calls answered in the dashboard](<features/calls.md>) - Agents answer WhatsApp calls in the browser; recordings and their announcement
+- [24 - Customers](<features/customers.md>) - The customer behind a number: IDs linked to numbers, live data from your system, notes and tags
 
 ### SDKs & Integrations
 - [13 - Python SDK](<sdks/python-sdk.md>) - Installation and usage
