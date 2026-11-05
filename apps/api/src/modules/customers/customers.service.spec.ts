@@ -259,6 +259,12 @@ describe('CustomersService.update and remove', () => {
     expect(p.customer.update).toHaveBeenLastCalledWith({ where: { id: 'c-1' }, data: { displayName: null } });
   });
 
+  it.each(['', '   '])('an empty or blank name (%j) clears the name, as null does', async (displayName) => {
+    viewOf([]);
+    await service().update(MEMBER, 'c-1', { displayName });
+    expect(p.customer.update).toHaveBeenCalledWith({ where: { id: 'c-1' }, data: { displayName: null } });
+  });
+
   it('409 for a name or fields while a lookup is configured, and changes nothing; the tags still change', async () => {
     viewOf([]);
     lookups.config.mockResolvedValue({ idLabel: 'Customer ID', lookupUrl: 'https://crm.example.com/lookup', lookupSecretEnc: null, timeoutMs: 5000 });
@@ -347,6 +353,13 @@ describe('notes', () => {
     expect(await service().deleteNote(MEMBER, 'c-1', 'n-1')).toEqual({ success: true });
     expect(p.customerNote.deleteMany).toHaveBeenCalledWith({ where: { id: 'n-1' } });
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'customer.note.delete', metadata: { customerId: 'c-1', noteId: 'n-1' } }));
+  });
+
+  it('a note deleted meanwhile is not found, and not audited', async () => {
+    p.customerNote.findFirst.mockResolvedValue(noteRow());
+    p.customerNote.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(service().deleteNote(MEMBER, 'c-1', 'n-1')).rejects.toMatchObject({ status: 404, message: 'Note not found' });
+    expect(audit.log).not.toHaveBeenCalled();
   });
 
   it('a note of another customer, or of another organization, is not found', async () => {
