@@ -11,6 +11,7 @@ import { api, Profile, Conversation, type CallRecord } from '@/lib/api';
 import { fromPayload, isCallEntry, mergeTimeline, type CallUpdatePayload } from '@/lib/calls';
 import { canAct, canConfigure, currentUser } from '@/lib/current-user';
 import { CallTimelineRow } from '@/components/calls/call-timeline-row';
+import { CustomerPanel, phoneOfJid } from '@/components/customers/customer-panel';
 import { formatRelative, formatFull, formatTime, formatDate, formatDateTime, formatDaySeparator, dayBucket } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -783,6 +784,8 @@ export default function ChatPage() {
 
   // A message's key uses its index among the messages only, so a call row landing before it does not remount it.
   let msgIdx = 0;
+  // A one-to-one chat's number has a customer; a group, or a number WhatsApp hides, has none.
+  const customerPhone = selectedConversation?.type === 'user' ? phoneOfJid(selectedConversation.jid) : null;
 
   // The screen below the header, less the page's padding: the header grows while a call's bar takes a row of its own,
   // and the chat shrinks with it, so the message field stays on the screen.
@@ -1488,6 +1491,11 @@ export default function ChatPage() {
 
           {/* Details */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Keyed by the number: another chat's never shows this one's customer. */}
+            {customerPhone && (
+              <CustomerPanel key={customerPhone} phone={customerPhone} profileId={selectedConversation.profileId} />
+            )}
+
             {/* Phone */}
             <div className="bg-secondary/30 rounded-xl p-3">
               <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5"><Smartphone className="w-3 h-3" /> Phone</p>
