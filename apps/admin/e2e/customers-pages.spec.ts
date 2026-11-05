@@ -1,7 +1,7 @@
 // The Customers pages: the list, searched and paged by the server, and a customer's page with its numbers, its
 // details, its tags and notes, and the chats and calls of its numbers. Every role reads them; an agent unlinks a
 // number; an owner or admin deletes a customer.
-import { test, expect, get, on, toasts, ME, PROFILE, type FakeBackend } from './support/fixtures';
+import { test, expect, gate, get, on, rendered, toasts, ME, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import { CONFIG, PHONE, customerBackend, openContactInfo } from './support/customers';
 import type { Page } from '@playwright/test';
@@ -14,6 +14,8 @@ const listing = (items: object[], total = items.length) =>
 /** The queries of the list reads, oldest first. */
 const asked = (backend: FakeBackend) => backend.requests.filter((r) => r.path === '/customers').map((r) => r.query.toString());
 const searchBox = (page: Page) => page.getByRole('searchbox', { name: 'Search customers' });
+/** The paths of the DELETE requests, oldest first. */
+const deleted = (backend: FakeBackend) => backend.requests.filter((r) => r.method === 'DELETE').map((r) => r.path);
 
 const LINE_2 = { ...PROFILE, id: 'p-2', name: 'Line 2', displayName: 'Line 2' };
 const HISTORY = [
@@ -74,10 +76,16 @@ test('with no customer yet, the list says how one comes', async ({ page, backend
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
-test('a list the server cannot give says so', async ({ page, backend }) => {
+test('a list the server cannot give says so and offers Retry, instead of saying there is no customer yet', async ({ page, backend }) => {
   backend.route(on('GET', '/customers', { status: 500, json: { message: 'Internal server error' } }));
   await page.goto('/dashboard/customers');
-  await expect(toasts(page).getByText('Could not load the customers')).toBeVisible();
+  const failed = page.getByRole('alert').filter({ hasText: 'Could not load the customers' });
+  await expect(failed).toContainText('Internal server error');
+  await expect(page.getByRole('heading', { name: 'No customers yet' })).toHaveCount(0);
+  backend.route(listing([BUDI]));
+  await failed.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByRole('link', { name: '1234567890' })).toBeVisible();
+  await expect(failed).toHaveCount(0);
 });
 
 test('a customer’s page has its numbers, its lookup, its tags and notes, and a history that opens the chat and the calls', async ({ page, backend }) => {
@@ -132,11 +140,51 @@ test('an admin deletes the customer once they say yes, and is back on the list',
   await expect(toasts(page).getByText('Customer deleted')).toBeVisible();
 });
 
+test('Delete customer waits for its answer: a second press asks nothing and sends nothing, and a refusal leaves it ready', async ({ page, backend }) => {
+  customerPage(backend);
+  const slow = gate();
+  backend.route(on('DELETE', '/customers/cus-1', async () => {
+    await slow.passed;
+    return { status: 500, json: { message: 'Internal server error' } };
+  }));
+  let asked = 0;
+  page.on('dialog', (d) => {
+    asked++;
+    void d.accept();
+  });
+  await page.goto('/dashboard/customers/cus-1');
+  const remove = page.getByRole('button', { name: 'Delete customer' });
+  await remove.focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(() => deleted(backend)).toEqual(['/customers/cus-1']);
+  await expect(remove).toBeDisabled();
+  await page.keyboard.press('Enter');
+  await rendered(page); // the press was handled: a second question or request would be out by now
+  slow.open();
+  await expect(toasts(page).getByText('Internal server error')).toBeVisible();
+  expect([asked, deleted(backend)]).toEqual([1, ['/customers/cus-1']]);
+  await expect(remove).toBeEnabled();
+  await expect(remove).toBeFocused();
+});
+
 test('a customer that is not there says so, with the way back to the list', async ({ page, backend }) => {
   backend.route(on('GET', '/customers/cus-9', { status: 404, json: { statusCode: 404, message: 'Customer not found', error: 'Not Found' } }));
   await page.goto('/dashboard/customers/cus-9');
   await expect(page.getByRole('heading', { level: 1, name: 'Customer not found' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'All customers' })).toHaveAttribute('href', '/dashboard/customers');
+});
+
+test('a history the server cannot give says so and offers Retry, instead of saying there are no chats or calls', async ({ page, backend }) => {
+  customerPage(backend);
+  backend.route(on('GET', '/customers/cus-1/history', { status: 500, json: { message: 'Internal server error' } }));
+  await page.goto('/dashboard/customers/cus-1');
+  const history = historyOf(page);
+  await expect(history.getByRole('alert')).toHaveText('Could not load the history: Internal server error');
+  await expect(history.getByText('No chats or calls with these numbers yet.')).toHaveCount(0);
+  backend.route(get('/customers/cus-1/history', HISTORY));
+  await history.getByRole('button', { name: 'Retry' }).click();
+  await expect(history.getByRole('link')).toHaveCount(2);
+  await expect(history.getByRole('alert')).toHaveCount(0);
 });
 
 test.describe('a member', () => {
@@ -154,6 +202,31 @@ test.describe('a member', () => {
     await expect(toasts(page).getByText('+6281100000001 unlinked')).toBeVisible();
     await expect(page).toHaveURL(/\/dashboard\/customers\/cus-1$/);
     await expect(page.getByRole('heading', { level: 1, name: 'Budi Santoso' })).toBeVisible();
+  });
+
+  test('Unlink waits for its answer: a second press asks nothing and sends nothing', async ({ page, backend }) => {
+    customerPage(backend);
+    const slow = gate();
+    backend.route(on('DELETE', '/customers/links/lnk-1', async () => {
+      await slow.passed;
+      return { json: { success: true } };
+    }));
+    let asked = 0;
+    page.on('dialog', (d) => {
+      asked++;
+      void d.accept();
+    });
+    await page.goto('/dashboard/customers/cus-1');
+    const unlink = numbers(page).getByRole('button', { name: 'Unlink +6281100000001' });
+    await unlink.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => deleted(backend)).toEqual(['/customers/links/lnk-1']);
+    await expect(unlink).toBeDisabled();
+    await page.keyboard.press('Enter');
+    await rendered(page); // the press was handled: a second question or request would be out by now
+    slow.open();
+    await expect(numbers(page).getByText('No number is linked any more.')).toBeVisible();
+    expect([asked, deleted(backend)]).toEqual([1, ['/customers/links/lnk-1']]);
   });
 });
 

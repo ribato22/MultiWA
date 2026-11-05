@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { IdCard, Search } from 'lucide-react';
+import { AlertTriangle, IdCard, Search } from 'lucide-react';
 import { api, type CustomerListPage } from '@/lib/api';
 import { formatDateTime, formatFull } from '@/lib/datetime';
 import { useIdLabel } from '@/components/customers/customer-details';
@@ -14,16 +14,17 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useToast } from '@/hooks/use-toast';
 
 const PAGE_SIZE = 25;
 
 export default function CustomersPage() {
-  const { toast } = useToast();
   const idLabel = useIdLabel();
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [list, setList] = useState<CustomerListPage | null>(null); // null until the first answer
+  const [failure, setFailure] = useState<string | null>(null); // why the last read failed
+  const [attempt, setAttempt] = useState(0); // a Retry reads the same page again
+  const heading = useRef<HTMLHeadingElement>(null);
   const readFor = useRef(''); // the search the last read was for
 
   // A new search is asked once the typing pauses, a page turn at once; the page shown stays until the next one comes.
@@ -33,15 +34,22 @@ export default function CustomersPage() {
       readFor.current = q;
       void api.getCustomers({ q: q.trim() || undefined, page, pageSize: PAGE_SIZE }).then((res) => {
         if (stale) return;
-        if (res.error) toast({ title: 'Could not load the customers', description: res.error, variant: 'destructive' });
-        setList(Array.isArray(res.data?.items) ? res.data : { items: [], total: 0, page, pageSize: PAGE_SIZE });
+        setFailure(res.error ?? null);
+        if (!res.error) setList(Array.isArray(res.data?.items) ? res.data : { items: [], total: 0, page, pageSize: PAGE_SIZE });
       });
     }, q === readFor.current ? 0 : 250);
     return () => {
       stale = true;
       clearTimeout(timer);
     };
-  }, [q, page, toast]);
+  }, [q, page, attempt]);
+
+  const retry = () => {
+    heading.current?.focus(); // Retry goes with the error: the focus moves to the heading, not to the page
+    setFailure(null);
+    setList(null);
+    setAttempt((n) => n + 1);
+  };
 
   const pages = Math.max(1, Math.ceil((list?.total ?? 0) / PAGE_SIZE));
   const searched = q.trim();
@@ -49,7 +57,7 @@ export default function CustomersPage() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Customers</h1>
+        <h1 ref={heading} tabIndex={-1} className="text-2xl font-bold text-foreground">Customers</h1>
         <p className="text-muted-foreground mt-1">The customers your team has linked to WhatsApp numbers, with their notes.</p>
       </div>
 
@@ -68,7 +76,16 @@ export default function CustomersPage() {
         />
       </div>
 
-      {list === null ? (
+      {failure ? (
+        <div role="alert">
+          <EmptyState
+            icon={<AlertTriangle className="w-8 h-8" aria-hidden="true" />}
+            title="Could not load the customers"
+            description={failure}
+            action={{ label: 'Retry', onClick: retry }}
+          />
+        </div>
+      ) : list === null ? (
         <div className="space-y-2">
           {[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
         </div>

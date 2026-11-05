@@ -4,7 +4,7 @@
 import { test, expect, gate, get, on, rendered, requestEnded, toasts, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import {
-  ADA, CONV, CUSTOMER, LOOKUP_DATA, LOOKUP_OK, MANUAL, NOW, PHONE, customerBackend, lookupAnswer, openContactInfo, sentBody,
+  ADA, BY_PHONE, CONV, CUSTOMER, LOOKUP_DATA, LOOKUP_OK, MANUAL, NOW, PHONE, customerBackend, lookupAnswer, openContactInfo, sentBody,
 } from './support/customers';
 import type { Locator, Page } from '@playwright/test';
 
@@ -107,6 +107,21 @@ test('a number with no ID linked yet says so, and without the organization’s l
   await expect(panel.getByRole('textbox', { name: 'New Customer ID' })).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Link Customer ID' })).toBeDisabled(); // nothing typed yet
   await expect(panel.getByRole('combobox')).toHaveCount(0);
+});
+
+test('IDs of the number the server cannot give are said so, with Retry: not taken for none linked', async ({ page, backend }) => {
+  customerBackend(backend);
+  backend.route(on('GET', `/customers/by-phone/${PHONE}`, { status: 500, json: { message: 'Internal server error' } }));
+  const panel = await openContactInfo(page, backend);
+  await expect(panel.getByRole('alert')).toHaveText('Could not read what is linked to this number: Internal server error');
+  await expect(panel.getByText(/is linked to this number yet/)).toHaveCount(0);
+  await expect(linkField(panel)).toHaveCount(0); // what is linked is not known: nothing to add to
+  backend.route(get(`/customers/by-phone/${PHONE}`, BY_PHONE));
+  await panel.getByRole('button', { name: 'Retry' }).click();
+  await expect(picker(panel)).toHaveText('1234567890 · Budi Santoso');
+  await expect(panel.getByText('R1 / 1300 VA')).toBeVisible();
+  await expect(panel.getByRole('alert')).toHaveCount(0);
+  await expect(linkField(panel)).toBeVisible();
 });
 
 test('follows the open chat: another chat’s number shows its own customer', async ({ page, backend }) => {

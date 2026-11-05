@@ -1,7 +1,7 @@
 'use client';
 // The customer behind a WhatsApp number, in a chat's Contact Info and a call's detail: the IDs linked to the number
 // (its default first), linking another, and the details of the one shown.
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { api, type ApiResponse, type CustomerByPhoneItem, type CustomerView, type LookupResult } from '@/lib/api';
 import { canAct, currentUser } from '@/lib/current-user';
@@ -36,7 +36,10 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
   const pickerId = useId();
   const inputId = useId();
   const hintId = useId();
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [linked, setLinked] = useState<CustomerByPhoneItem[] | null>(null); // null while being read
+  const [linkedFailed, setLinkedFailed] = useState<string | null>(null); // why the number's IDs could not be read
+  const [attempt, setAttempt] = useState(0); // a Retry reads them again
   const [selected, setSelected] = useState<string | null>(null);
   const [customer, setCustomer] = useState<CustomerView | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
@@ -50,11 +53,21 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
     let stale = false;
     void api.getCustomersByPhone(phone).then((res) => {
       if (stale) return;
+      if (res.error) {
+        setLinkedFailed(res.error); // not known to be none: it stays unread
+        return;
+      }
       const list = Array.isArray(res.data) ? res.data : [];
       setLinked(list);
       setSelected(list[0]?.id ?? null); // the number's default
-      if (res.error) setFailed(res.error);
     });
+    return () => {
+      stale = true;
+    };
+  }, [phone, attempt]);
+
+  useEffect(() => {
+    let stale = false;
     // The search matches part of a number: the contact is the one whose number this is.
     if (profileId) {
       void api.getContacts(profileId, { search: phone, limit: 5 }).then((res) => {
@@ -65,6 +78,13 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
       stale = true;
     };
   }, [phone, profileId]);
+
+  const retry = () => {
+    headingRef.current?.focus(); // Retry goes with the error: the focus moves to the heading, not to the page
+    setLinkedFailed(null);
+    setLinked(null);
+    setAttempt((n) => n + 1);
+  };
 
   useEffect(() => {
     setCustomer(null);
@@ -135,7 +155,7 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
   return (
     <section aria-labelledby={headingId} className="rounded-xl border border-border bg-secondary/20 p-3 space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <h3 id={headingId} className="text-sm font-semibold text-foreground">Customer</h3>
+        <h3 id={headingId} ref={headingRef} tabIndex={-1} className="text-sm font-semibold text-foreground">Customer</h3>
         {customer && (
           <Link href={`/dashboard/customers/${customer.id}`} className="text-xs text-primary hover:underline">
             Open the customer page
@@ -143,7 +163,12 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
         )}
       </div>
       {failed && <p role="alert" className="text-xs text-red-400">{failed}</p>}
-      {linked === null ? (
+      {linkedFailed ? (
+        <div className="flex items-center justify-between gap-2">
+          <p role="alert" className="text-xs text-red-400">{`Could not read what is linked to this number: ${linkedFailed}`}</p>
+          <Button type="button" size="sm" variant="outline" onClick={retry}>Retry</Button>
+        </div>
+      ) : linked === null ? (
         <p role="status" className="text-xs text-muted-foreground">Loading…</p>
       ) : linked.length === 0 ? (
         <p className="text-xs text-muted-foreground">{`No ${idLabel} is linked to this number yet.`}</p>
@@ -165,7 +190,7 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
         </div>
       )}
       {customer && <CustomerDetails key={customer.id} customer={customer} onChange={setCustomer} contactTags={contactTags} />}
-      {agent && (
+      {agent && !linkedFailed && (
         <form onSubmit={link} className="space-y-1 border-t border-border pt-3">
           <Label htmlFor={inputId} className="text-xs text-muted-foreground">{`New ${idLabel}`}</Label>
           <Input

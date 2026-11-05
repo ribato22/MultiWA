@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, MessagesSquare, PhoneIncoming, Trash2, Unlink, UserX } from 'lucide-react';
@@ -30,6 +30,12 @@ export default function CustomerPage() {
   const [customer, setCustomer] = useState<CustomerView | null>(null);
   const [failure, setFailure] = useState<{ status: number; error?: string } | null>(null);
   const [history, setHistory] = useState<CustomerHistoryItem[] | null>(null);
+  const [historyFailure, setHistoryFailure] = useState<string | null>(null);
+  const [historyAttempt, setHistoryAttempt] = useState(0); // a Retry reads the history again
+  const historyHeading = useRef<HTMLHeadingElement>(null);
+  // An unlink or the delete is on its way: one at a time. The buttons wait as aria-disabled, not disabled: the one
+  // pressed keeps the focus.
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -38,17 +44,35 @@ export default function CustomerPage() {
       if (res.data?.id) setCustomer(res.data);
       else setFailure({ status: res.status, error: res.error });
     });
-    void api.getCustomerHistory(id, 50).then((res) => {
-      if (!stale) setHistory(Array.isArray(res.data) ? res.data : []);
-    });
     return () => {
       stale = true;
     };
   }, [id]);
 
+  useEffect(() => {
+    let stale = false;
+    void api.getCustomerHistory(id, 50).then((res) => {
+      if (stale) return;
+      setHistoryFailure(res.error ?? null);
+      if (!res.error) setHistory(Array.isArray(res.data) ? res.data : []);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [id, historyAttempt]);
+
+  const retryHistory = () => {
+    historyHeading.current?.focus(); // Retry goes with the error: the focus moves to the heading, not to the page
+    setHistoryFailure(null);
+    setHistory(null);
+    setHistoryAttempt((n) => n + 1);
+  };
+
   const unlink = async (link: CustomerLinkView) => {
-    if (!window.confirm(`Unlink +${link.phone}? The customer, its notes and its tags stay.`)) return;
+    if (busy || !window.confirm(`Unlink +${link.phone}? The customer, its notes and its tags stay.`)) return;
+    setBusy(true);
     const res = await api.unlinkCustomer(link.id);
+    setBusy(false);
     if (res.error) {
       toast({ title: 'Could not unlink the number', description: res.error, variant: 'destructive' });
       return;
@@ -58,9 +82,11 @@ export default function CustomerPage() {
   };
 
   const remove = async () => {
-    if (!customer || !window.confirm(`Delete ${idLabel} ${customer.externalId}, with its links and notes?`)) return;
+    if (busy || !customer || !window.confirm(`Delete ${idLabel} ${customer.externalId}, with its links and notes?`)) return;
+    setBusy(true);
     const res = await api.deleteCustomer(customer.id);
     if (res.error) {
+      setBusy(false);
       toast({ title: 'Could not delete the customer', description: res.error, variant: 'destructive' });
       return;
     }
@@ -100,7 +126,7 @@ export default function CustomerPage() {
           <p className="text-muted-foreground mt-1">{idLabel} <span className="font-mono">{customer.externalId}</span></p>
         </div>
         {canConfigure(role) && (
-          <Button variant="destructive" onClick={() => void remove()}>
+          <Button variant="destructive" aria-disabled={busy} onClick={() => void remove()}>
             <Trash2 aria-hidden="true" />
             Delete customer
           </Button>
@@ -123,7 +149,7 @@ export default function CustomerPage() {
                   </p>
                 </div>
                 {canAct(role) && (
-                  <Button size="sm" variant="ghost" aria-label={`Unlink +${l.phone}`} onClick={() => void unlink(l)}>
+                  <Button size="sm" variant="ghost" aria-label={`Unlink +${l.phone}`} aria-disabled={busy} onClick={() => void unlink(l)}>
                     <Unlink aria-hidden="true" />
                     Unlink
                   </Button>
@@ -139,8 +165,13 @@ export default function CustomerPage() {
       </div>
 
       <section aria-labelledby="customer-history" className="bg-card rounded-2xl border border-border p-5 space-y-3">
-        <h2 id="customer-history" className="font-semibold text-foreground">History</h2>
-        {history === null ? (
+        <h2 id="customer-history" ref={historyHeading} tabIndex={-1} className="font-semibold text-foreground">History</h2>
+        {historyFailure ? (
+          <div className="flex items-center justify-between gap-2">
+            <p role="alert" className="text-sm text-red-400">{`Could not load the history: ${historyFailure}`}</p>
+            <Button size="sm" variant="outline" onClick={retryHistory}>Retry</Button>
+          </div>
+        ) : history === null ? (
           <Skeleton className="h-16 w-full" />
         ) : history.length === 0 ? (
           <p className="text-sm text-muted-foreground">No chats or calls with these numbers yet.</p>
