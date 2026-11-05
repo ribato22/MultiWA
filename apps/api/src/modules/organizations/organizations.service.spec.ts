@@ -176,3 +176,34 @@ describe('OrganizationsService — member-management invariants', () => {
     });
   });
 });
+
+describe('OrganizationsService — the customer lookup settings in settings.customers', () => {
+  const db = prisma as any;
+  const stored = { theme: 'dark', customers: { lookupUrl: 'https://crm.example.com/lookup', lookupSecretEnc: 'aa:bb:cc', timeoutMs: 5000 } };
+  beforeEach(() => {
+    db.organization.findUnique.mockReset().mockResolvedValue({ id: 'org-1', name: 'Org', settings: stored });
+    db.organization.update.mockReset().mockImplementation(async (args: any) => ({ id: 'org-1', name: args.data.name, settings: args.data.settings }));
+  });
+
+  it('an update keeps them, whatever settings it is sent: PUT /customers/config writes them', async () => {
+    await new OrganizationsService().update('org-1', { settings: { theme: 'light', customers: { lookupUrl: 'https://elsewhere.example.com/' } } });
+    expect(db.organization.update).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      data: { name: undefined, settings: { theme: 'light', customers: stored.customers } },
+    });
+  });
+
+  it('an update without settings leaves them alone and reads nothing', async () => {
+    await new OrganizationsService().update('org-1', { name: 'Renamed' });
+    expect(db.organization.update).toHaveBeenCalledWith({ where: { id: 'org-1' }, data: { name: 'Renamed', settings: undefined } });
+    expect(db.organization.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('no answer carries the encrypted secret', async () => {
+    const service = new OrganizationsService();
+    for (const org of [await service.findById('org-1'), await service.update('org-1', { settings: { theme: 'light' } })]) {
+      expect(JSON.stringify(org)).not.toContain('aa:bb:cc');
+      expect((org.settings as any).customers).toEqual({ lookupUrl: 'https://crm.example.com/lookup', timeoutMs: 5000 });
+    }
+  });
+});

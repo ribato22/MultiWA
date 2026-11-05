@@ -13,6 +13,14 @@ const ASSIGNABLE_ROLES = ['admin', 'member', 'viewer'];
 /** Who asks for a team change: their id and role, from the request. */
 type Requester = { id: string; role: string };
 
+/** An organization as the API answers it: without its customer lookup's encrypted secret (GET /customers/config says whether one is set). */
+function withoutLookupSecret<T extends { settings: unknown }>(org: T): T {
+  const customers = (org.settings as Record<string, any> | null)?.customers;
+  if (!customers || typeof customers !== 'object' || !('lookupSecretEnc' in customers)) return org;
+  const { lookupSecretEnc: _secret, ...rest } = customers;
+  return { ...org, settings: { ...(org.settings as object), customers: rest } };
+}
+
 @Injectable()
 export class OrganizationsService {
   private assertAssignableRole(role: string | undefined) {
@@ -29,14 +37,25 @@ export class OrganizationsService {
       include: { workspaces: true },
     });
     if (!org) throw new NotFoundException('Organization not found');
-    return org;
+    return withoutLookupSecret(org);
   }
 
+  // settings.customers holds the customer lookup's settings, written by PUT /customers/config, which checks the URL and
+  // encrypts the secret. An update here keeps them, whatever settings it is sent.
   async update(id: string, dto: any) {
-    return prisma.organization.update({
-      where: { id },
-      data: { name: dto.name, settings: dto.settings },
-    });
+    let settings = dto.settings;
+    if (settings && typeof settings === 'object') {
+      const current = await prisma.organization.findUnique({ where: { id }, select: { settings: true } });
+      const { customers: _sent, ...rest } = settings;
+      const kept = (current?.settings as Record<string, unknown> | null)?.customers;
+      settings = kept === undefined ? rest : { ...rest, customers: kept };
+    }
+    return withoutLookupSecret(
+      await prisma.organization.update({
+        where: { id },
+        data: { name: dto.name, settings },
+      }),
+    );
   }
 
   // ── Member Management ──

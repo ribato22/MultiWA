@@ -20,6 +20,7 @@ const db = vi.hoisted(() => {
 });
 vi.mock('@multiwa/database', () => ({ prisma: db.prisma }));
 
+import { decrypt, encrypt } from '../../common/crypto/secret-box';
 import { CustomersService, toExternalId, toPhone, type Actor } from './customers.service';
 
 const p = db.prisma as any;
@@ -516,5 +517,69 @@ describe("another organization's customer, for the notes, the history and the lo
     await expect(act(service())).rejects.toThrow(NotFoundException);
     for (const read of ['customerNote.findMany', 'customerNote.create', 'customerLink.findMany']) expect(calls(read)).toEqual([]);
     expect(lookups.lookup).not.toHaveBeenCalled();
+  });
+});
+
+describe('the lookup settings', () => {
+  const HEX_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const saved = (n = 0) => p.organization.update.mock.calls[n][0];
+  beforeEach(() => {
+    vi.stubEnv('ENCRYPTION_KEY', HEX_KEY);
+    vi.stubEnv('WEBHOOK_ALLOW_PRIVATE_TARGETS', 'false');
+    p.organization.findUnique.mockResolvedValue({ settings: { theme: 'dark' } });
+    p.organization.update.mockResolvedValue({});
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('GET answers whether a secret is set, never the secret', async () => {
+    lookups.config.mockResolvedValue({ idLabel: 'Customer ID', lookupUrl: null, lookupSecretEnc: 'aa:bb:cc', timeoutMs: 5000 });
+    expect(await service().getConfig('org-1')).toEqual({ idLabel: 'Customer ID', lookupUrl: null, hasSecret: true, timeoutMs: 5000, configured: false });
+    expect(lookups.config).toHaveBeenCalledWith('org-1');
+  });
+
+  it('PUT saves a URL the SSRF rule takes and the secret encrypted, keeps the other settings, and forgets the kept answers', async () => {
+    const view = await service().setConfig(ADMIN, { idLabel: ' ID Pelanggan ', lookupUrl: ' https://8.8.8.8/lookup ', secret: 'tok-123', timeoutMs: 3000 });
+    expect(p.organization.findUnique).toHaveBeenCalledWith({ where: { id: 'org-1' }, select: { settings: true } });
+    expect(saved().where).toEqual({ id: 'org-1' });
+    expect(saved().data.settings.theme).toBe('dark');
+    const stored = saved().data.settings.customers;
+    expect(stored).toMatchObject({ idLabel: 'ID Pelanggan', lookupUrl: 'https://8.8.8.8/lookup', timeoutMs: 3000 });
+    expect(stored.lookupSecretEnc).toMatch(/^[0-9a-f]{32}:[0-9a-f]{32}:[0-9a-f]+$/);
+    expect(decrypt(stored.lookupSecretEnc)).toBe('tok-123');
+    expect(view).toEqual({ idLabel: 'ID Pelanggan', lookupUrl: 'https://8.8.8.8/lookup', hasSecret: true, timeoutMs: 3000, configured: true });
+    expect(JSON.stringify(view)).not.toContain('tok-123');
+    expect(JSON.stringify(view)).not.toContain(stored.lookupSecretEnc);
+    expect(lookups.forget).toHaveBeenCalledWith('org-1');
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'customer.config.update', organizationId: 'org-1', userId: 'u-admin', metadata: {} }));
+    expect(JSON.stringify(audit.log.mock.calls)).not.toContain('tok-123');
+  });
+
+  it("PUT answers 400 with the rule's message for a URL the SSRF rule refuses, and saves nothing", async () => {
+    await expect(service().setConfig(ADMIN, { lookupUrl: 'http://127.0.0.1:8080/lookup' })).rejects.toThrow(BadRequestException);
+    await expect(service().setConfig(ADMIN, { lookupUrl: 'http://127.0.0.1:8080/lookup' })).rejects.toThrow('Webhook target address is not allowed');
+    await expect(service().setConfig(ADMIN, { lookupUrl: 'ftp://8.8.8.8/lookup' })).rejects.toThrow('Unsupported webhook URL scheme "ftp:"');
+    expect(p.organization.update).not.toHaveBeenCalled();
+    expect(lookups.forget).not.toHaveBeenCalled();
+  });
+
+  it('PUT keeps an omitted secret and clears an empty one; an empty URL turns the lookup off', async () => {
+    const enc = encrypt('tok-123');
+    p.organization.findUnique.mockResolvedValue({ settings: { customers: { lookupUrl: 'https://8.8.8.8/lookup', lookupSecretEnc: enc, timeoutMs: 5000 } } });
+    await service().setConfig(ADMIN, { timeoutMs: 8000 });
+    expect(saved(0).data.settings.customers).toEqual({ idLabel: 'Customer ID', lookupUrl: 'https://8.8.8.8/lookup', lookupSecretEnc: enc, timeoutMs: 8000 });
+    expect(await service().setConfig(ADMIN, { secret: '', lookupUrl: '' })).toMatchObject({ hasSecret: false, configured: false, lookupUrl: null });
+    expect(saved(1).data.settings.customers).toMatchObject({ lookupUrl: null, lookupSecretEnc: null });
+  });
+
+  it('PUT refuses an ID label that is blank once trimmed', async () => {
+    await expect(service().setConfig(ADMIN, { idLabel: '   ' })).rejects.toThrow(BadRequestException);
+    expect(p.organization.update).not.toHaveBeenCalled();
+  });
+
+  it('a test runs one lookup of a valid ID with the saved settings', async () => {
+    lookups.test.mockResolvedValue({ state: 'ok', data: null, fetchedAt: '2026-11-05T08:00:00.000Z', cached: false, latencyMs: 3 });
+    expect(await service().testConfig('org-1', ' A-1 ')).toMatchObject({ state: 'ok', latencyMs: 3 });
+    expect(lookups.test).toHaveBeenCalledWith('org-1', 'A-1');
+    await expect(service().testConfig('org-1', 'a b')).rejects.toThrow('Invalid customer ID');
   });
 });

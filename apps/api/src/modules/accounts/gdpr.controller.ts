@@ -31,7 +31,7 @@ export class GdprController {
   @ApiOperation({
     summary: 'Export all personal data (GDPR Art. 15)',
     description:
-      'Returns a JSON archive of the authenticated user: profile (secrets excluded), messages, contacts, automations, audit logs, notifications, push subscriptions, sessions, and profiles, plus summary statistics.',
+      "Returns a JSON archive of the authenticated user: profile (secrets excluded), messages, contacts, automations, audit logs, notifications, push subscriptions, sessions, profiles, and the organization's customers with their links and notes, plus summary statistics.",
   })
   @ApiResponse({ status: 200, description: 'JSON archive of all user data' })
   async exportData(@Req() req: any) {
@@ -40,7 +40,7 @@ export class GdprController {
     this.logger.log(`GDPR data export requested by user ${userId}`);
 
     // Gather all user-related data in parallel
-    const [user, auditLogs, pushSubscriptions, notifications, sessions] =
+    const [user, auditLogs, pushSubscriptions, notifications, sessions, customers] =
       await Promise.all([
         // User profile (exclude secrets)
         prisma.user.findUnique({
@@ -113,6 +113,23 @@ export class GdprController {
             userAgent: true,
             lastActiveAt: true,
             createdAt: true,
+          },
+        }),
+
+        // The organization's customers, with their links, notes and tags
+        prisma.customer.findMany({
+          where: { organizationId },
+          select: {
+            id: true,
+            externalId: true,
+            displayName: true,
+            tags: true,
+            manualFields: true,
+            lastLookupAt: true,
+            createdAt: true,
+            updatedAt: true,
+            links: { select: { id: true, phone: true, linkedByUserId: true, linkedByApiKeyId: true, lastUsedAt: true, createdAt: true } },
+            notes: { select: { id: true, body: true, authorUserId: true, authorApiKeyId: true, createdAt: true, updatedAt: true } },
           },
         }),
       ]);
@@ -197,11 +214,13 @@ export class GdprController {
         totalPushSubscriptions: pushSubscriptions.length,
         totalSessions: sessions.length,
         totalProfiles: profiles.length,
+        totalCustomers: customers.length,
       },
       profiles,
       messages,
       contacts,
       automations,
+      customers,
       auditLogs,
       notifications,
       pushSubscriptions,

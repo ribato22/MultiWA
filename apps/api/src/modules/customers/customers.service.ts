@@ -8,14 +8,16 @@
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { assertWebhookUrlSafe, WebhookUrlError } from '@multiwa/engine-runtime';
+import { encrypt } from '../../common/crypto/secret-box';
 import { pageSize } from '../../common/page-size';
 import { linkablePhone, normalizePhone } from '../../common/phone';
 import { AuditAction, AuditService } from '../audit/audit.service';
 import { ADMIN_ROLES } from '../auth/roles';
-import { CustomerLookupService } from './customer-lookup.service';
+import { CustomerLookupService, readCustomerConfig, type CustomerConfig } from './customer-lookup.service';
 import type {
-  ActorView, CustomerByPhoneItem, CustomerHistoryItem, CustomerLinkView, CustomerListPage, CustomerNoteView, CustomerView, LinkResult,
-  LookupField, LookupResult,
+  ActorView, CustomerByPhoneItem, CustomerConfigView, CustomerHistoryItem, CustomerLinkView, CustomerListPage, CustomerNoteView, CustomerView,
+  LinkResult, LookupField, LookupResult, LookupTestResult,
 } from './customers.types';
 
 /** Who makes a request: the signed-in user, their organization and role, the API key it came with, and from where. */
@@ -34,6 +36,22 @@ export interface CustomerChanges {
   displayName?: string | null;
   manualFields?: LookupField[];
 }
+
+/** What PUT /customers/config may change; its DTO holds these to their limits. */
+export interface ConfigChanges {
+  idLabel?: string;
+  lookupUrl?: string;
+  secret?: string;
+  timeoutMs?: number;
+}
+
+const configView = (c: CustomerConfig): CustomerConfigView => ({
+  idLabel: c.idLabel,
+  lookupUrl: c.lookupUrl,
+  hasSecret: c.lookupSecretEnc !== null,
+  timeoutMs: c.timeoutMs,
+  configured: c.lookupUrl !== null,
+});
 
 /** A customer's ID in the organization's system: 1 to 64 of A-Z, a-z, 0-9, '.', '_' and '-'. */
 const EXTERNAL_ID = /^[A-Za-z0-9._-]{1,64}$/;
@@ -405,6 +423,52 @@ export class CustomersService {
       throw new ForbiddenException("Only a note's author, an owner or an admin changes it");
     }
     return note;
+  }
+
+  /** The lookup settings: whether a secret is set, never the secret. */
+  async getConfig(organizationId: string): Promise<CustomerConfigView> {
+    return configView(await this.lookups.config(organizationId));
+  }
+
+  /**
+   * Changes the lookup settings in Organization.settings.customers. The URL passes the webhooks' SSRF rule here, and again
+   * before each call; an empty one turns the lookup off. An omitted secret is kept and an empty one cleared; a new one
+   * is stored encrypted, and no answer carries it.
+   */
+  async setConfig(actor: Actor, changes: ConfigChanges): Promise<CustomerConfigView> {
+    const org = await prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { settings: true } });
+    const next = readCustomerConfig(org?.settings);
+    if (changes.idLabel !== undefined) {
+      const label = changes.idLabel.trim();
+      if (!label || label.length > 40) throw new BadRequestException('The ID label has 1 to 40 characters');
+      next.idLabel = label;
+    }
+    if (changes.lookupUrl !== undefined) {
+      const url = changes.lookupUrl.trim();
+      if (url) {
+        try {
+          await assertWebhookUrlSafe(url);
+        } catch (e) {
+          if (e instanceof WebhookUrlError) throw new BadRequestException(e.message);
+          throw e;
+        }
+      }
+      next.lookupUrl = url || null;
+    }
+    if (changes.secret !== undefined) next.lookupSecretEnc = changes.secret ? encrypt(changes.secret) : null;
+    if (changes.timeoutMs !== undefined) next.timeoutMs = changes.timeoutMs;
+    await prisma.organization.update({
+      where: { id: actor.organizationId },
+      data: { settings: { ...(org?.settings as object | null), customers: next } },
+    });
+    this.lookups.forget(actor.organizationId);
+    this.audit(actor, AuditAction.CUSTOMER_CONFIG_UPDATE, null, {});
+    return configView(next);
+  }
+
+  /** One lookup with the saved settings, bypassing the cache, and how long it took. */
+  async testConfig(organizationId: string, rawExternalId: unknown): Promise<LookupTestResult> {
+    return this.lookups.test(organizationId, toExternalId(rawExternalId));
   }
 
   /** The caller's organization's customer, else 404: another organization's is not found either. */
