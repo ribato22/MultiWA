@@ -34,7 +34,7 @@ test.describe('the owner', () => {
     await expect(page.getByRole('button', { name: 'Delete customer' })).toBeVisible();
   });
 
-  test('changes and tests the customer settings', async ({ page, backend }) => {
+  test('has every customer settings control, enabled', async ({ page, backend }) => {
     backend.route(get('/customers/config', CONFIG));
     await page.goto('/dashboard/settings?tab=customers');
     const form = page.getByRole('tabpanel');
