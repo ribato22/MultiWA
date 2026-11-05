@@ -191,7 +191,7 @@ describe('Roles (e2e)', () => {
 
     it('deleting an API key, logging out, revoking the other sessions and removing a member close their sockets at once', async () => {
       // Stubbed, so that only the calls that revoke close these sockets, and not the sweep (its minute is far off anyway).
-      vi.spyOn(app.get(EventsGateway) as any, 'sweepSessions').mockResolvedValue(undefined);
+      vi.spyOn(app.get(EventsGateway) as any, 'sweepSockets').mockResolvedValue(undefined);
       const bystander = await connect(owner.token);
 
       const keyed = await newMember('keyed');
@@ -223,6 +223,31 @@ describe('Roles (e2e)', () => {
       for (const socket of removedSockets) await gone(socket);
 
       expect([bystander, ...currentSockets].map((socket) => socket.connected)).toEqual([true, true, true, true]);
+    });
+
+    it("the sweep closes the sockets of an API key that expired or was deleted, of a session that is gone, and of a user who is inactive, and keeps the others", async () => {
+      const gateway = app.get(EventsGateway) as any;
+      const kept = [await connect(owner.token), await connect({ apiKey: (await newKey(owner)).key })];
+
+      // changed in the database, behind the API: only the sweep finds these
+      const keys = await newMember('keys');
+      const [expiring, deleted] = [await newKey(keys), await newKey(keys)];
+      const keySockets = [await connect({ apiKey: expiring.key }), await connect({ apiKey: deleted.key })];
+      await prisma.apiKey.update({ where: { id: expiring.id }, data: { expiresAt: new Date(Date.now() - 1_000) } });
+      await prisma.apiKey.delete({ where: { id: deleted.id } });
+
+      const sessions = await newMember('gone');
+      const sessionSocket = await connect(sessions.token);
+      await prisma.session.deleteMany({ where: { userId: sessions.user.id } });
+
+      const inactive = await newMember('inactive');
+      const inactiveSockets = [await connect(inactive.token), await connect({ apiKey: (await newKey(inactive)).key })];
+      await prisma.user.update({ where: { id: inactive.user.id }, data: { isActive: false } });
+
+      for (const socket of [...kept, ...keySockets, sessionSocket, ...inactiveSockets]) expect(socket.connected).toBe(true); // until the sweep
+      await gateway.sweepSockets();
+      for (const socket of [...keySockets, sessionSocket, ...inactiveSockets]) await gone(socket);
+      expect(kept.map((socket) => socket.connected)).toEqual([true, true]);
     });
   });
 
