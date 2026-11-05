@@ -30,7 +30,7 @@ export class BroadcastService implements OnModuleInit {
    *
    * Runs only in the API process (BroadcastModule is API-only). Assumes a single
    * API instance; with multiple replicas each would recover, so guard with a lock
-   * before scaling out (tracked as a follow-up — PLN is single-instance today).
+   * before scaling out (tracked as a follow-up).
    */
   async onModuleInit() {
     try {

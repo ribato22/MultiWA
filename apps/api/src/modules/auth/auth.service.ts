@@ -9,6 +9,7 @@ import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { TwoFactorService } from './two-factor.service';
 import { SessionsService } from './sessions.service';
 import { assertServerOwnerMayLeave, isServerOwner } from './server-owner';
+import { withoutLookupSecret } from '../customers/customer-settings';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
 
@@ -248,6 +249,7 @@ export class AuthService {
     const { passwordHash: _passwordHash, twoFactorSecret: _twoFactorSecret, backupCodes, ...profile } = user;
     return {
       ...profile,
+      organization: withoutLookupSecret(profile.organization),
       twoFactorEnabled: user.twoFactorEnabled,
       backupCodesRemaining: user.twoFactorEnabled ? (backupCodes?.length ?? 0) : 0,
       // The dashboard shows the server-wide settings (SMTP, storage) to the server's owner only.

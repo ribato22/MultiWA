@@ -30,6 +30,7 @@ model Organization {
   roles      Role[]
   userRoles  UserRole[]
   auditLogs  AuditLog[]
+  customers  Customer[]
 
   @@map("organizations")
 }
@@ -378,6 +379,67 @@ model Contact {
 
   @@unique([profileId, phone])
   @@map("contacts")
+}
+
+// ============================================
+// Customers (the customer profile)
+// ============================================
+
+// A customer as the organization's own system knows them: their ID there, linked to WhatsApp numbers. Their data is
+// looked up live (Organization.settings.customers): only the last successful lookup's name is kept, for the list and
+// the search, and a name and fields typed by hand while no lookup is configured.
+model Customer {
+  id             String    @id @default(uuid())
+  organizationId String
+  externalId     String    // the customer's ID in the organization's system, e.g. an ID Pelanggan
+  displayName    String?   // the last successful lookup's name, or typed by hand without a lookup
+  manualFields   Json      @default("[]") // [{ label, value }], used only while no lookup is configured
+  tags           String[]  @default([])
+  lastLookupAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  links        CustomerLink[]
+  notes        CustomerNote[]
+
+  @@unique([organizationId, externalId])
+  @@index([organizationId, displayName])
+  @@map("customers")
+}
+
+// A number linked to a customer: many to many. Among a number's links in an organization, the one with the newest
+// lastUsedAt is the ID an agent sees first for it.
+model CustomerLink {
+  id               String   @id @default(uuid())
+  organizationId   String
+  customerId       String
+  phone            String   // digits only, country code first (628…)
+  linkedByUserId   String?
+  linkedByApiKeyId String?
+  lastUsedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, phone])
+  @@index([organizationId, phone])
+  @@map("customer_links")
+}
+
+model CustomerNote {
+  id             String   @id @default(uuid())
+  customerId     String
+  authorUserId   String?
+  authorApiKeyId String?
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@map("customer_notes")
 }
 
 // ============================================

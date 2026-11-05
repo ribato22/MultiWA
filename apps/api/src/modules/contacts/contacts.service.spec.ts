@@ -1,6 +1,6 @@
 // ContactsService Unit Tests — locks three invariants:
-//   1. normalizePhone() is deterministic: any Indonesian/international spelling of
-//      the same number collapses to one digits-only, 62-prefixed form.
+//   1. A contact is stored and checked under its normalized number (common/phone.ts):
+//      any Indonesian spelling of a number collapses to one digits-only, 62-prefixed form.
 //   2. The #80 type-confusion fix: addTags/removeTags coerce a non-array/non-string
 //      `tags` argument to [] so it can NEVER throw on spread, and removeTags never
 //      falls back to String.includes substring matching that would delete unrelated
@@ -51,17 +51,19 @@ describe('ContactsService', () => {
     service = makeService();
   });
 
-  describe('normalizePhone (deterministic)', () => {
-    it('collapses every Indonesian spelling of one number to the same 62-prefixed digits', () => {
-      const n = (p: string) => (service as any).normalizePhone(p);
-      expect(n('081234567890')).toBe('6281234567890'); // local 0-prefix -> 62
-      expect(n('+62 812-3456-7890')).toBe('6281234567890'); // +, spaces, dashes stripped
-      expect(n('(0812) 3456-7890')).toBe('6281234567890'); // punctuation stripped, 0 -> 62
-      expect(n('6281234567890')).toBe('6281234567890'); // already normalized -> unchanged
+  describe('numbers are normalized (common/phone.ts)', () => {
+    it('create() looks the contact up and stores it under the normalized number', async () => {
+      await service.create({ profileId: 'p1', phone: '+62 812-3456-7890' } as any);
+      expect(prisma.contact.findFirst).toHaveBeenCalledWith({ where: { profileId: 'p1', phone: '6281234567890' } });
+      expect(prisma.contact.create).toHaveBeenCalledWith({
+        data: { profileId: 'p1', phone: '6281234567890', name: undefined, tags: [], metadata: {} },
+      });
     });
 
-    it('preserves a non-Indonesian country code (no spurious 62 rewrite)', () => {
-      expect((service as any).normalizePhone('+1 (415) 555-2671')).toBe('14155552671');
+    it('validatePhone() answers the normalized number, and keeps a foreign country code', async () => {
+      vi.mocked(prisma.profile.findUnique).mockResolvedValue({ id: 'p1', status: 'disconnected' } as any);
+      expect(await service.validatePhone('p1', '(0812) 3456-7890')).toMatchObject({ phone: '6281234567890', validFormat: true, isIndonesian: true });
+      expect(await service.validatePhone('p1', '+1 (415) 555-2671')).toMatchObject({ phone: '14155552671', isIndonesian: false });
     });
   });
 

@@ -3,36 +3,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
-import * as crypto from 'crypto';
-
-const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 16;
-
-/**
- * Get or generate encryption key for sensitive settings.
- * Auto-generates and stores a key if not provided via env.
- */
-function getEncryptionKey(): Buffer {
-  let key = process.env.ENCRYPTION_KEY;
-  if (!key) {
-    if (process.env.NODE_ENV === 'production') {
-      // Never auto-generate in production: a fresh key each restart makes every
-      // previously-encrypted secret (S3/SMTP/etc.) permanently undecryptable.
-      throw new Error(
-        'ENCRYPTION_KEY is required in production. Set a stable 32-byte hex key (e.g. `openssl rand -hex 32`).',
-      );
-    }
-    // Dev only: generate an ephemeral key so local runs work, loudly.
-    key = crypto.randomBytes(32).toString('hex');
-    process.env.ENCRYPTION_KEY = key;
-    console.warn('[SettingsService] ENCRYPTION_KEY unset — generated an ephemeral dev key (set ENCRYPTION_KEY in .env for persistence; required in production).');
-  }
-  // Accept hex-encoded 64-char keys or raw 32-char keys
-  if (key.length === 64) {
-    return Buffer.from(key, 'hex');
-  }
-  return crypto.createHash('sha256').update(key).digest();
-}
+import { decrypt, encrypt } from '../../common/crypto/secret-box';
 
 export interface StorageConfig {
   type: 'local' | 's3';
@@ -104,13 +75,13 @@ export class SettingsService {
     };
 
     if (dbConfig.s3AccessKeyEnc) {
-      config.s3AccessKey = this.decrypt(dbConfig.s3AccessKeyEnc);
+      config.s3AccessKey = decrypt(dbConfig.s3AccessKeyEnc);
     } else {
       config.s3AccessKey = envConfig.s3AccessKey;
     }
 
     if (dbConfig.s3SecretKeyEnc) {
-      config.s3SecretKey = this.decrypt(dbConfig.s3SecretKeyEnc);
+      config.s3SecretKey = decrypt(dbConfig.s3SecretKeyEnc);
     } else {
       config.s3SecretKey = envConfig.s3SecretKey;
     }
@@ -150,13 +121,13 @@ export class SettingsService {
 
     // Encrypt sensitive fields, or preserve existing encrypted values
     if (config.s3AccessKey && !config.s3AccessKey.includes('••••')) {
-      dataToStore.s3AccessKeyEnc = this.encrypt(config.s3AccessKey);
+      dataToStore.s3AccessKeyEnc = encrypt(config.s3AccessKey);
     } else if (existing.s3AccessKeyEnc) {
       dataToStore.s3AccessKeyEnc = existing.s3AccessKeyEnc;
     }
 
     if (config.s3SecretKey && !config.s3SecretKey.includes('••••')) {
-      dataToStore.s3SecretKeyEnc = this.encrypt(config.s3SecretKey);
+      dataToStore.s3SecretKeyEnc = encrypt(config.s3SecretKey);
     } else if (existing.s3SecretKeyEnc) {
       dataToStore.s3SecretKeyEnc = existing.s3SecretKeyEnc;
     }
@@ -256,8 +227,8 @@ export class SettingsService {
       secure: dbConfig.secure ?? envConfig.secure,
     };
 
-    config.user = dbConfig.userEnc ? this.decrypt(dbConfig.userEnc) : envConfig.user;
-    config.pass = dbConfig.passEnc ? this.decrypt(dbConfig.passEnc) : envConfig.pass;
+    config.user = dbConfig.userEnc ? decrypt(dbConfig.userEnc) : envConfig.user;
+    config.pass = dbConfig.passEnc ? decrypt(dbConfig.passEnc) : envConfig.pass;
 
     return config;
   }
@@ -292,13 +263,13 @@ export class SettingsService {
     };
 
     if (config.user && !config.user.includes('••••')) {
-      dataToStore.userEnc = this.encrypt(config.user);
+      dataToStore.userEnc = encrypt(config.user);
     } else if (existing.userEnc) {
       dataToStore.userEnc = existing.userEnc;
     }
 
     if (config.pass && !config.pass.includes('••••')) {
-      dataToStore.passEnc = this.encrypt(config.pass);
+      dataToStore.passEnc = encrypt(config.pass);
     } else if (existing.passEnc) {
       dataToStore.passEnc = existing.passEnc;
     }
@@ -358,43 +329,6 @@ export class SettingsService {
       return { success: true, message: `SMTP connection to ${testConfig.host}:${testConfig.port} verified successfully` };
     } catch (err: any) {
       return { success: false, message: `SMTP connection failed: ${err.message}` };
-    }
-  }
-
-  // ======= Encryption helpers =======
-
-  private encrypt(text: string): string {
-    const key = getEncryptionKey();
-    const iv = crypto.randomBytes(IV_LENGTH);
-    const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
-    
-    let encrypted = cipher.update(text, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    const authTag = cipher.getAuthTag();
-
-    // Format: iv:authTag:ciphertext
-    return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
-  }
-
-  private decrypt(encryptedText: string): string {
-    try {
-      const key = getEncryptionKey();
-      const parts = encryptedText.split(':');
-      if (parts.length !== 3) throw new Error('Invalid encrypted format');
-
-      const iv = Buffer.from(parts[0], 'hex');
-      const authTag = Buffer.from(parts[1], 'hex');
-      const ciphertext = parts[2];
-
-      const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
-      decipher.setAuthTag(authTag);
-
-      let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
-      return decrypted;
-    } catch (err) {
-      this.logger.error(`Decryption failed: ${(err as Error).message}`);
-      return '';
     }
   }
 

@@ -54,6 +54,7 @@ const PAGES = [
   { src: '11-groups.md', dst: 'features/groups.md', title: 'Groups', pos: 2 },
   { src: '12-automation.md', dst: 'features/automation.md', title: 'Automation', pos: 3 },
   { src: '23-calls.md', dst: 'features/calls.md', title: 'Calls', pos: 4 },
+  { src: '24-customers.md', dst: 'features/customers.md', title: 'Customers', pos: 5 },
   { src: '13-sdk-python.md', dst: 'sdks/python-sdk.md', title: 'Python SDK', pos: 1 },
   { src: '14-sdk-php.md', dst: 'sdks/php-sdk.md', title: 'PHP SDK', pos: 2 },
   { src: '15-n8n-integration.md', dst: 'sdks/n8n-integration.md', title: 'n8n Integration', pos: 3 },

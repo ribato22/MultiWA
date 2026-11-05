@@ -15,6 +15,7 @@ import { AccountsController } from '../accounts/accounts.controller';
 import { BroadcastController } from '../broadcast/broadcast.controller';
 import { BulkController } from '../bulk/bulk.controller';
 import { ContactsController } from '../contacts/contacts.controller';
+import { CustomersController } from '../customers/customers.controller';
 import { ConversationsController } from '../conversations/conversations.controller';
 import { ProfilesController } from '../profiles/profiles.controller';
 import { WebhooksController } from '../webhooks/webhooks.controller';
@@ -63,5 +64,25 @@ describe.each(EXPECTED)('%o', (Ctrl, routes) => {
 
   it('asks each route for the scopes the dashboard issues for it', () => {
     expect(Object.fromEntries(Object.keys(routes).map((name) => [name, scopeOf(Ctrl, name)]))).toEqual(routes);
+  });
+});
+
+// A customer route takes no profile id: the service scopes it to the caller's organization (another organization's id
+// answers 404), so the controller has no tenant guard.
+describe('CustomersController', () => {
+  const READ = ['customers:read'];
+  const WRITE = ['customers:write'];
+  const ROUTES = {
+    list: READ, config: READ, preview: READ, byPhone: READ, findOne: READ, lookup: READ, history: READ, notes: READ,
+    setConfig: WRITE, testConfig: WRITE, link: WRITE, useLink: WRITE, unlink: WRITE, update: WRITE, remove: WRITE,
+    addNote: WRITE, editNote: WRITE, deleteNote: WRITE,
+  };
+
+  it('checks API-key scopes for the whole controller, after sign-in', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, CustomersController)).toEqual([JwtOrApiKeyGuard, ApiKeyScopeGuard]);
+  });
+
+  it('asks the reads for customers:read and every other route for customers:write', () => {
+    expect(Object.fromEntries(Object.keys(ROUTES).map((name) => [name, scopeOf(CustomersController, name)]))).toEqual(ROUTES);
   });
 });

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { io } from 'socket.io-client';
 import {
-  CheckCircle2, Link2, Loader2, MessageSquareText, MessagesSquare, PhoneIncoming, PhoneOff, RotateCcw, UserPlus, Video,
+  CheckCircle2, IdCard, Link2, Loader2, MessageSquareText, MessagesSquare, PhoneIncoming, PhoneOff, RotateCcw, UserPlus, Video,
 } from 'lucide-react';
 import { api, type CallFollowUp, type CallOutcome, type CallRecord, type Profile } from '@/lib/api';
 import { getSocketUrl } from '@/lib/socket';
@@ -27,6 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { outcomeIcon } from '@/components/calls/outcome-icon';
 import { CallRecording } from '@/components/calls/call-recording';
+import { CustomerPanel, phoneOfJid } from '@/components/customers/customer-panel';
 import { useToast } from '@/hooks/use-toast';
 
 type Member = { id: string; name: string; email: string; role: string; isActive: boolean };
@@ -87,6 +88,8 @@ export default function CallsPage() {
   const [assignee, setAssignee] = useState(UNASSIGNED);
   const [busy, setBusy] = useState<string[]>([]); // ids of the calls with an action in flight
   const opener = useRef<HTMLElement | null>(null);
+  // The call whose caller's customer is open under its row: one at a time.
+  const [customerOf, setCustomerOf] = useState<string | null>(null);
 
   const memberName = useCallback((id: string | null) => (id ? members.find((m) => m.id === id)?.name ?? null : null), [members]);
 
@@ -95,7 +98,9 @@ export default function CallsPage() {
       if (res.error) toast({ title: 'Could not load profiles', description: res.error, variant: 'destructive' });
       const list = Array.isArray(res.data) ? res.data : [];
       setProfiles(list);
-      setProfileId((current) => current || list[0]?.id || '');
+      // A link can name the profile to open, as a customer's history does: one of this user's, else the first.
+      const wanted = new URLSearchParams(window.location.search).get('profile');
+      setProfileId((current) => current || list.find((p) => p.id === wanted)?.id || list[0]?.id || '');
       if (!list.length) setLoading(false);
     });
     api.getUsers().then((res) => {
@@ -307,6 +312,9 @@ export default function CallsPage() {
           {calls.map((call) => {
             const assigned = memberName(call.assignedUserId) ?? call.assignedUser?.name ?? null;
             const disabled = busy.includes(call.id);
+            // A one-to-one call's caller has a customer; a group, or a number WhatsApp hides, has no number.
+            const phone = call.isGroup ? null : phoneOfJid(call.fromJid);
+            const customerOpen = customerOf === call.id;
             return (
               <li key={call.id}>
                 <Card>
@@ -332,6 +340,18 @@ export default function CallsPage() {
                           <Link href={`/dashboard/chat?profile=${call.profileId}&conv=${call.conversationId}`} aria-label={`Open chat with ${callerLabel(call)}`}>
                             <MessagesSquare className="w-4 h-4" aria-hidden="true" />
                           </Link>
+                        </Button>
+                      )}
+                      {phone && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-expanded={customerOpen}
+                          aria-controls={customerOpen ? `customer-of-${call.id}` : undefined}
+                          onClick={() => setCustomerOf(customerOpen ? null : call.id)}
+                        >
+                          <IdCard className="w-4 h-4" aria-hidden="true" />
+                          <span className="ml-1.5">Customer</span>
                         </Button>
                       )}
                       {agent && !call.isGroup && (
@@ -367,6 +387,11 @@ export default function CallsPage() {
                       )}
                     </div>
                   </CardContent>
+                  {customerOpen && phone && (
+                    <div id={`customer-of-${call.id}`} className="border-t border-border px-6 py-4">
+                      <CustomerPanel phone={phone} profileId={call.profileId} />
+                    </div>
+                  )}
                 </Card>
               </li>
             );

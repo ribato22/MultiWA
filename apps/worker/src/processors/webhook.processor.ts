@@ -24,7 +24,7 @@ function generateHmacSignature(body: string, secret: string): string {
  *   0  -> store {} (omit payload entirely)
  *   -1 -> store the full payload (no redaction)
  *   N  -> truncate common message-body fields to N characters (default 512)
- * PLN Batam internal deployments should set this to 0 (see internal runbook).
+ * A deployment that must keep no message text in its webhook log should set this to 0.
  */
 function policedLogPayload(payload: any): any {
   const max = parseInt(process.env.WEBHOOK_LOG_PAYLOAD_MAX_BYTES ?? '512', 10);

@@ -6,6 +6,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-custom';
 import { prisma } from '@multiwa/database';
 import * as crypto from 'crypto';
+import { withoutLookupSecret } from '../../customers/customer-settings';
 
 /** Persist lastUsedAt at most once per window (mirrors sessions TOUCH_THROTTLE_MS). */
 const LAST_USED_THROTTLE_MS = 5 * 60 * 1000;
@@ -64,7 +65,7 @@ export class ApiKeyStrategy extends PassportStrategy(Strategy, 'api-key') {
       name: key.user.name,
       role: key.user.role,
       organizationId: key.user.organizationId,
-      organization: key.user.organization,
+      organization: withoutLookupSecret(key.user.organization),
       apiKeyId: key.id,
       apiKeyScopes: key.permissions, // string[]; [] or ['*'] == full access (enforced by ApiKeyScopeGuard)
     };

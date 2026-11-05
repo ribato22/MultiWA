@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 221,
+  "routeCount": 239,
   "routes": [
     {
       "method": "DELETE",
@@ -496,6 +496,78 @@
     {
       "method": "GET",
       "path": "/api/v1/conversations/unread-count"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/customers/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/history"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/lookup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/notes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/:id/notes"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/:id/notes/:noteId"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/customers/:id/notes/:noteId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/by-phone/:phone"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/customers/config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/config/test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/links"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/links/:linkId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/links/:linkId/use"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/lookup"
     },
     {
       "method": "POST",

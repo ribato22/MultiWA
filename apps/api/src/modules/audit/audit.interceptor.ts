@@ -101,6 +101,9 @@ const SKIP_PATTERNS = [
   /^UploadsController\./,
   // Audited by CallRecordingsService as a play and retention's deletes are (resourceType call, with the recording's id).
   /^CallsController\.deleteRecording$/,
+  // Audited by CustomersService with the ids of the customer, link or note it made or changed, which a request alone
+  // does not carry.
+  /^CustomersController\./,
 ];
 
 @Injectable()

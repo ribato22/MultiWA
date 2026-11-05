@@ -18,6 +18,7 @@ import { WorkspacesModule } from './modules/workspaces/workspaces.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { EngineCommandsModule } from './modules/engine-commands/engine-commands.module';
 import { ContactsModule } from './modules/contacts/contacts.module';
+import { CustomersModule } from './modules/customers/customers.module';
 import { ConversationsModule } from './modules/conversations/conversations.module';
 import { CallsModule } from './modules/calls/calls.module';
 import { TemplatesModule } from './modules/templates/templates.module';
@@ -97,6 +98,7 @@ import { MetricsModule } from './metrics/metrics.module';
     MessagesModule,
     WebhooksModule,
     ContactsModule,
+    CustomersModule,
     ConversationsModule,
     CallsModule,
     TemplatesModule,

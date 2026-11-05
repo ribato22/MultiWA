@@ -3,6 +3,7 @@ import { Injectable, NotFoundException, BadRequestException, ForbiddenException 
 import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { withoutLookupSecret } from '../customers/customer-settings';
 
 // Roles that may be assigned through member-management endpoints. `owner` is
 // deliberately excluded: ownership is set when the org is created and is not
@@ -29,14 +30,26 @@ export class OrganizationsService {
       include: { workspaces: true },
     });
     if (!org) throw new NotFoundException('Organization not found');
-    return org;
+    return withoutLookupSecret(org);
   }
 
+  // settings.customers holds the customer lookup's settings, written by PUT /customers/config, which checks the URL and
+  // encrypts the secret. An update here keeps them, whatever settings it is sent. The row is locked before they are
+  // read, so a save of them made meanwhile is not written back over.
   async update(id: string, dto: any) {
-    return prisma.organization.update({
-      where: { id },
-      data: { name: dto.name, settings: dto.settings },
-    });
+    const { name, settings } = dto;
+    if (!settings || typeof settings !== 'object') {
+      return withoutLookupSecret(await prisma.organization.update({ where: { id }, data: { name, settings } }));
+    }
+    const { customers: _sent, ...rest } = settings;
+    return withoutLookupSecret(
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${id} FOR UPDATE`;
+        const current = await tx.organization.findUnique({ where: { id }, select: { settings: true } });
+        const kept = (current?.settings as Record<string, unknown> | null)?.customers;
+        return tx.organization.update({ where: { id }, data: { name, settings: kept === undefined ? rest : { ...rest, customers: kept } } });
+      }),
+    );
   }
 
   // ── Member Management ──

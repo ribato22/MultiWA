@@ -21,6 +21,8 @@ vi.mock('@multiwa/database', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -174,5 +176,61 @@ describe('OrganizationsService — member-management invariants', () => {
       expect(out).toEqual({ success: true });
       expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
     });
+  });
+});
+
+describe('OrganizationsService — the customer lookup settings in settings.customers', () => {
+  const db = prisma as any;
+  const stored = { theme: 'dark', customers: { lookupUrl: 'https://crm.example.com/lookup', lookupSecretEnc: 'aa:bb:cc', timeoutMs: 5000 } };
+  beforeEach(() => {
+    db.organization.findUnique.mockReset().mockResolvedValue({ id: 'org-1', name: 'Org', settings: stored });
+    db.organization.update.mockReset().mockImplementation(async (args: any) => ({ id: 'org-1', name: args.data.name, settings: args.data.settings }));
+    // A transaction's callback runs on the mocked client.
+    db.$transaction.mockReset().mockImplementation((run: (tx: unknown) => unknown) => run(db));
+    db.$queryRaw.mockReset().mockResolvedValue([{ id: 'org-1' }]);
+  });
+
+  it('an update keeps them, whatever settings it is sent: PUT /customers/config writes them', async () => {
+    await new OrganizationsService().update('org-1', { settings: { theme: 'light', customers: { lookupUrl: 'https://elsewhere.example.com/' } } });
+    expect(db.organization.update).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      data: { name: undefined, settings: { theme: 'light', customers: stored.customers } },
+    });
+  });
+
+  it('an update with settings locks the organization row, then reads, merges and writes inside the one transaction', async () => {
+    // The transaction's client apart from `db`: a read or a write of the row on `db` would not wait for the lock.
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: 'org-1' }]),
+      organization: { findUnique: vi.fn().mockResolvedValue({ settings: stored }), update: vi.fn().mockResolvedValue({ id: 'org-1', settings: {} }) },
+    };
+    db.$transaction.mockImplementation((run: (client: unknown) => unknown) => run(tx));
+    await new OrganizationsService().update('org-1', { name: 'Renamed', settings: { theme: 'light' } });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [sql, ...values] = tx.$queryRaw.mock.calls[0];
+    expect([sql.join('?'), values]).toEqual(['SELECT id FROM organizations WHERE id = ? FOR UPDATE', ['org-1']]);
+    const at = (fn: ReturnType<typeof vi.fn>) => fn.mock.invocationCallOrder[0];
+    expect(at(tx.$queryRaw)).toBeLessThan(at(tx.organization.findUnique));
+    expect(at(tx.organization.findUnique)).toBeLessThan(at(tx.organization.update));
+    expect(tx.organization.update).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      data: { name: 'Renamed', settings: { theme: 'light', customers: stored.customers } },
+    });
+    expect(db.organization.findUnique).not.toHaveBeenCalled();
+    expect(db.organization.update).not.toHaveBeenCalled();
+  });
+
+  it('an update without settings leaves them alone and reads nothing', async () => {
+    await new OrganizationsService().update('org-1', { name: 'Renamed' });
+    expect(db.organization.update).toHaveBeenCalledWith({ where: { id: 'org-1' }, data: { name: 'Renamed', settings: undefined } });
+    expect(db.organization.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('no answer carries the encrypted secret', async () => {
+    const service = new OrganizationsService();
+    for (const org of [await service.findById('org-1'), await service.update('org-1', { settings: { theme: 'light' } })]) {
+      expect(JSON.stringify(org)).not.toContain('aa:bb:cc');
+      expect((org.settings as any).customers).toEqual({ lookupUrl: 'https://crm.example.com/lookup', timeoutMs: 5000 });
+    }
   });
 });

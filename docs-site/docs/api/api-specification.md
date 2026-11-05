@@ -50,6 +50,8 @@ A key can carry a list of scopes. A route that asks for a scope answers `403` to
 | `messages:write` (Send Messages) | every `POST /messages/...` (the sends, `schedule` and `otp` included), `DELETE /messages/:id`, `DELETE /messages/schedule/:id`; `PUT /conversations/:id/read`, `/archive`, `/unarchive`, `/mute` and `/pin`, `DELETE /conversations/:id`, `DELETE /conversations/:id/messages`; `POST /calls/:id/reply` and `POST /calls/:id/call-link` |
 | `contacts:read` (Read Contacts) | `GET /contacts`, `GET /contacts/:id`, `GET /contacts/export/csv`, and the number checks `GET /contacts/profile/:profileId/validate/:phone` and `POST /contacts/profile/:profileId/validate` |
 | `contacts:write` (Manage Contacts) | the other contact routes: `POST /contacts`, `PUT` and `DELETE /contacts/:id`, `POST` and `DELETE /contacts/:id/tags`, `POST /contacts/import`, `/contacts/import/csv` and `/contacts/sync/whatsapp`, `POST /contacts/profile/:profileId/save-to-whatsapp`, `DELETE /contacts/profile/:profileId/whatsapp/:phone` |
+| `customers:read` (Read Customers) | every `GET /customers/...`: the search, a customer, a number's customers, the lookup and its preview, the history, the notes and the lookup settings |
+| `customers:write` (Manage Customers) | the other customer routes: `POST /customers/links`, `POST /customers/links/:linkId/use`, `DELETE /customers/links/:linkId`, `PATCH` and `DELETE /customers/:id`, `POST /customers/:id/notes`, `PATCH` and `DELETE /customers/:id/notes/:noteId`, `PUT /customers/config` and `POST /customers/config/test` |
 | `profiles:read` (Read Profiles) | `GET /profiles`, `GET /profiles/:id`, `GET /profiles/:id/status`, `GET /accounts/:accountId/profiles`, `GET /accounts/:accountId/profiles/:profileId` |
 | `profiles:write` (Manage Profiles) | `POST /profiles`, `PUT` and `DELETE /profiles/:id`, `POST /profiles/:id/connect` and `/disconnect`, `PUT /profiles/:id/calls-settings`, `POST`, `GET` and `DELETE /profiles/:id/calls-announcement`; under `/accounts/:accountId/profiles`: the create, the delete, `connect`, `disconnect` and `GET .../:profileId/qr`; and the pairing QR on the socket |
 | `webhooks:read` (Read Webhooks) | `GET /webhooks`, `GET /webhooks/:id` (they show each webhook's signing secret and custom headers) |
@@ -67,8 +69,8 @@ Each organization member has one role. An API key acts with its user's role, at 
 | Role | May |
 |---|---|
 | `viewer` | read; their own account: sign-in and sign-out, password, preferences, sessions, 2FA, notifications, API keys, and deleting the account |
-| `member` | as a viewer, plus send messages one at a time, upload media, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, use the AI routes |
-| `admin` | as a member, plus configure the organization, accounts, profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, send and cancel bulk batches, delete chats, read webhooks and audit logs, export contacts, and manage members and viewers |
+| `member` | as a viewer, plus send messages one at a time, upload media, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, link numbers to customers and write their notes and tags, use the AI routes |
+| `admin` | as a member, plus configure the organization, accounts, profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, send and cancel bulk batches, delete chats, delete customers and set the customer lookup, read webhooks and audit logs, export contacts, and manage members and viewers |
 | `owner` | as an admin, plus manage admins |
 
 A viewer's reads include the lookups that are `POST`s: a template preview, an automation test, a number check and a knowledge-base search. A few reads are for owners and admins only (webhooks, audit logs, the exports, a group's invite link, the auto-reply hooks' settings, call recordings, the calls media status, a profile's call announcement and the QR route): the notes under each section below say which.
@@ -96,6 +98,7 @@ An error has its HTTP status, and a body with the status, a message and the stat
 ```
 
 - On the routes of your workspaces' resources (profiles, contacts, conversations, calls and the like), an id outside your organization, or of nothing at all, is this `403`: the API does not say which.
+- The customer routes (`/customers/...`) answer `404` instead, for an id outside your organization as for an id of nothing.
 - A validation error (`400`) lists every problem in `message`.
 - Some errors carry a code of their own in `error`: a send through a disconnected profile is `409` `PROFILE_DISCONNECTED`, and the send gate's `429` is `{ "error": "DAILY_LIMIT_REACHED", … }` without `statusCode` (see [Messaging](<../features/messaging.md>)).
 - A refusal with reasons is `409` `{ "message": "…", "reasons": ["…"] }`, from the call settings and the announcement (see [Calls](#calls-calls)).
@@ -429,6 +432,33 @@ Owners, admins and members add and edit contacts and tags; deleting, importing, 
 
 Contact lists answer at most 1000 rows per request (`limit`), and a bulk validation takes at most 1000 numbers.
 
+### Customers (`/customers`)
+
+The guide, with the lookup contract and an example endpoint: [Customers](<../features/customers.md>).
+
+A customer is an ID in the organization's own system, linked to WhatsApp numbers. Every role reads, but for the preview of an ID that is not linked yet, which owners, admins and members make. Owners, admins and members link numbers, write notes and change tags; a note is changed by its author, an owner or an admin. Owners and admins delete customers and change the lookup settings. Another organization's customer, link or note answers `404`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/customers` | Search by ID (prefix), linked number or name (`q`); `page`, `pageSize` (at most 100) |
+| `GET` | `/customers/config` | The lookup settings: `idLabel`, `lookupUrl`, `hasSecret`, `timeoutMs`, `configured` (the secret is never sent) |
+| `PUT` | `/customers/config` | Change the lookup settings: an empty `lookupUrl` turns the lookup off, an omitted `secret` keeps it, an empty one clears it (owner or admin) |
+| `POST` | `/customers/config/test` | One lookup of an `externalId` with the saved settings, bypassing the cache (owner or admin) |
+| `GET` | `/customers/lookup` | Preview the lookup of an `externalId` that is not linked yet; stores nothing (owner, admin or member). At most 30 a minute for each user, or for each API key when the request came with one; past that, `429` "Too many lookups, try again shortly" |
+| `GET` | `/customers/by-phone/:phone` | The customers linked to a number, its default first |
+| `POST` | `/customers/links` | Link a number to a customer ID (`externalId`, `phone`): `201` with a new link, `200` with one that existed |
+| `POST` | `/customers/links/:linkId/use` | Make a link its number's default |
+| `DELETE` | `/customers/links/:linkId` | Remove a link; the customer, its notes and tags stay |
+| `GET` | `/customers/:id` | A customer with its links, tags, manual fields and 20 newest notes |
+| `PATCH` | `/customers/:id` | Change `tags`; `displayName` and `manualFields` only while no lookup is configured (else `409`) |
+| `DELETE` | `/customers/:id` | Delete a customer with its links and notes (owner or admin) |
+| `GET` | `/customers/:id/lookup` | The live lookup: `ok`, `not_found`, `unavailable` or `not_configured` (`refresh=true` skips the minute's cache) |
+| `GET` | `/customers/:id/history` | The organization's one-to-one chats and calls with the customer's numbers, newest first (`limit` at most 50) |
+| `GET` | `/customers/:id/notes` | The notes, newest first (`page`, `pageSize` at most 100) |
+| `POST` | `/customers/:id/notes` | Add a note (`body`, 1 to 2000 characters) |
+| `PATCH` | `/customers/:id/notes/:noteId` | Edit a note: its author, an owner or an admin |
+| `DELETE` | `/customers/:id/notes/:noteId` | Delete a note: its author, an owner or an admin |
+
 ### Templates (`/templates`)
 
 | Method | Endpoint | Description |
@@ -586,7 +616,7 @@ Owners and admins only.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/organizations/current` | Get current organization |
-| `PUT` | `/organizations/current` | Update current organization |
+| `PUT` | `/organizations/current` | Update current organization. It keeps `settings.customers` whatever `settings` it is sent: only `PUT /customers/config` changes it |
 | `GET` | `/organizations/members` | List members |
 | `POST` | `/organizations/members` | Invite a member |
 | `PUT` | `/organizations/members/:id/role` | Change member role |
@@ -608,7 +638,7 @@ Every role reads. Owners and admins create, change and delete workspaces.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/account/export` | Export the caller's own data (user, sessions, notifications, push subscriptions, audit log) and the organization's profiles, messages (the newest 10000), contacts and automations. Owners and admins only |
+| `GET` | `/account/export` | Export the caller's own data (user, sessions, notifications, push subscriptions, audit log) and the organization's profiles, messages (the newest 10000), contacts, automations and customers (with their links, notes and tags). Owners and admins only |
 | `DELETE` | `/account/delete` | Delete account and personal data. The organization stays, so an owner gets `403`: an owner deletes their account with `DELETE /auth/account`, which deletes the organization too |
 
 ---

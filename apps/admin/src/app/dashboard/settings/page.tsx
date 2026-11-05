@@ -44,6 +44,7 @@ import { useToast } from '@/hooks/use-toast';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { DeviceCheck } from '@/components/calls/device-check';
 import { useCalls } from '@/components/calls/calls-provider';
+import { CustomersSettings } from '@/components/customers/customers-settings';
 import {
   Tabs,
   TabsContent,
@@ -76,7 +77,7 @@ interface Member {
   createdAt: string;
 }
 
-const TABS = ['account', 'team', 'notifications', 'calls', 'api', 'security', 'storage'];
+const TABS = ['account', 'team', 'notifications', 'calls', 'customers', 'api', 'security', 'storage'];
 
 const ROLES = [
   { value: 'admin', label: 'Admin', color: 'bg-sky-500' },
@@ -516,6 +517,7 @@ export default function SettingsPage() {
               Calls
             </TabsTrigger>
           )}
+          <TabsTrigger value="customers">Customers</TabsTrigger>
           <TabsTrigger value="api">API & Webhooks</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           {serverOwner && <TabsTrigger value="storage">Storage</TabsTrigger>}
@@ -972,6 +974,11 @@ export default function SettingsPage() {
             <span className="sr-only">Loading calls settings</span>
           </Skeleton>
         )}
+
+        {/* Customers Tab: every role reads it, an owner or admin changes it. */}
+        <TabsContent value="customers">
+          <CustomersSettings />
+        </TabsContent>
 
         {/* API Tab */}
         <TabsContent value="api">

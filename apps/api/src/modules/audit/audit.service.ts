@@ -59,6 +59,16 @@ export enum AuditAction {
   CONTACT_DELETE = 'contact.delete',
   CONTACT_SYNC = 'contact.sync',
 
+  // Customers
+  CUSTOMER_LINK = 'customer.link',
+  CUSTOMER_UNLINK = 'customer.unlink',
+  CUSTOMER_UPDATE = 'customer.update',
+  CUSTOMER_DELETE = 'customer.delete',
+  CUSTOMER_NOTE_CREATE = 'customer.note.create',
+  CUSTOMER_NOTE_UPDATE = 'customer.note.update',
+  CUSTOMER_NOTE_DELETE = 'customer.note.delete',
+  CUSTOMER_CONFIG_UPDATE = 'customer.config.update',
+
   // Templates
   TEMPLATE_CREATE = 'template.create',
   TEMPLATE_UPDATE = 'template.update',
