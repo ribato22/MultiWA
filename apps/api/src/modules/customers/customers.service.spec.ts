@@ -5,18 +5,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
-// Every `prisma.<model>.<method>` is one vi.fn, made when a test first reads it.
+// Every `prisma.<model>.<method>` is one vi.fn, made when a test first reads it; so are the client's own `prisma.$...`.
 const db = vi.hoisted(() => {
   const fns = new Map<string, ReturnType<typeof vi.fn>>();
-  const model = (name: string) =>
-    new Proxy({}, {
-      get: (_, fn) => {
-        const key = `${name}.${String(fn)}`;
-        if (!fns.has(key)) fns.set(key, vi.fn());
-        return fns.get(key);
-      },
-    });
-  return { fns, prisma: new Proxy({}, { get: (_, name) => model(String(name)) }) };
+  const fn = (key: string) => {
+    if (!fns.has(key)) fns.set(key, vi.fn());
+    return fns.get(key)!;
+  };
+  const model = (name: string) => new Proxy({}, { get: (_, method) => fn(`${name}.${String(method)}`) });
+  return { fns, prisma: new Proxy({}, { get: (_, name) => (String(name).startsWith('$') ? fn(String(name)) : model(String(name))) }) };
 });
 vi.mock('@multiwa/database', () => ({ prisma: db.prisma }));
 
@@ -42,6 +39,8 @@ const noteRow = (over: object = {}) => ({
   id: 'n-1', customerId: 'c-1', authorUserId: 'u-member', authorApiKeyId: null, body: 'Prefers a call after 16:00', createdAt: AT, updatedAt: AT, ...over,
 });
 const clash = () => Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+/** What Prisma raises for a write to a row a concurrent delete has taken: P2025 for a change, P2003 for a create that points at it. */
+const vanished = (code: 'P2025' | 'P2003') => Object.assign(new Error(`Prisma ${code}`), { code });
 /** Found unless the query is scoped to another organization: a query without the scope would find another's row too. */
 const inOrg1 = (where: any) => where?.organizationId === undefined || where.organizationId === 'org-1';
 const calls = (name: string) => db.fns.get(name)?.mock.calls ?? [];
@@ -59,6 +58,8 @@ beforeEach(() => {
   db.fns.forEach((fn) => fn.mockReset());
   for (const fn of [...Object.values(lookups), audit.log]) fn.mockReset();
   audit.log.mockResolvedValue(undefined);
+  // A transaction's callback runs on the mocked client.
+  p.$transaction.mockImplementation((run: (tx: unknown) => unknown) => run(p));
   lookups.config.mockResolvedValue({ idLabel: 'Customer ID', lookupUrl: null, lookupSecretEnc: null, timeoutMs: 5000 });
 });
 afterEach(() => vi.useRealTimers());
@@ -375,6 +376,60 @@ describe('notes', () => {
   });
 });
 
+describe('a customer, link or note deleted between the read and the write answers 404', () => {
+  it('link: the customer is gone when its link is made', async () => {
+    p.customer.findUnique.mockResolvedValue(customerRow());
+    p.customerLink.findUnique.mockResolvedValue(null);
+    p.customerLink.create.mockRejectedValue(vanished('P2003'));
+    await expect(service().link(MEMBER, '1234567890', '6281100000001')).rejects.toMatchObject({ status: 404, message: 'Customer not found' });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("link: the link is gone when it becomes its number's default", async () => {
+    p.customer.findUnique.mockResolvedValue(customerRow());
+    p.customerLink.findUnique.mockResolvedValue(linkRow());
+    p.customerLink.update.mockRejectedValue(vanished('P2025'));
+    await expect(service().link(MEMBER, '1234567890', '6281100000001')).rejects.toMatchObject({ status: 404, message: 'Link not found' });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it("useLink: the link is gone when it is made its number's default", async () => {
+    p.customerLink.findFirst.mockResolvedValue(linkRow());
+    p.customerLink.update.mockRejectedValue(vanished('P2025'));
+    await expect(service().useLink(MEMBER, 'l-1')).rejects.toMatchObject({ status: 404, message: 'Link not found' });
+  });
+
+  it('update: the customer is gone when its changes are saved, and nothing is audited', async () => {
+    p.customer.findFirst.mockResolvedValue(customerRow());
+    p.customer.update.mockRejectedValue(vanished('P2025'));
+    await expect(service().update(MEMBER, 'c-1', { tags: ['vip'] })).rejects.toMatchObject({ status: 404, message: 'Customer not found' });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it('addNote: the customer is gone when the note is written, and nothing is audited', async () => {
+    p.customer.findFirst.mockResolvedValue(customerRow());
+    p.customerNote.create.mockRejectedValue(vanished('P2003'));
+    await expect(service().addNote(MEMBER, 'c-1', 'hello')).rejects.toMatchObject({ status: 404, message: 'Customer not found' });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it('editNote: the note is gone when the edit is saved, and nothing is audited', async () => {
+    p.customerNote.findFirst.mockResolvedValue(noteRow());
+    p.customerNote.update.mockRejectedValue(vanished('P2025'));
+    await expect(service().editNote(MEMBER, 'c-1', 'n-1', 'Edited')).rejects.toMatchObject({ status: 404, message: 'Note not found' });
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it('any other database error is not a 404', async () => {
+    p.customerLink.findFirst.mockResolvedValue(linkRow());
+    p.customerLink.update.mockRejectedValue(new Error('connection lost'));
+    await expect(service().useLink(MEMBER, 'l-1')).rejects.toThrow('connection lost');
+    p.customerNote.findFirst.mockResolvedValue(noteRow());
+    p.customerNote.update.mockRejectedValue(clash());
+    await expect(service().editNote(MEMBER, 'c-1', 'n-1', 'Edited')).rejects.toMatchObject({ code: 'P2002' });
+  });
+});
+
 describe('CustomersService.list', () => {
   beforeEach(() => {
     p.customer.findMany.mockResolvedValue([]);
@@ -400,6 +455,14 @@ describe('CustomersService.list', () => {
     expect(p.customer.findMany.mock.calls[0][0].where.OR).toEqual([
       { externalId: { startsWith: 'AB-123', mode: 'insensitive' } },
       { displayName: { contains: 'AB-123', mode: 'insensitive' } },
+    ]);
+  });
+
+  it("searches for the text typed: a query's %, _ and \\ are no wildcards", async () => {
+    await service().list('org-1', { q: '50%_a\\b' });
+    expect(p.customer.findMany.mock.calls[0][0].where.OR).toEqual([
+      { externalId: { startsWith: '50\\%\\_a\\\\b', mode: 'insensitive' } },
+      { displayName: { contains: '50\\%\\_a\\\\b', mode: 'insensitive' } },
     ]);
   });
 
@@ -554,12 +617,34 @@ describe('the lookup settings', () => {
     expect(JSON.stringify(audit.log.mock.calls)).not.toContain('tok-123');
   });
 
+  it('PUT locks the organization row, then reads, merges and writes inside the one transaction', async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: 'org-1' }]),
+      organization: { findUnique: vi.fn().mockResolvedValue({ settings: { theme: 'dark' } }), update: vi.fn().mockResolvedValue({}) },
+    };
+    p.$transaction.mockImplementation((run: (client: unknown) => unknown) => run(tx));
+    await service().setConfig(ADMIN, { timeoutMs: 8000 });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [sql, ...values] = tx.$queryRaw.mock.calls[0];
+    expect([sql.join('?'), values]).toEqual(['SELECT id FROM organizations WHERE id = ? FOR UPDATE', ['org-1']]);
+    const at = (fn: ReturnType<typeof vi.fn>) => fn.mock.invocationCallOrder[0];
+    expect(at(tx.$queryRaw)).toBeLessThan(at(tx.organization.findUnique));
+    expect(at(tx.organization.findUnique)).toBeLessThan(at(tx.organization.update));
+    expect(tx.organization.update.mock.calls[0][0].data.settings).toEqual({
+      theme: 'dark', customers: { idLabel: 'Customer ID', lookupUrl: null, lookupSecretEnc: null, timeoutMs: 8000 },
+    });
+    // Nothing read or wrote the row outside the transaction: a read there would not wait for the lock.
+    for (const outside of ['organization.findUnique', 'organization.update']) expect(calls(outside)).toEqual([]);
+  });
+
   it("PUT answers 400 with the rule's message for a URL the SSRF rule refuses, and saves nothing", async () => {
     await expect(service().setConfig(ADMIN, { lookupUrl: 'http://127.0.0.1:8080/lookup' })).rejects.toThrow(BadRequestException);
     await expect(service().setConfig(ADMIN, { lookupUrl: 'http://127.0.0.1:8080/lookup' })).rejects.toThrow('Webhook target address is not allowed');
     await expect(service().setConfig(ADMIN, { lookupUrl: 'ftp://8.8.8.8/lookup' })).rejects.toThrow('Unsupported webhook URL scheme "ftp:"');
     expect(p.organization.update).not.toHaveBeenCalled();
     expect(lookups.forget).not.toHaveBeenCalled();
+    // The URL check resolves a host: it runs before the lock is taken, which is not held for it.
+    expect(calls('$transaction')).toEqual([]);
   });
 
   it('PUT keeps an omitted secret and clears an empty one; an empty URL turns the lookup off', async () => {
@@ -574,6 +659,7 @@ describe('the lookup settings', () => {
   it('PUT refuses an ID label that is blank once trimmed', async () => {
     await expect(service().setConfig(ADMIN, { idLabel: '   ' })).rejects.toThrow(BadRequestException);
     expect(p.organization.update).not.toHaveBeenCalled();
+    expect(calls('$transaction')).toEqual([]);
   });
 
   it('a test runs one lookup of a valid ID with the saved settings', async () => {

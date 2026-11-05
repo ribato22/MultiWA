@@ -34,19 +34,20 @@ export class OrganizationsService {
   }
 
   // settings.customers holds the customer lookup's settings, written by PUT /customers/config, which checks the URL and
-  // encrypts the secret. An update here keeps them, whatever settings it is sent.
+  // encrypts the secret. An update here keeps them, whatever settings it is sent. The row is locked before they are
+  // read, so a save of them made meanwhile is not written back over.
   async update(id: string, dto: any) {
-    let settings = dto.settings;
-    if (settings && typeof settings === 'object') {
-      const current = await prisma.organization.findUnique({ where: { id }, select: { settings: true } });
-      const { customers: _sent, ...rest } = settings;
-      const kept = (current?.settings as Record<string, unknown> | null)?.customers;
-      settings = kept === undefined ? rest : { ...rest, customers: kept };
+    const { name, settings } = dto;
+    if (!settings || typeof settings !== 'object') {
+      return withoutLookupSecret(await prisma.organization.update({ where: { id }, data: { name, settings } }));
     }
+    const { customers: _sent, ...rest } = settings;
     return withoutLookupSecret(
-      await prisma.organization.update({
-        where: { id },
-        data: { name: dto.name, settings },
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${id} FOR UPDATE`;
+        const current = await tx.organization.findUnique({ where: { id }, select: { settings: true } });
+        const kept = (current?.settings as Record<string, unknown> | null)?.customers;
+        return tx.organization.update({ where: { id }, data: { name, settings: kept === undefined ? rest : { ...rest, customers: kept } } });
       }),
     );
   }

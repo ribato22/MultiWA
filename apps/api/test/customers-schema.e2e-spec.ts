@@ -37,6 +37,20 @@ describe('Customer tables (e2e)', () => {
     });
   });
 
+  it('raises P2003 for a link or note made on a customer deleted meanwhile, and P2025 for a change to a deleted row', async () => {
+    // CustomersService answers 404 for these two codes, which a delete made between its read and its write causes.
+    const org = await organization('e');
+    const customer = await prisma.customer.create({ data: { organizationId: org, externalId: 'E-1' } });
+    const link = await prisma.customerLink.create({ data: { organizationId: org, customerId: customer.id, phone: '6281100000003' } });
+    const note = await prisma.customerNote.create({ data: { customerId: customer.id, body: 'Prefers a call after 16:00' } });
+    await prisma.customer.delete({ where: { id: customer.id } });
+    await expect(prisma.customerLink.create({ data: { organizationId: org, customerId: customer.id, phone: '6281100000004' } })).rejects.toMatchObject({ code: 'P2003' });
+    await expect(prisma.customerNote.create({ data: { customerId: customer.id, body: 'Seen' } })).rejects.toMatchObject({ code: 'P2003' });
+    await expect(prisma.customer.update({ where: { id: customer.id }, data: { tags: ['vip'] } })).rejects.toMatchObject({ code: 'P2025' });
+    await expect(prisma.customerLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } })).rejects.toMatchObject({ code: 'P2025' });
+    await expect(prisma.customerNote.update({ where: { id: note.id }, data: { body: 'Checked' } })).rejects.toMatchObject({ code: 'P2025' });
+  });
+
   it("deletes a customer's links and notes with it, and an organization's customers with it", async () => {
     const org = await organization('d');
     const kept = await prisma.customer.create({ data: { organizationId: org, externalId: 'D-1' } });

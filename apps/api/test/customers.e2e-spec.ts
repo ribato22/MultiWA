@@ -4,7 +4,8 @@
 // - a number linked to an ID once (201, then 200), and the number's default ID;
 // - notes and their authors;
 // - the lookup's four states, and the settings' write-only secret;
-// - the search, the history and the GDPR export;
+// - the search (its % _ and \ are the text typed), the history and the GDPR export;
+// - settings saved at the same moment all staying;
 // - another organization's customers answering 404.
 // The unit specs pin the same rules with Prisma mocked.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -15,6 +16,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { prisma } from '@multiwa/database';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/app.factory';
+import { decrypt } from '../src/common/crypto/secret-box';
 import { EngineManagerService } from '../src/modules/profiles/engine-manager.service';
 
 const engineStub = { onModuleInit: () => undefined, onModuleDestroy: () => undefined, getEngine: () => null, getStatus: () => 'DISCONNECTED' };
@@ -310,5 +312,36 @@ describe('Customers (e2e)', () => {
     expect((await send('DELETE', `/customers/${id}`, admin)).json()).toEqual({ success: true });
     expect(await prisma.customerLink.count({ where: { customerId: id } })).toBe(0);
     expect((await send('GET', `/customers/${id}`, admin)).statusCode).toBe(404);
+  });
+
+  it('a search finds the % _ and \\ typed, not a wildcard: A_ is not A1 or AB', async () => {
+    const organizationId = owner.user.organizationId;
+    const ids = ['A1', 'AB', 'A_C'];
+    for (const externalId of ids) expect((await send('POST', '/customers/links', member, { externalId, phone: PHONE })).statusCode).toBe(201);
+    await prisma.customer.update({ where: { organizationId_externalId: { organizationId, externalId: 'AB' } }, data: { displayName: '100% sure' } });
+    const found = async (q: string) => externalIds((await send('GET', `/customers?q=${encodeURIComponent(q)}`, viewer)).json().items).sort();
+    expect(await found('A1')).toEqual(['A1']);
+    expect(await found('A_')).toEqual(['A_C']);
+    expect(await found('a_')).toEqual(['A_C']);
+    expect(await found('%')).toEqual(['AB']);
+    expect(await found('0% s')).toEqual(['AB']);
+    expect(await found('\\')).toEqual([]);
+    await prisma.customer.deleteMany({ where: { organizationId, externalId: { in: ids } } });
+  });
+
+  it('settings saved at the same moment all stay: the lookup settings, one field each, and the organization settings', async () => {
+    const organizationId = owner.user.organizationId;
+    const saves = await Promise.all([
+      send('PUT', '/customers/config', admin, { idLabel: 'Nomor Pelanggan' }),
+      send('PUT', '/customers/config', admin, { timeoutMs: 7000 }),
+      send('PUT', '/customers/config', admin, { secret: 'second-secret' }),
+      send('PUT', '/customers/config', admin, { lookupUrl: `${lookupUrl}?v=2` }),
+      send('PUT', '/organizations/current', admin, { settings: { theme: 'dark' } }),
+    ]);
+    expect(saves.map((res) => res.statusCode)).toEqual([200, 200, 200, 200, 200]);
+    const settings = (await prisma.organization.findUniqueOrThrow({ where: { id: organizationId } })).settings as any;
+    expect(settings.theme).toBe('dark');
+    expect(settings.customers).toMatchObject({ idLabel: 'Nomor Pelanggan', timeoutMs: 7000, lookupUrl: `${lookupUrl}?v=2` });
+    expect(decrypt(settings.customers.lookupSecretEnc)).toBe('second-secret');
   });
 });

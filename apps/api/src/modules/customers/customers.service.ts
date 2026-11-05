@@ -115,12 +115,29 @@ async function findOrCreate<T>(find: () => Promise<T | null>, create: () => Prom
   }
 }
 
+/**
+ * A write to a row read a moment ago. A delete made in between takes the row: Prisma raises P2025 for a change to it and
+ * P2003 for a create that points at it, and either answers 404 with this message. Any other error goes through.
+ */
+async function orNotFound<T>(write: Promise<T>, message: string): Promise<T> {
+  try {
+    return await write;
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === 'P2025' || code === 'P2003') throw new NotFoundException(message);
+    throw e;
+  }
+}
+
 /** A note's text as stored: trimmed, of 1 to 2000 characters. */
 function toNoteBody(raw: unknown): string {
   const body = typeof raw === 'string' ? raw.trim() : '';
   if (!body || body.length > 2000) throw new BadRequestException('A note has 1 to 2000 characters');
   return body;
 }
+
+/** The text as a pattern for contains and startsWith: Prisma hands a `%`, `_` or `\` in it to LIKE as it is, where it is a wildcard or an escape. */
+const likeLiteral = (text: string) => text.replace(/[\\%_]/g, '\\$&');
 
 /** A page number from the query: 1 unless it is a whole number of at least 1. */
 const pageOf = (raw: unknown): number => {
@@ -184,7 +201,8 @@ export class CustomersService {
 
   /**
    * Links a number to a customer ID, making the customer when the ID is new and the link when it is missing. A link
-   * that exists is answered as it is (created: false), and nothing changes.
+   * that exists is answered with created: false and becomes its number's default (its lastUsedAt is now); nothing else
+   * changes, and nothing is audited.
    */
   async link(actor: Actor, rawExternalId: unknown, rawPhone: unknown): Promise<LinkResult> {
     const externalId = toExternalId(rawExternalId);
@@ -197,13 +215,16 @@ export class CustomersService {
     const { row: link, created } = await findOrCreate(
       () => prisma.customerLink.findUnique({ where: { customerId_phone: { customerId: customer.id, phone } } }),
       () =>
-        prisma.customerLink.create({
-          data: { organizationId, customerId: customer.id, phone, linkedByUserId: actor.userId, linkedByApiKeyId: actor.apiKeyId ?? null },
-        }),
+        orNotFound(
+          prisma.customerLink.create({
+            data: { organizationId, customerId: customer.id, phone, linkedByUserId: actor.userId, linkedByApiKeyId: actor.apiKeyId ?? null },
+          }),
+          'Customer not found',
+        ),
     );
     if (created) this.audit(actor, AuditAction.CUSTOMER_LINK, customer.id, { customerId: customer.id, linkId: link.id });
     // Linking a number to an ID it already has says which ID the number is about now: it becomes the default.
-    else await prisma.customerLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } });
+    else await orNotFound(prisma.customerLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } }), 'Link not found');
     const view = await this.findOne(organizationId, customer.id);
     return { created, customer: view, link: view.links.find((l) => l.id === link.id) ?? linkView(link, () => null) };
   }
@@ -212,7 +233,7 @@ export class CustomersService {
   async useLink(actor: Actor, linkId: string): Promise<CustomerLinkView> {
     const link = await prisma.customerLink.findFirst({ where: { id: linkId, organizationId: actor.organizationId } });
     if (!link) throw new NotFoundException('Link not found');
-    const used = await prisma.customerLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } });
+    const used = await orNotFound(prisma.customerLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } }), 'Link not found');
     return linkView(used, await this.names(actor.organizationId, [linkedBy(used)]));
   }
 
@@ -235,14 +256,17 @@ export class CustomersService {
     if (manual && (await this.lookups.config(actor.organizationId)).lookupUrl) {
       throw new ConflictException('The name and the fields come from the lookup while one is configured');
     }
-    await prisma.customer.update({
-      where: { id: customer.id },
-      data: {
-        ...(changes.tags !== undefined ? { tags: [...new Set(changes.tags.map((t) => t.trim()).filter(Boolean))] } : {}),
-        ...(changes.displayName !== undefined ? { displayName: changes.displayName?.trim() || null } : {}),
-        ...(changes.manualFields !== undefined ? { manualFields: changes.manualFields.map(({ label, value }) => ({ label, value })) } : {}),
-      },
-    });
+    await orNotFound(
+      prisma.customer.update({
+        where: { id: customer.id },
+        data: {
+          ...(changes.tags !== undefined ? { tags: [...new Set(changes.tags.map((t) => t.trim()).filter(Boolean))] } : {}),
+          ...(changes.displayName !== undefined ? { displayName: changes.displayName?.trim() || null } : {}),
+          ...(changes.manualFields !== undefined ? { manualFields: changes.manualFields.map(({ label, value }) => ({ label, value })) } : {}),
+        },
+      }),
+      'Customer not found',
+    );
     this.audit(actor, AuditAction.CUSTOMER_UPDATE, customer.id, { customerId: customer.id });
     return this.findOne(actor.organizationId, customer.id);
   }
@@ -264,9 +288,10 @@ export class CustomersService {
     if (q) {
       // A number's digits only for a query that is a number: an ID like AB-123 is no phone number.
       const digits = /^[\d\s()+-]+$/.test(q) ? normalizePhone(q) : '';
+      const text = likeLiteral(q);
       where.OR = [
-        { externalId: { startsWith: q, mode: 'insensitive' } },
-        { displayName: { contains: q, mode: 'insensitive' } },
+        { externalId: { startsWith: text, mode: 'insensitive' } },
+        { displayName: { contains: text, mode: 'insensitive' } },
         ...(digits ? [{ links: { some: { phone: { contains: digits } } } }] : []),
       ];
     }
@@ -318,9 +343,12 @@ export class CustomersService {
   async addNote(actor: Actor, id: string, rawBody: unknown): Promise<CustomerNoteView> {
     const body = toNoteBody(rawBody);
     const customer = await this.owned(actor.organizationId, id);
-    const note = await prisma.customerNote.create({
-      data: { customerId: customer.id, body, authorUserId: actor.userId, authorApiKeyId: actor.apiKeyId ?? null },
-    });
+    const note = await orNotFound(
+      prisma.customerNote.create({
+        data: { customerId: customer.id, body, authorUserId: actor.userId, authorApiKeyId: actor.apiKeyId ?? null },
+      }),
+      'Customer not found',
+    );
     this.audit(actor, AuditAction.CUSTOMER_NOTE_CREATE, customer.id, { customerId: customer.id, noteId: note.id });
     return noteView(note, await this.names(actor.organizationId, [authoredBy(note)]));
   }
@@ -329,7 +357,7 @@ export class CustomersService {
   async editNote(actor: Actor, id: string, noteId: string, rawBody: unknown): Promise<CustomerNoteView> {
     const body = toNoteBody(rawBody);
     const note = await this.changeableNote(actor, id, noteId);
-    const edited = await prisma.customerNote.update({ where: { id: note.id }, data: { body } });
+    const edited = await orNotFound(prisma.customerNote.update({ where: { id: note.id }, data: { body } }), 'Note not found');
     this.audit(actor, AuditAction.CUSTOMER_NOTE_UPDATE, note.customerId, { customerId: note.customerId, noteId: note.id });
     return noteView(edited, await this.names(actor.organizationId, [authoredBy(edited)]));
   }
@@ -436,12 +464,12 @@ export class CustomersService {
    * is stored encrypted, and no answer carries it.
    */
   async setConfig(actor: Actor, changes: ConfigChanges): Promise<CustomerConfigView> {
-    const org = await prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { settings: true } });
-    const next = readCustomerConfig(org?.settings);
+    // Checked and encrypted before the organization is locked: the URL check resolves its host, and the lock is not held for that.
+    const patch: Partial<CustomerConfig> = {};
     if (changes.idLabel !== undefined) {
       const label = changes.idLabel.trim();
       if (!label || label.length > 40) throw new BadRequestException('The ID label has 1 to 40 characters');
-      next.idLabel = label;
+      patch.idLabel = label;
     }
     if (changes.lookupUrl !== undefined) {
       const url = changes.lookupUrl.trim();
@@ -453,13 +481,20 @@ export class CustomersService {
           throw e;
         }
       }
-      next.lookupUrl = url || null;
+      patch.lookupUrl = url || null;
     }
-    if (changes.secret !== undefined) next.lookupSecretEnc = changes.secret ? encrypt(changes.secret) : null;
-    if (changes.timeoutMs !== undefined) next.timeoutMs = changes.timeoutMs;
-    await prisma.organization.update({
-      where: { id: actor.organizationId },
-      data: { settings: { ...(org?.settings as object | null), customers: next } },
+    if (changes.secret !== undefined) patch.lookupSecretEnc = changes.secret ? encrypt(changes.secret) : null;
+    if (changes.timeoutMs !== undefined) patch.timeoutMs = changes.timeoutMs;
+    // The row is locked before the settings are read: a save that read them before another's write would write them back over it.
+    const next = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM organizations WHERE id = ${actor.organizationId} FOR UPDATE`;
+      const org = await tx.organization.findUnique({ where: { id: actor.organizationId }, select: { settings: true } });
+      const customers = { ...readCustomerConfig(org?.settings), ...patch };
+      await tx.organization.update({
+        where: { id: actor.organizationId },
+        data: { settings: { ...(org?.settings as object | null), customers } },
+      });
+      return customers;
     });
     this.lookups.forget(actor.organizationId);
     this.audit(actor, AuditAction.CUSTOMER_CONFIG_UPDATE, null, {});
