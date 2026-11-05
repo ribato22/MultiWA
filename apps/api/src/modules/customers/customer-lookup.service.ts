@@ -2,12 +2,14 @@
 // apps/api/src/modules/customers/customer-lookup.service.ts
 //
 // An organization's lookup settings live in Organization.settings.customers. A found or not-found answer is kept for a
-// minute per organization and ID; an unavailable one is asked again on the next request. A refresh skips the cache at
-// most REFRESH_LIMIT times a minute per user: past that it is answered from the cache like any other request, so a
-// client looping on refresh cannot flood the organization's system. Each call is logged with the organization, the
-// state, the HTTP status and the latency, never the secret or the answer.
+// minute per organization and ID; an unavailable one is asked again on the next request. Two kinds of request are
+// bounded per minute, so that a client looping on them cannot flood the organization's system: a refresh skips the
+// cache at most REFRESH_LIMIT times per user, and past that it is answered from the cache like any other request; a
+// preview (the lookup of an ID that is not linked yet) is allowed PREVIEW_LIMIT times per API key, or per user when
+// the request came without one, the cache's answers counted too, and past that it is refused with 429. Each call is
+// logged with the organization, the state, the HTTP status and the latency, never the secret or the answer.
 
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { decrypt } from '../../common/crypto/secret-box';
 import { fetchLookup, type LookupOutcome } from './lookup';
@@ -18,7 +20,9 @@ export const DEFAULT_TIMEOUT_MS = 5000;
 export const MIN_TIMEOUT_MS = 1000;
 export const MAX_TIMEOUT_MS = 15000;
 export const REFRESH_LIMIT = 30;
-const REFRESH_WINDOW_MS = 60_000;
+export const PREVIEW_LIMIT = 30;
+/** The window of both allowances. */
+const LIMIT_WINDOW_MS = 60_000;
 const CACHE_MS = 60_000;
 /** The most answers kept: past it, the oldest goes. */
 const MAX_KEPT = 10_000;
@@ -50,7 +54,10 @@ const notConfigured = (): LookupResult => ({ state: 'not_configured', data: null
 export class CustomerLookupService {
   private readonly logger = new Logger(CustomerLookupService.name);
   private readonly kept = new Map<string, Kept>();
+  // The times of each user's last refreshes, and of each actor's last previews: in this process, so with several API
+  // processes each counts on its own.
   private readonly refreshes = new Map<string, number[]>();
+  private readonly previews = new Map<string, number[]>();
 
   /** The organization's lookup settings. */
   async config(organizationId: string): Promise<CustomerConfig> {
@@ -64,13 +71,28 @@ export class CustomerLookupService {
     if (!config.lookupUrl) return notConfigured();
     const key = `${organizationId} ${externalId}`; // an ID has no space
     const kept = this.kept.get(key);
-    if (kept && kept.until > Date.now() && !(opts.refresh && this.mayRefresh(opts.userId))) {
+    if (kept && kept.until > Date.now() && !(opts.refresh && this.allowed(this.refreshes, opts.userId, REFRESH_LIMIT))) {
       return answer(kept.outcome, kept.fetchedAt, true);
     }
     const outcome = await this.call(organizationId, config, externalId);
     const fetchedAt = new Date().toISOString();
     if (outcome.state !== 'unavailable') this.keep(key, { outcome, fetchedAt, until: Date.now() + CACHE_MS });
     return answer(outcome, fetchedAt, false);
+  }
+
+  /**
+   * The lookup of an ID that is not linked yet, for an agent to check it: `lookup` without a refresh. Allowed PREVIEW_LIMIT
+   * times a minute per actor, the API key's id when the request came with a key, else the user's; every call counts, one
+   * the cache answers too. Past that, 429 and nothing is read or asked.
+   */
+  async preview(organizationId: string, externalId: string, who: { userId: string; apiKeyId?: string }): Promise<LookupResult> {
+    if (!this.allowed(this.previews, who.apiKeyId ?? who.userId, PREVIEW_LIMIT)) {
+      throw new HttpException(
+        { statusCode: HttpStatus.TOO_MANY_REQUESTS, message: 'Too many lookups, try again shortly', error: 'Too Many Requests' },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    return this.lookup(organizationId, externalId, { userId: who.userId });
   }
 
   /** One lookup with the saved settings, for an admin's test: it neither reads nor fills the cache. */
@@ -95,13 +117,13 @@ export class CustomerLookupService {
     return outcome;
   }
 
-  /** Whether the user may skip the cache once more this minute; a yes counts. */
-  private mayRefresh(userId: string): boolean {
+  /** Whether `who` may do one more this minute, going by the times of its last ones in `used`; a yes counts. */
+  private allowed(used: Map<string, number[]>, who: string, limit: number): boolean {
     const now = Date.now();
-    const recent = (this.refreshes.get(userId) ?? []).filter((t) => now - t < REFRESH_WINDOW_MS);
-    const allowed = recent.length < REFRESH_LIMIT;
+    const recent = (used.get(who) ?? []).filter((t) => now - t < LIMIT_WINDOW_MS);
+    const allowed = recent.length < limit;
     if (allowed) recent.push(now);
-    this.refreshes.set(userId, recent);
+    used.set(who, recent);
     return allowed;
   }
 

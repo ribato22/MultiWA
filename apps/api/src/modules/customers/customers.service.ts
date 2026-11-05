@@ -438,9 +438,9 @@ export class CustomersService {
     return result;
   }
 
-  /** The lookup of an ID before it is linked, for an agent to check it: it stores nothing. */
+  /** The lookup of an ID before it is linked, for an agent to check it: it stores nothing, and the lookup service bounds it per API key, else per user. */
   async preview(actor: Actor, rawExternalId: unknown): Promise<LookupResult> {
-    return this.lookups.lookup(actor.organizationId, toExternalId(rawExternalId), { userId: actor.userId });
+    return this.lookups.preview(actor.organizationId, toExternalId(rawExternalId), actor);
   }
 
   /** The note, when it is this customer's in the caller's organization (else 404) and the caller may change it (else 403). */

@@ -1,7 +1,8 @@
 // CustomersController is a thin shell over CustomersService. Pinned here: the eighteen routes with their verbs and
 // paths, the literal paths ahead of `:id`, the caller handed to the service, a link's 201 or 200, the bodies as the
 // API-wide ValidationPipe applies them, and the audit interceptor leaving these routes to the service. Who may call
-// each route is pinned by the role snapshot, its API-key scope by api-key-scopes.spec.ts.
+// each route is pinned by the role snapshot (the preview, an agent's though it reads, here too), its API-key scope by
+// api-key-scopes.spec.ts.
 import 'reflect-metadata';
 import { describe, expect, it, vi } from 'vitest';
 import { BadRequestException, RequestMethod, ValidationPipe, type ArgumentMetadata, type Type } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { lastValueFrom, of } from 'rxjs';
 vi.mock('@multiwa/database', () => ({ prisma: {} }));
 
 import { AuditInterceptor } from '../audit/audit.interceptor';
+import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { CustomersController } from './customers.controller';
 import { CustomerConfigDto, LinkCustomerDto, NoteDto, TestLookupDto, UpdateCustomerDto } from './dto';
 
@@ -61,6 +63,10 @@ describe('CustomersController routes', () => {
     for (const literal of ['config', 'setConfig', 'testConfig', 'preview', 'byPhone', 'link', 'useLink', 'unlink']) {
       expect(order.indexOf(literal)).toBeLessThan(order.indexOf('findOne'));
     }
+  });
+
+  it("the preview of an ID is for owners, admins and members, though it only reads: it asks the organization's own system", () => {
+    expect(Reflect.getMetadata(ROLES_KEY, proto.preview)).toEqual(['owner', 'admin', 'member']);
   });
 
   it('the audit interceptor writes nothing for them: the service audits them, with the ids', async () => {

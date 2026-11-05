@@ -3,7 +3,8 @@
 // - who may read and change what;
 // - a number linked to an ID once (201, then 200), and the number's default ID;
 // - notes and their authors;
-// - the lookup's four states, and the settings' write-only secret;
+// - the lookup's four states, the preview of a typed ID (an agent's, at most 30 a minute per actor), and the settings'
+//   write-only secret;
 // - the search (its % _ and \ are the text typed), the history and the GDPR export;
 // - settings saved at the same moment all staying;
 // - another organization's customers answering 404.
@@ -68,10 +69,11 @@ describe('Customers (e2e)', () => {
   }
   const register = (who: string) =>
     session('/auth/register', { email: `${tag}-${who}@test.local`, password: 'password1234!', name: who, organizationName: `${tag}-${who}` });
-  async function addAndSignIn(role: string): Promise<Session> {
-    const added = await send('POST', '/organizations/members', owner, { email: `${tag}-${role}@test.local`, name: role, role });
+  async function addAndSignIn(role: string, name = role): Promise<Session> {
+    const email = `${tag}-${name}@test.local`;
+    const added = await send('POST', '/organizations/members', owner, { email, name, role });
     expect(added.statusCode).toBe(201);
-    return session('/auth/login', { email: `${tag}-${role}@test.local`, password: added.json().temporaryPassword });
+    return session('/auth/login', { email, password: added.json().temporaryPassword });
   }
   const customerId = async (externalId: string) =>
     (await prisma.customer.findUniqueOrThrow({ where: { organizationId_externalId: { organizationId: owner.user.organizationId, externalId } } })).id;
@@ -241,6 +243,21 @@ describe('Customers (e2e)', () => {
     expect((await send('GET', '/customers/lookup?externalId=CUST-DOWN', member)).json()).toMatchObject({ state: 'unavailable', data: null });
     expect(await prisma.customer.count({ where: { organizationId: owner.user.organizationId, externalId: { in: ['CUST-NONE', 'CUST-DOWN'] } } })).toBe(0);
     expect(lookupAuth.every((auth) => auth === `Bearer ${SECRET}`)).toBe(true);
+  });
+
+  it("the preview of an ID is an agent's, at most 30 a minute per user or API key: a viewer gets 403, a member's 31st gets 429", async () => {
+    const preview = (auth: Auth) => send('GET', '/customers/lookup?externalId=CUST-NONE', auth);
+    expect((await preview(viewer)).statusCode).toBe(403);
+    // A member with no preview made yet, so that the minute's count starts at 0. The first asks the endpoint and the other
+    // 29 are the cache's; all 30 count.
+    const sam = await addAndSignIn('member', 'sam');
+    for (let i = 1; i <= 30; i++) expect([i, (await preview(sam)).statusCode]).toEqual([i, 200]);
+    const refused = await preview(sam);
+    expect(refused.statusCode).toBe(429);
+    expect(refused.json()).toEqual({ statusCode: 429, message: 'Too many lookups, try again shortly', error: 'Too Many Requests' });
+    // A key is an actor of its own: sam's new key is not counted with sam, who is refused.
+    const key = (await send('POST', '/api-keys', sam, { name: `${tag} preview`, permissions: ['customers:read'] })).json();
+    expect((await preview({ apiKey: key.key })).statusCode).toBe(200);
   });
 
   it('while a lookup is configured, the name and fields are refused with 409; the tags are not', async () => {

@@ -25,7 +25,7 @@ The ID can be letters, digits, `.`, `_` and `-`, up to 64 characters. A number i
 | | Owner | Admin | Member | Viewer |
 |---|---|---|---|---|
 | See profiles, lookups, notes, history; search customers | ✓ | ✓ | ✓ | ✓ |
-| Link and unlink numbers, pick the default ID, write notes, edit tags | ✓ | ✓ | ✓ | |
+| Link and unlink numbers, pick the default ID, check an ID before linking it, write notes, edit tags | ✓ | ✓ | ✓ | |
 | Edit or delete someone else's note | ✓ | ✓ | | |
 | Delete a customer; set up the lookup (Settings → Customers) | ✓ | ✓ | | |
 
@@ -127,6 +127,7 @@ All routes are in the [API specification](<../api/api-specification.md#customers
 | `POST /customers/links` | link a number to an ID (creates the customer when new) |
 | `GET /customers/by-phone/:phone` | the IDs linked to a number, the default first |
 | `GET /customers/:id/lookup` | the live master data |
+| `GET /customers/lookup?externalId=` | what the lookup says of an ID that is not linked yet, for an agent to check it before linking; stores nothing. At most 30 a minute for each user, or for each API key; past that `429` |
 | `POST /customers/:id/notes` | add a note |
 | `GET /customers?q=` | search by ID (prefix), number or name; a `%` or `_` in `q` matches itself |
 

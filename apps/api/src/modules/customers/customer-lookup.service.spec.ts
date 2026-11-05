@@ -1,8 +1,9 @@
 // CustomerLookupService with the HTTP call mocked: the settings and their defaults, the minute's cache (a found or not
-// found answer kept, an unavailable one not), the refresh allowance per user, an admin's test, and log lines that carry
-// the organization, the state, the status and the latency, never the secret or the answer.
+// found answer kept, an unavailable one not), the refresh allowance per user, the preview allowance per user or API key,
+// an admin's test, and log lines that carry the organization, the state, the status and the latency, never the secret
+// or the answer.
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { Logger } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({ prisma: { organization: { findUnique: vi.fn() } } }));
 vi.mock('./lookup', () => ({ fetchLookup: vi.fn() }));
@@ -10,7 +11,7 @@ vi.mock('./lookup', () => ({ fetchLookup: vi.fn() }));
 import { prisma } from '@multiwa/database';
 import { encrypt } from '../../common/crypto/secret-box';
 import { fetchLookup } from './lookup';
-import { CustomerLookupService, REFRESH_LIMIT, readCustomerConfig } from './customer-lookup.service';
+import { CustomerLookupService, PREVIEW_LIMIT, REFRESH_LIMIT, readCustomerConfig } from './customer-lookup.service';
 
 const findOrg = prisma.organization.findUnique as unknown as Mock;
 const call = fetchLookup as unknown as Mock;
@@ -116,6 +117,50 @@ describe('CustomerLookupService', () => {
     expect((await service.lookup('org-1', 'A-1', { userId: 'u2', refresh: true })).cached).toBe(false);
     // A minute after its refreshes, u1 may refresh again: the answer kept at 59 s is skipped.
     at(61_000);
+    expect((await service.lookup('org-1', 'A-1', { userId: 'u1', refresh: true })).cached).toBe(false);
+  });
+
+  /** A refusal for too many lookups: 429, with its message. */
+  async function expectTooMany(attempt: Promise<unknown>) {
+    const error = await attempt.then(() => null, (e) => e);
+    expect(error).toBeInstanceOf(HttpException);
+    expect(error.getStatus()).toBe(429);
+    expect(error.getResponse()).toEqual({ statusCode: 429, message: 'Too many lookups, try again shortly', error: 'Too Many Requests' });
+  }
+
+  it(`a preview is allowed ${PREVIEW_LIMIT} times a minute, the cache's answers counted too; past that it is refused with 429`, async () => {
+    const user = { userId: 'u1' };
+    for (let i = 0; i < PREVIEW_LIMIT; i++) expect(await service.preview('org-1', 'A-1', user)).toMatchObject({ state: 'ok' });
+    expect(call).toHaveBeenCalledTimes(1); // the first asked the endpoint; the other answers came from the cache, and counted
+    await expectTooMany(service.preview('org-1', 'A-1', user));
+    await expectTooMany(service.preview('org-1', 'A-2', user)); // an ID of its own makes no difference
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(findOrg).toHaveBeenCalledTimes(PREVIEW_LIMIT); // a refused preview reads nothing
+  });
+
+  it('a new minute allows previews again', async () => {
+    const user = { userId: 'u1' };
+    for (let i = 0; i < PREVIEW_LIMIT; i++) await service.preview('org-1', 'A-1', user);
+    at(59_999);
+    await expectTooMany(service.preview('org-1', 'A-1', user));
+    at(60_000);
+    expect(await service.preview('org-1', 'A-1', user)).toMatchObject({ state: 'ok', cached: false });
+  });
+
+  it('counts the previews of each actor apart: a user, a key by its own ID, and another user', async () => {
+    const user = { userId: 'u1' };
+    const key = { userId: 'u1', apiKeyId: 'k1' };
+    for (let i = 0; i < PREVIEW_LIMIT; i++) await service.preview('org-1', 'A-1', user);
+    await expectTooMany(service.preview('org-1', 'A-1', user));
+    // The key's previews are not counted with its user's, and nobody else's are.
+    expect(await service.preview('org-1', 'A-1', { userId: 'u2' })).toMatchObject({ state: 'ok' });
+    for (let i = 0; i < PREVIEW_LIMIT; i++) expect(await service.preview('org-1', 'A-1', key)).toMatchObject({ state: 'ok' });
+    await expectTooMany(service.preview('org-1', 'A-1', key));
+    await expectTooMany(service.preview('org-1', 'A-1', user));
+  });
+
+  it('a preview is no refresh: the two allowances are separate', async () => {
+    for (let i = 0; i < PREVIEW_LIMIT; i++) await service.preview('org-1', 'A-1', { userId: 'u1' });
     expect((await service.lookup('org-1', 'A-1', { userId: 'u1', refresh: true })).cached).toBe(false);
   });
 

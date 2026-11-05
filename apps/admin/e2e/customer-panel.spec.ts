@@ -342,6 +342,17 @@ test.describe('a member', () => {
     await expect(field).toHaveAccessibleDescription('');
   });
 
+  test("says it can't check now when the server limits the previews, and still lets the ID be linked", async ({ page, backend }) => {
+    customerBackend(backend);
+    backend.route(on('GET', '/customers/lookup', { status: 429, json: { statusCode: 429, message: 'Too many lookups, try again shortly', error: 'Too Many Requests' } }));
+    const panel = await openContactInfo(page, backend);
+    const field = linkField(panel);
+    await field.fill('5550003333');
+    await expect(field).toHaveAccessibleDescription("Can't check now");
+    await expect(panel.getByRole('alert')).toHaveCount(0); // a hint, not an error
+    await expect(panel.getByRole('button', { name: 'Link ID Pelanggan' })).toBeEnabled();
+  });
+
   test('linking an ID the number already has makes it the default again, with no error', async ({ page, backend }) => {
     customerBackend(backend);
     backend.route(on('POST', '/customers/links', { status: 200, json: { created: false, customer: SECOND, link: SECOND.links[0] } }));

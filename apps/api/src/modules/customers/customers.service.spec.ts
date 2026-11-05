@@ -21,7 +21,7 @@ import { decrypt, encrypt } from '../../common/crypto/secret-box';
 import { CustomersService, toExternalId, toPhone, type Actor } from './customers.service';
 
 const p = db.prisma as any;
-const lookups = { config: vi.fn(), lookup: vi.fn(), test: vi.fn(), forget: vi.fn() };
+const lookups = { config: vi.fn(), lookup: vi.fn(), preview: vi.fn(), test: vi.fn(), forget: vi.fn() };
 const audit = { log: vi.fn() };
 const service = () => new CustomersService(lookups as any, audit as any);
 
@@ -573,11 +573,15 @@ describe('lookups', () => {
     expect(calls('customer.updateMany')).toEqual([]);
   });
 
-  it('a preview checks the ID, asks without a refresh, and stores nothing', async () => {
-    lookups.lookup.mockResolvedValue({ state: 'not_found', data: null, fetchedAt: '2026-11-05T08:00:00.000Z', cached: false });
-    await service().preview(MEMBER, ' A-1 ');
-    expect(lookups.lookup).toHaveBeenCalledWith('org-1', 'A-1', { userId: 'u-member' });
+  it('a preview checks the ID, hands the caller with its API key to the lookup, and stores nothing', async () => {
+    const answer = { state: 'not_found', data: null, fetchedAt: '2026-11-05T08:00:00.000Z', cached: false };
+    lookups.preview.mockResolvedValue(answer);
+    const key: Actor = { ...MEMBER, apiKeyId: 'k-1' };
+    expect(await service().preview(key, ' A-1 ')).toEqual(answer);
+    expect(lookups.preview).toHaveBeenCalledWith('org-1', 'A-1', key);
     await expect(service().preview(MEMBER, 'a b')).rejects.toThrow('Invalid customer ID');
+    expect(lookups.preview).toHaveBeenCalledTimes(1); // an ID that breaks the rule is not asked, nor counted
+    expect(lookups.lookup).not.toHaveBeenCalled();
     for (const write of ['customer.create', 'customer.update', 'customer.updateMany']) expect(calls(write)).toEqual([]);
   });
 });

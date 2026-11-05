@@ -8,7 +8,7 @@
 // the rest.
 
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiConflictResponse, ApiOperation, ApiQuery, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiConflictResponse, ApiOperation, ApiQuery, ApiSecurity, ApiTags, ApiTooManyRequestsResponse } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
 import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
@@ -75,10 +75,15 @@ export class CustomersController {
   }
 
   @Get('lookup')
+  @Roles(...AGENT_ROLES)
   @RequireScope('customers:read')
-  @ApiOperation({ summary: 'Preview the lookup of an ID that is not linked yet; stores nothing' })
+  @ApiOperation({ summary: 'Preview the lookup of an ID that is not linked yet; stores nothing. At most 30 a minute per user or API key' })
   @ApiQuery({ name: 'externalId', required: true })
   @ApiValidationError()
+  @ApiTooManyRequestsResponse({
+    description: 'More than 30 previews in a minute by this user, or by this API key when the request came with one.',
+    schema: { example: { statusCode: 429, message: 'Too many lookups, try again shortly', error: 'Too Many Requests' } },
+  })
   preview(@Req() req: any, @Query('externalId') externalId?: string) {
     return this.service.preview(actorOf(req), externalId);
   }

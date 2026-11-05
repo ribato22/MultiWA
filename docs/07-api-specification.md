@@ -431,7 +431,7 @@ Contact lists answer at most 1000 rows per request (`limit`), and a bulk validat
 
 The guide, with the lookup contract and an example endpoint: [Customers](./24-customers.md).
 
-A customer is an ID in the organization's own system, linked to WhatsApp numbers. Every role reads. Owners, admins and members link numbers, write notes and change tags; a note is changed by its author, an owner or an admin. Owners and admins delete customers and change the lookup settings. Another organization's customer, link or note answers `404`.
+A customer is an ID in the organization's own system, linked to WhatsApp numbers. Every role reads, but for the preview of an ID that is not linked yet, which owners, admins and members make. Owners, admins and members link numbers, write notes and change tags; a note is changed by its author, an owner or an admin. Owners and admins delete customers and change the lookup settings. Another organization's customer, link or note answers `404`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -439,7 +439,7 @@ A customer is an ID in the organization's own system, linked to WhatsApp numbers
 | `GET` | `/customers/config` | The lookup settings: `idLabel`, `lookupUrl`, `hasSecret`, `timeoutMs`, `configured` (the secret is never sent) |
 | `PUT` | `/customers/config` | Change the lookup settings: an empty `lookupUrl` turns the lookup off, an omitted `secret` keeps it, an empty one clears it (owner or admin) |
 | `POST` | `/customers/config/test` | One lookup of an `externalId` with the saved settings, bypassing the cache (owner or admin) |
-| `GET` | `/customers/lookup` | Preview the lookup of an `externalId` that is not linked yet; stores nothing |
+| `GET` | `/customers/lookup` | Preview the lookup of an `externalId` that is not linked yet; stores nothing (owner, admin or member). At most 30 a minute for each user, or for each API key when the request came with one; past that, `429` "Too many lookups, try again shortly" |
 | `GET` | `/customers/by-phone/:phone` | The customers linked to a number, its default first |
 | `POST` | `/customers/links` | Link a number to a customer ID (`externalId`, `phone`): `201` with a new link, `200` with one that existed |
 | `POST` | `/customers/links/:linkId/use` | Make a link its number's default |

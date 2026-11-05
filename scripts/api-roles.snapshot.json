@@ -141,7 +141,7 @@
     "POST /customers/links": "Agent",
     "DELETE /customers/links/:linkId": "Agent",
     "POST /customers/links/:linkId/use": "Agent",
-    "GET /customers/lookup": "Any",
+    "GET /customers/lookup": "Agent",
     "POST /groups": "Admin",
     "GET /groups/:groupId": "Any",
     "PATCH /groups/:groupId": "Admin",
