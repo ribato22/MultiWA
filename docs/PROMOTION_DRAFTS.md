@@ -2,14 +2,14 @@
 
 ## 📢 Reddit Post — r/selfhosted
 
-**Title:** `I built MultiWA — a self-hosted WhatsApp API gateway with visual automation, AI replies, and multi-engine support`
+**Title:** `I built MultiWA — a self-hosted WhatsApp API gateway with a built-in team inbox, visual automation, and AI replies`
 
 **Body:**
 
 ```
 Hey r/selfhosted! 👋
 
-I've been working on **MultiWA**, a fully self-hosted, open-source WhatsApp Business API gateway. Think of it as your own Twilio for WhatsApp — but free, open-source, and completely under your control.
+I've been working on **MultiWA**, a fully self-hosted, open-source WhatsApp API gateway with a built-in team inbox. Think of it as your own Twilio for WhatsApp — but free, open-source, and completely under your control.
 
 ### 🐳 One-command setup:
 ```bash
@@ -51,7 +51,7 @@ Would love to hear your feedback! What features would you want to see next?
 **Body:**
 
 ```
-I'm sharing my open-source project **MultiWA** — a self-hosted WhatsApp Business API gateway.
+I'm sharing my open-source project **MultiWA** — a self-hosted WhatsApp API gateway with a built-in team inbox.
 
 **What makes it different from other WhatsApp tools:**
 - Pluggable engines: whatsapp-web.js (production) or Baileys (experimental), selectable per profile
@@ -76,7 +76,7 @@ Contributions welcome! We have several "good first issue" tickets for newcomers.
 **Entry to add** (in alphabetical order under `Communication - Custom`):
 
 ```markdown
-- [MultiWA](https://github.com/ribato22/MultiWA) - Self-hosted WhatsApp Business API gateway with multi-engine support, visual automation builder, AI-powered replies, and admin dashboard. `MIT` `Docker/Nodejs`
+- [MultiWA](https://github.com/ribato22/MultiWA) - Self-hosted WhatsApp API gateway with a built-in team inbox, visual automation builder, AI-powered replies, and admin dashboard. `MIT` `Docker/Nodejs`
 ```
 
 **PR Description:**
@@ -84,8 +84,8 @@ Contributions welcome! We have several "good first issue" tickets for newcomers.
 ```
 Adds MultiWA to the Communication - Custom section.
 
-MultiWA is a self-hosted WhatsApp Business API gateway featuring:
-- Multi-engine support (whatsapp-web.js + Baileys)
+MultiWA is a self-hosted WhatsApp API gateway with a built-in team inbox, featuring:
+- Engines: whatsapp-web.js; Baileys (experimental)
 - Visual drag-and-drop automation builder
 - AI-powered auto-reply (OpenAI-compatible API)
 - Full admin dashboard (Next.js 14)
@@ -106,7 +106,7 @@ Source: https://github.com/ribato22/MultiWA
 **Body:**
 
 ```
-I built MultiWA, a self-hosted WhatsApp Business API gateway.
+I built MultiWA, a self-hosted WhatsApp API gateway with a built-in team inbox.
 
 It supports multiple WhatsApp engines (whatsapp-web.js production, Baileys experimental), has a visual drag-and-drop automation builder, AI-powered knowledge base (OpenAI-compatible), and a full admin dashboard.
 

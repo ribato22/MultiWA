@@ -2,7 +2,7 @@
   "name": "multiwa",
   "version": "2.0.0",
   "private": true,
-  "description": "Open Source WhatsApp Business API Gateway - Multi-engine, Self-hosted, Enterprise-ready",
+  "description": "Self-hosted WhatsApp API gateway with a built-in team inbox",
   "keywords": [
     "whatsapp",
     "api",

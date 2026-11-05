@@ -143,7 +143,7 @@ export function EmptyContacts() {
     <EmptyState
       icon={EmptyStateIcons.contacts}
       title="No contacts yet"
-      description="Contacts added by hand or synced from WhatsApp are listed here."
+      description="Someone who messages one of your profiles one-to-one is saved here, and so are contacts added by hand, synced from WhatsApp or imported."
     />
   );
 }

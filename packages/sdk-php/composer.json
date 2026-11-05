@@ -1,6 +1,6 @@
 {
   "name": "multiwa/multiwa-php",
-  "description": "Official PHP SDK for the MultiWA WhatsApp Business API Gateway.",
+  "description": "Official PHP SDK for MultiWA, the self-hosted WhatsApp API gateway with a built-in team inbox.",
   "type": "library",
   "license": "MIT",
   "keywords": [

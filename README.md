@@ -5,8 +5,7 @@
 <h1 align="center">MultiWA</h1>
 
 <p align="center">
-  <strong>Open Source WhatsApp Business API Gateway</strong><br />
-  Multi-engine • Self-hosted • Enterprise-ready
+  <strong>Self-hosted WhatsApp API gateway with a built-in team inbox</strong>
 </p>
 
 <p align="center">
@@ -36,6 +35,9 @@
 
 ---
 
+> [!WARNING]
+> MultiWA is not affiliated with WhatsApp or Meta. It connects through WhatsApp Web, and WhatsApp can block or log out numbers that break its terms. Use a number you can afford to lose, and follow [WhatsApp's policies](https://www.whatsapp.com/legal).
+
 ## 🎯 What is MultiWA?
 
 **MultiWA** is a fully self-hosted, open-source WhatsApp API gateway that lets you connect multiple WhatsApp numbers through a single unified REST + WebSocket API. It runs as a `docker compose up` stack on your own server, ships an admin dashboard for QR onboarding and live chat, and exposes official SDKs for TypeScript, Python, and PHP.
@@ -47,7 +49,7 @@ If you want to send and receive WhatsApp messages from your own backend without 
 | Feature | MultiWA | WhatsApp Cloud API | Evolution API |
 |---------|---------|-------------------|---------------|
 | **Self-hosted** | ✅ Full control | ❌ Meta-hosted | ✅ |
-| **Multi-engine** | ✅ whatsapp-web.js (Baileys adapter experimental) | ❌ Single | ❌ Fixed |
+| **WhatsApp connection** | WhatsApp Web via whatsapp-web.js (a Baileys adapter is experimental) | Meta's official Cloud API | Baileys or the official Cloud API |
 | **Admin Dashboard** | ✅ Full-featured | ❌ None | ⚠️ Basic |
 | **Visual Automation** | ✅ Drag & drop builder | ❌ | ❌ |
 | **Knowledge Base AI** | ✅ OpenAI-compatible | ❌ | ❌ |

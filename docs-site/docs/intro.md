@@ -5,7 +5,13 @@ title: "Documentation Index"
 
 # MultiWA Documentation
 
-Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp API Gateway designed for developers who need full control over their messaging infrastructure.
+Welcome to the MultiWA documentation. MultiWA is a free, open-source, self-hosted WhatsApp API gateway with a built-in team inbox, designed for developers who need full control over their messaging infrastructure.
+
+:::warning
+
+MultiWA is not affiliated with WhatsApp or Meta. It connects through WhatsApp Web, and WhatsApp can block or log out numbers that break its terms. Use a number you can afford to lose, and follow [WhatsApp's policies](https://www.whatsapp.com/legal).
+
+:::
 
 ## 📚 Documentation Index
 

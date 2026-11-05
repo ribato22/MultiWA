@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'MultiWA',
-  tagline: 'Open Source WhatsApp Business API Gateway',
+  tagline: 'Self-hosted WhatsApp API gateway with a built-in team inbox',
   favicon: 'img/favicon.ico',
 
   future: {

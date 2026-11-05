@@ -13,7 +13,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: 'MultiWA - Admin Dashboard',
-  description: 'Open Source WhatsApp Business API Gateway',
+  description: 'Self-hosted WhatsApp API gateway with a built-in team inbox',
   icons: {
     icon: '/favicon.ico',
   },
