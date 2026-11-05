@@ -34,9 +34,12 @@ vi.mock('bcrypt', () => ({
 
 import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
+import type { EventsGateway } from '../events/events.gateway';
 import { OrganizationsService } from './organizations.service';
 
 const OWNER = { id: 'u-owner', role: 'owner' };
+const gateway = { disconnectUser: vi.fn() };
+const newService = () => new OrganizationsService(gateway as unknown as EventsGateway);
 
 describe('OrganizationsService — member-management invariants', () => {
   let service: OrganizationsService;
@@ -48,7 +51,8 @@ describe('OrganizationsService — member-management invariants', () => {
     vi.mocked(prisma.user.update).mockReset();
     vi.mocked(prisma.user.delete).mockReset();
     vi.mocked(bcrypt.hash).mockClear();
-    service = new OrganizationsService();
+    gateway.disconnectUser.mockReset();
+    service = newService();
   });
 
   describe('assertAssignableRole (via addMember / updateMemberRole)', () => {
@@ -176,6 +180,34 @@ describe('OrganizationsService — member-management invariants', () => {
       expect(out).toEqual({ success: true });
       expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
     });
+
+    // Closed before the delete, a socket could reconnect as the member, who still exists then.
+    it("closes the member's sockets, a login's and an API key's, once the member is deleted, not before", async () => {
+      const order: string[] = [];
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
+      vi.mocked(prisma.user.delete).mockImplementationOnce((async () => void order.push('delete')) as any);
+      gateway.disconnectUser.mockImplementationOnce(() => void order.push('disconnect'));
+
+      await service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'm-1');
+
+      expect(gateway.disconnectUser).toHaveBeenCalledWith('m-1');
+      expect(order).toEqual(['delete', 'disconnect']);
+    });
+
+    it('closes no socket when the removal is refused (yourself, the owner, an admin by an admin, no such member) or fails', async () => {
+      await expect(service.removeMember('org-1', { id: 'me', role: 'owner' }, 'me')).rejects.toThrow(BadRequestException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'owner-1', role: 'owner' } as any);
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'owner-1')).rejects.toThrow(ForbiddenException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'admin-2', role: 'admin' } as any);
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'admin-2')).rejects.toThrow(ForbiddenException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'nobody')).rejects.toThrow(NotFoundException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
+      vi.mocked(prisma.user.delete).mockRejectedValueOnce(new Error('connection refused'));
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'm-1')).rejects.toThrow('connection refused');
+
+      expect(gateway.disconnectUser).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -191,7 +223,7 @@ describe('OrganizationsService — the customer lookup settings in settings.cust
   });
 
   it('an update keeps them, whatever settings it is sent: PUT /customers/config writes them', async () => {
-    await new OrganizationsService().update('org-1', { settings: { theme: 'light', customers: { lookupUrl: 'https://elsewhere.example.com/' } } });
+    await newService().update('org-1', { settings: { theme: 'light', customers: { lookupUrl: 'https://elsewhere.example.com/' } } });
     expect(db.organization.update).toHaveBeenCalledWith({
       where: { id: 'org-1' },
       data: { name: undefined, settings: { theme: 'light', customers: stored.customers } },
@@ -205,7 +237,7 @@ describe('OrganizationsService — the customer lookup settings in settings.cust
       organization: { findUnique: vi.fn().mockResolvedValue({ settings: stored }), update: vi.fn().mockResolvedValue({ id: 'org-1', settings: {} }) },
     };
     db.$transaction.mockImplementation((run: (client: unknown) => unknown) => run(tx));
-    await new OrganizationsService().update('org-1', { name: 'Renamed', settings: { theme: 'light' } });
+    await newService().update('org-1', { name: 'Renamed', settings: { theme: 'light' } });
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
     const [sql, ...values] = tx.$queryRaw.mock.calls[0];
     expect([sql.join('?'), values]).toEqual(['SELECT id FROM organizations WHERE id = ? FOR UPDATE', ['org-1']]);
@@ -221,13 +253,13 @@ describe('OrganizationsService — the customer lookup settings in settings.cust
   });
 
   it('an update without settings leaves them alone and reads nothing', async () => {
-    await new OrganizationsService().update('org-1', { name: 'Renamed' });
+    await newService().update('org-1', { name: 'Renamed' });
     expect(db.organization.update).toHaveBeenCalledWith({ where: { id: 'org-1' }, data: { name: 'Renamed', settings: undefined } });
     expect(db.organization.findUnique).not.toHaveBeenCalled();
   });
 
   it('no answer carries the encrypted secret', async () => {
-    const service = new OrganizationsService();
+    const service = newService();
     for (const org of [await service.findById('org-1'), await service.update('org-1', { settings: { theme: 'light' } })]) {
       expect(JSON.stringify(org)).not.toContain('aa:bb:cc');
       expect((org.settings as any).customers).toEqual({ lookupUrl: 'https://crm.example.com/lookup', timeoutMs: 5000 });

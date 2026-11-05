@@ -1,8 +1,10 @@
 // The four roles through the real app (HTTP → auth guard → role check → Prisma → Postgres): a viewer reads but changes
 // nothing, a member does the daily work but no configuration, an admin configures and manages members and viewers,
 // only the owner manages admins, and only the server's owner reaches the server settings. Plus the pairing QR on the
-// /ws socket, and the registration gate. The unit specs pin the same rules with Prisma mocked.
-import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
+// /ws socket, a socket's end with its credential, and the registration gate. The unit specs pin the same rules with
+// Prisma mocked.
+import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { io, type Socket } from 'socket.io-client';
@@ -30,7 +32,7 @@ describe('Roles (e2e)', () => {
   let profileId: string;
   let origin: string; // where the app listens, for the /ws sockets
 
-  const send = (method: 'GET' | 'POST' | 'PUT', url: string, auth: { token?: string; apiKey?: string }, payload?: object) =>
+  const send = (method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, auth: { token?: string; apiKey?: string }, payload?: object) =>
     app.inject({
       method,
       url: `/api/v1${url}`,
@@ -38,10 +40,11 @@ describe('Roles (e2e)', () => {
       ...(payload ? { payload } : {}),
     });
 
-  /** A socket on /ws with a JWT, connected; `got` lists every event it is sent, in order. */
-  const connectSocket = (token: string) =>
+  /** A socket on /ws with a JWT or an API key, connected; `got` lists every event it is sent, in order. */
+  const connectSocket = (credential: string | { apiKey: string }) =>
     new Promise<{ socket: Socket; got: string[] }>((resolve, reject) => {
-      const socket = io(`${origin}/ws`, { auth: { token }, transports: ['websocket'], forceNew: true, reconnection: false });
+      const auth = typeof credential === 'string' ? { token: credential } : credential;
+      const socket = io(`${origin}/ws`, { auth, transports: ['websocket'], forceNew: true, reconnection: false });
       const got: string[] = [];
       socket.onAny((event: string) => got.push(event));
       socket.once('connect', () => resolve({ socket, got }));
@@ -155,6 +158,72 @@ describe('Roles (e2e)', () => {
       ownerWs.socket.close();
       viewerWs.socket.close();
     }
+  });
+
+  describe('a socket ends with its credential', () => {
+    /** A new member of the owner's organization, signed in; `login()` signs them in again, as a second session. */
+    async function newMember(label: string) {
+      const email = `${tag}-${label}@test.local`;
+      const added = await send('POST', '/organizations/members', owner, { email, name: label, role: 'member' });
+      expect(added.statusCode).toBe(201);
+      const login = () => session('/auth/login', { email, password: added.json().temporaryPassword });
+      return { ...(await login()), login };
+    }
+    /** A new API key of a user: its id, and the key. */
+    async function newKey(who: Session) {
+      const created = await send('POST', '/api-keys', who, { name: `${tag} key`, expiresInDays: 30 });
+      expect(created.statusCode).toBe(201);
+      return { id: created.json().id as string, key: created.json().key as string };
+    }
+    const gone = (socket: Socket) => vi.waitFor(() => expect(socket.connected).toBe(false), { timeout: 3000 });
+    const open: Socket[] = [];
+    // A socket without valid credentials is accepted and then closed: the join's answer says it is authenticated.
+    const connect = async (credential: string | { apiKey: string }) => {
+      const { socket } = await connectSocket(credential);
+      open.push(socket);
+      expect(await socket.emitWithAck('join', { profileId })).toEqual({ success: true, profileId });
+      return socket;
+    };
+    afterEach(() => {
+      vi.restoreAllMocks();
+      for (const socket of open.splice(0)) socket.close();
+    });
+
+    it('deleting an API key, logging out, revoking the other sessions and removing a member close their sockets at once', async () => {
+      // Stubbed, so that only the calls that revoke close these sockets, and not the sweep (its minute is far off anyway).
+      vi.spyOn(app.get(EventsGateway) as any, 'sweepSessions').mockResolvedValue(undefined);
+      const bystander = await connect(owner.token);
+
+      const keyed = await newMember('keyed');
+      const key = await newKey(keyed);
+      const keySocket = await connect({ apiKey: key.key });
+      expect((await send('DELETE', `/api-keys/${key.id}`, keyed)).statusCode).toBe(200);
+      await gone(keySocket);
+
+      const loggingOut = await newMember('logout');
+      const loginSocket = await connect(loggingOut.token);
+      expect((await send('POST', '/auth/logout', loggingOut)).statusCode).toBeLessThan(300);
+      await gone(loginSocket);
+
+      // One session, and every session but the current one: the current session's socket, and the user's API key, keep theirs.
+      const [single, others] = [await newMember('session'), await newMember('sessions')];
+      const firstSockets = [await connect(single.token), await connect(others.token)];
+      await new Promise((resolve) => setTimeout(resolve, 1100)); // a token is signed to the second: a second login within it is the same session
+      const [singleNow, othersNow] = [await single.login(), await others.login()];
+      const currentSockets = [await connect(singleNow.token), await connect(othersNow.token), await connect({ apiKey: (await newKey(others)).key })];
+      const firstSession = await prisma.session.findUniqueOrThrow({ where: { tokenHash: createHash('sha256').update(single.token).digest('hex') } });
+      expect((await send('DELETE', `/auth/sessions/${firstSession.id}`, singleNow)).statusCode).toBe(200);
+      expect((await send('DELETE', '/auth/sessions', othersNow)).statusCode).toBe(200);
+      for (const socket of firstSockets) await gone(socket);
+      expect(currentSockets.map((socket) => socket.connected)).toEqual([true, true, true]);
+
+      const removed = await newMember('removed');
+      const removedSockets = [await connect(removed.token), await connect({ apiKey: (await newKey(removed)).key })];
+      expect((await send('DELETE', `/organizations/members/${removed.user.id}`, owner)).statusCode).toBe(200);
+      for (const socket of removedSockets) await gone(socket);
+
+      expect([bystander, ...currentSockets].map((socket) => socket.connected)).toEqual([true, true, true, true]);
+    });
   });
 
   it('registration closes unless ALLOW_REGISTRATION=true', async () => {

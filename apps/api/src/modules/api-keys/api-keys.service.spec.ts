@@ -20,17 +20,20 @@ vi.mock('@multiwa/database', () => ({
 }));
 
 import { prisma } from '@multiwa/database';
+import type { EventsGateway } from '../events/events.gateway';
 import { ApiKeysService } from './api-keys.service';
 
 describe('ApiKeysService', () => {
   let service: ApiKeysService;
+  const gateway = { disconnectApiKey: vi.fn() };
 
   beforeEach(() => {
     vi.mocked(prisma.apiKey.create).mockReset();
     vi.mocked(prisma.apiKey.findMany).mockReset();
     vi.mocked(prisma.apiKey.findUnique).mockReset();
     vi.mocked(prisma.apiKey.delete).mockReset();
-    service = new ApiKeysService();
+    gateway.disconnectApiKey.mockReset();
+    service = new ApiKeysService(gateway as unknown as EventsGateway);
 
     // Echo the persisted row back with a synthetic id/createdAt, mirroring Prisma.
     (prisma.apiKey.create as any).mockImplementation(async ({ data }: any) => ({
@@ -150,6 +153,31 @@ describe('ApiKeysService', () => {
 
       await expect(service.delete('key_1', 'user-1')).resolves.toEqual({ success: true });
       expect(prisma.apiKey.delete).toHaveBeenCalledWith({ where: { id: 'key_1' } });
+    });
+
+    // Before the delete, a socket closed at once could reconnect with the key that is still valid.
+    it("closes the key's sockets once the key is gone, not before", async () => {
+      const order: string[] = [];
+      vi.mocked(prisma.apiKey.findUnique).mockResolvedValueOnce({ id: 'key_1', userId: 'user-1' } as any);
+      vi.mocked(prisma.apiKey.delete).mockImplementationOnce((async () => void order.push('delete')) as any);
+      gateway.disconnectApiKey.mockImplementationOnce(() => void order.push('disconnect'));
+
+      await service.delete('key_1', 'user-1');
+
+      expect(gateway.disconnectApiKey).toHaveBeenCalledWith('key_1');
+      expect(order).toEqual(['delete', 'disconnect']);
+    });
+
+    it('closes no socket when the key is missing, is another user\'s, or the delete fails', async () => {
+      vi.mocked(prisma.apiKey.findUnique).mockResolvedValueOnce(null);
+      await expect(service.delete('key_x', 'user-1')).rejects.toThrow(NotFoundException);
+      vi.mocked(prisma.apiKey.findUnique).mockResolvedValueOnce({ id: 'key_1', userId: 'owner' } as any);
+      await expect(service.delete('key_1', 'attacker')).rejects.toThrow(ForbiddenException);
+      vi.mocked(prisma.apiKey.findUnique).mockResolvedValueOnce({ id: 'key_1', userId: 'user-1' } as any);
+      vi.mocked(prisma.apiKey.delete).mockRejectedValueOnce(new Error('connection refused'));
+      await expect(service.delete('key_1', 'user-1')).rejects.toThrow('connection refused');
+
+      expect(gateway.disconnectApiKey).not.toHaveBeenCalled();
     });
   });
 });

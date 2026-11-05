@@ -4,9 +4,12 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import * as crypto from 'crypto';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class ApiKeysService {
+  constructor(private readonly gateway: EventsGateway) {}
+
   // Generate a new API key
   async create(userId: string, name: string, permissions: string[] = [], expiresInDays?: number) {
     // Generate a random API key with prefix
@@ -74,6 +77,8 @@ export class ApiKeysService {
     if (key.userId !== userId) throw new ForbiddenException('Not your API key');
 
     await prisma.apiKey.delete({ where: { id } });
+    // After the delete: a socket closed before it could reconnect with the key.
+    this.gateway.disconnectApiKey(id);
     return { success: true };
   }
 }
