@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "multiwa"
-version = "1.4.0"
+version = "2.0.0"
 description = "Official Python SDK for the MultiWA WhatsApp Business API Gateway."
 readme = "README.md"
 license = {text = "MIT"}

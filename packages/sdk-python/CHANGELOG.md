@@ -6,6 +6,14 @@ this file. Its version follows the MultiWA release (tag `sdk-python-v<version>`)
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-11-05
+
+### Changed
+
+- The version follows MultiWA 2.0.0. Its server now checks every route against
+  the caller's role and each API key's scopes (see the MultiWA changelog). The
+  SDK's calls are unchanged.
+
 ## [1.4.0] - 2026-11-03
 
 ### Added
