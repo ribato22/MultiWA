@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A `%`, `_` or `\` typed in the contacts or templates search, or in the audit log's action filter, now matches itself. Prisma hands these to `LIKE` as wildcards, so a search for `%` matched everything.
 
+### Security
+
+- A socket on `/ws` is disconnected when its API key is deleted or expires, when its login session is logged out, revoked or expires, and when its user is removed or deactivated. Deleting an API key, logging out, revoking a session and removing a member close their sockets at once; the server also checks every socket again each minute. See docs/08.
+
 ## [2.0.0] - 2026-11-05
 
 ### Added
