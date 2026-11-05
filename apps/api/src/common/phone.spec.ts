@@ -25,6 +25,7 @@ describe('linkablePhone', () => {
     ['+62 811 0000 0001', '6281100000001'],
     ['6281100000001@s.whatsapp.net', '6281100000001'],
     ['6281100000001@c.us', '6281100000001'],
+    ['6281100000001:12@s.whatsapp.net', '6281100000001'], // a multi-device JID: the device is not part of the number
     ['12345678', '12345678'],
     ['123456789012345', '123456789012345'],
   ])('links %j as %j', (input, expected) => {

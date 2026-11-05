@@ -15,11 +15,12 @@ const PHONE_JID = /^(s\.whatsapp\.net|c\.us)$/;
 
 /**
  * The number a customer can be linked to, or null: a phone number or the JID of a one-to-one chat (…@s.whatsapp.net,
- * …@c.us), normalized as above, of 8 to 15 digits. A group, a broadcast list or an @lid identity has no number.
+ * …@c.us, a device's …:12@s.whatsapp.net too), normalized as above, of 8 to 15 digits. A group, a broadcast list or an
+ * @lid identity has no number.
  */
 export function linkablePhone(input: string): string | null {
   const at = input.indexOf('@');
   if (at >= 0 && !PHONE_JID.test(input.slice(at + 1).trim())) return null;
-  const phone = normalizePhone(at >= 0 ? input.slice(0, at) : input);
+  const phone = normalizePhone(at >= 0 ? input.slice(0, at).split(':')[0] : input);
   return /^\d{8,15}$/.test(phone) ? phone : null;
 }
