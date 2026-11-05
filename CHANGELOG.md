@@ -9,11 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Customer profile.** An agent sees the customer behind a WhatsApp number in a one-to-one chat's Contact Info and under a one-to-one call on the Calls page, and on a new Customers page:
+  - customer IDs linked to numbers, many to many, linked by agents or through the API (`POST /customers/links`);
+  - master data fetched live from an endpoint the organization sets in Settings → Customers, in a fixed format ([docs/24](docs/24-customers.md)); only the name is stored;
+  - notes and tags on the customer, and the history of the linked numbers' conversations and calls;
+  - new API-key scopes `customers:read` and `customers:write`.
 - `GET /auth/registration` tells whether registration is open.
 - `GET /auth/me` and the `user` of the sign-in answer carry `isServerOwner`, which says whether the caller is the server's owner.
 
 ### Changed
 
+- `GET` and `PUT /organizations/current` and `GET /auth/me` never answer the customers lookup's encrypted secret, and a `PUT /organizations/current` keeps the customers settings whatever `settings` it is sent: `PUT /customers/config` changes them.
 - **Roles are enforced in the API, the socket and the dashboard.** A viewer reads; a member does the daily work (messages, chats, calls, contacts); an admin configures and manages members and viewers; the owner also manages admins. A route a role may not call answers `403`. `scripts/api-roles.snapshot.json` lists each route's class, and CI holds the code to it. See docs/07 § Roles.
 - **Breaking:**
   - a viewer's changes, including those made with a viewer's API keys, now get `403`; move integrations that send onto a member's or admin's key. A viewer keeps their own account and the lookups that are `POST`s:
