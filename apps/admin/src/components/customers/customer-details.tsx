@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 
 /** The name of a customer's ID until the organization's own is read. */
-export const DEFAULT_ID_LABEL = 'Customer ID';
+const DEFAULT_ID_LABEL = 'Customer ID';
 
 /** What the organization calls a customer's ID, such as "ID Pelanggan", from its customer settings. */
 export function useIdLabel() {
@@ -34,7 +34,7 @@ export function useIdLabel() {
 }
 
 /** The customer, as the page that shows it keeps it: the details change it in place. */
-export type SetCustomer = Dispatch<SetStateAction<CustomerView | null>>;
+type SetCustomer = Dispatch<SetStateAction<CustomerView | null>>;
 type Heading = 'h2' | 'h4';
 
 // The server's limits on what an agent types.

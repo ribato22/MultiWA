@@ -57,7 +57,7 @@ export interface LookupTarget {
 }
 
 /** Why a lookup is unavailable, a fixed word for the log line: never anything of the answer. */
-export type LookupProblem = 'refused' | 'timeout' | 'network' | 'status' | 'too_large' | 'invalid_json' | 'invalid_body';
+type LookupProblem = 'refused' | 'timeout' | 'network' | 'status' | 'too_large' | 'invalid_json' | 'invalid_body';
 
 export interface LookupOutcome {
   state: 'ok' | 'not_found' | 'unavailable';

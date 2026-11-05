@@ -7,7 +7,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
-import { MAX_TIMEOUT_MS, MIN_TIMEOUT_MS } from '../customer-lookup.service';
+import { DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, MIN_TIMEOUT_MS } from '../customer-lookup.service';
 
 export class LinkCustomerDto {
   @ApiProperty({ example: '1234567890', description: "The customer's ID in the organization's system: 1 to 64 of A-Z, a-z, 0-9, '.', '_' and '-'." })
@@ -83,7 +83,7 @@ export class CustomerConfigDto {
   @Matches(/^[\x21-\x7e]*$/, { message: 'secret must be visible ASCII characters, without spaces' })
   secret?: string;
 
-  @ApiPropertyOptional({ minimum: MIN_TIMEOUT_MS, maximum: MAX_TIMEOUT_MS, default: 5000 })
+  @ApiPropertyOptional({ minimum: MIN_TIMEOUT_MS, maximum: MAX_TIMEOUT_MS, default: DEFAULT_TIMEOUT_MS })
   @IsOptional()
   @IsInt()
   @Min(MIN_TIMEOUT_MS)

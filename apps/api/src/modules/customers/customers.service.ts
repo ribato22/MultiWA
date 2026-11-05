@@ -31,14 +31,14 @@ export interface Actor {
 }
 
 /** What PATCH /customers/:id may change; its DTO holds these to their limits. */
-export interface CustomerChanges {
+interface CustomerChanges {
   tags?: string[];
   displayName?: string | null;
   manualFields?: LookupField[];
 }
 
 /** What PUT /customers/config may change; its DTO holds these to their limits. */
-export interface ConfigChanges {
+interface ConfigChanges {
   idLabel?: string;
   lookupUrl?: string;
   secret?: string;

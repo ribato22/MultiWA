@@ -8,7 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class UpdateOrganizationDto {
-  @ApiPropertyOptional({ example: 'PLN Batam' })
+  @ApiPropertyOptional({ example: 'Acme Corp' })
   @IsOptional()
   @IsString()
   name?: string;

@@ -127,7 +127,7 @@ describe('WebhookProcessor', () => {
     expect(logged.id).toBe('keep'); // non-message fields pass through untouched
   });
 
-  it('policy 0 stores {} (PLN Batam PII-off posture)', async () => {
+  it('policy 0 stores {} (PII-off posture)', async () => {
     process.env[ENV_KEY] = '0';
     mockPrisma.webhook.findUnique.mockResolvedValueOnce(makeWebhook());
     fetchMock.mockResolvedValueOnce(makeResponse());

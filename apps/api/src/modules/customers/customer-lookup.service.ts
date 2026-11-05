@@ -15,7 +15,7 @@ import { decrypt } from '../../common/crypto/secret-box';
 import { fetchLookup, type LookupOutcome } from './lookup';
 import type { LookupResult, LookupTestResult } from './customers.types';
 
-export const DEFAULT_ID_LABEL = 'Customer ID';
+const DEFAULT_ID_LABEL = 'Customer ID';
 export const DEFAULT_TIMEOUT_MS = 5000;
 export const MIN_TIMEOUT_MS = 1000;
 export const MAX_TIMEOUT_MS = 15000;
