@@ -3,7 +3,7 @@
 // search, the history, the lookups, the settings and their secret, and every read and write scoped to the caller's
 // organization (another organization's id is not found).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 
 // Every `prisma.<model>.<method>` is one vi.fn, made when a test first reads it.
 const db = vi.hoisted(() => {
@@ -291,5 +291,230 @@ describe("another organization's ids", () => {
     await expect(act(service())).rejects.toThrow(NotFoundException);
     for (const write of ['customer.update', 'customerLink.update', 'customerLink.deleteMany']) expect(calls(write)).toEqual([]);
     expect(audit.log).not.toHaveBeenCalled();
+  });
+});
+
+describe('notes', () => {
+  it('adds a note, trimmed, written by the caller and the key it came with, and audits its ids', async () => {
+    p.customer.findFirst.mockResolvedValue(customerRow());
+    p.customerNote.create.mockImplementation(async ({ data }: any) => noteRow({ id: 'n-2', ...data }));
+    p.user.findMany.mockResolvedValue([{ id: 'u-member', name: 'Mira' }]);
+    p.apiKey.findMany.mockResolvedValue([{ id: 'k-1', name: 'CRM sync' }]);
+    const note = await service().addNote({ ...MEMBER, apiKeyId: 'k-1' }, 'c-1', '  Prefers a call after 16:00 ');
+    expect(p.customerNote.create).toHaveBeenCalledWith({
+      data: { customerId: 'c-1', body: 'Prefers a call after 16:00', authorUserId: 'u-member', authorApiKeyId: 'k-1' },
+    });
+    expect(note).toMatchObject({ id: 'n-2', body: 'Prefers a call after 16:00', author: { type: 'apiKey', id: 'k-1', name: 'CRM sync' } });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'customer.note.create', resourceId: 'c-1', metadata: { customerId: 'c-1', noteId: 'n-2' } }));
+    expect(JSON.stringify(audit.log.mock.calls)).not.toContain('Prefers a call');
+  });
+
+  it.each(['', '   ', 'x'.repeat(2001)])('refuses the note %j before it reads anything', async (body) => {
+    await expect(service().addNote(MEMBER, 'c-1', body)).rejects.toThrow(BadRequestException);
+    expect(calls('customer.findFirst')).toEqual([]);
+    expect(calls('customerNote.create')).toEqual([]);
+  });
+
+  it("its author edits it; an owner or an admin edits anyone's; another member gets 403 and changes nothing", async () => {
+    p.customerNote.findFirst.mockResolvedValue(noteRow());
+    p.customerNote.update.mockImplementation(async ({ data }: any) => noteRow(data));
+    p.user.findMany.mockResolvedValue([{ id: 'u-member', name: 'Mira' }]);
+    await expect(service().editNote(MEMBER, 'c-1', 'n-1', 'Prefers a call after 17:00')).resolves.toMatchObject({ body: 'Prefers a call after 17:00' });
+    await expect(service().editNote(ADMIN, 'c-1', 'n-1', 'Checked')).resolves.toMatchObject({ body: 'Checked' });
+    await expect(service().editNote({ ...MEMBER, userId: 'u-owner', role: 'owner' }, 'c-1', 'n-1', 'Seen')).resolves.toMatchObject({ body: 'Seen' });
+    expect(p.customerNote.findFirst).toHaveBeenCalledWith({ where: { id: 'n-1', customerId: 'c-1', customer: { organizationId: 'org-1' } } });
+    p.customerNote.update.mockClear();
+    const other = { ...MEMBER, userId: 'u-other' };
+    await expect(service().editNote(other, 'c-1', 'n-1', 'Mine now')).rejects.toThrow(ForbiddenException);
+    await expect(service().deleteNote(other, 'c-1', 'n-1')).rejects.toThrow(ForbiddenException);
+    expect(p.customerNote.update).not.toHaveBeenCalled();
+    expect(calls('customerNote.deleteMany')).toEqual([]);
+  });
+
+  it("a note written through one of its author's API keys is still the author's", async () => {
+    p.customerNote.findFirst.mockResolvedValue(noteRow({ authorApiKeyId: 'k-1' }));
+    p.customerNote.update.mockImplementation(async ({ data }: any) => noteRow({ authorApiKeyId: 'k-1', ...data }));
+    p.user.findMany.mockResolvedValue([{ id: 'u-member', name: 'Mira' }]);
+    p.apiKey.findMany.mockResolvedValue([{ id: 'k-1', name: 'CRM sync' }]);
+    await expect(service().editNote(MEMBER, 'c-1', 'n-1', 'Edited in the dashboard')).resolves.toMatchObject({ body: 'Edited in the dashboard' });
+  });
+
+  it('deletes a note on the same terms, and audits its ids', async () => {
+    p.customerNote.findFirst.mockResolvedValue(noteRow());
+    p.customerNote.deleteMany.mockResolvedValue({ count: 1 });
+    expect(await service().deleteNote(MEMBER, 'c-1', 'n-1')).toEqual({ success: true });
+    expect(p.customerNote.deleteMany).toHaveBeenCalledWith({ where: { id: 'n-1' } });
+    expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'customer.note.delete', metadata: { customerId: 'c-1', noteId: 'n-1' } }));
+  });
+
+  it('a note of another customer, or of another organization, is not found', async () => {
+    p.customerNote.findFirst.mockImplementation(async ({ where }: any) =>
+      (where.customerId !== undefined && where.customerId !== 'c-1') || !inOrg1(where.customer) ? null : noteRow());
+    await expect(service().editNote(MEMBER, 'c-9', 'n-1', 'x')).rejects.toThrow(NotFoundException);
+    await expect(service().editNote(ELSEWHERE, 'c-1', 'n-1', 'x')).rejects.toThrow(NotFoundException);
+    await expect(service().deleteNote(ELSEWHERE, 'c-1', 'n-1')).rejects.toThrow(NotFoundException);
+    expect(calls('customerNote.update')).toEqual([]);
+    expect(calls('customerNote.deleteMany')).toEqual([]);
+  });
+
+  it('lists the notes newest first, a page at a time, at most 100', async () => {
+    p.customer.findFirst.mockResolvedValue(customerRow());
+    p.customerNote.findMany.mockResolvedValue([noteRow()]);
+    p.customerNote.count.mockResolvedValue(41);
+    p.user.findMany.mockResolvedValue([{ id: 'u-member', name: 'Mira' }]);
+    expect(await service().notes('org-1', 'c-1', '3', '20')).toEqual({
+      items: [expect.objectContaining({ id: 'n-1', author: { type: 'user', id: 'u-member', name: 'Mira' } })],
+      total: 41,
+    });
+    expect(p.customerNote.findMany).toHaveBeenCalledWith({ where: { customerId: 'c-1' }, orderBy: { createdAt: 'desc' }, skip: 40, take: 20 });
+    await service().notes('org-1', 'c-1', undefined, '1000');
+    expect(p.customerNote.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ skip: 0, take: 100 }));
+    await service().notes('org-1', 'c-1');
+    expect(p.customerNote.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ skip: 0, take: 20 }));
+  });
+});
+
+describe('CustomersService.list', () => {
+  beforeEach(() => {
+    p.customer.findMany.mockResolvedValue([]);
+    p.customer.count.mockResolvedValue(0);
+  });
+
+  it("searches the organization's customers by ID prefix, by name, and, for a number, by its digits", async () => {
+    await service().list('org-1', { q: ' 0811-0000 ' });
+    const where = {
+      organizationId: 'org-1',
+      OR: [
+        { externalId: { startsWith: '0811-0000', mode: 'insensitive' } },
+        { displayName: { contains: '0811-0000', mode: 'insensitive' } },
+        { links: { some: { phone: { contains: '628110000' } } } },
+      ],
+    };
+    expect(p.customer.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
+    expect(p.customer.count).toHaveBeenCalledWith({ where });
+  });
+
+  it('looks for no number in a query with a letter in it', async () => {
+    await service().list('org-1', { q: 'AB-123' });
+    expect(p.customer.findMany.mock.calls[0][0].where.OR).toEqual([
+      { externalId: { startsWith: 'AB-123', mode: 'insensitive' } },
+      { displayName: { contains: 'AB-123', mode: 'insensitive' } },
+    ]);
+  });
+
+  it('lists every customer of the organization without a query, 25 a page by default and at most 100', async () => {
+    await service().list('org-1', {});
+    expect(p.customer.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: 'org-1' }, orderBy: { updatedAt: 'desc' }, skip: 0, take: 25 }));
+    await service().list('org-1', { page: '3', pageSize: '500' });
+    expect(p.customer.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ skip: 200, take: 100 }));
+  });
+
+  it('answers each customer with its counts and its last activity: the newest link use or note', async () => {
+    p.customer.findMany.mockResolvedValue([
+      {
+        ...customerRow({ displayName: 'Budi Santoso' }),
+        links: [{ lastUsedAt: AT }, { lastUsedAt: new Date('2026-11-05T09:00:00.000Z') }],
+        notes: [{ createdAt: new Date('2026-11-05T08:30:00.000Z') }],
+        _count: { notes: 3 },
+      },
+      { ...customerRow({ id: 'c-2', externalId: 'B-2' }), links: [], notes: [], _count: { notes: 0 } },
+    ]);
+    p.customer.count.mockResolvedValue(2);
+    expect(await service().list('org-1', { page: '1' })).toEqual({
+      items: [
+        { id: 'c-1', externalId: '1234567890', displayName: 'Budi Santoso', linkCount: 2, noteCount: 3, lastActivityAt: '2026-11-05T09:00:00.000Z' },
+        { id: 'c-2', externalId: 'B-2', displayName: null, linkCount: 0, noteCount: 0, lastActivityAt: null },
+      ],
+      total: 2,
+      page: 1,
+      pageSize: 25,
+    });
+  });
+});
+
+describe('CustomersService.history', () => {
+  const line = { displayName: 'Support line', phoneNumber: '6281100000099' };
+  const jids = ['6281100000001@s.whatsapp.net', '6281100000001@c.us'];
+  beforeEach(() => {
+    p.customer.findFirst.mockResolvedValue(customerRow());
+    p.customerLink.findMany.mockResolvedValue([{ phone: '6281100000001' }]);
+    p.conversation.findMany.mockResolvedValue([
+      { id: 'cv-1', profileId: 'p-1', jid: jids[0], lastMessageAt: new Date('2026-11-01T10:00:00.000Z'), updatedAt: AT, profile: line, _count: { messages: 12 } },
+      { id: 'cv-2', profileId: 'p-2', jid: jids[1], lastMessageAt: null, updatedAt: new Date('2026-10-01T10:00:00.000Z'), profile: { displayName: null, phoneNumber: null }, _count: { messages: 1 } },
+    ]);
+    p.call.findMany.mockResolvedValue([
+      { id: 'ca-1', profileId: 'p-1', fromJid: jids[0], startedAt: new Date('2026-11-02T09:00:00.000Z'), isVideo: false, outcome: 'answered_elsewhere', profile: line },
+    ]);
+  });
+
+  it("reads the organization's one-to-one chats and calls of the linked numbers, under both JID forms", async () => {
+    await service().history('org-1', 'c-1');
+    expect(p.customerLink.findMany).toHaveBeenCalledWith({ where: { customerId: 'c-1' }, select: { phone: true } });
+    const inOrg = { workspace: { organizationId: 'org-1' } };
+    expect(p.conversation.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { type: 'user', jid: { in: jids }, profile: inOrg }, take: 20 }));
+    expect(p.call.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { isGroup: false, fromJid: { in: jids }, profile: inOrg }, take: 20 }));
+  });
+
+  it('answers them newest first, with what each was', async () => {
+    expect(await service().history('org-1', 'c-1')).toEqual([
+      { kind: 'call', id: 'ca-1', profileId: 'p-1', profileName: 'Support line', phone: '6281100000001', at: '2026-11-02T09:00:00.000Z', summary: 'Voice call, answered elsewhere' },
+      { kind: 'conversation', id: 'cv-1', profileId: 'p-1', profileName: 'Support line', phone: '6281100000001', at: '2026-11-01T10:00:00.000Z', summary: '12 messages' },
+      { kind: 'conversation', id: 'cv-2', profileId: 'p-2', profileName: '', phone: '6281100000001', at: '2026-10-01T10:00:00.000Z', summary: '1 message' },
+    ]);
+  });
+
+  it('answers at most `limit` items (at most 50), and nothing for a customer without a number', async () => {
+    expect(await service().history('org-1', 'c-1', '2')).toHaveLength(2);
+    await service().history('org-1', 'c-1', '500');
+    expect(p.call.findMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 50 }));
+    p.customerLink.findMany.mockResolvedValue([]);
+    p.conversation.findMany.mockClear();
+    expect(await service().history('org-1', 'c-1')).toEqual([]);
+    expect(p.conversation.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('lookups', () => {
+  const ok = (fetchedAt: string, cached = false) => ({ state: 'ok', data: { name: 'Budi Santoso', fields: [], sections: [] }, fetchedAt, cached });
+
+  it("a customer's lookup keeps the name and the time of an answer newer than the stored one", async () => {
+    p.customer.findFirst.mockResolvedValue(customerRow({ lastLookupAt: new Date('2026-11-05T07:00:00.000Z') }));
+    lookups.lookup.mockResolvedValue(ok('2026-11-05T08:00:00.000Z', true));
+    expect(await service().lookup(MEMBER, 'c-1', true)).toEqual(ok('2026-11-05T08:00:00.000Z', true));
+    expect(lookups.lookup).toHaveBeenCalledWith('org-1', '1234567890', { userId: 'u-member', refresh: true });
+    expect(p.customer.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c-1' }, data: { lastLookupAt: new Date('2026-11-05T08:00:00.000Z'), displayName: 'Budi Santoso' },
+    });
+  });
+
+  it('stores nothing for an answer stored already, or one that is not ok', async () => {
+    p.customer.findFirst.mockResolvedValue(customerRow({ lastLookupAt: new Date('2026-11-05T08:00:00.000Z') }));
+    lookups.lookup.mockResolvedValue(ok('2026-11-05T08:00:00.000Z', true));
+    await service().lookup(MEMBER, 'c-1', false);
+    lookups.lookup.mockResolvedValue({ state: 'not_found', data: null, fetchedAt: '2026-11-05T09:00:00.000Z', cached: false });
+    await service().lookup(MEMBER, 'c-1', false);
+    expect(calls('customer.updateMany')).toEqual([]);
+  });
+
+  it('a preview checks the ID, asks without a refresh, and stores nothing', async () => {
+    lookups.lookup.mockResolvedValue({ state: 'not_found', data: null, fetchedAt: '2026-11-05T08:00:00.000Z', cached: false });
+    await service().preview(MEMBER, ' A-1 ');
+    expect(lookups.lookup).toHaveBeenCalledWith('org-1', 'A-1', { userId: 'u-member' });
+    await expect(service().preview(MEMBER, 'a b')).rejects.toThrow('Invalid customer ID');
+    for (const write of ['customer.create', 'customer.update', 'customer.updateMany']) expect(calls(write)).toEqual([]);
+  });
+});
+
+describe("another organization's customer, for the notes, the history and the lookup", () => {
+  it.each([
+    ['notes', (s: CustomersService) => s.notes('org-2', 'c-1')],
+    ['addNote', (s: CustomersService) => s.addNote(ELSEWHERE, 'c-1', 'hello')],
+    ['history', (s: CustomersService) => s.history('org-2', 'c-1')],
+    ['lookup', (s: CustomersService) => s.lookup(ELSEWHERE, 'c-1', false)],
+  ] as const)('%s: not found', async (_name, act) => {
+    p.customer.findFirst.mockImplementation(async ({ where }: any) => (inOrg1(where) ? customerRow() : null));
+    await expect(act(service())).rejects.toThrow(NotFoundException);
+    for (const read of ['customerNote.findMany', 'customerNote.create', 'customerLink.findMany']) expect(calls(read)).toEqual([]);
+    expect(lookups.lookup).not.toHaveBeenCalled();
   });
 });

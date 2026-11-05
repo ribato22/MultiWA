@@ -6,12 +6,17 @@
 // organization's id answers 404. The service audits its own changes with the ids of what it made or changed, never a
 // number, a note's text or a secret.
 
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
-import { linkablePhone } from '../../common/phone';
+import { pageSize } from '../../common/page-size';
+import { linkablePhone, normalizePhone } from '../../common/phone';
 import { AuditAction, AuditService } from '../audit/audit.service';
+import { ADMIN_ROLES } from '../auth/roles';
 import { CustomerLookupService } from './customer-lookup.service';
-import type { ActorView, CustomerByPhoneItem, CustomerLinkView, CustomerNoteView, CustomerView, LinkResult, LookupField } from './customers.types';
+import type {
+  ActorView, CustomerByPhoneItem, CustomerHistoryItem, CustomerLinkView, CustomerListPage, CustomerNoteView, CustomerView, LinkResult,
+  LookupField, LookupResult,
+} from './customers.types';
 
 /** Who makes a request: the signed-in user, their organization and role, the API key it came with, and from where. */
 export interface Actor {
@@ -91,6 +96,25 @@ async function findOrCreate<T>(find: () => Promise<T | null>, create: () => Prom
     return { row: winner, created: false };
   }
 }
+
+/** A note's text as stored: trimmed, of 1 to 2000 characters. */
+function toNoteBody(raw: unknown): string {
+  const body = typeof raw === 'string' ? raw.trim() : '';
+  if (!body || body.length > 2000) throw new BadRequestException('A note has 1 to 2000 characters');
+  return body;
+}
+
+/** A page number from the query: 1 unless it is a whole number of at least 1. */
+const pageOf = (raw: unknown): number => {
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 1 ? n : 1;
+};
+
+/** The latest of these times, or null for none. */
+const latest = (times: Date[]): string | null => (times.length ? new Date(Math.max(...times.map((t) => t.getTime()))).toISOString() : null);
+
+/** A profile as the history names it. */
+const lineName = (p: { displayName: string | null; phoneNumber: string | null }) => p.displayName ?? p.phoneNumber ?? '';
 
 @Injectable()
 export class CustomersService {
@@ -211,6 +235,176 @@ export class CustomersService {
     if (count === 0) throw new NotFoundException('Customer not found');
     this.audit(actor, AuditAction.CUSTOMER_DELETE, id, { customerId: id });
     return { success: true };
+  }
+
+  /** Customers by ID (prefix), name (anywhere in it), any case, or a number's digits; the recently changed first. */
+  async list(organizationId: string, query: { q?: unknown; page?: unknown; pageSize?: unknown }): Promise<CustomerListPage> {
+    const take = Math.min(pageSize(Number(query.pageSize), 25), 100);
+    const page = pageOf(query.page);
+    const q = typeof query.q === 'string' ? query.q.trim().slice(0, 100) : '';
+    const where: any = { organizationId };
+    if (q) {
+      // A number's digits only for a query that is a number: an ID like AB-123 is no phone number.
+      const digits = /^[\d\s()+-]+$/.test(q) ? normalizePhone(q) : '';
+      where.OR = [
+        { externalId: { startsWith: q, mode: 'insensitive' } },
+        { displayName: { contains: q, mode: 'insensitive' } },
+        ...(digits ? [{ links: { some: { phone: { contains: digits } } } }] : []),
+      ];
+    }
+    const [rows, total] = await Promise.all([
+      prisma.customer.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        skip: (page - 1) * take,
+        take,
+        include: {
+          links: { select: { lastUsedAt: true } },
+          // Each one's newest note. Prisma reads the times of the page's notes in full and keeps one each: fine for a
+          // page of at most 100 customers; a groupBy would do if a customer ever had thousands of notes.
+          notes: { select: { createdAt: true }, orderBy: { createdAt: 'desc' }, take: 1 },
+          _count: { select: { notes: true } },
+        },
+      }),
+      prisma.customer.count({ where }),
+    ]);
+    return {
+      items: rows.map((c) => ({
+        id: c.id,
+        externalId: c.externalId,
+        displayName: c.displayName,
+        linkCount: c.links.length,
+        noteCount: c._count.notes,
+        lastActivityAt: latest([...c.links.map((l) => l.lastUsedAt), ...c.notes.map((n) => n.createdAt)]),
+      })),
+      total,
+      page,
+      pageSize: take,
+    };
+  }
+
+  /** The notes, newest first. */
+  async notes(organizationId: string, id: string, page?: unknown, size?: unknown): Promise<{ items: CustomerNoteView[]; total: number }> {
+    const customer = await this.owned(organizationId, id);
+    const take = Math.min(pageSize(Number(size), 20), 100);
+    const where = { customerId: customer.id };
+    const [rows, total] = await Promise.all([
+      prisma.customerNote.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (pageOf(page) - 1) * take, take }),
+      prisma.customerNote.count({ where }),
+    ]);
+    const nameOf = await this.names(organizationId, rows.map(authoredBy));
+    return { items: rows.map((n) => noteView(n, nameOf)), total };
+  }
+
+  /** Adds a note, written by the caller (and the API key it came with). */
+  async addNote(actor: Actor, id: string, rawBody: unknown): Promise<CustomerNoteView> {
+    const body = toNoteBody(rawBody);
+    const customer = await this.owned(actor.organizationId, id);
+    const note = await prisma.customerNote.create({
+      data: { customerId: customer.id, body, authorUserId: actor.userId, authorApiKeyId: actor.apiKeyId ?? null },
+    });
+    this.audit(actor, AuditAction.CUSTOMER_NOTE_CREATE, customer.id, { customerId: customer.id, noteId: note.id });
+    return noteView(note, await this.names(actor.organizationId, [authoredBy(note)]));
+  }
+
+  /** Edits a note: its author's own, or any for an owner or an admin. */
+  async editNote(actor: Actor, id: string, noteId: string, rawBody: unknown): Promise<CustomerNoteView> {
+    const body = toNoteBody(rawBody);
+    const note = await this.changeableNote(actor, id, noteId);
+    const edited = await prisma.customerNote.update({ where: { id: note.id }, data: { body } });
+    this.audit(actor, AuditAction.CUSTOMER_NOTE_UPDATE, note.customerId, { customerId: note.customerId, noteId: note.id });
+    return noteView(edited, await this.names(actor.organizationId, [authoredBy(edited)]));
+  }
+
+  /** Deletes a note, on the terms of an edit. */
+  async deleteNote(actor: Actor, id: string, noteId: string): Promise<{ success: true }> {
+    const note = await this.changeableNote(actor, id, noteId);
+    if ((await prisma.customerNote.deleteMany({ where: { id: note.id } })).count === 0) throw new NotFoundException('Note not found');
+    this.audit(actor, AuditAction.CUSTOMER_NOTE_DELETE, note.customerId, { customerId: note.customerId, noteId: note.id });
+    return { success: true };
+  }
+
+  /**
+   * The organization's one-to-one chats and calls with the customer's numbers, across its profiles, newest first. A chat
+   * counts its messages; a call says its kind and outcome. Nothing of it is stored with the customer.
+   */
+  async history(organizationId: string, id: string, limit?: unknown): Promise<CustomerHistoryItem[]> {
+    const customer = await this.owned(organizationId, id);
+    const take = Math.min(pageSize(Number(limit), 20), 50);
+    const links = await prisma.customerLink.findMany({ where: { customerId: customer.id }, select: { phone: true } });
+    if (links.length === 0) return [];
+    // Chats and calls are stored under @s.whatsapp.net, but a send keeps the @c.us of a JID it was given.
+    const jids = links.flatMap(({ phone }) => [`${phone}@s.whatsapp.net`, `${phone}@c.us`]);
+    const profile = { workspace: { organizationId } };
+    const line = { select: { displayName: true, phoneNumber: true } } as const;
+    const [chats, calls] = await Promise.all([
+      prisma.conversation.findMany({
+        where: { type: 'user', jid: { in: jids }, profile },
+        orderBy: { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+        take,
+        select: { id: true, profileId: true, jid: true, lastMessageAt: true, updatedAt: true, profile: line, _count: { select: { messages: true } } },
+      }),
+      prisma.call.findMany({
+        where: { isGroup: false, fromJid: { in: jids }, profile },
+        orderBy: { startedAt: 'desc' },
+        take,
+        select: { id: true, profileId: true, fromJid: true, startedAt: true, isVideo: true, outcome: true, profile: line },
+      }),
+    ]);
+    const items: CustomerHistoryItem[] = [
+      ...chats.map((c) => ({
+        kind: 'conversation' as const,
+        id: c.id,
+        profileId: c.profileId,
+        profileName: lineName(c.profile),
+        phone: c.jid.split('@')[0],
+        at: (c.lastMessageAt ?? c.updatedAt).toISOString(),
+        summary: `${c._count.messages} message${c._count.messages === 1 ? '' : 's'}`,
+      })),
+      ...calls.map((c) => ({
+        kind: 'call' as const,
+        id: c.id,
+        profileId: c.profileId,
+        profileName: lineName(c.profile),
+        phone: c.fromJid.split('@')[0],
+        at: c.startedAt.toISOString(),
+        summary: `${c.isVideo ? 'Video' : 'Voice'} call, ${c.outcome.replace(/_/g, ' ')}`,
+      })),
+    ];
+    return items.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, take);
+  }
+
+  /**
+   * The live lookup of a customer. An ok answer newer than the stored one leaves its name (for the list and the search)
+   * and its time; nothing else of an answer is stored.
+   */
+  async lookup(actor: Actor, id: string, refresh: boolean): Promise<LookupResult> {
+    const customer = await this.owned(actor.organizationId, id);
+    const result = await this.lookups.lookup(actor.organizationId, customer.externalId, { userId: actor.userId, refresh });
+    const fetchedAt = new Date(result.fetchedAt);
+    if (result.state === 'ok' && (!customer.lastLookupAt || customer.lastLookupAt < fetchedAt)) {
+      // updateMany: a customer deleted meanwhile is no error here.
+      await prisma.customer.updateMany({
+        where: { id: customer.id },
+        data: { lastLookupAt: fetchedAt, ...(result.data?.name ? { displayName: result.data.name } : {}) },
+      });
+    }
+    return result;
+  }
+
+  /** The lookup of an ID before it is linked, for an agent to check it: it stores nothing. */
+  async preview(actor: Actor, rawExternalId: unknown): Promise<LookupResult> {
+    return this.lookups.lookup(actor.organizationId, toExternalId(rawExternalId), { userId: actor.userId });
+  }
+
+  /** The note, when it is this customer's in the caller's organization (else 404) and the caller may change it (else 403). */
+  private async changeableNote(actor: Actor, customerId: string, noteId: string) {
+    const note = await prisma.customerNote.findFirst({ where: { id: noteId, customerId, customer: { organizationId: actor.organizationId } } });
+    if (!note) throw new NotFoundException('Note not found');
+    if (note.authorUserId !== actor.userId && !ADMIN_ROLES.includes(actor.role)) {
+      throw new ForbiddenException("Only a note's author, an owner or an admin changes it");
+    }
+    return note;
   }
 
   /** The caller's organization's customer, else 404: another organization's is not found either. */
