@@ -4,12 +4,14 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, MessagesSquare, PhoneIncoming, Trash2, Unlink, UserX } from 'lucide-react';
 import { api, type CustomerHistoryItem, type CustomerLinkView, type CustomerView } from '@/lib/api';
 import { canAct, canConfigure, currentUser } from '@/lib/current-user';
 import { formatDateTime, formatFull } from '@/lib/datetime';
+import { refocus } from '@/lib/focus';
 import { CustomerDetails, useIdLabel } from '@/components/customers/customer-details';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -33,6 +35,8 @@ export default function CustomerPage() {
   const [historyFailure, setHistoryFailure] = useState<string | null>(null);
   const [historyAttempt, setHistoryAttempt] = useState(0); // a Retry reads the history again
   const historyHeading = useRef<HTMLHeadingElement>(null);
+  const numbers = useRef<HTMLUListElement>(null);
+  const noNumbers = useRef<HTMLParagraphElement>(null);
   // An unlink or the delete is on its way: one at a time. The buttons wait as aria-disabled, not disabled: the one
   // pressed keeps the focus.
   const [busy, setBusy] = useState(false);
@@ -68,7 +72,8 @@ export default function CustomerPage() {
     setHistoryAttempt((n) => n + 1);
   };
 
-  const unlink = async (link: CustomerLinkView) => {
+  /** `at`: the number's place in the list. */
+  const unlink = async (link: CustomerLinkView, at: number) => {
     if (busy || !window.confirm(`Unlink +${link.phone}? The customer, its notes and its tags stay.`)) return;
     setBusy(true);
     const res = await api.unlinkCustomer(link.id);
@@ -77,7 +82,10 @@ export default function CustomerPage() {
       toast({ title: 'Could not unlink the number', description: res.error, variant: 'destructive' });
       return;
     }
-    setCustomer((c) => c && { ...c, links: c.links.filter((l) => l.id !== link.id) });
+    flushSync(() => setCustomer((c) => c && { ...c, links: c.links.filter((l) => l.id !== link.id) }));
+    // The Unlink pressed went with its number: the focus goes on to the next number's, else to the line that says none is left.
+    const buttons = numbers.current?.querySelectorAll('button');
+    refocus(buttons?.[Math.min(at, buttons.length - 1)] ?? noNumbers.current);
     toast({ title: `+${link.phone} unlinked` });
   };
 
@@ -136,10 +144,10 @@ export default function CustomerPage() {
       <section aria-labelledby="customer-numbers" className="bg-card rounded-2xl border border-border p-5 space-y-3">
         <h2 id="customer-numbers" className="font-semibold text-foreground">Numbers</h2>
         {customer.links.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No number is linked any more.</p>
+          <p ref={noNumbers} tabIndex={-1} className="text-sm text-muted-foreground">No number is linked any more.</p>
         ) : (
-          <ul className="divide-y divide-border">
-            {customer.links.map((l) => (
+          <ul ref={numbers} className="divide-y divide-border">
+            {customer.links.map((l, at) => (
               <li key={l.id} className="flex items-center justify-between gap-3 py-2">
                 <div className="min-w-0">
                   <p className="font-mono text-sm text-foreground">+{l.phone}</p>
@@ -149,7 +157,7 @@ export default function CustomerPage() {
                   </p>
                 </div>
                 {canAct(role) && (
-                  <Button size="sm" variant="ghost" aria-label={`Unlink +${l.phone}`} aria-disabled={busy} onClick={() => void unlink(l)}>
+                  <Button size="sm" variant="ghost" aria-label={`Unlink +${l.phone}`} aria-disabled={busy} onClick={() => void unlink(l, at)}>
                     <Unlink aria-hidden="true" />
                     Unlink
                   </Button>

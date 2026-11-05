@@ -4,7 +4,7 @@
 import { test, expect, gate, get, on, rendered, requestEnded, toasts, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import {
-  ADA, BY_PHONE, CONV, CUSTOMER, LOOKUP_DATA, LOOKUP_OK, MANUAL, NOW, PHONE, customerBackend, lookupAnswer, openContactInfo, sentBody,
+  ADA, BY_PHONE, CONV, CUSTOMER, LOOKUP_DATA, LOOKUP_OK, MANUAL, NOW, PHONE, SECOND, customerBackend, lookupAnswer, openContactInfo, sentBody,
 } from './support/customers';
 import type { Locator, Page } from '@playwright/test';
 
@@ -67,6 +67,16 @@ test('an unavailable lookup offers Retry, which asks the endpoint again', async 
   expect(lookups(backend).slice(before)).toEqual(['']); // the server caches no unavailable answer: no refresh needed
 });
 
+test('a Retry that finds the customer hands the focus to Refresh, which takes its place', async ({ page, backend }) => {
+  let up = false;
+  customerBackend(backend, { lookup: () => ({ json: up ? LOOKUP_OK : lookupAnswer('unavailable') }) });
+  const panel = await openContactInfo(page, backend);
+  await expect(panel.getByText('The lookup is unavailable right now.')).toBeVisible();
+  up = true;
+  await panel.getByRole('button', { name: 'Retry' }).click();
+  await expect(panel.getByRole('button', { name: 'Refresh' })).toBeFocused();
+});
+
 test('says it is looking while the endpoint is slow', async ({ page, backend }) => {
   const slow = gate();
   customerBackend(backend, {
@@ -122,6 +132,7 @@ test('IDs of the number the server cannot give are said so, with Retry: not take
   await expect(panel.getByText('R1 / 1300 VA')).toBeVisible();
   await expect(panel.getByRole('alert')).toHaveCount(0);
   await expect(linkField(panel)).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Customer' })).toBeFocused(); // Retry went: the focus is not left to the page
 });
 
 test('follows the open chat: another chat’s number shows its own customer', async ({ page, backend }) => {
@@ -220,6 +231,50 @@ test('tags answered after the agent picked another ID leave that ID’s details 
   await expect(picker(panel)).toHaveText('9876543210 · Siti Rahayu');
   await expect(panel.getByText('No tags yet.')).toBeVisible();
   await expect(panel.getByText('R1 / 1300 VA')).toHaveCount(0); // Budi Santoso's lookup
+});
+
+test('the picker names an ID as its details were renamed', async ({ page, backend }) => {
+  customerBackend(backend, { config: MANUAL, lookup: { json: lookupAnswer('not_configured') } });
+  backend.route(on('PATCH', '/customers/cus-1', (r) => ({ json: { ...CUSTOMER, ...json(r.body) } })));
+  const panel = await openContactInfo(page, backend);
+  await expect(picker(panel)).toHaveText('1234567890 · Budi Santoso');
+  await panel.getByRole('button', { name: 'Edit details' }).click();
+  await panel.getByRole('textbox', { name: 'Name', exact: true }).fill('Budi S.');
+  await panel.getByRole('button', { name: 'Save details' }).click();
+  await expect(panel.getByText('Budi S.', { exact: true })).toBeVisible();
+  await expect(picker(panel)).toHaveText('1234567890 · Budi S.');
+  await picker(panel).click();
+  await expect(page.getByRole('option')).toHaveText(['1234567890 · Budi S.', '9876543210 · Siti Rahayu']);
+});
+
+test('the picker names an ID by the name the lookup gave it', async ({ page, backend }) => {
+  customerBackend(backend, {
+    customers: [{ ...CUSTOMER, displayName: null }, SECOND],
+    byPhone: [{ ...BY_PHONE[0], displayName: null }, BY_PHONE[1]],
+  });
+  const panel = await openContactInfo(page, backend);
+  await expect(panel.getByText('R1 / 1300 VA')).toBeVisible(); // the lookup answered, with the name Budi Santoso
+  await expect(picker(panel)).toHaveText('1234567890 · Budi Santoso');
+});
+
+test('picks follow one another to the server: the last pick is the last default it is told', async ({ page, backend }) => {
+  const slow = gate();
+  const told: string[] = [];
+  customerBackend(backend);
+  backend.route(on('POST', /^\/customers\/links\/[^/]+\/use$/, async (r) => {
+    const linkId = r.path.split('/')[3];
+    if (linkId === 'lnk-2') await slow.passed; // the first pick's request is the slow one
+    told.push(linkId);
+    return { status: 201, json: { id: linkId, phone: PHONE, lastUsedAt: NOW, createdAt: NOW, linkedBy: null } };
+  }));
+  const panel = await openContactInfo(page, backend);
+  await picker(panel).click();
+  await page.getByRole('option', { name: '9876543210 · Siti Rahayu' }).click();
+  await picker(panel).click();
+  await page.getByRole('option', { name: '1234567890 · Budi Santoso' }).click();
+  await expect(picker(panel)).toHaveText('1234567890 · Budi Santoso');
+  slow.open();
+  await expect.poll(() => told).toEqual(['lnk-2', 'lnk-1']);
 });
 
 test.describe('a member', () => {
@@ -363,6 +418,53 @@ test.describe('a member', () => {
     await panel.getByRole('button', { name: 'Remove tag priority' }).click();
     await expect(tags).toHaveText(['billing']);
     expect(backend.requests.filter((r) => r.method === 'PATCH').map((r) => json(r.body))).toEqual([{ tags: ['priority', 'billing'] }, { tags: ['billing'] }]);
+  });
+
+  test('keeps the focus in a note’s edit: in its field, back on Edit when it closes, on the new note after a delete', async ({ page, backend }) => {
+    customerBackend(backend);
+    backend.route(on('PATCH', '/customers/cus-1/notes/note-1', (r) => ({ json: { ...CUSTOMER.notes[1], body: json(r.body).body } })));
+    backend.route(on('DELETE', '/customers/cus-1/notes/note-1', { json: { success: true } }));
+    page.on('dialog', (d) => d.accept());
+    const panel = await openContactInfo(page, backend);
+    const mine = notes(panel).filter({ hasText: 'Prefers WhatsApp to calls' });
+    const field = panel.getByRole('textbox', { name: 'Edit note' });
+    await mine.getByRole('button', { name: 'Edit note' }).click();
+    await expect(field).toBeFocused();
+    await panel.getByRole('button', { name: 'Cancel' }).click();
+    await expect(mine.getByRole('button', { name: 'Edit note' })).toBeFocused();
+    await mine.getByRole('button', { name: 'Edit note' }).click();
+    await field.fill('Prefers WhatsApp, never calls');
+    await panel.getByRole('button', { name: 'Save note' }).click();
+    const edited = notes(panel).filter({ hasText: 'Prefers WhatsApp, never calls' });
+    await expect(edited.getByRole('button', { name: 'Edit note' })).toBeFocused();
+    await edited.getByRole('button', { name: 'Delete note' }).click();
+    await expect(edited).toHaveCount(0);
+    await expect(panel.getByRole('textbox', { name: 'New note' })).toBeFocused();
+  });
+
+  test('keeps the focus in the typed details’ edit: in the name, and back on Edit details when it closes', async ({ page, backend }) => {
+    customerBackend(backend, { config: MANUAL, lookup: { json: lookupAnswer('not_configured') } });
+    backend.route(on('PATCH', '/customers/cus-1', (r) => ({ json: { ...CUSTOMER, ...json(r.body) } })));
+    const panel = await openContactInfo(page, backend);
+    const edit = panel.getByRole('button', { name: 'Edit details' });
+    const name = panel.getByRole('textbox', { name: 'Name', exact: true });
+    await edit.click();
+    await expect(name).toBeFocused();
+    await panel.getByRole('button', { name: 'Cancel' }).click();
+    await expect(edit).toBeFocused();
+    await edit.click();
+    await name.fill('Budi S.');
+    await panel.getByRole('button', { name: 'Save details' }).click();
+    await expect(edit).toBeFocused();
+  });
+
+  test('removing a tag leaves the focus in the new tag field', async ({ page, backend }) => {
+    customerBackend(backend);
+    backend.route(on('PATCH', '/customers/cus-1', (r) => ({ json: { ...CUSTOMER, tags: json(r.body).tags } })));
+    const panel = await openContactInfo(page, backend);
+    await panel.getByRole('button', { name: 'Remove tag priority' }).click();
+    await expect(panel.getByText('No tags yet.')).toBeVisible();
+    await expect(panel.getByRole('textbox', { name: 'New tag' })).toBeFocused();
   });
 });
 

@@ -2,10 +2,12 @@
 // One customer: what the organization's lookup says of it now, or the details typed by hand while no lookup is set
 // up; its tags; the team's notes. The chat's customer panel, the call detail and the customer's page show it.
 import { Fragment, useCallback, useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { flushSync } from 'react-dom';
 import { Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { api, type CustomerNoteView, type CustomerView, type LookupField, type LookupResult } from '@/lib/api';
 import { canAct, canConfigure, currentUser } from '@/lib/current-user';
 import { formatFull, formatRelative } from '@/lib/datetime';
+import { refocus } from '@/lib/focus';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -66,26 +68,37 @@ export function CustomerDetails({ customer, onChange, contactTags, headingLevel 
   headingLevel?: Heading;
 }) {
   // A save answered after the page moved on to another customer is dropped, not applied to the one shown now.
-  const change: SetCustomer = (next) => onChange((c) => (c?.id === customer.id ? (typeof next === 'function' ? next(c) : next) : c));
+  const change = useCallback<SetCustomer>(
+    (next) => onChange((c) => (c?.id === customer.id ? (typeof next === 'function' ? next(c) : next) : c)),
+    [onChange, customer.id],
+  );
   // null until the first answer: a Refresh keeps what is shown until the next one comes.
   const [lookup, setLookup] = useState<LookupResult | 'failed' | null>(null);
   const [busy, setBusy] = useState(false);
   const seq = useRef(0); // only the newest read lands
-  const load = useCallback(async (refresh = false) => {
+  const askButton = useRef<HTMLButtonElement>(null);
+  /** `pressed`: an agent asked, and the button pressed may give way to the one the answer shows. */
+  const load = useCallback(async (refresh = false, pressed = false) => {
     const n = ++seq.current;
     setBusy(true);
     const res = await api.lookupCustomer(customer.id, refresh);
     if (n !== seq.current) return;
-    setBusy(false);
-    setLookup(res.data?.state ? res.data : 'failed');
-  }, [customer.id]);
+    const name = res.data?.state === 'ok' ? res.data.data?.name : undefined;
+    flushSync(() => {
+      setBusy(false);
+      setLookup(res.data?.state ? res.data : 'failed');
+      // The server keeps the name a lookup gives: the customer is called that from now on.
+      if (name) change((c) => (c && c.displayName !== name ? { ...c, displayName: name } : c));
+    });
+    if (pressed) refocus(askButton.current);
+  }, [customer.id, change]);
   useEffect(() => {
     void load();
   }, [load]);
 
   // aria-disabled, not disabled: the button keeps the focus while the lookup runs.
   const ask = (label: 'Refresh' | 'Retry', refresh: boolean) => (
-    <Button type="button" size="sm" variant={refresh ? 'ghost' : 'outline'} aria-disabled={busy} onClick={() => !busy && void load(refresh)}>
+    <Button ref={askButton} type="button" size="sm" variant={refresh ? 'ghost' : 'outline'} aria-disabled={busy} onClick={() => !busy && void load(refresh, true)}>
       <RefreshCw className={busy ? 'mw-spin' : undefined} aria-hidden="true" />
       {label}
     </Button>
@@ -136,7 +149,16 @@ function ManualFields({ customer, onChange }: { customer: CustomerView; onChange
   const nameId = useId();
   const [form, setForm] = useState<{ name: string; fields: LookupField[] } | null>(null); // null: not editing
   const [saving, setSaving] = useState(false);
+  const editButton = useRef<HTMLButtonElement>(null);
 
+  /** Closes the form, the customer saved or not, and gives the focus back to Edit details, which opened it. */
+  const leave = (saved?: CustomerView) => {
+    flushSync(() => {
+      if (saved) onChange(saved);
+      setForm(null);
+    });
+    refocus(editButton.current);
+  };
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form || saving) return;
@@ -151,8 +173,7 @@ function ManualFields({ customer, onChange }: { customer: CustomerView; onChange
       toast({ title: res.error ?? 'Could not save the details', variant: 'destructive' });
       return;
     }
-    onChange(res.data);
-    setForm(null);
+    leave(res.data);
   };
   const setField = (i: number, part: Partial<LookupField>) =>
     setForm((f) => f && { ...f, fields: f.fields.map((x, j) => (j === i ? { ...x, ...part } : x)) });
@@ -165,6 +186,7 @@ function ManualFields({ customer, onChange }: { customer: CustomerView; onChange
         <Pairs pairs={customer.manualFields ?? []} />
         {agent && (
           <Button
+            ref={editButton}
             type="button"
             size="sm"
             variant="outline"
@@ -181,7 +203,7 @@ function ManualFields({ customer, onChange }: { customer: CustomerView; onChange
     <form onSubmit={save} className="space-y-2">
       <div className="space-y-1">
         <Label htmlFor={nameId} className="text-xs">Name</Label>
-        <Input id={nameId} value={form.name} maxLength={200} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <Input id={nameId} autoFocus value={form.name} maxLength={200} onChange={(e) => setForm({ ...form, name: e.target.value })} />
       </div>
       {form.fields.map((f, i) => (
         <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-1">
@@ -206,7 +228,7 @@ function ManualFields({ customer, onChange }: { customer: CustomerView; onChange
       )}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={saving}>{saving ? 'Saving…' : 'Save details'}</Button>
-        <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => setForm(null)}>Cancel</Button>
+        <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={() => leave()}>Cancel</Button>
       </div>
     </form>
   );
@@ -218,6 +240,7 @@ function CustomerTags({ customer, onChange, contactTags, H }: { customer: Custom
   const [agent] = useState(() => canAct(currentUser()?.role));
   const [tag, setTag] = useState('');
   const [saving, setSaving] = useState(false);
+  const tagInput = useRef<HTMLInputElement>(null);
 
   const save = async (tags: string[]) => {
     setSaving(true);
@@ -227,7 +250,7 @@ function CustomerTags({ customer, onChange, contactTags, H }: { customer: Custom
       toast({ title: res.error ?? 'Could not save the tags', variant: 'destructive' });
       return false;
     }
-    onChange(res.data);
+    flushSync(() => onChange(res.data));
     return true;
   };
   const add = async (e: React.FormEvent) => {
@@ -235,6 +258,9 @@ function CustomerTags({ customer, onChange, contactTags, H }: { customer: Custom
     const t = tag.trim();
     if (!t || saving) return;
     if (customer.tags.includes(t) || (await save([...customer.tags, t]))) setTag('');
+  };
+  const remove = async (t: string) => {
+    if (await save(customer.tags.filter((x) => x !== t))) refocus(tagInput.current); // the button pressed went with its tag
   };
 
   return (
@@ -251,7 +277,7 @@ function CustomerTags({ customer, onChange, contactTags, H }: { customer: Custom
                     type="button"
                     aria-label={`Remove tag ${t}`}
                     disabled={saving}
-                    onClick={() => void save(customer.tags.filter((x) => x !== t))}
+                    onClick={() => void remove(t)}
                     className="rounded-sm hover:text-foreground focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
                     <X className="h-3 w-3" aria-hidden="true" />
@@ -266,7 +292,7 @@ function CustomerTags({ customer, onChange, contactTags, H }: { customer: Custom
       )}
       {agent && customer.tags.length < MAX_TAGS && (
         <form onSubmit={add} className="flex gap-2">
-          <Input aria-label="New tag" value={tag} maxLength={32} onChange={(e) => setTag(e.target.value)} className="h-8" />
+          <Input ref={tagInput} aria-label="New tag" value={tag} maxLength={32} onChange={(e) => setTag(e.target.value)} className="h-8" />
           <Button type="submit" size="sm" variant="outline" disabled={!tag.trim() || saving}>Add tag</Button>
         </form>
       )}
@@ -296,9 +322,23 @@ function CustomerNotes({ customer, onChange, H }: { customer: CustomerView; onCh
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState<{ id: string; body: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const newNote = useRef<HTMLTextAreaElement>(null);
+  const editButtons = useRef(new Map<string, HTMLButtonElement>()); // each note's Edit button, by note
+  const editButton = (id: string) => (el: HTMLButtonElement | null) => {
+    if (el) editButtons.current.set(id, el);
+    else editButtons.current.delete(id);
+  };
   // An API key's note is nobody's own: an owner or admin changes it.
   const mayChange = (n: CustomerNoteView) => admin || (agent && n.author?.type === 'user' && n.author.id === me?.id);
   const setNotes = (change: (notes: CustomerNoteView[]) => CustomerNoteView[]) => onChange((c) => c && { ...c, notes: change(c.notes) });
+  /** Closes note `id`'s edit, `saved` or not, and gives the focus back to the Edit button that opened it. */
+  const stopEditing = (id: string, saved?: CustomerNoteView) => {
+    flushSync(() => {
+      setEditing(null);
+      if (saved) setNotes((notes) => notes.map((n) => (n.id === saved.id ? saved : n)));
+    });
+    refocus(editButtons.current.get(id));
+  };
 
   const add = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,8 +367,7 @@ function CustomerNotes({ customer, onChange, H }: { customer: CustomerView; onCh
       toast({ title: res.error ?? 'Could not save the note', variant: 'destructive' });
       return;
     }
-    setEditing(null);
-    setNotes((notes) => notes.map((n) => (n.id === note.id ? note : n)));
+    stopEditing(note.id, note);
   };
   const remove = async (note: CustomerNoteView) => {
     if (busy || !window.confirm('Delete this note?')) return;
@@ -339,7 +378,8 @@ function CustomerNotes({ customer, onChange, H }: { customer: CustomerView; onCh
       toast({ title: res.error, variant: 'destructive' });
       return;
     }
-    setNotes((notes) => notes.filter((n) => n.id !== note.id));
+    flushSync(() => setNotes((notes) => notes.filter((n) => n.id !== note.id)));
+    refocus(newNote.current); // the Delete pressed went with its note
   };
 
   return (
@@ -348,7 +388,7 @@ function CustomerNotes({ customer, onChange, H }: { customer: CustomerView; onCh
       {agent && (
         <form onSubmit={add} className="space-y-1">
           <Label htmlFor={newNoteId} className="sr-only">New note</Label>
-          <Textarea id={newNoteId} rows={2} maxLength={2000} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="A note for the team" />
+          <Textarea id={newNoteId} ref={newNote} rows={2} maxLength={2000} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="A note for the team" />
           <Button type="submit" size="sm" disabled={!draft.trim() || busy}>Add note</Button>
         </form>
       )}
@@ -362,6 +402,7 @@ function CustomerNotes({ customer, onChange, H }: { customer: CustomerView; onCh
                 <form onSubmit={saveEdit} className="space-y-1">
                   <Textarea
                     aria-label="Edit note"
+                    autoFocus
                     rows={3}
                     maxLength={2000}
                     value={editing.body}
@@ -369,7 +410,7 @@ function CustomerNotes({ customer, onChange, H }: { customer: CustomerView; onCh
                   />
                   <div className="flex gap-2">
                     <Button type="submit" size="sm" disabled={!editing.body.trim() || busy}>Save note</Button>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => stopEditing(n.id)}>Cancel</Button>
                   </div>
                 </form>
               ) : (
@@ -381,7 +422,7 @@ function CustomerNotes({ customer, onChange, H }: { customer: CustomerView; onCh
                 </span>
                 {mayChange(n) && editing?.id !== n.id && (
                   <span className="flex">
-                    <Button type="button" size="icon" variant="ghost" className="h-6 w-6" aria-label="Edit note" onClick={() => setEditing({ id: n.id, body: n.body })}>
+                    <Button ref={editButton(n.id)} type="button" size="icon" variant="ghost" className="h-6 w-6" aria-label="Edit note" onClick={() => setEditing({ id: n.id, body: n.body })}>
                       <Pencil aria-hidden="true" />
                     </Button>
                     <Button type="button" size="icon" variant="ghost" className="h-6 w-6" aria-label="Delete note" onClick={() => void remove(n)}>

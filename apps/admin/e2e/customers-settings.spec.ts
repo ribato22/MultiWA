@@ -56,6 +56,21 @@ test('a save that leaves the secret alone keeps it; Clear takes it away on the n
   expect(saves(backend)).toEqual([kept, { ...kept, secret: '' }]);
 });
 
+test('the focus follows the secret’s controls: into the new secret, and back to Replace or Clear when Cancel closes it', async ({ page, backend }) => {
+  backend.route(get('/customers/config', CONFIG));
+  await page.goto('/dashboard/settings?tab=customers');
+  const form = panel(page);
+  const button = (name: string) => form.getByRole('button', { name, exact: true });
+  await button('Replace').click();
+  await expect(form.getByLabel('New secret')).toBeFocused();
+  await button('Cancel').click();
+  await expect(button('Replace')).toBeFocused();
+  await button('Clear').click();
+  await expect(button('Cancel')).toBeFocused();
+  await button('Cancel').click();
+  await expect(button('Clear')).toBeFocused();
+});
+
 test('cannot save the settings before they are read: a Save then would write the defaults over them', async ({ page, backend }) => {
   const slow = gate();
   backend.route(on('GET', '/customers/config', async () => {

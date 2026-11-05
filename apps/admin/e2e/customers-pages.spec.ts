@@ -3,7 +3,7 @@
 // number; an owner or admin deletes a customer.
 import { test, expect, gate, get, on, rendered, toasts, ME, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
-import { CONFIG, PHONE, customerBackend, openContactInfo } from './support/customers';
+import { CONFIG, CUSTOMER, PHONE, SECOND, customerBackend, openContactInfo } from './support/customers';
 import type { Page } from '@playwright/test';
 
 const BUDI = { id: 'cus-1', externalId: '1234567890', displayName: 'Budi Santoso', linkCount: 2, noteCount: 3, lastActivityAt: '2026-11-01T03:00:00.000Z' };
@@ -86,6 +86,7 @@ test('a list the server cannot give says so and offers Retry, instead of saying 
   await failed.getByRole('button', { name: 'Retry' }).click();
   await expect(page.getByRole('link', { name: '1234567890' })).toBeVisible();
   await expect(failed).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 1, name: 'Customers' })).toBeFocused(); // Retry went: the focus is not left to the page
 });
 
 test('a customer’s page has its numbers, its lookup, its tags and notes, and a history that opens the chat and the calls', async ({ page, backend }) => {
@@ -185,6 +186,7 @@ test('a history the server cannot give says so and offers Retry, instead of sayi
   await history.getByRole('button', { name: 'Retry' }).click();
   await expect(history.getByRole('link')).toHaveCount(2);
   await expect(history.getByRole('alert')).toHaveCount(0);
+  await expect(history.getByRole('heading', { name: 'History' })).toBeFocused(); // Retry went: the focus is not left to the page
 });
 
 test.describe('a member', () => {
@@ -227,6 +229,19 @@ test.describe('a member', () => {
     slow.open();
     await expect(numbers(page).getByText('No number is linked any more.')).toBeVisible();
     expect([asked, deleted(backend)]).toEqual([1, ['/customers/links/lnk-1']]);
+  });
+
+  test('Unlink leaves the focus on the next number’s Unlink, and on the line that says none is left after the last', async ({ page, backend }) => {
+    const [first] = CUSTOMER.links;
+    customerBackend(backend, { customers: [{ ...CUSTOMER, links: [first, { ...first, id: 'lnk-9', phone: '6281100000009' }] }, SECOND] });
+    backend.route(get('/customers/cus-1/history', HISTORY));
+    backend.route(on('DELETE', /^\/customers\/links\/[^/]+$/, { json: { success: true } }));
+    page.on('dialog', (d) => d.accept());
+    await page.goto('/dashboard/customers/cus-1');
+    await numbers(page).getByRole('button', { name: 'Unlink +6281100000001' }).click();
+    await expect(numbers(page).getByRole('button', { name: 'Unlink +6281100000009' })).toBeFocused();
+    await numbers(page).getByRole('button', { name: 'Unlink +6281100000009' }).click();
+    await expect(numbers(page).getByText('No number is linked any more.')).toBeFocused();
   });
 });
 

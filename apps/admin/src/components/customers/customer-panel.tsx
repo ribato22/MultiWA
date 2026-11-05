@@ -86,6 +86,16 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
     setAttempt((n) => n + 1);
   };
 
+  // The name the details show is the picker's too: a rename, or the name a lookup gave.
+  useEffect(() => {
+    if (!customer) return;
+    setLinked((list) =>
+      list?.some((c) => c.id === customer.id && c.displayName !== customer.displayName)
+        ? list.map((c) => (c.id === customer.id ? { ...c, displayName: customer.displayName } : c))
+        : list,
+    );
+  }, [customer]);
+
   useEffect(() => {
     setCustomer(null);
     if (!selected) return;
@@ -119,14 +129,18 @@ export function CustomerPanel({ phone, profileId }: { phone: string; profileId?:
     };
   }, [typed]);
 
+  // The requests go one after another: of two quick picks, the last is also the last the server hears.
+  const defaults = useRef(Promise.resolve());
   const pick = (id: string) => {
     setSelected(id);
     const item = linked?.find((c) => c.id === id);
     if (!agent || !item) return;
     // The ID an agent picked last is the number's default.
-    void api.setDefaultCustomerLink(item.linkId).then((res) => {
-      if (res.error) toast({ title: `Could not make ${item.externalId} the default`, description: res.error, variant: 'destructive' });
-    });
+    defaults.current = defaults.current
+      .then(() => api.setDefaultCustomerLink(item.linkId))
+      .then((res) => {
+        if (res.error) toast({ title: `Could not make ${item.externalId} the default`, description: res.error, variant: 'destructive' });
+      });
   };
 
   const link = async (e: React.FormEvent) => {

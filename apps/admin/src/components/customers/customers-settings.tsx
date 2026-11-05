@@ -1,9 +1,11 @@
 'use client';
 // Settings → Customers: where the customer panel reads a customer's details from (the organization's lookup endpoint),
 // what the organization calls a customer's ID, and a test lookup. An owner or admin changes them; the others read them.
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { api, type CustomerConfigView, type LookupTestResult } from '@/lib/api';
 import { canConfigure, currentUser } from '@/lib/current-user';
+import { refocus } from '@/lib/focus';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +44,15 @@ export function CustomersSettings() {
   const [testId, setTestId] = useState('');
   const [testing, setTesting] = useState(false);
   const [tested, setTested] = useState<string | null>(null);
+  const replaceButton = useRef<HTMLButtonElement>(null);
+  const clearButton = useRef<HTMLButtonElement>(null);
+
+  /** Cancel closes the secret's change, and gives the focus back to Replace or Clear, which opened it. */
+  const keepSecret = () => {
+    const opener = secret.mode === 'clear' ? clearButton : replaceButton;
+    flushSync(() => setSecret({ mode: 'keep' }));
+    refocus(opener.current);
+  };
 
   const show = (c: CustomerConfigView) => {
     setConfig(c);
@@ -147,11 +158,11 @@ export function CustomersSettings() {
                 <p className="text-xs text-muted-foreground">Sent as a Bearer token. It is stored encrypted and never shown again.</p>
                 {admin && secret.mode === 'keep' && (
                   <div className="flex gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={() => setSecret({ mode: 'replace', value: '' })}>
+                    <Button ref={replaceButton} type="button" size="sm" variant="outline" onClick={() => setSecret({ mode: 'replace', value: '' })}>
                       {config.hasSecret ? 'Replace' : 'Add'}
                     </Button>
                     {config.hasSecret && (
-                      <Button type="button" size="sm" variant="outline" onClick={() => setSecret({ mode: 'clear' })}>Clear</Button>
+                      <Button ref={clearButton} type="button" size="sm" variant="outline" onClick={() => setSecret({ mode: 'clear' })}>Clear</Button>
                     )}
                   </div>
                 )}
@@ -163,18 +174,19 @@ export function CustomersSettings() {
                         id={newSecretId}
                         type="password"
                         autoComplete="new-password"
+                        autoFocus
                         value={secret.value}
                         onChange={(e) => setSecret({ mode: 'replace', value: e.target.value })}
                         className="max-w-sm"
                       />
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setSecret({ mode: 'keep' })}>Cancel</Button>
+                      <Button type="button" size="sm" variant="ghost" onClick={keepSecret}>Cancel</Button>
                     </div>
                   </div>
                 )}
                 {secret.mode === 'clear' && (
                   <div className="flex items-center gap-2">
                     <p className="text-sm text-amber-300">The secret is removed when you save.</p>
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setSecret({ mode: 'keep' })}>Cancel</Button>
+                    <Button type="button" size="sm" variant="ghost" autoFocus onClick={keepSecret}>Cancel</Button>
                   </div>
                 )}
               </div>
