@@ -192,4 +192,13 @@ describe('CustomerLookupService', () => {
     const written = JSON.stringify([log.mock.calls, warn.mock.calls]);
     for (const secret of ['tok-123', secretEnc, 'Budi']) expect(written).not.toContain(secret);
   });
+
+  it('a line break in any logged value ends no line', async () => {
+    const forged = (state: string) => ({ state, status: '200\r\nforged', data: null, problem: 'status\nforged', latencyMs: '7\r\nforged' });
+    call.mockResolvedValueOnce(forged('unavailable')).mockResolvedValueOnce(forged('ok\r\nforged'));
+    await service.lookup('org-1', 'A-1', { userId: 'u1' });
+    await service.lookup('org-1', 'A-2', { userId: 'u1' });
+    expect(Logger.prototype.warn).toHaveBeenCalledWith('Customer lookup org=org-1 state=unavailable status=200forged latencyMs=7forged problem=statusforged');
+    expect(Logger.prototype.log).toHaveBeenCalledWith('Customer lookup org=org-1 state=okforged status=200forged latencyMs=7forged');
+  });
 });

@@ -111,8 +111,8 @@ export class CustomerLookupService {
   private async call(organizationId: string, config: CustomerConfig, externalId: string): Promise<LookupOutcome> {
     const secret = config.lookupSecretEnc ? decrypt(config.lookupSecretEnc) : '';
     const outcome = await fetchLookup({ url: config.lookupUrl!, secret: secret || null, timeoutMs: config.timeoutMs }, externalId);
-    const line = `Customer lookup org=${clean(organizationId)} state=${outcome.state} status=${outcome.status ?? '-'} latencyMs=${outcome.latencyMs}`;
-    if (outcome.state === 'unavailable') this.logger.warn(`${line}${outcome.problem ? ` problem=${outcome.problem}` : ''}`);
+    const line = `Customer lookup org=${clean(organizationId)} state=${clean(outcome.state)} status=${clean(outcome.status ?? '-')} latencyMs=${clean(outcome.latencyMs)}`;
+    if (outcome.state === 'unavailable') this.logger.warn(`${line}${outcome.problem ? ` problem=${clean(outcome.problem)}` : ''}`);
     else this.logger.log(line);
     return outcome;
   }

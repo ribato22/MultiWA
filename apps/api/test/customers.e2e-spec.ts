@@ -272,6 +272,7 @@ describe('Customers (e2e)', () => {
     expect(await found('cust-o')).toEqual(['CUST-OK']);
     expect(await found('budi')).toEqual(['CUST-OK']);
     expect(await found('0811-0000-0001')).toEqual(['CUST-KEY', 'CUST-OK']);
+    expect(await found('0001')).toEqual(['CUST-KEY', 'CUST-OK']); // the end of 6281100000001: a 0 at the start is not always a 62
     expect(await found('6281199')).toEqual([]);
     const page = (await send('GET', '/customers?q=budi', viewer)).json();
     expect(page).toMatchObject({ total: 1, page: 1, pageSize: 25, items: [{ displayName: 'Budi Santoso', linkCount: 1, noteCount: 2, lastActivityAt: expect.any(String) }] });

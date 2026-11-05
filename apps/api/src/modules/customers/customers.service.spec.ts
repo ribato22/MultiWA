@@ -449,18 +449,46 @@ describe('CustomersService.list', () => {
     p.customer.count.mockResolvedValue(0);
   });
 
-  it("searches the organization's customers by ID prefix, by name, and, for a number, by its digits", async () => {
+  it("searches the organization's customers by ID prefix, by name, and, for a number, by its digits as typed or with a leading 0 read as 62", async () => {
     await service().list('org-1', { q: ' 0811-0000 ' });
     const where = {
       organizationId: 'org-1',
       OR: [
         { externalId: { startsWith: '0811-0000', mode: 'insensitive' } },
         { displayName: { contains: '0811-0000', mode: 'insensitive' } },
+        { links: { some: { phone: { contains: '08110000' } } } },
         { links: { some: { phone: { contains: '628110000' } } } },
       ],
     };
     expect(p.customer.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
     expect(p.customer.count).toHaveBeenCalledWith({ where });
+  });
+
+  it('finds the end of a number that starts with 0: 0001 is a part of 6281100000001, not of 62001', async () => {
+    await service().list('org-1', { q: '0001' });
+    expect(p.customer.findMany.mock.calls[0][0].where.OR).toEqual([
+      { externalId: { startsWith: '0001', mode: 'insensitive' } },
+      { displayName: { contains: '0001', mode: 'insensitive' } },
+      { links: { some: { phone: { contains: '0001' } } } },
+      { links: { some: { phone: { contains: '62001' } } } },
+    ]);
+  });
+
+  it('looks for digits once when a leading 0 does not change them', async () => {
+    await service().list('org-1', { q: '+62 811' });
+    expect(p.customer.findMany.mock.calls[0][0].where.OR).toEqual([
+      { externalId: { startsWith: '+62 811', mode: 'insensitive' } },
+      { displayName: { contains: '+62 811', mode: 'insensitive' } },
+      { links: { some: { phone: { contains: '62811' } } } },
+    ]);
+  });
+
+  it('looks for no number in a query without a digit', async () => {
+    await service().list('org-1', { q: '+ -' });
+    expect(p.customer.findMany.mock.calls[0][0].where.OR).toEqual([
+      { externalId: { startsWith: '+ -', mode: 'insensitive' } },
+      { displayName: { contains: '+ -', mode: 'insensitive' } },
+    ]);
   });
 
   it('looks for no number in a query with a letter in it', async () => {

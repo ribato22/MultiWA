@@ -286,13 +286,14 @@ export class CustomersService {
     const q = typeof query.q === 'string' ? query.q.trim().slice(0, 100) : '';
     const where: any = { organizationId };
     if (q) {
-      // A number's digits only for a query that is a number: an ID like AB-123 is no phone number.
-      const digits = /^[\d\s()+-]+$/.test(q) ? normalizePhone(q) : '';
+      // A number's digits only for a query that is a number: an ID like AB-123 is no phone number. They are looked for as
+      // typed and with a leading 0 read as 62: that 0 starts a local number (0811… is 62811…), or only a part of one (0001).
+      const digits = /^[\d\s()+-]+$/.test(q) ? [...new Set([q.replace(/\D/g, ''), normalizePhone(q)])].filter(Boolean) : [];
       const text = likeLiteral(q);
       where.OR = [
         { externalId: { startsWith: text, mode: 'insensitive' } },
         { displayName: { contains: text, mode: 'insensitive' } },
-        ...(digits ? [{ links: { some: { phone: { contains: digits } } } }] : []),
+        ...digits.map((d) => ({ links: { some: { phone: { contains: d } } } })),
       ];
     }
     const [rows, total] = await Promise.all([
