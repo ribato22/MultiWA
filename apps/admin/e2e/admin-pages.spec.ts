@@ -24,6 +24,21 @@ test('an API key can get the recordings scopes, and the keys list names its scop
   expect(sentBody(backend, 'POST', '/api-keys')?.permissions).toEqual(['recordings:read', 'recordings:delete']);
 });
 
+test('an API key can get the customers scopes', async ({ page, backend }) => {
+  backend.route(get('/api-keys', []));
+  backend.route(on('POST', '/api-keys', { json: { id: 'k3', key: 'mwa_live_9012' } }));
+  await page.goto('/dashboard/api-keys');
+  await page.getByRole('button', { name: 'Create API Key' }).first().click();
+  const dialog = page.getByRole('dialog', { name: 'Create API Key' });
+  await expect(dialog.getByText('Customers', { exact: true })).toBeVisible();
+  await dialog.getByLabel('Key Name').fill('CRM sync');
+  await dialog.getByLabel('Read Customers', { exact: true }).check();
+  await dialog.getByLabel('Manage Customers', { exact: true }).check();
+  await dialog.getByRole('button', { name: 'Create Key' }).click();
+  await expect(page.getByLabel('Generated API key')).toHaveValue('mwa_live_9012');
+  expect(sentBody(backend, 'POST', '/api-keys')?.permissions).toEqual(['customers:read', 'customers:write']);
+});
+
 test('a call ringing on the calls page can be rejected with a red button whose text is readable (WCAG AA)', async ({ page, backend }) => {
   const call = {
     id: 'call-9', profileId: 'p-1', waCallId: 'W9', fromJid: '628111000999@s.whatsapp.net', isVideo: false, isGroup: false, direction: 'incoming',

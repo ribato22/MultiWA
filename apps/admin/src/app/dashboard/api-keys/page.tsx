@@ -72,6 +72,8 @@ const PERMISSIONS = [
   { value: 'broadcast:write', label: 'Send Broadcasts', group: 'Broadcast' },
   { value: 'recordings:read', label: 'Read Recordings', group: 'Recordings' },
   { value: 'recordings:delete', label: 'Delete Recordings', group: 'Recordings' },
+  { value: 'customers:read', label: 'Read Customers', group: 'Customers' },
+  { value: 'customers:write', label: 'Manage Customers', group: 'Customers' },
 ];
 
 export default function ApiKeysPage() {
@@ -400,9 +402,9 @@ export default function ApiKeysPage() {
         </div>
       </div>
 
-      {/* Create Modal */}
+      {/* Create Modal: the scope list is taller than a short window, so the dialog scrolls and Create Key stays reachable. */}
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
