@@ -14,10 +14,12 @@ useDefault = true
 # `mwa_live_` and four digits, while a real key is `mwa_` and 64 hex characters,
 # so no real key can match. Its mediasoup file replays the transport parameters
 # of a local test call, whose ICE credentials were good for that call only.
+# The tests' ENCRYPTION_KEY is `0123456789abcdef` four times, the same key CI
+# runs with: the unit specs pin ciphertexts under it.
 [allowlist]
-description = "Admin e2e fixtures: made-up API keys, and a replayed test call's mediasoup parameters"
+description = "Test fixtures: made-up API keys, the tests' fixed ENCRYPTION_KEY, and a replayed test call's mediasoup parameters"
 paths = ['''^apps/admin/e2e/support/mediasoup\.json$''']
-regexes = ['''^mwa_live_\d{4}$''']
+regexes = ['''^mwa_live_\d{4}$''', '''^(?:0123456789abcdef){4}$''']
 
 [[rules]]
 id = "curl-auth-header"
