@@ -103,11 +103,11 @@ test('a lookup URL the server refuses says why, and nothing says it saved', asyn
   backend.route(on('PUT', '/customers/config', { status: 400, json: { statusCode: 400, message: 'Webhook target address is not allowed', error: 'Bad Request' } }));
   await page.goto('/dashboard/settings?tab=customers');
   const form = panel(page);
-  await form.getByLabel('Lookup URL').fill('http://10.0.0.5/lookup');
+  await form.getByLabel('Lookup URL').fill('http://localhost:8099/lookup');
   await form.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(toasts(page).getByText('Webhook target address is not allowed')).toBeVisible();
   await expect(toasts(page).getByText('Customer settings saved')).toHaveCount(0);
-  await expect(form.getByLabel('Lookup URL')).toHaveValue('http://10.0.0.5/lookup');
+  await expect(form.getByLabel('Lookup URL')).toHaveValue('http://localhost:8099/lookup');
 });
 
 test('Test asks the saved lookup about an ID, and says what came back and how fast', async ({ page, backend }) => {
