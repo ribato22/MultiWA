@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - the TypeScript SDK's `conversations.archive`, `unarchive` and `markAsRead` read the conversation back, so on a key with a scope list they need both `messages:write` and `messages:read`;
   - registration is open only to the first user of a new server, unless `ALLOW_REGISTRATION=true`;
   - the server-wide settings (`/settings/*`) are for the server's owner, the owner of the oldest organization;
-  - the server's owner cannot delete their account (`DELETE /auth/account`, `DELETE /account/delete`) while other organizations use the server;
+  - the server's owner cannot delete their account (`DELETE /auth/account`) while other organizations use the server;
+  - an owner's `DELETE /account/delete` gets `403`: that erasure keeps the organization, so an owner deletes their account with `DELETE /auth/account`, which deletes the organization too;
   - profile responses carry `hasWebhookSecret` instead of `webhookSecret`;
   - the pairing QR (`qr:update`) reaches owners and admins only;
   - a call's assignee must be an owner, admin or member;

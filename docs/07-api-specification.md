@@ -604,7 +604,7 @@ Every role reads. Owners and admins create, change and delete workspaces.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/account/export` | Export the caller's own data (user, sessions, notifications, push subscriptions, audit log) and the organization's profiles, messages (the newest 10000), contacts and automations. Owners and admins only |
-| `DELETE` | `/account/delete` | Delete account and personal data (the server's owner gets `403` while other organizations use the server: nobody else could take over the server-wide settings) |
+| `DELETE` | `/account/delete` | Delete account and personal data. The organization stays, so an owner gets `403`: an owner deletes their account with `DELETE /auth/account`, which deletes the organization too |
 
 ---
 

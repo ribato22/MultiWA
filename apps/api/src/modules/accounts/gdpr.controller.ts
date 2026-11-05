@@ -1,13 +1,12 @@
 // MultiWA Gateway - GDPR Compliance Controller
 // apps/api/src/modules/accounts/gdpr.controller.ts
 
-import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
-import { assertServerOwnerMayLeave } from '../auth/server-owner';
 import { prisma } from '@multiwa/database';
 
 /**
@@ -225,7 +224,7 @@ export class GdprController {
       'Irreversibly erases the authenticated user and their push subscriptions, notifications, audit logs, sessions, API keys, and role assignments. Remaining data cascades via FK constraints.',
   })
   @ApiResponse({ status: 200, description: 'Account and all data permanently deleted' })
-  @ApiResponse({ status: 403, description: "The server's owner, while other organizations use this server" })
+  @ApiResponse({ status: 403, description: 'An owner: owners delete their account with DELETE /auth/account' })
   @ApiResponse({ status: 404, description: 'User not found' })
   @ApiNotFound('User')
   async deleteAccount(@Req() req: any) {
@@ -237,8 +236,11 @@ export class GdprController {
     if (!userId) {
       throw new UnauthorizedException('Authenticated user id is required');
     }
-    // Before anything is erased: the server's owner may not leave while other organizations use this server.
-    await assertServerOwnerMayLeave(req.user);
+    // Before anything is erased: this keeps the user's organization, which an owner's erasure would leave without its
+    // owner. An owner's account goes with the organization, through DELETE /auth/account.
+    if (req.user.role === 'owner') {
+      throw new ForbiddenException('An owner deletes their account with DELETE /auth/account, which deletes the organization too');
+    }
     this.logger.warn(`GDPR account deletion requested by user ${userId}`);
 
     const deletionLog: Record<string, number> = {};
