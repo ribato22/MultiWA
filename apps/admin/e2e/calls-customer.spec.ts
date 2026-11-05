@@ -19,8 +19,7 @@ const panelOf = (page: Page) => row(page).getByRole('region', { name: 'Customer'
 
 test('a one-to-one call opens its caller’s customer under its row, and closes it again', async ({ page, backend }) => {
   customerBackend(backend);
-  // A rejected call: the accessibility check below covers the whole list, and the Missed badge's red is under the contrast minimum.
-  listCalls(backend, [{ ...CALL, outcome: 'rejected' }]);
+  listCalls(backend, [CALL]); // a missed call: the accessibility check below covers its Missed badge too
   await page.goto('/dashboard/calls');
   await expect(toggle(page)).toHaveAttribute('aria-expanded', 'false');
   await toggle(page).click();
