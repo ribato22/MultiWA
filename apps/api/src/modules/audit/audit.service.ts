@@ -3,6 +3,7 @@
 
 import { Injectable } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { likeLiteral } from '../../common/like-literal';
 import { pageSize } from '../../common/page-size';
 
 export enum AuditAction {
@@ -148,7 +149,7 @@ export class AuditService {
 
     if (options.organizationId) where.organizationId = options.organizationId;
     if (options.userId) where.userId = options.userId;
-    if (options.action) where.action = { startsWith: options.action };
+    if (options.action) where.action = { startsWith: likeLiteral(options.action) };
     if (options.resourceType) where.resourceType = options.resourceType;
     if (options.resourceId) where.resourceId = options.resourceId;
 

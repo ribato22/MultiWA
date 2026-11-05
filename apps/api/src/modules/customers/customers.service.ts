@@ -10,6 +10,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { prisma } from '@multiwa/database';
 import { assertWebhookUrlSafe, WebhookUrlError } from '@multiwa/engine-runtime';
 import { encrypt } from '../../common/crypto/secret-box';
+import { likeLiteral } from '../../common/like-literal';
 import { pageSize } from '../../common/page-size';
 import { linkablePhone, normalizePhone } from '../../common/phone';
 import { AuditAction, AuditService } from '../audit/audit.service';
@@ -135,9 +136,6 @@ function toNoteBody(raw: unknown): string {
   if (!body || body.length > 2000) throw new BadRequestException('A note has 1 to 2000 characters');
   return body;
 }
-
-/** The text as a pattern for contains and startsWith: Prisma hands a `%`, `_` or `\` in it to LIKE as it is, where it is a wildcard or an escape. */
-const likeLiteral = (text: string) => text.replace(/[\\%_]/g, '\\$&');
 
 /** A page number from the query: 1 unless it is a whole number of at least 1. */
 const pageOf = (raw: unknown): number => {

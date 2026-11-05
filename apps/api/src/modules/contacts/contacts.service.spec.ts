@@ -167,5 +167,38 @@ describe('ContactsService', () => {
       expect(await service.findAll('p', { limit: 1_000_000 })).toMatchObject({ limit: 1000 });
       expect(vi.mocked(prisma.contact.findMany).mock.calls[0][0]).toMatchObject({ take: 1000 });
     });
+
+    it('searches the name, the number and the WhatsApp name of the profile for the text typed', async () => {
+      vi.mocked(prisma.contact.findMany).mockReset().mockResolvedValue([]);
+      vi.mocked(prisma.contact.count).mockReset().mockResolvedValue(0);
+      await service.findAll('p', { search: 'jane' });
+      const where = {
+        profileId: 'p',
+        OR: [
+          { name: { contains: 'jane', mode: 'insensitive' } },
+          { phone: { contains: 'jane' } },
+          { whatsappName: { contains: 'jane', mode: 'insensitive' } },
+        ],
+      };
+      expect(vi.mocked(prisma.contact.findMany).mock.calls[0][0]).toMatchObject({ where });
+      expect(prisma.contact.count).toHaveBeenCalledWith({ where });
+    });
+
+    it("searches for the text typed: a search's %, _ and \\ are no wildcards", async () => {
+      vi.mocked(prisma.contact.findMany).mockReset().mockResolvedValue([]);
+      vi.mocked(prisma.contact.count).mockReset().mockResolvedValue(0);
+      await service.findAll('p', { search: '50%_off\\' });
+      const text = '50\\%\\_off\\\\';
+      const where = {
+        profileId: 'p',
+        OR: [
+          { name: { contains: text, mode: 'insensitive' } },
+          { phone: { contains: text } },
+          { whatsappName: { contains: text, mode: 'insensitive' } },
+        ],
+      };
+      expect(vi.mocked(prisma.contact.findMany).mock.calls[0][0]).toMatchObject({ where });
+      expect(prisma.contact.count).toHaveBeenCalledWith({ where });
+    });
   });
 });

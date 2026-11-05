@@ -7,6 +7,7 @@ import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto } f
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { likeLiteral } from '../../common/like-literal';
 import { pageSize } from '../../common/page-size';
 import { normalizePhone } from '../../common/phone';
 
@@ -58,10 +59,11 @@ export class ContactsService {
     const where: any = { profileId };
     
     if (options.search) {
+      const text = likeLiteral(options.search);
       where.OR = [
-        { name: { contains: options.search, mode: 'insensitive' } },
-        { phone: { contains: options.search } },
-        { whatsappName: { contains: options.search, mode: 'insensitive' } },
+        { name: { contains: text, mode: 'insensitive' } },
+        { phone: { contains: text } },
+        { whatsappName: { contains: text, mode: 'insensitive' } },
       ];
     }
     

@@ -1,4 +1,5 @@
-// The audit log list loads, and says it loaded, a bounded page whatever `limit` it is given.
+// The audit log list loads, and says it loaded, a bounded page whatever `limit` it is given, and its action filter is a
+// prefix of the text typed, where a %, an _ or a \ is that character, no wildcard.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@multiwa/database', () => ({ prisma: { auditLog: { findMany: vi.fn(), count: vi.fn() } } }));
@@ -18,5 +19,16 @@ describe('AuditService.query', () => {
     const res = await new AuditService().query({ organizationId: 'o1', limit });
     expect(db.auditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: 'o1' }, take }));
     expect(res.limit).toBe(take);
+  });
+
+  it('lists the actions that start with the prefix typed', async () => {
+    await new AuditService().query({ organizationId: 'o1', action: 'auth' });
+    expect(db.auditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: 'o1', action: { startsWith: 'auth' } } }));
+  });
+
+  it("lists the actions that start with the prefix typed: a prefix's %, _ and \\ are no wildcards", async () => {
+    await new AuditService().query({ organizationId: 'o1', action: '50%_off\\' });
+    expect(db.auditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organizationId: 'o1', action: { startsWith: '50\\%\\_off\\\\' } } }));
+    expect(db.auditLog.count).toHaveBeenCalledWith({ where: { organizationId: 'o1', action: { startsWith: '50\\%\\_off\\\\' } } });
   });
 });
