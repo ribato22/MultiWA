@@ -49,7 +49,7 @@ If you want to send and receive WhatsApp messages from your own backend without 
 | Feature | MultiWA | WhatsApp Cloud API | Evolution API |
 |---------|---------|-------------------|---------------|
 | **Self-hosted** | ✅ Full control | ❌ Meta-hosted | ✅ |
-| **Multi-engine** | ✅ whatsapp-web.js (Baileys adapter experimental) | ❌ Single | ❌ Fixed |
+| **WhatsApp connection** | WhatsApp Web via whatsapp-web.js (a Baileys adapter is experimental) | Meta's official Cloud API | Baileys or the official Cloud API |
 | **Admin Dashboard** | ✅ Full-featured | ❌ None | ⚠️ Basic |
 | **Visual Automation** | ✅ Drag & drop builder | ❌ | ❌ |
 | **Knowledge Base AI** | ✅ OpenAI-compatible | ❌ | ❌ |
