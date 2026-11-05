@@ -1,0 +1,255 @@
+// MultiWA Gateway API - Customers Service
+// apps/api/src/modules/customers/customers.service.ts
+//
+// A customer is an ID in the organization's own system (externalId), linked to WhatsApp numbers: many to many, and the
+// link a number used last is its default. Every read and write is scoped to the caller's organization: another
+// organization's id answers 404. The service audits its own changes with the ids of what it made or changed, never a
+// number, a note's text or a secret.
+
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { prisma } from '@multiwa/database';
+import { linkablePhone } from '../../common/phone';
+import { AuditAction, AuditService } from '../audit/audit.service';
+import { CustomerLookupService } from './customer-lookup.service';
+import type { ActorView, CustomerByPhoneItem, CustomerLinkView, CustomerNoteView, CustomerView, LinkResult, LookupField } from './customers.types';
+
+/** Who makes a request: the signed-in user, their organization and role, the API key it came with, and from where. */
+export interface Actor {
+  userId: string;
+  organizationId: string;
+  role: string;
+  apiKeyId?: string;
+  ip?: string;
+  userAgent?: string;
+}
+
+/** What PATCH /customers/:id may change; its DTO holds these to their limits. */
+export interface CustomerChanges {
+  tags?: string[];
+  displayName?: string | null;
+  manualFields?: LookupField[];
+}
+
+/** A customer's ID in the organization's system: 1 to 64 of A-Z, a-z, 0-9, '.', '_' and '-'. */
+const EXTERNAL_ID = /^[A-Za-z0-9._-]{1,64}$/;
+
+const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
+
+/** The ID as stored: trimmed. Else 400 "Invalid customer ID". */
+export function toExternalId(raw: unknown): string {
+  const id = typeof raw === 'string' ? raw.trim() : '';
+  if (!EXTERNAL_ID.test(id)) throw new BadRequestException('Invalid customer ID');
+  return id;
+}
+
+/** The number as stored (common/phone.ts). Else 400 "Invalid phone number": a group or an @lid has none. */
+export function toPhone(raw: unknown): string {
+  const phone = typeof raw === 'string' ? linkablePhone(raw) : null;
+  if (!phone) throw new BadRequestException('Invalid phone number');
+  return phone;
+}
+
+type Who = { userId: string | null; apiKeyId: string | null };
+type LinkRow = { id: string; phone: string; lastUsedAt: Date; createdAt: Date; linkedByUserId: string | null; linkedByApiKeyId: string | null };
+type NoteRow = { id: string; body: string; createdAt: Date; updatedAt: Date; authorUserId: string | null; authorApiKeyId: string | null };
+type NameOf = (who: Who) => ActorView | null;
+
+const linkedBy = (l: LinkRow): Who => ({ userId: l.linkedByUserId, apiKeyId: l.linkedByApiKeyId });
+const authoredBy = (n: NoteRow): Who => ({ userId: n.authorUserId, apiKeyId: n.authorApiKeyId });
+
+const linkView = (l: LinkRow, nameOf: NameOf): CustomerLinkView => ({
+  id: l.id,
+  phone: l.phone,
+  lastUsedAt: l.lastUsedAt.toISOString(),
+  createdAt: l.createdAt.toISOString(),
+  linkedBy: nameOf(linkedBy(l)),
+});
+
+const noteView = (n: NoteRow, nameOf: NameOf): CustomerNoteView => ({
+  id: n.id,
+  body: n.body,
+  createdAt: n.createdAt.toISOString(),
+  updatedAt: n.updatedAt.toISOString(),
+  author: nameOf(authoredBy(n)),
+});
+
+/** The manual fields as stored: the {label, value} pairs of text, whatever else the JSON holds. */
+const fieldsOf = (json: unknown): LookupField[] =>
+  Array.isArray(json)
+    ? json.filter((f) => typeof f?.label === 'string' && typeof f?.value === 'string').map((f) => ({ label: f.label, value: f.value }))
+    : [];
+
+/** The row `find` reads, else the one `create` makes; a create that loses a race to the same unique key reads the winner's. */
+async function findOrCreate<T>(find: () => Promise<T | null>, create: () => Promise<T>): Promise<{ row: T; created: boolean }> {
+  const found = await find();
+  if (found) return { row: found, created: false };
+  try {
+    return { row: await create(), created: true };
+  } catch (e) {
+    const winner = (e as { code?: string })?.code === 'P2002' ? await find() : null;
+    if (!winner) throw e;
+    return { row: winner, created: false };
+  }
+}
+
+@Injectable()
+export class CustomersService {
+  private readonly logger = new Logger(CustomersService.name);
+
+  constructor(
+    private readonly lookups: CustomerLookupService,
+    private readonly auditService: AuditService,
+  ) {}
+
+  /** A customer with its links (the default first), tags, manual fields and 20 newest notes, and who made each. */
+  async findOne(organizationId: string, id: string): Promise<CustomerView> {
+    const customer = await this.owned(organizationId, id);
+    // The notes in a query of their own, which puts their LIMIT in the SQL.
+    const [links, notes] = await Promise.all([
+      prisma.customerLink.findMany({ where: { customerId: customer.id }, orderBy: { lastUsedAt: 'desc' } }),
+      prisma.customerNote.findMany({ where: { customerId: customer.id }, orderBy: { createdAt: 'desc' }, take: 20 }),
+    ]);
+    const nameOf = await this.names(organizationId, [...links.map(linkedBy), ...notes.map(authoredBy)]);
+    return {
+      id: customer.id,
+      externalId: customer.externalId,
+      displayName: customer.displayName,
+      tags: customer.tags,
+      manualFields: fieldsOf(customer.manualFields),
+      lastLookupAt: customer.lastLookupAt?.toISOString() ?? null,
+      createdAt: customer.createdAt.toISOString(),
+      updatedAt: customer.updatedAt.toISOString(),
+      links: links.map((l) => linkView(l, nameOf)),
+      notes: notes.map((n) => noteView(n, nameOf)),
+    };
+  }
+
+  /** The customers linked to a number, the one it used last (its default) first. */
+  async byPhone(organizationId: string, rawPhone: unknown): Promise<CustomerByPhoneItem[]> {
+    const links = await prisma.customerLink.findMany({
+      where: { organizationId, phone: toPhone(rawPhone) },
+      orderBy: { lastUsedAt: 'desc' },
+      include: { customer: { select: { id: true, externalId: true, displayName: true } } },
+    });
+    return links.map((l) => ({
+      id: l.customer.id,
+      externalId: l.customer.externalId,
+      displayName: l.customer.displayName,
+      linkId: l.id,
+      lastUsedAt: l.lastUsedAt.toISOString(),
+    }));
+  }
+
+  /**
+   * Links a number to a customer ID, making the customer when the ID is new and the link when it is missing. A link
+   * that exists is answered as it is (created: false), and nothing changes.
+   */
+  async link(actor: Actor, rawExternalId: unknown, rawPhone: unknown): Promise<LinkResult> {
+    const externalId = toExternalId(rawExternalId);
+    const phone = toPhone(rawPhone);
+    const { organizationId } = actor;
+    const { row: customer } = await findOrCreate(
+      () => prisma.customer.findUnique({ where: { organizationId_externalId: { organizationId, externalId } } }),
+      () => prisma.customer.create({ data: { organizationId, externalId } }),
+    );
+    const { row: link, created } = await findOrCreate(
+      () => prisma.customerLink.findUnique({ where: { customerId_phone: { customerId: customer.id, phone } } }),
+      () =>
+        prisma.customerLink.create({
+          data: { organizationId, customerId: customer.id, phone, linkedByUserId: actor.userId, linkedByApiKeyId: actor.apiKeyId ?? null },
+        }),
+    );
+    if (created) this.audit(actor, AuditAction.CUSTOMER_LINK, customer.id, { customerId: customer.id, linkId: link.id });
+    // Linking a number to an ID it already has says which ID the number is about now: it becomes the default.
+    else await prisma.customerLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } });
+    const view = await this.findOne(organizationId, customer.id);
+    return { created, customer: view, link: view.links.find((l) => l.id === link.id) ?? linkView(link, () => null) };
+  }
+
+  /** Makes a link its number's default: the link a number used last is the one an agent sees first. */
+  async useLink(actor: Actor, linkId: string): Promise<CustomerLinkView> {
+    const link = await prisma.customerLink.findFirst({ where: { id: linkId, organizationId: actor.organizationId } });
+    if (!link) throw new NotFoundException('Link not found');
+    const used = await prisma.customerLink.update({ where: { id: link.id }, data: { lastUsedAt: new Date() } });
+    return linkView(used, await this.names(actor.organizationId, [linkedBy(used)]));
+  }
+
+  /** Removes one link; the customer, its notes and its tags stay. */
+  async unlink(actor: Actor, linkId: string): Promise<{ success: true }> {
+    const link = await prisma.customerLink.findFirst({
+      where: { id: linkId, organizationId: actor.organizationId },
+      select: { id: true, customerId: true },
+    });
+    // deleteMany: a link removed meanwhile is not found either, rather than a failed delete.
+    if (!link || (await prisma.customerLink.deleteMany({ where: { id: link.id } })).count === 0) throw new NotFoundException('Link not found');
+    this.audit(actor, AuditAction.CUSTOMER_UNLINK, link.customerId, { customerId: link.customerId, linkId: link.id });
+    return { success: true };
+  }
+
+  /** Changes the tags; the name and the manual fields only while no lookup is configured (they come from it then). */
+  async update(actor: Actor, id: string, changes: CustomerChanges): Promise<CustomerView> {
+    const customer = await this.owned(actor.organizationId, id);
+    const manual = changes.displayName !== undefined || changes.manualFields !== undefined;
+    if (manual && (await this.lookups.config(actor.organizationId)).lookupUrl) {
+      throw new ConflictException('The name and the fields come from the lookup while one is configured');
+    }
+    await prisma.customer.update({
+      where: { id: customer.id },
+      data: {
+        ...(changes.tags !== undefined ? { tags: [...new Set(changes.tags.map((t) => t.trim()).filter(Boolean))] } : {}),
+        ...(changes.displayName !== undefined ? { displayName: changes.displayName?.trim() || null } : {}),
+        ...(changes.manualFields !== undefined ? { manualFields: changes.manualFields.map(({ label, value }) => ({ label, value })) } : {}),
+      },
+    });
+    this.audit(actor, AuditAction.CUSTOMER_UPDATE, customer.id, { customerId: customer.id });
+    return this.findOne(actor.organizationId, customer.id);
+  }
+
+  /** Deletes a customer; its links and notes go with it. */
+  async remove(actor: Actor, id: string): Promise<{ success: true }> {
+    const { count } = await prisma.customer.deleteMany({ where: { id, organizationId: actor.organizationId } });
+    if (count === 0) throw new NotFoundException('Customer not found');
+    this.audit(actor, AuditAction.CUSTOMER_DELETE, id, { customerId: id });
+    return { success: true };
+  }
+
+  /** The caller's organization's customer, else 404: another organization's is not found either. */
+  private async owned(organizationId: string, id: string) {
+    const customer = await prisma.customer.findFirst({ where: { id, organizationId } });
+    if (!customer) throw new NotFoundException('Customer not found');
+    return customer;
+  }
+
+  /** Who made each link or note: a key by its name, else its user by theirs; nobody for one since deleted. */
+  private async names(organizationId: string, who: Who[]): Promise<NameOf> {
+    const ids = (pick: (w: Who) => string | null) => [...new Set(who.map(pick).filter((id): id is string => !!id))];
+    const [userIds, keyIds] = [ids((w) => w.userId), ids((w) => w.apiKeyId)];
+    const [users, keys] = await Promise.all([
+      userIds.length ? prisma.user.findMany({ where: { id: { in: userIds }, organizationId }, select: { id: true, name: true } }) : [],
+      keyIds.length ? prisma.apiKey.findMany({ where: { id: { in: keyIds }, user: { organizationId } }, select: { id: true, name: true } }) : [],
+    ]);
+    const userName = new Map(users.map((u) => [u.id, u.name] as const));
+    const keyName = new Map(keys.map((k) => [k.id, k.name] as const));
+    return ({ userId, apiKeyId }) => {
+      if (apiKeyId && keyName.has(apiKeyId)) return { type: 'apiKey', id: apiKeyId, name: keyName.get(apiKeyId)! };
+      if (userId && userName.has(userId)) return { type: 'user', id: userId, name: userName.get(userId)! };
+      return null;
+    };
+  }
+
+  /** An audit entry with ids only. A failed one is logged, not thrown: the change is made by then. */
+  private audit(actor: Actor, action: AuditAction, customerId: string | null, metadata: Record<string, string>): void {
+    this.auditService
+      .log({
+        action,
+        userId: actor.userId,
+        organizationId: actor.organizationId,
+        resourceType: 'customer',
+        ...(customerId ? { resourceId: customerId } : {}),
+        metadata,
+        ip: actor.ip,
+        userAgent: actor.userAgent,
+      })
+      .catch((e) => this.logger.warn(`The audit of ${action} failed: ${clean((e as Error)?.message ?? e)}`));
+  }
+}
