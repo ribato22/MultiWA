@@ -76,6 +76,9 @@ export function customerBackend(
   backend.route(on('GET', /^\/customers\/[^/]+\/lookup$/, opts.lookup ?? ((r) => ({ json: r.path === `/customers/${SECOND.id}/lookup` ? siti : LOOKUP_OK }))));
 }
 
+/** The paths of the DELETE requests the pages sent, oldest first. */
+export const deleted = (backend: FakeBackend) => backend.requests.filter((r) => r.method === 'DELETE').map((r) => r.path);
+
 /** The JSON body of the first `method path` request the pages sent. */
 export const sentBody = (backend: FakeBackend, method: string, path: string) => {
   const req = backend.requests.find((r) => r.method === method && r.path === path);

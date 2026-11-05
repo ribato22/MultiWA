@@ -3,7 +3,7 @@
 // number; an owner or admin deletes a customer.
 import { test, expect, gate, get, on, rendered, toasts, ME, PROFILE, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
-import { CONFIG, CUSTOMER, PHONE, SECOND, customerBackend, openContactInfo } from './support/customers';
+import { CONFIG, CUSTOMER, PHONE, SECOND, customerBackend, deleted, openContactInfo } from './support/customers';
 import type { Page } from '@playwright/test';
 
 const BUDI = { id: 'cus-1', externalId: '1234567890', displayName: 'Budi Santoso', linkCount: 2, noteCount: 3, lastActivityAt: '2026-11-01T03:00:00.000Z' };
@@ -14,13 +14,11 @@ const listing = (items: object[], total = items.length) =>
 /** The queries of the list reads, oldest first. */
 const asked = (backend: FakeBackend) => backend.requests.filter((r) => r.path === '/customers').map((r) => r.query.toString());
 const searchBox = (page: Page) => page.getByRole('searchbox', { name: 'Search customers' });
-/** The paths of the DELETE requests, oldest first. */
-const deleted = (backend: FakeBackend) => backend.requests.filter((r) => r.method === 'DELETE').map((r) => r.path);
 
 const LINE_2 = { ...PROFILE, id: 'p-2', name: 'Line 2', displayName: 'Line 2' };
 const HISTORY = [
-  { kind: 'call', id: 'call-1', profileId: LINE_2.id, profileName: 'Line 2', phone: PHONE, at: '2026-11-03T03:00:00.000Z', summary: 'Missed voice call' },
-  { kind: 'conversation', id: 'conv-1', profileId: PROFILE.id, profileName: 'Line 1', phone: PHONE, at: '2026-11-02T03:00:00.000Z', summary: 'Terima kasih, sudah lunas' },
+  { kind: 'call', id: 'call-1', profileId: LINE_2.id, profileName: 'Line 2', phone: PHONE, at: '2026-11-03T03:00:00.000Z', summary: 'Voice call, missed' },
+  { kind: 'conversation', id: 'conv-1', profileId: PROFILE.id, profileName: 'Line 1', phone: PHONE, at: '2026-11-02T03:00:00.000Z', summary: '3 messages' },
 ];
 /** Budi Santoso's page: the customer, its lookup and its history. */
 function customerPage(backend: FakeBackend) {
@@ -102,8 +100,8 @@ test('a customer’s page has its numbers, its lookup, its tags and notes, and a
   await expect(page.getByRole('list', { name: 'Customer tags' })).toHaveText('priority');
   await expect(page.getByRole('heading', { level: 2, name: 'Notes' })).toBeVisible();
   await expect(page.getByRole('list', { name: 'Notes' }).getByRole('listitem')).toHaveCount(2);
-  await expect(historyOf(page).getByRole('link', { name: /Missed voice call/ })).toHaveAttribute('href', '/dashboard/calls?profile=p-2');
-  await expect(historyOf(page).getByRole('link', { name: /Terima kasih, sudah lunas/ })).toHaveAttribute('href', '/dashboard/chat?profile=p-1&conv=conv-1');
+  await expect(historyOf(page).getByRole('link', { name: /Voice call, missed/ })).toHaveAttribute('href', '/dashboard/calls?profile=p-2');
+  await expect(historyOf(page).getByRole('link', { name: /3 messages/ })).toHaveAttribute('href', '/dashboard/chat?profile=p-1&conv=conv-1');
   expect(backend.requests.find((r) => r.path === '/customers/cus-1/history')?.query.get('limit')).toBe('50');
   await expectAccessible(page, 'main > .p-6');
 });
@@ -113,7 +111,7 @@ test('a call in the history opens the Calls of its profile', async ({ page, back
   backend.route(get('/profiles', [PROFILE, LINE_2]));
   const profilesAsked = () => backend.requests.filter((r) => r.path === '/calls').map((r) => r.query.get('profileId'));
   await page.goto('/dashboard/customers/cus-1');
-  await historyOf(page).getByRole('link', { name: /Missed voice call/ }).click();
+  await historyOf(page).getByRole('link', { name: /Voice call, missed/ }).click();
   await expect(page).toHaveURL(/\/dashboard\/calls\?profile=p-2$/);
   await expect(page.getByRole('combobox', { name: 'Profile' })).toHaveText('Line 2');
   await expect.poll(profilesAsked).toContain(LINE_2.id);
@@ -139,6 +137,7 @@ test('an admin deletes the customer once they say yes, and is back on the list',
   await page.getByRole('button', { name: 'Delete customer' }).click();
   await expect(page).toHaveURL(/\/dashboard\/customers$/);
   await expect(toasts(page).getByText('Customer deleted')).toBeVisible();
+  expect(deleted(backend)).toEqual(['/customers/cus-1']);
 });
 
 test('Delete customer waits for its answer: a second press asks nothing and sends nothing, and a refusal leaves it ready', async ({ page, backend }) => {
@@ -202,6 +201,7 @@ test.describe('a member', () => {
     await numbers(page).getByRole('button', { name: 'Unlink +6281100000001' }).click();
     await expect(numbers(page).getByText('No number is linked any more.')).toBeVisible();
     await expect(toasts(page).getByText('+6281100000001 unlinked')).toBeVisible();
+    expect(deleted(backend)).toEqual(['/customers/links/lnk-1']); // the link's own ID, not the customer's
     await expect(page).toHaveURL(/\/dashboard\/customers\/cus-1$/);
     await expect(page.getByRole('heading', { level: 1, name: 'Budi Santoso' })).toBeVisible();
   });

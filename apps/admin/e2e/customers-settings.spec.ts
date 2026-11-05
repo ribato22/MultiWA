@@ -56,6 +56,19 @@ test('a save that leaves the secret alone keeps it; Clear takes it away on the n
   expect(saves(backend)).toEqual([kept, { ...kept, secret: '' }]);
 });
 
+test('a Replace saved with its new secret left empty keeps the stored secret: no secret is sent', async ({ page, backend }) => {
+  backend.route(get('/customers/config', CONFIG));
+  takesSaves(backend);
+  await page.goto('/dashboard/settings?tab=customers');
+  const form = panel(page);
+  await form.getByRole('button', { name: 'Replace', exact: true }).click();
+  await expect(form.getByLabel('New secret')).toHaveValue('');
+  await form.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(toasts(page).getByText('Customer settings saved')).toBeVisible();
+  expect(saves(backend)).toEqual([{ idLabel: 'ID Pelanggan', lookupUrl: 'https://crm.example.com/lookup', timeoutMs: 5000 }]);
+  await expect(form.getByText('Set', { exact: true })).toBeVisible();
+});
+
 test('the focus follows the secret’s controls: into the new secret, and back to Replace or Clear when Cancel closes it', async ({ page, backend }) => {
   backend.route(get('/customers/config', CONFIG));
   await page.goto('/dashboard/settings?tab=customers');

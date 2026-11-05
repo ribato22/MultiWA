@@ -4,7 +4,7 @@
 import { test, expect, gate, get, on, rendered, requestEnded, toasts, ME, type FakeBackend } from './support/fixtures';
 import { expectAccessible } from './support/axe';
 import {
-  ADA, BY_PHONE, CONV, CUSTOMER, LOOKUP_DATA, LOOKUP_OK, MANUAL, NOW, PHONE, SECOND, customerBackend, lookupAnswer, openContactInfo, sentBody,
+  ADA, BY_PHONE, CONV, CUSTOMER, LOOKUP_DATA, LOOKUP_OK, MANUAL, NOW, PHONE, SECOND, customerBackend, deleted, lookupAnswer, openContactInfo, sentBody,
 } from './support/customers';
 import type { Locator, Page } from '@playwright/test';
 
@@ -29,16 +29,23 @@ async function answerAfterPicking(page: Page, panel: Locator, slow: ReturnType<t
 }
 
 test('shows the number’s default ID and what the lookup says of it, every value as text', async ({ page, backend }) => {
-  const markup = '<img src=x onerror="window.__injected=1">';
-  customerBackend(backend, { lookup: { json: lookupAnswer('ok', { ...LOOKUP_DATA, fields: [...LOOKUP_DATA.fields, { label: 'Catatan', value: markup }] }) } });
+  // The endpoint is another system's: its name, its values and its section titles are text, never markup.
+  const markup = (n: number) => `<img src=x onerror="window.__injected=${n}">`;
+  customerBackend(backend, {
+    lookup: {
+      json: lookupAnswer('ok', {
+        ...LOOKUP_DATA,
+        name: markup(1),
+        fields: [...LOOKUP_DATA.fields, { label: 'Catatan', value: markup(2) }],
+        sections: [...LOOKUP_DATA.sections, { title: markup(3), rows: [] }],
+      }),
+    },
+  });
   const panel = await openContactInfo(page, backend);
-  await expect(picker(panel)).toHaveText('1234567890 · Budi Santoso');
-  await expect(panel.getByText('Budi Santoso', { exact: true })).toBeVisible();
-  for (const text of ['Alamat', 'Jl. Contoh No. 1', 'Tarif/Daya', 'R1 / 1300 VA', 'Tagihan', 'Okt 2026', 'Rp 245.000 (lunas)']) {
+  await expect(picker(panel)).toContainText('1234567890'); // the number's default
+  for (const text of ['Alamat', 'Jl. Contoh No. 1', 'Tarif/Daya', 'R1 / 1300 VA', 'Tagihan', 'Okt 2026', 'Rp 245.000 (lunas)', markup(1), markup(2), markup(3)]) {
     await expect(panel.getByText(text, { exact: true })).toBeVisible();
   }
-  // The endpoint is another system's: its values are text, never markup.
-  await expect(panel.getByText(markup, { exact: true })).toBeVisible();
   await expect(panel.locator('img')).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).__injected)).toBeUndefined();
   await expect(panel.getByRole('button', { name: 'Refresh' })).toBeVisible();
@@ -53,6 +60,14 @@ test('an ID the lookup does not know says so, and Refresh asks again past the ca
   await panel.getByRole('button', { name: 'Refresh' }).click();
   await expect.poll(() => lookups(backend).filter((q) => q === 'refresh=true')).toHaveLength(1);
   await expect(panel.getByRole('button', { name: 'Refresh' })).toBeFocused();
+});
+
+test('Refresh on what the lookup says asks again past the cache', async ({ page, backend }) => {
+  customerBackend(backend);
+  const panel = await openContactInfo(page, backend);
+  await expect(panel.getByText('R1 / 1300 VA')).toBeVisible();
+  await panel.getByRole('button', { name: 'Refresh' }).click();
+  await expect.poll(() => lookups(backend).filter((q) => q === 'refresh=true')).toHaveLength(1);
 });
 
 test('an unavailable lookup offers Retry, which asks the endpoint again', async ({ page, backend }) => {
@@ -198,6 +213,7 @@ test('an admin edits and deletes another’s note too, and Cancel on the questio
   page.once('dialog', (d) => d.accept());
   await theirs.getByRole('button', { name: 'Delete note' }).click();
   await expect(theirs).toHaveCount(0);
+  expect(deleted(backend)).toEqual(['/customers/cus-1/notes/note-2']); // the customer's ID, then the note's
 });
 
 test('a note answered after the agent picked another ID stays out of that ID’s notes', async ({ page, backend }) => {
@@ -326,6 +342,21 @@ test.describe('a member', () => {
     await expect(field).toHaveAccessibleDescription('');
   });
 
+  test('linking an ID the number already has makes it the default again, with no error', async ({ page, backend }) => {
+    customerBackend(backend);
+    backend.route(on('POST', '/customers/links', { status: 200, json: { created: false, customer: SECOND, link: SECOND.links[0] } }));
+    const panel = await openContactInfo(page, backend);
+    await linkField(panel).fill('9876543210');
+    await panel.getByRole('button', { name: 'Link ID Pelanggan' }).click();
+    await expect(toasts(page).getByText('ID Pelanggan 9876543210 was already linked')).toBeVisible();
+    expect(sentBody(backend, 'POST', '/customers/links')).toEqual({ externalId: '9876543210', phone: PHONE });
+    await expect(picker(panel)).toHaveText('9876543210 · Siti Rahayu');
+    await expect(panel.getByRole('alert')).toHaveCount(0);
+    await expect(linkField(panel)).toHaveValue('');
+    await picker(panel).click();
+    await expect(page.getByRole('option')).toHaveText(['9876543210 · Siti Rahayu', '1234567890 · Budi Santoso']);
+  });
+
   test('a link the server refuses says why beside the field, and links nothing', async ({ page, backend }) => {
     customerBackend(backend);
     backend.route(on('POST', '/customers/links', { status: 400, json: { statusCode: 400, message: 'Invalid customer ID', error: 'Bad Request' } }));
@@ -360,6 +391,23 @@ test.describe('a member', () => {
     expect(sentBody(backend, 'PATCH', '/customers/cus-1')).toEqual({ displayName: 'Budi Santoso', manualFields: [{ label: 'Alamat', value: 'Jl. Contoh No. 1' }] });
     await expect(panel.getByText('Budi Santoso', { exact: true })).toBeVisible();
     await expect(panel.getByRole('button', { name: 'Edit details' })).toBeVisible();
+  });
+
+  test('clearing the name sends it empty, which the server reads as no name', async ({ page, backend }) => {
+    customerBackend(backend, { config: MANUAL, lookup: { json: lookupAnswer('not_configured') } });
+    // As the server takes it: a name sent empty clears it, and a name not sent leaves it.
+    backend.route(on('PATCH', '/customers/cus-1', (r) => {
+      const { displayName } = json(r.body);
+      return { json: { ...CUSTOMER, ...(displayName === undefined ? {} : { displayName: displayName.trim() || null }) } };
+    }));
+    const panel = await openContactInfo(page, backend);
+    await panel.getByRole('button', { name: 'Edit details' }).click();
+    await panel.getByRole('textbox', { name: 'Name', exact: true }).fill('');
+    await panel.getByRole('button', { name: 'Save details' }).click();
+    await expect(panel.getByRole('button', { name: 'Edit details' })).toBeVisible();
+    expect(sentBody(backend, 'PATCH', '/customers/cus-1')).toEqual({ displayName: '', manualFields: [] });
+    await expect(panel.getByText('Budi Santoso', { exact: true })).toHaveCount(0);
+    await expect(picker(panel)).toHaveText('1234567890');
   });
 
   test('a save of the typed details the server refuses says why, and keeps what was typed', async ({ page, backend }) => {
@@ -400,6 +448,7 @@ test.describe('a member', () => {
     await edited.getByRole('button', { name: 'Delete note' }).click();
     await expect(edited).toHaveCount(0);
     await expect(notes(panel)).toHaveCount(2);
+    expect(deleted(backend)).toEqual(['/customers/cus-1/notes/note-1']);
   });
 
   test('adds and removes the customer’s tags, beside the contact’s own, which stay read-only', async ({ page, backend }) => {
