@@ -170,3 +170,21 @@ test.describe('a viewer', () => {
     await expectAccessible(page, 'main > .p-6');
   });
 });
+
+const sidebarLink = (page: Page, name: string) =>
+  page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('link', { name, exact: true });
+
+for (const role of ['viewer', 'member', 'admin']) {
+  test.describe(`a ${role}, in the sidebar`, () => {
+    test.use({ user: { ...ME, role } });
+
+    test('has Customers, which opens the list', async ({ page, backend }) => {
+      backend.route(listing([BUDI]));
+      await page.goto('/dashboard/settings');
+      await sidebarLink(page, 'Customers').click();
+      await expect(page).toHaveURL(/\/dashboard\/customers$/);
+      await expect(page.getByRole('link', { name: '1234567890' })).toBeVisible();
+      await expect(sidebarLink(page, 'Customers')).toHaveAttribute('aria-current', 'page');
+    });
+  });
+}
