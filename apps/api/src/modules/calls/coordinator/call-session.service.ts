@@ -209,7 +209,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     if (call.answeredByUserId) return { ok: false, reason: 'already_claimed' };
     if (this.busy(user.id)) return { ok: false, reason: 'busy' };
     const media = this.engines.getEngine(profile.id)?.callMedia;
-    if (profile.settings.callsAnswerInDashboard !== true || call.isVideo || call.isGroup || !media || this.callMedia.publicStatus().worker !== 'up') {
+    if (profile.settings.callsAnswerInDashboard !== true || call.isGroup || !media || this.callMedia.publicStatus().worker !== 'up') {
       return { ok: false, reason: 'media_unavailable' };
     }
     const recording = this.recorder.plan(profile.id, profile.settings);
@@ -401,8 +401,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       if (profile.settings.callsAnswerInDashboard !== true || profile.settings.autoRejectCalls === true) return;
       const agents = await this.eligibleAgents(profile.organizationId);
       if (!agents.length || closed()) return;
-      // This engine is voice-only: the page's bridge carries no video.
-      const unavailableReason = call.isGroup ? 'group_call' : call.isVideo ? 'video_call' : (await this.readiness(profile.id, profile.settings)).reasons[0];
+      // This engine is voice-only: a video call is answered as a voice call, and the caller sees no video.
+      const unavailableReason = call.isGroup ? 'group_call' : (await this.readiness(profile.id, profile.settings)).reasons[0];
       if (closed()) return;
       for (const id of agents) rung.add(id);
       this.gateway.emitToUsers(agents, 'call:ringing', {
@@ -413,6 +413,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         // The banner's link to the caller's chat, when the call has one.
         conversationId: call.conversationId ?? null,
         startedAt: call.startedAt.toISOString(),
+        // The agent's banner says it: the caller expects a picture and gets none.
+        isVideo: call.isVideo,
         answerable: !unavailableReason,
         // Recorded from before an announcement the caller hears first: the agent's banner says so.
         recorded: !!this.recorder.plan(profile.id, profile.settings),

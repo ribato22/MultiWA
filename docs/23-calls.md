@@ -8,7 +8,8 @@ Operators: start at [Server setup](#server-setup). Owners and admins: [Turning i
 
 It does not cover:
 
-- video calls and group calls: they ring with **Answer on the phone**;
+- video: a video call is answered as a voice call, and the caller sees no video;
+- group calls: they ring with **Answer on the phone**;
 - outgoing calls;
 - profiles on the Baileys engine: answering needs whatsapp-web.js;
 - `ENGINE_HOST=worker`: the engines must run in the API, where the media server runs.
@@ -236,7 +237,9 @@ Other refusals:
 | `storage_check_failed` | The recording storage could not be checked: try again, or ask your administrator | Try again, and check the storage's address and credentials. |
 | `recording_on` | Recording is on for this profile | Turn recording off before you remove the announcement. |
 
-A video or a group call rings with **Answer on the phone** and its `unavailableReason`: `video_call` (Video calls can’t be answered in the dashboard) or `group_call` (Group calls can’t be answered in the dashboard). Answer it on the phone.
+A group call rings with **Answer on the phone** and its `unavailableReason`, `group_call` (Group calls can’t be answered in the dashboard). Answer it on the phone.
+
+A video call rings like a voice call, and its banner says **Video call: you answer by voice, the caller sees no video**.
 
 Other problems:
 

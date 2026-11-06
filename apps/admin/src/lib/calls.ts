@@ -84,7 +84,6 @@ export const READINESS_TEXT: Record<string, string> = {
   hooks_missing: WA_CHANGED,
   not_prepared: WA_CHANGED,
   page_error: WA_CHANGED,
-  video_call: 'Video calls can’t be answered in the dashboard',
   group_call: 'Group calls can’t be answered in the dashboard',
 };
 
