@@ -26,8 +26,8 @@ import { CallMediaService } from '../media/call-media.service';
 import { CallRecorderService } from '../recordings/call-recorder.service';
 import { CallSessionService } from './call-session.service';
 import {
-  BLACK_RGB, CALLER_RGB, WWEBJS_USER_AGENT, agentHearsInPage, consoleAgentBundle, launchCallMediaBrowser, micCarriesInPage, nearestOf, openFakeWhatsAppPage,
-  recordedPicturesInPage, sineWav, sleep, startConsoleAgentInPage, until,
+  AGENT_RGB, BLACK_RGB, CALLER_RGB, WWEBJS_USER_AGENT, agentHearsInPage, agentSeesInPage, cameraCarriesInPage, consoleAgentBundle, consoleCameraInPage,
+  launchCallMediaBrowser, micCarriesInPage, nearestOf, openFakeWhatsAppPage, recordedPicturesInPage, sineWav, sleep, startConsoleAgentInPage, until,
 } from '../../../testing/call-media-browser';
 
 // sessions: by tokenHash, as the sessions table keys them
@@ -459,6 +459,41 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
       const seen: Awaited<ReturnType<typeof recordedPicturesInPage>> = await page.evaluate(recordedPicturesInPage, store.files.get(rec.storageKey)!.body.toString('base64'));
       expect([seen.width, seen.height]).toEqual([640, 480]);
       expect(seen.centre.some((rgb) => nearestOf(rgb, [CALLER_RGB, BLACK_RGB]) === 0), JSON.stringify(seen.centre)).toBe(true); // the caller's picture
+      await page.close();
+    } finally {
+      await hangUpIfUp(ana, callId);
+    }
+  }, 60_000);
+
+  /** What `look` read last in `p` (colourDistanceInPage's `__lastLook`) is nearest to the first colour of `palette`. */
+  const nearest = async (p: any, look: () => Promise<number>, palette: number[][]) => {
+    await look();
+    const rgb: number[] | null = await p.evaluate(() => (window as any).__lastLook?.rgb ?? null);
+    return !!rgb && nearestOf(rgb, palette) === 0;
+  };
+
+  it("a video call both ways through the console: the agent sees the caller, the agent's camera reaches WhatsApp Web, and is black once off", async () => {
+    const ana = await agent('u1');
+    const { callId } = await ring('p1', true);
+    try {
+      expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
+      const page = await agentPage(ana.socket, callId);
+      const ack: any = await ana.socket.emitWithAck('call:answer', { callId });
+      expect(ack).toMatchObject({ ok: true, callerVideoProducerId: expect.any(String) });
+      await page.evaluate(startConsoleAgentInPage, ack.callerProducerId, 660, false, ack.callerVideoProducerId);
+      expect(await until(() => ana.sent('call:active', callId).length > 0, 8000)).toBe(true);
+      const sawCaller = () => nearest(page, () => agentSeesInPage(page, CALLER_RGB), [CALLER_RGB, BLACK_RGB]);
+      expect(await until(sawCaller, 15_000)).toBe(true); // once WhatsApp Web draws the caller and the coordinator attached it
+      const cameraIs = (rgb: number[], other: number[]) => () => nearest(waPage, () => cameraCarriesInPage(waPage, rgb), [rgb, other]);
+      expect(await until(cameraIs(BLACK_RGB, AGENT_RGB), 5000)).toBe(true); // the agent's camera starts off
+      expect(await page.evaluate(consoleCameraInPage, AGENT_RGB)).toEqual(expect.any(String));
+      expect(await ana.socket.emitWithAck('call:camera', { callId, on: true })).toEqual({ ok: true, on: true });
+      expect(await until(cameraIs(AGENT_RGB, BLACK_RGB), 10_000)).toBe(true);
+      const [off, ended] = await Promise.all([ana.socket.emitWithAck('call:camera', { callId, on: false }), page.evaluate(consoleCameraInPage, null)]);
+      expect(off).toEqual({ ok: true, on: false });
+      expect(ended).toBe('ended'); // this browser's camera stopped at once
+      expect(await until(cameraIs(BLACK_RGB, AGENT_RGB), 5000)).toBe(true);
+      expect(await ana.socket.emitWithAck('call:hangup', { callId })).toEqual({ ok: true });
       await page.close();
     } finally {
       await hangUpIfUp(ana, callId);

@@ -220,7 +220,7 @@ export async function openFakeWhatsAppPage(browser: any, url: string, initScript
  * microphone and the page binding `__agentSignal(op, json)` as its signalling, started muted if `muted`. What the agent
  * hears goes to an analyser.
  */
-export async function startConsoleAgentInPage(callerProducerId: string, hz: number, muted = false): Promise<{ agentProducerId: string }> {
+export async function startConsoleAgentInPage(callerProducerId: string, hz: number, muted = false, callerVideoProducerId: string | null = null): Promise<{ agentProducerId: string }> {
   const w = window as any;
   const ctx = new AudioContext();
   const osc = ctx.createOscillator();
@@ -234,6 +234,7 @@ export async function startConsoleAgentInPage(callerProducerId: string, hz: numb
     iceServers: [],
     mic: mic.stream.getAudioTracks()[0],
     muted,
+    callerVideoProducerId,
   });
   const keepAlive = new Audio(); // Chrome feeds a remote track to Web Audio only while a media element plays it
   keepAlive.muted = true;
@@ -242,8 +243,43 @@ export async function startConsoleAgentInPage(callerProducerId: string, hz: numb
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 8192;
   ctx.createMediaStreamSource(media.remote).connect(analyser);
-  w.__agent = { analyser, keepAlive, media };
+  // The caller's picture, as the console's video tile shows it: colourDistanceInPage('agent') reads its track.
+  let video: HTMLVideoElement | undefined;
+  if (media.remoteVideo) {
+    video = document.createElement('video');
+    video.muted = true;
+    video.srcObject = media.remoteVideo;
+    video.play().catch(() => {});
+  }
+  w.__agent = { analyser, keepAlive, media, video };
   return { agentProducerId: media.producerId };
+}
+
+/**
+ * In the console agent's page: its camera on, a canvas of `rgb` given to setCamera as a camera track, resolving with
+ * the camera's producer id; or off (null), resolving with the state of the track it sent (`ended` once stopped).
+ */
+export async function consoleCameraInPage(rgb: number[] | null): Promise<string | null> {
+  const w = window as any;
+  if (!rgb) {
+    await w.__agent.media.setCamera(null);
+    clearInterval(w.__agent.cameraTimer);
+    return w.__agent.cameraTrack?.readyState ?? null;
+  }
+  const c = document.createElement('canvas');
+  c.width = 320;
+  c.height = 240;
+  const g = c.getContext('2d')!;
+  const paint = () => {
+    g.fillStyle = `rgb(${rgb.join(',')})`;
+    g.fillRect(0, 0, 320, 240);
+  };
+  paint();
+  w.__agent.cameraTimer = setInterval(paint, 66);
+  const track = c.captureStream(15).getVideoTracks()[0];
+  w.__agent.cameraTrack = track;
+  await w.__agent.media.setCamera(track);
+  return w.__agent.media.cameraProducerId;
 }
 
 /** Amplitude of `hz` in what the agent hears (single-bin DFT over the analyser window). */
