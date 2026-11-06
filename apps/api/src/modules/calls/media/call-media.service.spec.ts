@@ -245,6 +245,26 @@ describe('CallMediaService', () => {
     await expect(room.silenceAgent()).resolves.toBeUndefined();
   });
 
+  it("silenceAgent pauses the agent's camera too: the page's consumer of it sees it paused", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const caps = await page.rtpCapabilities();
+    const agentSend: any = await agent.createTransport('send');
+    await agent.produce(agentSend.id, 'audio', OPUS(2222));
+    const camera = await agent.produce(agentSend.id, 'video', VP8(2232));
+    const pageRecv: any = await page.createTransport('recv');
+    const seen: any = await page.consume(pageRecv.id, camera.id, caps);
+    await page.resumeConsumer(seen.id);
+    const consumer: ms.Consumer = (room as any).consumers.get(seen.id).consumer;
+    await room.silenceAgent();
+    expect([(room as any).producers.get('agent:audio').paused, (room as any).producers.get('agent:video').paused]).toEqual([true, true]);
+    expect(await until(() => consumer.producerPaused, 2_000)).toBe(true); // the worker told the page's consumer
+    room.close();
+  });
+
   it("closing a room releases its transports from the WebRtcServer, and only that room's", async () => {
     switchOn();
     await service.onModuleInit();

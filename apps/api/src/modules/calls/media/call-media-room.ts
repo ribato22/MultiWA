@@ -174,14 +174,14 @@ export class CallMediaRoom {
   }
 
   /**
-   * The agent's voice reaches nobody from now on (its call is ending): its producer is paused at the worker, so neither
-   * the page nor a recording gets any more of it, whatever the agent's browser does. The peer stays as it is: closing it
-   * would fail the browser's transports, and the browser would join again. Never rejects; not awaited, the pause is
-   * already on its way to the worker.
+   * The agent reaches nobody from now on (its call is ending): its voice and its camera are paused at the worker, so
+   * neither the page nor a recording gets any more of them, whatever the agent's browser does. The peer stays as it is:
+   * closing it would fail the browser's transports, and the browser would join again. Never rejects; not awaited, the
+   * pauses are already on their way to the worker.
    */
   async silenceAgent(): Promise<void> {
     if (this.isClosed) return;
-    await this.producers.get('agent:audio')?.pause().catch(() => undefined);
+    await Promise.all(['audio', 'video'].map((kind) => this.producers.get(`agent:${kind}`)?.pause().catch(() => undefined)));
   }
 
   /** Whether `peer` has transports and every one of them is linked. */
