@@ -19,6 +19,15 @@ const clean = (s: unknown) => String(s).replace(/[\r\n]/g, '');
 const MAX_RESTART_DELAY_MS = 30_000;
 /** A worker that lived this long was healthy: when it dies, the restart backoff starts over. */
 const HEALTHY_UPTIME_MS = 60_000;
+/**
+ * Every call's router: Opus 48 kHz stereo for the voice, VP8 for a video call, which every Chrome encodes and decodes in
+ * software (the engine's runs with --disable-gpu). A voice room carries VP8 too, unused: only a room opened for video
+ * lets its peers produce video.
+ */
+export const CALL_MEDIA_CODECS: ms.RouterRtpCodecCapability[] = [
+  { kind: 'audio', mimeType: 'audio/opus', clockRate: 48000, channels: 2 },
+  { kind: 'video', mimeType: 'video/VP8', clockRate: 90000 },
+];
 
 /** The media server's state, for authenticated readers. The public /health shows only `publicStatus()`. */
 export interface CallMediaStatus {
@@ -79,22 +88,28 @@ export class CallMediaService implements OnModuleInit, OnModuleDestroy {
     return this.worker?.pid ?? null;
   }
 
-  /** Open the media room of `callId`: one Router, Opus 48 kHz stereo. One room per call. */
-  async createRoom(callId: string): Promise<CallMediaRoom> {
+  /** Open the media room of `callId`: one Router (CALL_MEDIA_CODECS). One room per call; `video` lets it carry video. */
+  async createRoom(callId: string, opts: { video?: boolean } = {}): Promise<CallMediaRoom> {
     const worker = this.worker;
     const server = this.server;
     if (!worker || !server) throw new Error('Call media server unavailable');
     if (this.rooms.has(callId)) throw new Error('This call already has a media room');
-    const router = await worker.createRouter({ mediaCodecs: [{ kind: 'audio', mimeType: 'audio/opus', clockRate: 48000, channels: 2 }] });
+    const router = await worker.createRouter({ mediaCodecs: CALL_MEDIA_CODECS });
     if (this.worker !== worker || this.rooms.has(callId)) {
       router.close(); // the worker died, or another room opened, meanwhile
       throw new Error(this.worker !== worker ? 'Call media server unavailable' : 'This call already has a media room');
     }
-    const room = new CallMediaRoom(callId, router, server, () => {
-      // A dead worker closes its routers (and so its rooms) BEFORE it emits 'died': those rooms stay listed until
-      // onWorkerDied has named them.
-      if (!worker.died && this.rooms.get(callId) === room) this.rooms.delete(callId);
-    });
+    const room = new CallMediaRoom(
+      callId,
+      router,
+      server,
+      () => {
+        // A dead worker closes its routers (and so its rooms) BEFORE it emits 'died': those rooms stay listed until
+        // onWorkerDied has named them.
+        if (!worker.died && this.rooms.get(callId) === room) this.rooms.delete(callId);
+      },
+      opts.video === true,
+    );
     this.rooms.set(callId, room);
     return room;
   }

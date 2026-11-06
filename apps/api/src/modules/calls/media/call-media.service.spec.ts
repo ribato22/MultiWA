@@ -104,6 +104,20 @@ describe('CallMediaService', () => {
     expect(service.room('CALL1')).toBeNull();
   });
 
+  it('every router speaks Opus and VP8; a room takes video only when it was opened for it', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const voice = await service.createRoom('CALL1');
+    const video = await service.createRoom('CALL2', { video: true });
+    for (const room of [voice, video]) {
+      const caps: any = await room.signalingFor('page').rtpCapabilities();
+      expect(caps.codecs.map((c: any) => c.mimeType)).toEqual(expect.arrayContaining(['audio/opus', 'video/VP8']));
+    }
+    expect([voice.video, video.video]).toEqual([false, true]);
+    voice.close();
+    video.close();
+  });
+
   it('the room lets each peer do only its own part', async () => {
     switchOn();
     await service.onModuleInit();

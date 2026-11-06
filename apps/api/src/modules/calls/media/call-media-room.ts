@@ -38,6 +38,8 @@ export class CallMediaRoom {
     private readonly router: ms.Router,
     private readonly server: ms.WebRtcServer,
     private readonly onClose: () => void,
+    /** Opened for a video call: only then may its peers produce video. */
+    readonly video = false,
   ) {
     // A dead worker closes its routers: the room goes with it.
     router.observer.once('close', () => this.close());

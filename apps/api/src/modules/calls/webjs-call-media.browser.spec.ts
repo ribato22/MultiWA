@@ -24,6 +24,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import * as mediasoup from 'mediasoup';
 import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaBridge, callMediaPage, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
 import type { CallMediaHandle } from '@multiwa/engines';
+import { CALL_MEDIA_CODECS } from './media/call-media.service';
 import { launchCallMediaBrowser, openFakeWhatsAppPage, sineWav, sleep, until } from '../../testing/call-media-browser';
 
 const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
@@ -1193,7 +1194,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
 
     beforeAll(async () => {
       worker = await mediasoup.createWorker({ logLevel: 'warn' });
-      router = await worker.createRouter({ mediaCodecs: [{ kind: 'audio', mimeType: 'audio/opus', clockRate: 48000, channels: 2 }] });
+      router = await worker.createRouter({ mediaCodecs: CALL_MEDIA_CODECS });
       // The agent: a plain mediasoup-client peer in a page of its own, producing a 660 Hz tone into the router.
       const room = makeRoom();
       agentPage = await browser.newPage();
