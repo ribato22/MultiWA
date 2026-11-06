@@ -18,6 +18,12 @@ export type MediaRole = 'caller' | 'agent';
 /** What each peer produces, and what it may consume. */
 const PRODUCES: Record<MediaPeer, MediaRole> = { page: 'caller', agent: 'agent' };
 const CONSUMES: Record<MediaPeer, MediaRole> = { page: 'agent', agent: 'caller' };
+/**
+ * What one transport takes in: a video call's ~800 kbps of video (its producer's encodings cap it), its voice and the
+ * RTCP, with headroom for a key frame. The worker tells the sender this ceiling (REMB), so a sender that ignores its
+ * encodings (the page's own scripts can reach the bridge's signalling) is held near one call's worth.
+ */
+const MAX_INCOMING_BITRATE = 1_500_000;
 
 export class CallMediaRoom {
   private readonly transports = new Map<string, { peer: MediaPeer; direction: 'send' | 'recv'; transport: ms.WebRtcTransport }>();
@@ -109,7 +115,7 @@ export class CallMediaRoom {
       throw new Error(`The ${peer} already has a ${direction} transport`);
     }
     const transport = await this.keepIfCurrent(peer, generation, () =>
-      this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true }),
+      this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true, maxIncomingBitrate: MAX_INCOMING_BITRATE }),
     );
     this.transports.set(transport.id, { peer, direction, transport });
     // Its link, from the worker's state events: the coordinator hangs up an agent whose link stays down (agent lost).

@@ -124,6 +124,17 @@ describe('CallMediaService', () => {
     video.close();
   });
 
+  it('every transport takes in at most 1.5 Mbps', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const made = vi.spyOn(room['router'], 'createWebRtcTransport');
+    await room.signalingFor('page').createTransport('send');
+    await room.signalingFor('agent').createTransport('recv');
+    expect(made.mock.calls.map(([options]: any[]) => options.maxIncomingBitrate)).toEqual([1_500_000, 1_500_000]);
+    room.close();
+  });
+
   it('the room lets each peer do only its own part', async () => {
     switchOn();
     await service.onModuleInit();
