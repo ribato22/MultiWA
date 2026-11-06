@@ -378,17 +378,18 @@ A call:
     "port": 40000,
     "engineHost": "api",
     "activeSessions": 0,
+    "videoCalls": { "active": 0, "max": 2 },
     "recordings": { "storage": "local", "configured": true, "problem": null, "lastCheck": { "at": "2026-11-03T02:30:00.000Z", "ok": true } }
   },
   "profiles": [
-    { "profileId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "name": "Sales", "answerInDashboard": true, "recording": false, "retentionDays": 90, "announcement": null, "ready": true, "reasons": [] }
+    { "profileId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "name": "Sales", "answerInDashboard": true, "recording": false, "retentionDays": 90, "announcement": null, "ready": true, "reasons": [], "video": true }
   ]
 }
 ```
 
-- `server.enabled` is `true` when `CALLS_MEDIA_ENABLED=true` and the engines run in the API (`ENGINE_HOST` is not `worker`); `worker` is `up` or `down`; `port` is `null` while disabled; `engineHost` must be `api` for answering in the dashboard; `activeSessions` counts the organization's calls connecting or connected in the dashboard.
+- `server.enabled` is `true` when `CALLS_MEDIA_ENABLED=true` and the engines run in the API (`ENGINE_HOST` is not `worker`); `worker` is `up` or `down`; `port` is `null` while disabled; `engineHost` must be `api` for answering in the dashboard; `activeSessions` counts the organization's calls connecting or connected in the dashboard; `videoCalls.active` counts those of them answered with video, and `videoCalls.max` is the server's cap (`CALLS_MAX_VIDEO_CALLS`), shared with every organization.
 - `server.recordings`: `storage` is `local` or `s3`; `configured: false` with `problem` naming the missing or refused setting; `lastCheck` is the last check that the storage refuses reads without credentials (its `reason` when it failed: `storage_not_private`, `storage_check_failed`, or `recordings_storage_unset` from the nightly check while no storage is configured).
-- Each profile has its call settings, `ready`, and the `reasons` it is not ready.
+- Each profile has its call settings, `ready`, the `reasons` it is not ready, and `video`: whether its video calls are answered with video now (ready, and its WhatsApp Web can).
 
 Turning `answerInDashboard` on answers `409` with `reasons` when the profile is not ready: `engine_host_worker`, `media_disabled`, `media_server_down`, `auto_reject_on`, `profile_not_connected`, `engine_not_supported`, and those of its WhatsApp Web page: `not_ready`, `web_calling_disabled`, `voip_stack_unavailable`, `module_missing`, `hooks_missing`, `not_prepared` and `page_error`. [Calls answered in the dashboard](./23-calls.md#troubleshooting) says what each one means.
 

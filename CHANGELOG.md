@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Video calls answered with video (API and socket; the dashboard follows).** A one-to-one video call is answered with WhatsApp Web's video call UI while the server has a video slot free (`CALLS_MAX_VIDEO_CALLS`, default 2) and the profile's WhatsApp Web can. The agent's camera starts off, and `call:camera` turns it on and off. `call:ringing` says how a video call will be answered (`video`), `call:answer` carries the caller's picture (`callerVideoProducerId`), and `GET /calls/media/status` reports `videoCalls` and each profile's `video`. Video is best effort: whatever of it fails, the call goes on as voice.
+- A video call's recording has the pictures: the caller full frame, and the agent in a corner while their camera is on, stored as `video/webm` in the same local or S3 storage (about 450 MB an hour).
+
 ### Changed
 
-- A video call can be answered in the dashboard. It is answered as a voice call: the agent speaks, and the caller sees no video. Its banner says so, and `call:ringing` carries `isVideo`. It no longer rings with `unavailableReason: video_call`. Group calls still ring with **Answer on the phone**.
+- A video call can be answered in the dashboard. Without a free video slot, or where WhatsApp Web cannot answer with video, it is answered as a voice call: the agent speaks, and the caller sees no video. Its banner says so, and `call:ringing` carries `isVideo`. It no longer rings with `unavailableReason: video_call`. Group calls still ring with **Answer on the phone**.
 
 ### Fixed
 

@@ -33,6 +33,7 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `CALLS_MEDIA_ENABLED` | ❌ | `false` | Answering calls in the dashboard: the media server's switch |
 | `CALLS_MEDIA_ANNOUNCED_ADDRESS` | with `CALLS_MEDIA_ENABLED` | - | The address agents' browsers reach the media port on |
 | `CALLS_MAX_TALK_MINUTES` | ❌ | `120` | A call answered in the dashboard is hung up after this long |
+| `CALLS_MAX_VIDEO_CALLS` | ❌ | `2` | How many calls the server answers with video at once; past it, and with `0`, video calls are answered as voice |
 | `CALL_RECORDINGS_STORAGE` | ❌ | `STORAGE_TYPE`, else `local` | Where call recordings go: `local` or `s3` |
 | `CALL_RECORDINGS_PATH` | for local recordings | - (Docker: `/data/call-recordings`) | The directory of local call recordings |
 | `CALL_RECORDINGS_TMP` | for recording | - (Docker: `/data/call-recordings-tmp`) | The directory of recordings in progress |
@@ -445,6 +446,11 @@ From an agent's Answer to its audio connected. Past it the answer is undone and 
 **Optional** | Number (milliseconds) | Default: `15000`
 
 An agent whose browser has no connection to the API, or whose audio link is down, for this long is hung up (`endReason: agent_lost`). A reloaded agent page rejoins its call within it. The WhatsApp Web page's own audio link down for as long ends the call too (`endReason: media_failed`). It is also how long an agent's "unavailable" outlives their last socket: a reload keeps it, and closing the dashboard ends it. The API keeps it in memory, so a restart of the API (a deploy too) forgets it: every agent who had turned calls off is available, and rung, again.
+
+### `CALLS_MAX_VIDEO_CALLS`
+**Optional** | Number (0 or more) | Default: `2`
+
+How many calls the server answers with video at once, for every organization. A video call past it is answered as voice, and its banner says the server is busy. `0` answers every video call as voice. Each video call costs the WhatsApp Web page about 1 GB of memory and close to a CPU core (Chromium encodes VP8 without a GPU), so raise it only on a server with room for that.
 
 ```env
 CALLS_MEDIA_ENABLED=true

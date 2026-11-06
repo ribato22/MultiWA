@@ -8,6 +8,9 @@
 // hung up. Once WhatsApp has answered, the call ends with the agent's Hang up, the caller's, the talk-time cap, an agent
 // lost for CALLS_AGENT_GRACE_MS, or a media failure (the page's media link down as long, too): every end silences the
 // agent at once, hangs up what WhatsApp still holds, closes the media, and stores who ended it and why.
+// A one-to-one video call is answered with video while one of CALLS_MAX_VIDEO_CALLS slots is free and WhatsApp Web
+// can, with the agent's camera off until call:camera turns it on; otherwise as voice. Video is best effort: whatever
+// of it fails, the call goes on as voice.
 // Sessions live in this process, with the engines and the media server they use: a restart ends them, and the next
 // boot closes their rows.
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, forwardRef } from '@nestjs/common';
