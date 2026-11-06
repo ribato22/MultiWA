@@ -10,8 +10,10 @@ export interface RingingCall {
   caller: { name: string | null; number: string | null };
   conversationId?: string | null;
   startedAt: string;
-  /** A video call: answered by voice, so the caller sees no video. */
+  /** A video call. */
   isVideo?: boolean;
+  /** How a video call is answered: with video (the camera off), or as voice because the server or the line cannot. */
+  video?: 'available' | 'server_busy' | 'unsupported' | 'disabled';
   answerable: boolean;
   unavailableReason?: string;
   recorded: boolean;
@@ -37,6 +39,10 @@ export interface ActiveCall {
   endedText?: string;
   /** A hang-up or a reconnection that did not go through. */
   problem?: string;
+  /** The call runs with video in this tab: the caller's picture came, and WhatsApp answered with video. */
+  video?: boolean;
+  /** The agent's camera; off until the agent turns it on. */
+  camera?: 'off' | 'switching' | 'on';
 }
 
 export type Availability = 'available' | 'unavailable' | 'offline';
@@ -65,6 +71,8 @@ export type ConsoleEvent =
   | { type: 'hangUpFailed'; callId: string; text: string }
   | { type: 'local'; callId: string; local: boolean }
   | { type: 'muted'; muted: boolean }
+  | { type: 'video'; callId: string; video: boolean }
+  | { type: 'camera'; callId: string; camera: 'off' | 'switching' | 'on' }
   | { type: 'problem'; callId: string; text: string | null } // null: it is over
   | { type: 'dismiss'; callId: string }
   | { type: 'drop'; callId: string }
@@ -176,10 +184,15 @@ export function reduce(s: ConsoleState, e: ConsoleEvent): ConsoleState {
       // Audio this tab was building, given up (it failed, or another tab took it): the call is back in the phase the
       // server last said, so it can be taken here again.
       const phase = !e.local && a!.phase === 'connecting' ? (a!.answeredAt ? 'active' : a!.announcing ? 'announcing' : 'connecting') : a!.phase;
-      return { ...s, active: { ...a!, local: e.local, phase } };
+      return { ...s, active: { ...a!, local: e.local, phase, ...(e.local ? {} : { camera: 'off' as const }) } };
     }
     case 'muted':
       return a ? { ...s, active: { ...a, muted: e.muted } } : s;
+    case 'video':
+      // A call that goes on as voice has no camera either.
+      return isActive(e.callId) ? { ...s, active: { ...a!, video: e.video, ...(e.video ? {} : { camera: 'off' as const }) } } : s;
+    case 'camera':
+      return live(e.callId) ? { ...s, active: { ...a!, camera: e.camera } } : s;
     case 'dismiss':
       return { ...s, banners: without(e.callId), dismissed: [...s.dismissed.slice(-49), e.callId] };
     case 'drop':

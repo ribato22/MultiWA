@@ -222,3 +222,20 @@ test('a reload restores when the server put the call through: a call that stays 
   expect(s.active).toMatchObject({ phase: 'connecting', local: true, answeredAt: 'T1' });
   expect(reduce(s, { type: 'local', callId: 'c1', local: false }).active).toMatchObject({ phase: 'active', local: false, answeredAt: 'T1' });
 });
+
+test('a call answered with video: `video` marks it, `false` also turns the camera off; the camera switches on a live call only', () => {
+  const on = run({ type: 'ringing', call: call() }, { type: 'answered', call: call() }, { type: 'video', callId: 'c1', video: true });
+  expect(on.active).toMatchObject({ video: true });
+  expect(reduce(on, { type: 'camera', callId: 'c1', camera: 'switching' }).active).toMatchObject({ camera: 'switching' });
+  const camera = reduce(on, { type: 'camera', callId: 'c1', camera: 'on' });
+  expect(camera.active).toMatchObject({ camera: 'on' });
+  expect(reduce(camera, { type: 'video', callId: 'c1', video: false }).active).toMatchObject({ video: false, camera: 'off' });
+  expect(reduce(camera, { type: 'camera', callId: 'c2', camera: 'off' })).toBe(camera); // another call's
+  const ended = reduce(camera, { type: 'ended', callId: 'c1', text: 'Call ended' });
+  expect(reduce(ended, { type: 'camera', callId: 'c1', camera: 'switching' })).toBe(ended); // over
+  // This tab lets go of the audio: its camera went with it.
+  expect(reduce(camera, { type: 'local', callId: 'c1', local: false }).active).toMatchObject({ local: false, camera: 'off' });
+  // A new answer, or a call restored here, starts without either.
+  expect(reduce(camera, { type: 'answered', call: call('c2') }).active).not.toHaveProperty('camera');
+  expect(reduce(camera, { type: 'restored', call: call(), local: true }).active).not.toHaveProperty('video');
+});
