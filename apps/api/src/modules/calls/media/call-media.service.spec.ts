@@ -110,7 +110,7 @@ describe('CallMediaService', () => {
     expect(service.room('CALL1')).toBeNull();
   });
 
-  it('every router speaks Opus and VP8; a room takes video only when it was opened for it', async () => {
+  it('every router speaks Opus and VP8; a room remembers whether it was opened for video', async () => {
     switchOn();
     await service.onModuleInit();
     const voice = await service.createRoom('CALL1');
@@ -228,19 +228,23 @@ describe('CallMediaService', () => {
     await agent.closeConsumer(seen.id);
     await expect(agent.consume(agentRecv.id, callerVideo.id, caps)).resolves.toMatchObject({ kind: 'video' });
     room.closePeer('agent');
-    expect(room.producerId('agent', 'video')).toBeNull();
+    expect([room.producerId('agent'), room.producerId('agent', 'video')]).toEqual([null, null]);
     const agentSend2: any = await agent.createTransport('send');
-    await expect(agent.produce(agentSend2.id, 'video', VP8(2233))).resolves.toHaveProperty('id');
+    const again = await agent.produce(agentSend2.id, 'video', VP8(2233));
+    // The page's consumer of the old camera closed with its producer, not through closeConsumer: the worker tells it
+    // (producerclose) before it answers the requests above, so the page's video slot is free by now and no wait is needed.
+    await expect(page.consume(pageRecv.id, again.id, caps)).resolves.toMatchObject({ producerId: again.id, kind: 'video' });
     room.close();
   });
 
-  it("silenceAgent pauses the agent's voice at the worker: the page hears none of it; with no voice yet, or a closed room, it does nothing and never throws", async () => {
+  it("silenceAgent pauses the agent's voice at the worker: the page hears none of it; with no voice yet, or a closed room, it pauses nothing and never throws", async () => {
     switchOn();
     await service.onModuleInit();
+    const idle = await service.createRoom('CALL0'); // a room of its own: a silenced room also starts the agent's later voice paused
+    await expect(idle.silenceAgent()).resolves.toBeUndefined(); // nothing produced yet
     const room = await service.createRoom('CALL1');
     const page = room.signalingFor('page');
     const agent = room.signalingFor('agent');
-    await expect(room.silenceAgent()).resolves.toBeUndefined(); // nothing produced yet
     const caps = await page.rtpCapabilities();
     const agentSend: any = await agent.createTransport('send');
     const voice = await agent.produce(agentSend.id, 'audio', OPUS(2222));
@@ -273,6 +277,24 @@ describe('CallMediaService', () => {
     await room.silenceAgent();
     expect([(room as any).producers.get('agent:audio').paused, (room as any).producers.get('agent:video').paused]).toEqual([true, true]);
     expect(await until(() => consumer.producerPaused, 2_000)).toBe(true); // the worker told the page's consumer
+    room.close();
+  });
+
+  it("silenceAgent holds back what the agent produces afterwards: a produce still waiting, or issued later, starts paused; the caller's does not", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const pageSend: any = await page.createTransport('send');
+    const agentSend: any = await agent.createTransport('send');
+    const waiting = agent.produce(agentSend.id, 'audio', OPUS(2222)); // issued before the silence, and not run yet
+    await room.silenceAgent(); // no producer yet for it to pause
+    await waiting;
+    await agent.produce(agentSend.id, 'video', VP8(2232));
+    await page.produce(pageSend.id, 'audio', OPUS(1111));
+    const producers = (room as any).producers;
+    expect(['agent:audio', 'agent:video', 'caller:audio'].map((key) => producers.get(key).paused)).toEqual([true, true, false]);
     room.close();
   });
 

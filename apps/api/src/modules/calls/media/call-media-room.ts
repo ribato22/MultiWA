@@ -15,6 +15,8 @@ import type { CallMediaSignaling } from '@multiwa/engines';
 
 export type MediaPeer = 'page' | 'agent';
 export type MediaRole = 'caller' | 'agent';
+/** What a producer is filed under: its role and its kind, like "agent:video". */
+type ProducerKey = `${MediaRole}:${ms.MediaKind}`;
 /** What each peer produces, and what it may consume. */
 const PRODUCES: Record<MediaPeer, MediaRole> = { page: 'caller', agent: 'agent' };
 const CONSUMES: Record<MediaPeer, MediaRole> = { page: 'agent', agent: 'caller' };
@@ -27,8 +29,8 @@ const MAX_INCOMING_BITRATE = 1_500_000;
 
 export class CallMediaRoom {
   private readonly transports = new Map<string, { peer: MediaPeer; direction: 'send' | 'recv'; transport: ms.WebRtcTransport }>();
-  /** Each role's producers by kind, keyed "caller:audio", "caller:video", "agent:audio", "agent:video". */
-  private readonly producers = new Map<string, ms.Producer>();
+  /** Each role's producers by kind. */
+  private readonly producers = new Map<ProducerKey, ms.Producer>();
   private readonly consumers = new Map<string, { peer: MediaPeer; consumer: ms.Consumer }>();
   /** Where each peer's signalling operations queue (see `run`). The two peers are independent of each other. */
   private readonly chains: Record<MediaPeer, Promise<unknown>> = { page: Promise.resolve(), agent: Promise.resolve() };
@@ -40,6 +42,8 @@ export class CallMediaRoom {
   private readonly linkTold: Record<MediaPeer, boolean> = { page: false, agent: false };
   private readonly linkListeners: Array<(peer: MediaPeer, up: boolean) => void> = [];
   private isClosed = false;
+  /** Set by silenceAgent: what the agent produces from then on starts paused. */
+  private silenced = false;
 
   constructor(
     readonly callId: string,
@@ -148,11 +152,12 @@ export class CallMediaRoom {
     this.assertCurrent(peer, generation);
     const { transport } = this.own(peer, transportId, 'send');
     if (kind !== 'audio' && !(kind === 'video' && this.video)) throw new Error(this.video ? 'Audio or video only' : 'Audio only');
-    const media = kind as ms.MediaKind;
     const role = PRODUCES[peer];
-    const key = `${role}:${media}`;
-    if (this.producers.has(key)) throw new Error(`The ${role}'s ${media} is already produced`);
-    const producer = await this.keepIfCurrent(peer, generation, () => transport.produce({ kind: media, rtpParameters, appData: { role } }));
+    const key: ProducerKey = `${role}:${kind}`;
+    if (this.producers.has(key)) throw new Error(`The ${role}'s ${kind} is already produced`);
+    // silenceAgent pauses the producers there are: one made after it ran (a produce still waiting its turn) starts paused.
+    const paused = role === 'agent' && this.silenced;
+    const producer = await this.keepIfCurrent(peer, generation, () => transport.produce({ kind, rtpParameters, appData: { role }, paused }));
     this.producers.set(key, producer);
     // A closed producer (its transport closed: closePeer, a dropped agent) can be produced again.
     producer.observer.once('close', () => {
@@ -181,13 +186,15 @@ export class CallMediaRoom {
 
   /**
    * The agent reaches nobody from now on (its call is ending): its voice and its camera are paused at the worker, so
-   * neither the page nor a recording gets any more of them, whatever the agent's browser does. The peer stays as it is:
+   * neither the page nor a recording gets any more of them, whatever the agent's browser does. What it produces from now
+   * on starts paused (`produce`), also a produce that was already waiting in its chain. The peer stays as it is:
    * closing it would fail the browser's transports, and the browser would join again. Never rejects; not awaited, the
    * pauses are already on their way to the worker.
    */
   async silenceAgent(): Promise<void> {
     if (this.isClosed) return;
-    await Promise.all(['audio', 'video'].map((kind) => this.producers.get(`agent:${kind}`)?.pause().catch(() => undefined)));
+    this.silenced = true;
+    await Promise.all((['audio', 'video'] as const).map((kind) => this.producers.get(`agent:${kind}`)?.pause().catch(() => undefined)));
   }
 
   /** Whether `peer` has transports and every one of them is linked. */
