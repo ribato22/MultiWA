@@ -119,7 +119,9 @@ export async function startBridgeInPage(
         b.agentVideo.consumer.close();
         b.agentVideo = null;
       }
-      try { b.send?.close(); } catch { /* closes "caller" and "callerVideo" too: stopTracks false leaves WhatsApp Web's own audio track running; the video's tracks are our captures */ }
+      // Closes "caller" and "callerVideo" too: stopTracks false leaves WhatsApp Web's own audio track running, and the
+      // video's tracks, our captures, stop with it.
+      try { b.send?.close(); } catch { /* already closed */ }
       try { b.recv?.close(); } catch { /* already closed */ }
       try { silence.stop(); } catch { /* already stopped */ }
       silence.disconnect();
@@ -332,13 +334,13 @@ export async function connectAgentVideoInPage(callId: string, producerId: string
   if (!b.callerVideo) throw new Error('No video on this call');
   if (b.agentVideo) throw new Error('Agent video already connected');
   if (!ours()) throw new Error('Call is not the active call');
+  const camera = w.__mwCall.ensureCamera(); // before the consume: from there on, any failure is undone below
   const signal = async (op: string, args: unknown) => JSON.parse(await w.__mwBridgeSignal(callId, op, JSON.stringify(args)));
   const options = await signal('consume', { transportId: b.recv.id, producerId, rtpCapabilities: b.device.rtpCapabilities });
   const live = () => {
     if (w.__mwBridge !== b) throw new Error('Media bridge closed');
     if (!ours()) throw new Error('Call is not the active call');
   };
-  const camera = w.__mwCall.ensureCamera();
   let consumer: any;
   let view: HTMLVideoElement | undefined;
   let mine: MwBridge['agentVideo'] = null;
