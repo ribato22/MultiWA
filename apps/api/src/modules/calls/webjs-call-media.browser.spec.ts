@@ -1909,9 +1909,15 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         expect(await bridgeGone(p, 1500)).toBe(true);
         // Chrome starts a fresh clone on the canvas's last frame, before any redraw: read that very frame
         const first = await p.evaluate(async () => {
+          // Only a frame read off the track itself is the very first one. The standard has MediaStreamTrackProcessor in
+          // workers only; Chromium still has it on window, and a Chromium without it must fail with a readable message.
+          const Processor = (window as any).MediaStreamTrackProcessor;
+          if (typeof Processor !== 'function') {
+            throw new Error('This test needs MediaStreamTrackProcessor on window (Chromium 94 or later) to read the first camera frame');
+          }
           const track = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0];
           const { value: frame } = await Promise.race([
-            new (window as any).MediaStreamTrackProcessor({ track }).readable.getReader().read(),
+            new Processor({ track }).readable.getReader().read(),
             new Promise<never>((_, reject) => setTimeout(() => reject(new Error('No camera frame within 2 s')), 2000)), // fails fast, not at the test's timeout
           ]);
           const c = document.createElement('canvas');
