@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { CircleDot, Loader2, MessagesSquare, Phone, PhoneIncoming, Video, VolumeX, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { READINESS_TEXT, ringingCallerLabel } from '@/lib/calls';
+import { READINESS_TEXT, VIDEO_TEXT, ringingCallerLabel } from '@/lib/calls';
 import { consoleFocus, settleFocus, takeFocus } from '@/lib/call-console/focus';
 import { useCalls } from './calls-provider';
 
@@ -67,7 +67,7 @@ export function IncomingCallBanner() {
                 {b.call.isVideo && (
                   <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
                     <Video className="mt-px h-3 w-3 flex-shrink-0" aria-hidden="true" />
-                    Video call: you answer by voice, the caller sees no video
+                    {VIDEO_TEXT[b.call.video ?? 'unknown'] ?? VIDEO_TEXT.unknown}
                   </p>
                 )}
                 {b.call.recorded && (

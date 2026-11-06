@@ -50,6 +50,24 @@ test('a video call rings answerable, and says it is answered by voice: the calle
   await expectAccessible(page, '[aria-label="Incoming calls"]');
 });
 
+test('a video call says how it will be answered: with video and the camera off, or by voice and why', async ({ page, backend }) => {
+  backend.emit('call:ringing', ringing({ isVideo: true, video: 'available' }));
+  const cards = banner(page).getByRole('group', { name: 'Call from Pak Joko' });
+  await expect(cards.filter({ hasText: 'Video call: your camera starts off' })).toBeVisible();
+  await expect(page.locator('#calls-announcer')).toHaveText('Incoming call from Pak Joko on Line 1. Video call');
+  const lines: Array<[string, string]> = [
+    ['server_busy', 'Video call, answered by voice: the server is busy with other video calls'],
+    ['unsupported', 'Video call, answered by voice: this line can’t take video here'],
+    ['disabled', 'Video call, answered by voice: video is turned off on this server'],
+  ];
+  for (const [video, line] of lines) {
+    backend.emit('call:ringing', ringing({ callId: `call-${video}`, isVideo: true, video }));
+    await expect(cards.filter({ hasText: line })).toBeVisible();
+  }
+  await expect(page.locator('#calls-announcer')).toHaveText('Incoming call from Pak Joko on Line 1. Video call, answered by voice');
+  await expectAccessible(page, '[aria-label="Incoming calls"]');
+});
+
 test('it rings and flashes the title; Dismiss stops both, and a re-ring of that call stays dismissed', async ({ page, backend }) => {
   backend.emit('call:ringing', ringing());
   await expect.poll(() => tones(page), { timeout: 8000 }).toBeGreaterThan(0); // the first ring, or the next one 3 s later
