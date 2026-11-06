@@ -246,7 +246,7 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
     }
   }, 60_000);
 
-  it("an agent's video that stops coming (silenced as its call ends) leaves WhatsApp Web's camera black, not on its last frame", async () => {
+  it("an agent's video stays on WhatsApp Web's camera while its frames come; one that stops coming (silenced as its call ends) leaves the camera black, not on its last frame", async () => {
     const waPage = await openWaPage();
     const agentPage = await openTestAgentPage();
     const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
@@ -258,6 +258,14 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
       await media.answer('CALL1', { video: true });
       await handle.connectAgentVideo(agentVideoProducerId);
       expect(await until(async () => (await cameraCarriesInPage(waPage, AGENT_RGB)) < NEAR, 10_000)).toBe(true);
+      // while its frames keep coming, the agent stays on the camera well past the stall's second: a frame count that
+      // stopped counting would turn every agent black after it, and the wait above succeeds within that second
+      let farthest = 0;
+      for (const end = Date.now() + 2_500; Date.now() < end; ) {
+        farthest = Math.max(farthest, await cameraCarriesInPage(waPage, AGENT_RGB));
+        await sleep(100);
+      }
+      expect(farthest).toBeLessThan(NEAR);
       // paused at the worker: no new frame reaches the page, whose camera is still connected to the agent's video
       await room.silenceAgent();
       expect(await until(async () => (await cameraCarriesInPage(waPage, BLACK_RGB)) < NEAR, 2_000)).toBe(true);
