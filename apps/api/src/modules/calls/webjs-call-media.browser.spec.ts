@@ -1085,7 +1085,31 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
           };
         });
         expect(got).toEqual({ both: [true, 1, 1], camera: [true, 0, 'live'], mics: 1, canvasesInDocument: 0 });
-        expect(await until(async () => (await p.evaluate(cameraCarriesInPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+        expect(await until(async () => (await cameraCarriesInPage(p, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+      } finally {
+        await p.close();
+      }
+    });
+
+    it('the camera is drawn only while a camera it handed out is live, and drawn again for the next one', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(trackIntervals); // the camera's redraw is the one interval this page sets
+        await p.evaluate(async () => {
+          const md = navigator.mediaDevices;
+          (window as any).__cams = [await md.getUserMedia({ video: true }), await md.getUserMedia({ audio: true, video: true })];
+        });
+        expect(await liveIntervals(p)).toBe(1); // one redraw, whatever the number of cameras handed out
+        await p.evaluate(() => (window as any).__cams[0].getVideoTracks()[0].stop());
+        await sleep(300); // several redraws
+        expect(await liveIntervals(p)).toBe(1); // the other camera is still live
+        await p.evaluate(() => (window as any).__cams[1].getVideoTracks()[0].stop()); // WhatsApp Web stops its camera when a call ends
+        expect(await until(async () => (await liveIntervals(p)) === 0, 1000)).toBe(true); // the redraw is cleared, not just idle
+        expect(await p.evaluate(() => (window as any).__mwCall.camera.clones.length)).toBe(0); // and the stopped cameras are let go of
+        // the next call's camera: drawn again, so it carries a picture (a canvas that does not change sends no frames)
+        await p.evaluate(async () => { (window as any).__fakeWa.camStream = await navigator.mediaDevices.getUserMedia({ video: true }); });
+        expect(await liveIntervals(p)).toBe(1);
+        expect(await until(async () => (await cameraCarriesInPage(p, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
       } finally {
         await p.close();
       }
@@ -1104,7 +1128,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await p.evaluate(() => (window as any).__fakeWa.ring('CALL1', true));
         expect(await p.evaluate(answerActiveCall, 'CALL1', 5000, true)).toEqual({ connectedAfterMs: expect.any(Number), video: true });
         expect(await answered(p)).toEqual({ bundle: true, accepts: [[true, false, null]], camera: true, caller: true });
-        expect(await until(async () => (await p.evaluate(cameraCarriesInPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+        expect(await until(async () => (await cameraCarriesInPage(p, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
       } finally {
         await p.close();
       }

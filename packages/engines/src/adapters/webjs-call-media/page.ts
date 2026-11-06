@@ -75,12 +75,13 @@ export interface MwCall {
   ensure(): MwCall;
   /**
    * The injected camera, created by ensureCamera(): every getUserMedia that asks for video gets a clone of `track`, a
-   * capture of `canvas`. The canvas is redrawn at 15 fps, black, or with `source` (the agent's video, set by the media
-   * bridge) fitted in. Like the microphone it lasts as long as the document. It is never put in the document, so a
-   * search of WhatsApp Web's canvases never finds it.
+   * capture of `canvas`, kept in `clones` while it is live. While one is, the canvas is redrawn at 15 fps (`timer`),
+   * black, or with `source` (the agent's video, set by the media bridge) fitted in; with none live the redraw stops
+   * (`timer` null). Like the microphone it lasts as long as the document. It is never put in the document, so a search
+   * of WhatsApp Web's canvases never finds it.
    */
-  camera: { canvas: HTMLCanvasElement; track: MediaStreamTrack; source: HTMLVideoElement | null } | null;
-  /** Creates the camera once, returns it. */
+  camera: { canvas: HTMLCanvasElement; track: MediaStreamTrack; source: HTMLVideoElement | null; clones: MediaStreamTrack[]; timer: any } | null;
+  /** Creates the camera once, starts its redraw when it is stopped, returns it. */
   ensureCamera(): NonNullable<MwCall['camera']>;
   /** getUserMedia calls answered with the injected microphone. */
   gumCalls: number;
@@ -169,21 +170,31 @@ export function installCallMediaHooks(): void {
         const canvas = document.createElement('canvas');
         canvas.width = 640;
         canvas.height = 480;
-        const g = canvas.getContext('2d');
-        const camera: MwCall['camera'] = { canvas, track: canvas.captureStream(15).getVideoTracks()[0], source: null };
-        // A canvas that does not change sends no frames: it is redrawn at the capture rate, black or the agent fitted in.
-        // ponytail: the redraw runs for the rest of the document once a call asked for the camera (a 640×480 fill at
-        // 15 fps); stop it between calls if many profiles take video calls.
-        setInterval(() => {
+        call.camera = { canvas, track: canvas.captureStream(15).getVideoTracks()[0], source: null, clones: [], timer: null };
+      }
+      const camera = call.camera;
+      // A canvas that does not change sends no frames: while a clone is live it is redrawn at the capture rate, black or
+      // the agent fitted in. With none live (polled: a track the page stops fires no `ended`) the redraw stops, until
+      // the next call's camera starts it again.
+      // ponytail: only the clones handed out here count; a copy the page made of one (track.clone()) freezes once ours
+      // are stopped. Follow MediaStreamTrack.prototype.clone if WhatsApp Web ever copies its camera.
+      if (!camera.timer) {
+        const g = camera.canvas.getContext('2d');
+        camera.timer = setInterval(() => {
+          camera.clones = camera.clones.filter((t) => t.readyState === 'live');
+          if (!camera.clones.length) {
+            clearInterval(camera.timer);
+            camera.timer = null;
+            return;
+          }
           g.fillRect(0, 0, 640, 480);
           const v = camera.source;
           if (!v || v.readyState < 2 || !v.videoWidth) return;
           const s = Math.min(640 / v.videoWidth, 480 / v.videoHeight);
           g.drawImage(v, (640 - v.videoWidth * s) / 2, (480 - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
         }, 1000 / 15);
-        call.camera = camera;
       }
-      return call.camera;
+      return camera;
     },
   };
   const note = (stream: MediaStream, via: MwTap['via'], owner: MwTap['owner']) => {
@@ -234,7 +245,12 @@ export function installCallMediaHooks(): void {
       tracks.push(call.dest.stream.getAudioTracks()[0].clone());
     }
     // WhatsApp Web asks for a camera on every video call, also one answered with the camera off: it gets ours.
-    if (c.video) tracks.push(call.ensureCamera().track.clone());
+    if (c.video) {
+      const camera = call.ensureCamera();
+      const clone = camera.track.clone();
+      camera.clones.push(clone);
+      tracks.push(clone);
+    }
     const s: any = new MediaStream(tracks);
     s.__mwOwn = true;
     return Promise.resolve(s);

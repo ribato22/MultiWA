@@ -335,11 +335,29 @@ export async function seeCallerVideoInPage(producerId: string): Promise<void> {
 }
 
 /**
- * How far what the test agent sees of the caller (seeCallerVideoInPage) is from `rgb`: the largest difference, over the
- * three channels, of the picture's mean colour, 0-255; 255 while there is no picture yet.
+ * How far a picture in this page is from `rgb`: the largest difference, over the three channels, of its mean colour,
+ * 0-255; 255 while there is no picture yet. `of` picks the picture: `agent`, what the test agent sees of the caller
+ * (seeCallerVideoInPage); `camera`, WhatsApp Web's camera in the fake page, the stream its last video answer took (what
+ * the caller sees).
  */
-export function agentSeesInPage(rgb: number[]): number {
-  const v: HTMLVideoElement | undefined = (window as any).__agent?.video;
+export function colourDistanceInPage(of: 'agent' | 'camera', rgb: number[]): number {
+  const w = window as any;
+  let v: HTMLVideoElement | undefined;
+  if (of === 'agent') v = w.__agent?.video;
+  else {
+    const f = w.__fakeWa;
+    const track: MediaStreamTrack | undefined = f.camStream?.getVideoTracks()[0];
+    if (!track) return 255;
+    // Each video answer takes a new camera stream: a page that takes several calls is looked at on the current one.
+    if (f.camView?.track !== track) {
+      const view = document.createElement('video');
+      view.muted = true;
+      view.srcObject = new MediaStream([track]);
+      view.play().catch(() => {});
+      f.camView = { track, view };
+    }
+    v = f.camView.view;
+  }
   if (!v || v.readyState < 2 || !v.videoWidth) return 255;
   const c = document.createElement('canvas');
   c.width = 16;
@@ -352,31 +370,8 @@ export function agentSeesInPage(rgb: number[]): number {
   return Math.max(...mean.map((m, k) => Math.abs(m - rgb[k])));
 }
 
-/**
- * How far WhatsApp Web's camera in the fake page (the stream its last video answer took: what the caller sees) is from
- * `rgb`, measured as agentSeesInPage measures; 255 while there is no picture.
- */
-export function cameraCarriesInPage(rgb: number[]): number {
-  const f = (window as any).__fakeWa;
-  const track: MediaStreamTrack | undefined = f.camStream?.getVideoTracks()[0];
-  if (!track) return 255;
-  // Each video answer takes a new camera stream: a page that takes several calls is looked at on the current one.
-  if (f.camView?.track !== track) {
-    const view = document.createElement('video');
-    view.muted = true;
-    view.srcObject = new MediaStream([track]);
-    view.play().catch(() => {});
-    f.camView = { track, view };
-  }
-  const v: HTMLVideoElement = f.camView.view;
-  if (v.readyState < 2 || !v.videoWidth) return 255;
-  const c = document.createElement('canvas');
-  c.width = 16;
-  c.height = 12;
-  const g = c.getContext('2d', { willReadFrequently: true })!;
-  g.drawImage(v, 0, 0, 16, 12);
-  const d = g.getImageData(0, 0, 16, 12).data;
-  const mean = [0, 0, 0];
-  for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += d[i + k] / (d.length / 4);
-  return Math.max(...mean.map((m, k) => Math.abs(m - rgb[k])));
-}
+// Node side, around the page function above: page functions cannot share code, a page gets each one as its own source.
+/** In the test agent's page: how far what it sees of the caller is from `rgb` (colourDistanceInPage). */
+export const agentSeesInPage = (agentPage: any, rgb: number[]): Promise<number> => agentPage.evaluate(colourDistanceInPage, 'agent', rgb);
+/** In the fake WhatsApp Web page: how far its camera, what the caller sees, is from `rgb` (colourDistanceInPage). */
+export const cameraCarriesInPage = (waPage: any, rgb: number[]): Promise<number> => waPage.evaluate(colourDistanceInPage, 'camera', rgb);
