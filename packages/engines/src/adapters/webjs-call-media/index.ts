@@ -196,8 +196,8 @@ export class WebJsCallMedia implements CallMediaEngine {
     }
   }
 
-  async answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }> {
-    const r = await this.requirePage().evaluate(answerActiveCall, callId, opts?.timeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS);
+  async answer(callId: string, opts?: { timeoutMs?: number; video?: boolean }): Promise<{ connectedAfterMs: number; video: boolean }> {
+    const r = await this.requirePage().evaluate(answerActiveCall, callId, opts?.timeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS, opts?.video === true);
     console.log(`[WhatsApp-WebJS] Call ${clean(callId)} answered for profile ${clean(this.profileId)}, connected after ${r.connectedAfterMs} ms`);
     return r;
   }

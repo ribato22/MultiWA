@@ -1090,6 +1090,60 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await p.close();
       }
     });
+
+    /** What the fake saw of the answer: the video call UI loaded, the accepts, the camera taken being ours, the caller drawn. */
+    const answered = (p: any) =>
+      p.evaluate(() => {
+        const f = (window as any).__fakeWa;
+        return { bundle: f.bundleLoaded, accepts: f.acceptArgs, camera: f.camStream?.__mwOwn === true, caller: !!f.callerCanvas };
+      });
+
+    it('is answered the way WhatsApp Web answers one: its video call UI first, then the accept with the camera off; the camera it takes is black', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(() => (window as any).__fakeWa.ring('CALL1', true));
+        expect(await p.evaluate(answerActiveCall, 'CALL1', 5000, true)).toEqual({ connectedAfterMs: expect.any(Number), video: true });
+        expect(await answered(p)).toEqual({ bundle: true, accepts: [[true, false, null]], camera: true, caller: true });
+        expect(await until(async () => (await p.evaluate(cameraCarriesInPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+      } finally {
+        await p.close();
+      }
+    });
+
+    it('answered as voice it still takes a camera, ours; without the video call UI WhatsApp Web draws no caller', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(() => (window as any).__fakeWa.ring('CALL1', true));
+        expect(await p.evaluate(answerActiveCall, 'CALL1', 5000)).toEqual({ connectedAfterMs: expect.any(Number), video: false });
+        expect(await answered(p)).toEqual({ bundle: false, accepts: [[true, false, null]], camera: true, caller: false });
+      } finally {
+        await p.close();
+      }
+    });
+
+    it('a video call UI that does not load answers the call as voice instead of failing it', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL1', true); f.bundleFails = true; });
+        expect(await p.evaluate(answerActiveCall, 'CALL1', 5000, true)).toEqual({ connectedAfterMs: expect.any(Number), video: false });
+        expect(await answered(p)).toEqual({ bundle: false, accepts: [[true, false, null]], camera: true, caller: false });
+      } finally {
+        await p.close();
+      }
+    });
+
+    it('the one deadline covers the video call UI too: one that never loads fails the answer, and nothing is accepted', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL1', true); f.bundleHangs = true; });
+        const t0 = Date.now();
+        await expect(p.evaluate(answerActiveCall, 'CALL1', 500, true)).rejects.toThrow('Call did not connect in time');
+        expect(Date.now() - t0).toBeLessThan(3000);
+        expect(await p.evaluate(() => (window as any).__fakeWa.accepts)).toBe(0);
+      } finally {
+        await p.close();
+      }
+    });
   });
 
   describe('the media bridge, against a real mediasoup router', () => {

@@ -271,10 +271,12 @@ export interface CallMediaEngine {
    * Answer the ringing call; resolves once it is connected, rejects when it is not ringing or does not connect in
    * time. WhatsApp's accept cannot be cancelled, so a call can still connect AFTER this rejected "did not connect in
    * time". After that rejection the caller MUST call `hangUp(callId)`, ignore its error, and release the call.
-   * It does not refuse a video call: this engine is voice-only and never looks at the call type, so the coordinator
-   * decides which calls to answer.
+   * `video`: answered the way WhatsApp Web answers a video call (its video call UI first, so that it draws the caller),
+   * with the camera off: the handle's setCameraMuted(false) turns it on. A video call UI that does not load answers as
+   * voice instead, and `video` in the result says which it was. Without `video` any call is answered as voice: the
+   * engine never looks at the call type, so the coordinator decides which calls to answer, and how.
    */
-  answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }>;
+  answer(callId: string, opts?: { timeoutMs?: number; video?: boolean }): Promise<{ connectedAfterMs: number; video: boolean }>;
   /** End the call the way WhatsApp Web's End button does; rejects when the voip stack does not end it in time (10 s). */
   hangUp(callId: string): Promise<void>;
   /**

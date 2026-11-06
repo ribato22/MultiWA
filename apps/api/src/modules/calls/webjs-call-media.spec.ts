@@ -304,13 +304,15 @@ describe('WebJsCallMedia without a browser', () => {
     });
   });
 
-  it('hands the page the call id and the deadline, and returns what the page answers', async () => {
+  it('hands the page the call id, the deadline and whether to answer with video, and returns what the page answers', async () => {
     const page = fakePage();
     const media = new WebJsCallMedia(() => page, () => true, 'p1');
     expect(await media.answer('c1')).toEqual({ connectedAfterMs: 120 });
-    expect(page.evaluate).toHaveBeenLastCalledWith(answerActiveCall, 'c1', 15000);
+    expect(page.evaluate).toHaveBeenLastCalledWith(answerActiveCall, 'c1', 15000, false);
     await media.answer('c1', { timeoutMs: 3000 });
-    expect(page.evaluate).toHaveBeenLastCalledWith(answerActiveCall, 'c1', 3000);
+    expect(page.evaluate).toHaveBeenLastCalledWith(answerActiveCall, 'c1', 3000, false);
+    await media.answer('c1', { video: true });
+    expect(page.evaluate).toHaveBeenLastCalledWith(answerActiveCall, 'c1', 15000, true);
     await media.hangUp('c1');
     expect(page.evaluate).toHaveBeenLastCalledWith(hangUpActiveCall, 'c1', 10000);
     expect(await media.playAnnouncement('c1', Buffer.from([1, 2, 3]))).toEqual({ durationMs: 900 });
