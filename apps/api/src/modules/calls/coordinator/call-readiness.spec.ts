@@ -9,14 +9,22 @@ const SUPPORTED = { supported: true, reasons: [] };
 
 describe('checkReadiness', () => {
   it('ready: the api hosts the engines, the media server is up, the profile does not reject calls, its page supports call media', async () => {
-    expect(await checkReadiness({}, { engineHostWorker: false, media: UP, engine: engine(SUPPORTED) })).toEqual({ ready: true, reasons: [] });
+    expect(await checkReadiness({}, { engineHostWorker: false, media: UP, engine: engine(SUPPORTED) })).toEqual({ ready: true, reasons: [], video: false });
   });
 
   it('the server reasons come first, and all of them are listed', async () => {
     expect(await checkReadiness({ autoRejectCalls: true }, { engineHostWorker: true, media: { enabled: false, worker: 'down' }, engine: null })).toEqual({
       ready: false,
       reasons: ['engine_host_worker', 'media_disabled', 'auto_reject_on', 'profile_not_connected'],
+      video: false,
     });
+  });
+
+  it('video: only while ready, and only with the page probe saying WhatsApp Web can answer with video', async () => {
+    const deps = (support: object) => ({ engineHostWorker: false, media: UP, engine: engine(support) });
+    expect((await checkReadiness({}, deps({ supported: true, reasons: [], videoSupported: true }))).video).toBe(true);
+    expect((await checkReadiness({}, deps({ supported: true, reasons: [] }))).video).toBe(false);
+    expect((await checkReadiness({ autoRejectCalls: true }, deps({ supported: true, reasons: [], videoSupported: true }))).video).toBe(false);
   });
 
   it('a media server that is restarting', async () => {

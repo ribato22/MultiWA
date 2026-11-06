@@ -52,6 +52,14 @@ describe('finalizeWebm', () => {
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
+  it('a block of another track that comes after a later one (a recording with video) does not shorten the length', async () => {
+    const plain = await finalizeWebm(file(FIXTURE), out());
+    // A whole SimpleBlock of track 2 at the last Cluster's own time (relative 0), so older than the block before it.
+    const mixed = await finalizeWebm(file(withAt(FIXTURE.length, [0xa3, 0x85, 0x82, 0x00, 0x00, 0x80, 0x00])), out());
+    expect(mixed.rewritten).toBe(true);
+    expect(mixed.durationMs).toBe(plain.durationMs);
+  });
+
   /** The Duration in Info, in ms at the fixture's 1-ms TimecodeScale; null without one. */
   const durationIn = (webm: Buffer): number | null => {
     const at = webm.indexOf(Buffer.from([0x44, 0x89, 0x88]), INFO_AT);

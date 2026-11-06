@@ -44,6 +44,11 @@ export class CallsGateway {
     return this.as(client, 'call:hangup', (p) => this.sessions.hangup(p, body?.callId));
   }
 
+  @SubscribeMessage('call:camera')
+  camera(@ConnectedSocket() client: Socket, @MessageBody() body: Body) {
+    return this.as(client, 'call:camera', (p) => this.sessions.camera(p, body?.callId, body?.on));
+  }
+
   @SubscribeMessage('call:availability')
   availability(@ConnectedSocket() client: Socket, @MessageBody() body: Body) {
     return this.as(client, 'call:availability', (p) => this.sessions.setAvailability(p, body?.available));

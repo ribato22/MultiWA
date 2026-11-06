@@ -55,7 +55,11 @@ function make() {
   const engineCommands = { rejectCall: vi.fn().mockResolvedValue({ callId: 'c1' }), createCallLink: vi.fn().mockResolvedValue(LINK) };
   const eventEmitter = { emit: vi.fn() };
   const realtime = { emitCallUpdate: vi.fn() };
-  const sessions = { readiness: vi.fn().mockResolvedValue({ ready: true, reasons: [] }), activeSessionCount: vi.fn(() => 1) };
+  const sessions = {
+    readiness: vi.fn().mockResolvedValue({ ready: true, reasons: [], video: false }),
+    activeSessionCount: vi.fn(() => 1),
+    videoCalls: vi.fn(() => ({ active: 0, max: 2 })),
+  };
   const callMedia = { status: vi.fn(() => ({ enabled: true, worker: 'up', port: 40000, activeRooms: 1 })) };
   const recordings = { recordingReasons: vi.fn().mockResolvedValue([]), storageStatus: vi.fn(() => STORAGE) };
   const svc = new CallsService(engineManager as any, messages as any, engineCommands as any, eventEmitter as any, realtime as any, sessions as any, callMedia as any, recordings as any);
@@ -975,13 +979,14 @@ describe('CallsService: call settings and status', () => {
       { id: 'p2', displayName: null, settings: {} },
     ]);
     expect(await svc.mediaStatus('o1')).toEqual({
-      server: { enabled: true, worker: 'up', port: 40000, engineHost: 'api', activeSessions: 1, recordings: STORAGE },
+      server: { enabled: true, worker: 'up', port: 40000, engineHost: 'api', activeSessions: 1, videoCalls: { active: 0, max: 2 }, recordings: STORAGE },
       profiles: [
-        { profileId: 'p1', name: 'Line 1', answerInDashboard: true, recording: true, retentionDays: 30, announcement: { mimeType: 'audio/mpeg', durationSec: 4 }, ready: true, reasons: [] },
-        { profileId: 'p2', name: 'p2', answerInDashboard: false, recording: false, retentionDays: 90, announcement: null, ready: true, reasons: [] },
+        { profileId: 'p1', name: 'Line 1', answerInDashboard: true, recording: true, retentionDays: 30, announcement: { mimeType: 'audio/mpeg', durationSec: 4 }, ready: true, reasons: [], video: false },
+        { profileId: 'p2', name: 'p2', answerInDashboard: false, recording: false, retentionDays: 90, announcement: null, ready: true, reasons: [], video: false },
       ],
     });
     expect(sessions.activeSessionCount).toHaveBeenCalledWith('o1');
+    expect(sessions.videoCalls).toHaveBeenCalledWith('o1');
     expect(db.profile.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { workspace: { organizationId: 'o1' } } }));
   });
 

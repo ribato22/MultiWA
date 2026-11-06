@@ -216,6 +216,9 @@ export class CallsProfileStatusDto extends CallsSettingsDto {
 
   @ApiProperty({ type: [String], example: ['auto_reject_on'], description: 'Why not, each a code (see the API specification); empty when ready.' })
   reasons: string[];
+
+  @ApiProperty({ type: Boolean, description: 'Whether its video calls are answered with video now: ready, and its WhatsApp Web can.' })
+  video: boolean;
 }
 
 export class CallsStorageCheckDto {
@@ -247,6 +250,14 @@ export class CallsRecordingsStorageDto {
   lastCheck: CallsStorageCheckDto | null;
 }
 
+export class CallsVideoCallsDto {
+  @ApiProperty({ type: Number, description: "The organization's calls answered with video now." })
+  active: number;
+
+  @ApiProperty({ type: Number, description: 'CALLS_MAX_VIDEO_CALLS: how many calls the server answers with video at once, for every organization; past it, and with 0, a video call is answered as voice.' })
+  max: number;
+}
+
 export class CallsMediaServerDto {
   @ApiProperty({ type: Boolean, description: 'CALLS_MEDIA_ENABLED.' })
   enabled: boolean;
@@ -262,6 +273,9 @@ export class CallsMediaServerDto {
 
   @ApiProperty({ type: Number, description: "The organization's calls connected or connecting in the dashboard." })
   activeSessions: number;
+
+  @ApiProperty({ type: () => CallsVideoCallsDto })
+  videoCalls: CallsVideoCallsDto;
 
   @ApiProperty({ type: () => CallsRecordingsStorageDto })
   recordings: CallsRecordingsStorageDto;

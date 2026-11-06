@@ -139,7 +139,7 @@ interface Layout {
   scale: number;
   /** The end of the last whole element: what the copy keeps. */
   end: number;
-  /** In TimecodeScale units: the last block's time, and how long after the block before it it came. */
+  /** In TimecodeScale units: the latest block's time, and how long after the latest before it it came. */
   last: number;
   step: number | null;
 }
@@ -201,8 +201,12 @@ async function walk(r: Reader): Promise<Layout | false | null> {
       // Its track number, then 2 bytes of time: a block shorter than that has no time to read.
       if (head.length < lengthOf(head[0], 8) + 2) return null;
       const at = cluster + head.readInt16BE(lengthOf(head[0], 8));
-      if (last !== null) step = at - last;
-      last = at;
+      // A recording with video interleaves two tracks, not always in time order: the length runs to the latest block,
+      // one step (the gap to the latest before it) past it.
+      if (last === null || at > last) {
+        if (last !== null) step = at - last;
+        last = at;
+      }
     }
     end = next;
     pos = next;

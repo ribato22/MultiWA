@@ -27,7 +27,7 @@ import * as mediasoup from 'mediasoup';
 import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaBridge, callMediaPage, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
 import type { CallMediaHandle } from '@multiwa/engines';
 import { CALL_MEDIA_CODECS } from './media/call-media.service';
-import { AGENT_RGB, BLACK_RGB, CALLER_RGB, NEAR, agentSeesInPage, cameraCarriesInPage, launchCallMediaBrowser, openFakeWhatsAppPage, seeCallerVideoInPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
+import { AGENT_RGB, BLACK_RGB, CALLER_RGB, NEAR, agentSeesInPage, cameraCarriesInPage, launchCallMediaBrowser, nearestOf, openFakeWhatsAppPage, recordedPicturesInPage, seeCallerVideoInPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
 
 const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 /** What startRecordingInPage reports on a normal call: the one tap that connected after the answer, no guessing. */
@@ -2083,6 +2083,29 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await expect(handle.setCameraMuted(true)).rejects.toThrow('Call is not the active call');
       });
     });
+
+    it("a video call's recording has both pictures: the caller full frame, the agent in a corner while the camera is on", async () => {
+      const got: Buffer[] = [];
+      await withBridge({ video: true }, async ({ media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await handle.attachCallerVideo();
+        await media.startRecording('CALL1', (chunk) => got.push(chunk), { video: true });
+        await sleep(1500); // the camera off: the caller's picture fills the corner too
+        await handle.connectAgentVideo(agentVideoProducerId);
+        await handle.setCameraMuted(false);
+        await sleep(2500);
+        await media.stopRecording('CALL1');
+      });
+      const seen: Awaited<ReturnType<typeof recordedPicturesInPage>> = await agentPage.evaluate(recordedPicturesInPage, Buffer.concat(got).toString('base64'));
+      expect([seen.width, seen.height]).toEqual([640, 480]);
+      const palette = [CALLER_RGB, AGENT_RGB, BLACK_RGB];
+      const centre = seen.centre.map((rgb) => nearestOf(rgb, palette));
+      const corner = seen.corner.map((rgb) => nearestOf(rgb, palette));
+      expect(centre.filter((i) => i === 0).length, JSON.stringify(seen.centre)).toBeGreaterThan(centre.length / 2); // the caller, all along
+      expect(centre).not.toContain(1); // the agent is never full frame
+      expect(corner.indexOf(0), JSON.stringify(seen.corner)).toBeGreaterThanOrEqual(0); // the camera off: the caller there too
+      expect(corner.lastIndexOf(1), JSON.stringify(seen.corner)).toBeGreaterThan(corner.indexOf(0)); // then the agent
+    }, 40_000);
 
     it('a camera switch whose bridge closes while the voip stack is looked up switches nothing', async () => {
       await withBridge({ video: true }, async ({ p, media, handle }) => {

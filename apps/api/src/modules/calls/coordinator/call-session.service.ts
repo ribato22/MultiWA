@@ -8,6 +8,9 @@
 // hung up. Once WhatsApp has answered, the call ends with the agent's Hang up, the caller's, the talk-time cap, an agent
 // lost for CALLS_AGENT_GRACE_MS, or a media failure (the page's media link down as long, too): every end silences the
 // agent at once, hangs up what WhatsApp still holds, closes the media, and stores who ended it and why.
+// A one-to-one video call is answered with video while one of CALLS_MAX_VIDEO_CALLS slots is free and WhatsApp Web
+// can, with the agent's camera off until call:camera turns it on; otherwise as voice. Video is best effort: whatever
+// of it fails, the call goes on as voice.
 // Sessions live in this process, with the engines and the media server they use: a restart ends them, and the next
 // boot closes their rows.
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, OnModuleInit, forwardRef } from '@nestjs/common';
@@ -24,7 +27,7 @@ import { CallMediaService } from '../media/call-media.service';
 import type { CallMediaRoom } from '../media/call-media-room';
 import { InternalEvents, type CallEngineSignalPayload, type CallMediaFailureReason, type CallsSessionPayload, type WsUserPayload } from '../../../metrics/internal-events';
 import { isWorkerEngine } from '../../../common/engine-host';
-import { checkReadiness, type CallReadiness } from './call-readiness';
+import { READINESS_PROBE_MS, checkReadiness, type CallReadiness } from './call-readiness';
 import { CallAlerts } from './call-alerts';
 import { CallRecorderService, type RecordingPlan } from '../recordings/call-recorder.service';
 import { claimCall, findCallForAnswer, markAnswered, markEnded, reconcileAfterRestart, releaseClaim, type CallEndReason, type CallEndedBy } from './call-session-store';
@@ -38,6 +41,8 @@ const ATTACH_MS = 8_000; // attachCaller itself waits up to 5 s for the caller's
 const AGENT_CONNECT_MS = 8_000;
 const HANGUP_MS = 12_000; // the voip stack's own limit is 10 s
 const TEARDOWN_MS = 5_000;
+const CAMERA_MS = 8_000; // the page's own camera deadline is 5 s
+const CALLER_VIDEO_RETRY_MS = 5_000; // "No caller video" comes after the page's own 5 s wait
 
 /** Why a session's audio did not connect, or broke: the media-failure counter's reason. */
 type MediaFailure = CallMediaFailureReason;
@@ -52,11 +57,19 @@ export interface CallTimings {
   agentGraceMs: number;
   /** The talk-time cap (CALLS_MAX_TALK_MINUTES). */
   maxTalkMs: number;
+  /** How many calls the server answers with video at once (CALLS_MAX_VIDEO_CALLS); 0: every video call as voice. */
+  maxVideoCalls: number;
 }
 
 const positive = (raw: string | undefined, fallback: number) => {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+/** A whole number, 0 or more; anything else (unset, empty, negative, a fraction) is the fallback. */
+const count = (raw: string | undefined, fallback: number) => {
+  const n = Number(raw);
+  return raw?.trim() && Number.isInteger(n) && n >= 0 ? n : fallback;
 };
 
 /** setTimeout's longest delay: a longer one fires after 1 ms. */
@@ -67,6 +80,7 @@ export function readCallTimings(env: NodeJS.ProcessEnv = process.env): CallTimin
     connectMs: timerMs(positive(env.CALLS_CONNECT_TIMEOUT_MS, 10_000)),
     agentGraceMs: timerMs(positive(env.CALLS_AGENT_GRACE_MS, 15_000)),
     maxTalkMs: timerMs(positive(env.CALLS_MAX_TALK_MINUTES, 120) * 60_000),
+    maxVideoCalls: count(env.CALLS_MAX_VIDEO_CALLS, 2),
   };
 }
 
@@ -95,6 +109,19 @@ interface Session {
   agent: CallMediaSignaling | null;
   agentProducerId: string | null;
   agentListening: boolean;
+  /**
+   * The call runs with video: a video room and bridge, WhatsApp Web's video answer. Set at the answer while a video slot
+   * was free (it holds one, videoSlots); once false, for good: every video step that fails makes the call voice.
+   */
+  video: boolean;
+  /** The agent's one camera producer of this join (call:media produce, kind video): what call:camera connects. */
+  agentVideoProducerId: string | null;
+  /** The agent's consumer of the caller's picture: resuming it is not listening to the caller. */
+  callerVideoConsumerId: string | null;
+  /** The agent's camera as they last asked (call:camera): a rejoin tells the new page, which turns it on again. */
+  cameraOn: boolean;
+  /** Counts call:camera commands: a camera-on that fails undoes its picture only while no later command came. */
+  cameraTurn: number;
   ready: { promise: Promise<string>; resolve: (agentProducerId: string) => void; reject: (e: Error) => void };
   /** engine.answer was called: WhatsApp may hold the call from then on (its accept cannot be cancelled). */
   answerTried: boolean;
@@ -127,6 +154,11 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   private readonly availableAgain = new Map<string, NodeJS.Timeout>();
   /** Users whose Answer is claiming a call: busy before their session exists. */
   private readonly claiming = new Set<string>();
+  /**
+   * The calls holding one of the server's CALLS_MAX_VIDEO_CALLS video slots: from their answer's claim until they end or
+   * fall back to voice. Taken with the claim, nothing awaited in between, so two answers cannot both take the last one.
+   */
+  private readonly videoSlots = new Set<string>();
 
   constructor(
     private readonly callMedia: CallMediaService,
@@ -173,6 +205,12 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     return organizationId ? [...this.sessions.values()].filter((s) => s.organizationId === organizationId).length : this.sessions.size;
   }
 
+  /** The organization's calls answered with video now, and the server's cap on video calls (every organization's). */
+  videoCalls(organizationId: string): { active: number; max: number } {
+    const active = [...this.sessions.values()].filter((s) => s.organizationId === organizationId && s.video).length;
+    return { active, max: this.timing.maxVideoCalls };
+  }
+
   /** Whether the profile's calls can be answered in the dashboard now, and why not. */
   readiness(profileId: string, settings: Record<string, unknown>): Promise<CallReadiness> {
     return checkReadiness(settings, {
@@ -199,7 +237,10 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
    * agent's browser needs (the caller's producer, the ICE servers). The rest runs on (connect): the agent's media ops
    * (call:media), WhatsApp's Accept, the caller attached, the agent on the microphone, call:active.
    */
-  async answer(principal: SocketPrincipal, callId: unknown): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
+  async answer(
+    principal: SocketPrincipal,
+    callId: unknown,
+  ): Promise<CallCommandReply<{ callId: string; callerProducerId: string; callerVideoProducerId: string | null; iceServers: unknown[] }>> {
     const user = await this.agentOf(principal);
     if (!user || typeof callId !== 'string') return { ok: false, reason: 'not_allowed' };
     const found = await findCallForAnswer(callId);
@@ -207,44 +248,62 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     const { call, profile } = found;
     if (call.outcome !== 'ringing') return { ok: false, reason: 'not_ringing' };
     if (call.answeredByUserId) return { ok: false, reason: 'already_claimed' };
-    if (this.busy(user.id)) return { ok: false, reason: 'busy' };
     const media = this.engines.getEngine(profile.id)?.callMedia;
+    // Whether WhatsApp Web can answer this one with video: asked before the checks below, which nothing awaited may
+    // separate from the claim.
+    const videoReady = call.isVideo && !call.isGroup && !!media && (await this.videoSupported(media));
+    if (this.busy(user.id)) return { ok: false, reason: 'busy' };
     if (profile.settings.callsAnswerInDashboard !== true || call.isGroup || !media || this.callMedia.publicStatus().worker !== 'up') {
       return { ok: false, reason: 'media_unavailable' };
     }
     const recording = this.recorder.plan(profile.id, profile.settings);
-    // Busy from the check above on, nothing awaited in between: two Answers of one agent cannot both claim.
+    // Busy from the check above on, nothing awaited in between: two Answers of one agent cannot both claim, and two video
+    // calls cannot both take the last video slot.
+    const video = videoReady && this.videoSlots.size < this.timing.maxVideoCalls;
     this.claiming.add(user.id);
+    if (video) this.videoSlots.add(call.id);
     let session: Session;
+    let claimed = false;
     try {
       if (!(await claimCall(call.id, user.id))) {
         const now = await findCallForAnswer(call.id);
         return { ok: false, reason: now?.call.outcome === 'ringing' ? 'already_claimed' : 'not_ringing' };
       }
-      session = this.open(call, user.organizationId, user.id, media, recording);
+      claimed = true;
+      session = this.open(call, user.organizationId, user.id, media, recording, video);
     } finally {
       this.claiming.delete(user.id);
+      if (!claimed) this.videoSlots.delete(call.id); // a lost or failed claim gives its slot back
     }
     // To everyone it rang, the agent who answered too: their other tabs stop ringing (a banner compares byUserId).
     this.gateway.emitToUsers([...(this.rung.get(call.id) ?? [])], 'call:claimed', { callId: call.id, byUserId: user.id, byUserName: user.name });
     let handle: CallMediaHandle;
     try {
-      const room = await this.callMedia.createRoom(call.id);
+      const room = await this.callMedia.createRoom(call.id, { video: session.video });
       if (session.phase !== 'connecting') {
         room.close(); // the session ended while the room was being made
         return { ok: false, reason: 'media_failed' };
       }
       session.room = room;
       session.agent = this.watchedAgent(session, room.signalingFor('agent'));
-      handle = await withTimeout(media.startCallMedia(call.waCallId, room.signalingFor('page')), this.timing.connectMs, 'the media bridge did not start in time');
+      handle = await withTimeout(
+        media.startCallMedia(call.waCallId, room.signalingFor('page'), { video: session.video }),
+        this.timing.connectMs,
+        'the media bridge did not start in time',
+      );
       session.handle = handle;
     } catch (e) {
       await this.stopConnecting(session, { failure: 'page_start_failed', error: e, reRing: true });
       return { ok: false, reason: 'media_failed' };
     }
     if (session.phase !== 'connecting') return { ok: false, reason: 'media_failed' }; // ended meanwhile: the timeout, or the call stopped ringing
+    // The room or the page refused the caller's picture (the engine logged why).
+    if (session.video && !handle.callerVideoProducerId) this.toVoice(session, "the bridge does not carry the caller's video");
     void this.connect(session);
-    return { ok: true, callId: call.id, callerProducerId: handle.callerProducerId, iceServers: this.callMedia.iceServers() };
+    return {
+      ok: true, callId: call.id, callerProducerId: handle.callerProducerId, callerVideoProducerId: session.video ? handle.callerVideoProducerId : null,
+      iceServers: this.callMedia.iceServers(),
+    };
   }
 
   /** One of the agent's mediasoup signalling operations, on its own session's room only. */
@@ -256,6 +315,50 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       return { ok: true, result: (await runCallMediaSignal(own.session.agent, op, args)) ?? null };
     } catch (e) {
       return { ok: false, reason: 'media_error', message: message(e) };
+    }
+  }
+
+  /**
+   * The agent's camera on or off, in the order the handle requires. On: the agent's one camera producer of this join
+   * into WhatsApp Web's camera, then its camera unmuted. Off: the camera black at once, then muted; a mute that fails
+   * or hangs only leaves WhatsApp Web sending black. Never ends the call: a camera-on that fails leaves the camera black,
+   * and says so.
+   */
+  async camera(principal: SocketPrincipal, callId: unknown, on: unknown): Promise<CallCommandReply<{ on: boolean }>> {
+    const own = await this.ownSession(principal, callId);
+    if (!own.ok) return own;
+    const { session } = own;
+    if (typeof on !== 'boolean') return { ok: false, reason: 'invalid' };
+    const handle = session.handle;
+    if (session.phase !== 'active' || !handle) return { ok: false, reason: 'not_in_call' };
+    if (!session.video) return { ok: false, reason: 'no_video' };
+    const producerId = session.agentVideoProducerId;
+    if (on && !producerId) return { ok: false, reason: 'no_video_producer' };
+    const turn = ++session.cameraTurn;
+    session.cameraOn = on;
+    if (!on) {
+      try {
+        await withTimeout(handle.disconnectAgentVideo(), AGENT_CONNECT_MS, 'the camera did not go black in time');
+      } catch (e) {
+        if (!/No media bridge/.test(message(e))) return this.cameraFailed(session, e);
+      }
+      await withTimeout(handle.setCameraMuted(true), CAMERA_MS).catch((e) => this.logger.warn(`Call ${session.callId}: the camera was not muted (it sends black): ${message(e)}`));
+      return { ok: true, on };
+    }
+    try {
+      await withTimeout(handle.connectAgentVideo(producerId!), AGENT_CONNECT_MS, "the agent's video did not reach the camera in time").catch((e) => {
+        if (!/Agent video already connected/.test(message(e))) throw e; // a second camera-on: it is there already
+      });
+      await withTimeout(handle.setCameraMuted(false), CAMERA_MS);
+      return { ok: true, on };
+    } catch (e) {
+      // A rejected unmute may still land late inside WhatsApp Web: the camera it sends is then black. A later command
+      // decides the picture, and this one's failure leaves it alone.
+      if (turn === session.cameraTurn) {
+        session.cameraOn = false;
+        void handle.disconnectAgentVideo().catch(() => undefined);
+      }
+      return this.cameraFailed(session, e);
     }
   }
 
@@ -286,7 +389,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     principal: SocketPrincipal,
     callId: unknown,
     ifProducerId?: unknown,
-  ): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
+  ): Promise<CallCommandReply<{ callId: string; callerProducerId: string; callerVideoProducerId: string | null; cameraOn: boolean; iceServers: unknown[] }>> {
     const own = await this.ownSession(principal, callId);
     if (!own.ok) return own;
     const { session } = own;
@@ -309,14 +412,26 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       }
     }
     if (session.phase !== 'active') return { ok: false, reason: 'not_in_call' }; // it ended meanwhile
+    // The old page's picture leaves WhatsApp Web's camera before its producer goes (closePeer): the page is never told
+    // the producer closed, and a new one would be refused. Best effort: video never ends a call.
+    if (session.video) {
+      await withTimeout(session.handle.disconnectAgentVideo(), AGENT_CONNECT_MS).catch((e) => this.logger.warn(`Call ${session.callId}: the old camera was not disconnected: ${message(e)}`));
+      if (session.phase !== 'active') return { ok: false, reason: 'not_in_call' };
+    }
     session.room.closePeer('agent');
     // Whatever the closed page did during the disconnect is void: its producer went with its transports.
     session.agentProducerId = null;
+    session.agentVideoProducerId = null;
+    session.callerVideoConsumerId = null;
     session.agentListening = false;
     session.rejoining = true;
     session.socketsLost = false; // it is talking to us
     this.updateGrace(session);
-    return { ok: true, callId: session.callId, callerProducerId: session.handle.callerProducerId, iceServers: this.callMedia.iceServers() };
+    return {
+      ok: true, callId: session.callId, callerProducerId: session.handle.callerProducerId,
+      callerVideoProducerId: session.video ? session.handle.callerVideoProducerId : null, cameraOn: session.video && session.cameraOn,
+      iceServers: this.callMedia.iceServers(),
+    };
   }
 
   @OnEvent(AppEvents.CALL.RECEIVED)
@@ -401,8 +516,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       if (profile.settings.callsAnswerInDashboard !== true || profile.settings.autoRejectCalls === true) return;
       const agents = await this.eligibleAgents(profile.organizationId);
       if (!agents.length || closed()) return;
-      // This engine is voice-only: a video call is answered as a voice call, and the caller sees no video.
-      const unavailableReason = call.isGroup ? 'group_call' : (await this.readiness(profile.id, profile.settings)).reasons[0];
+      const readiness = call.isGroup ? null : await this.readiness(profile.id, profile.settings);
+      const unavailableReason = call.isGroup ? 'group_call' : readiness!.reasons[0];
       if (closed()) return;
       for (const id of agents) rung.add(id);
       this.gateway.emitToUsers(agents, 'call:ringing', {
@@ -413,8 +528,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         // The banner's link to the caller's chat, when the call has one.
         conversationId: call.conversationId ?? null,
         startedAt: call.startedAt.toISOString(),
-        // The agent's banner says it: the caller expects a picture and gets none.
+        // The agent's banner says it, and `video` how it would be answered.
         isVideo: call.isVideo,
+        ...(call.isVideo ? { video: this.videoAvailability(readiness) } : {}),
         answerable: !unavailableReason,
         // Recorded from before an announcement the caller hears first: the agent's banner says so.
         recorded: !!this.recorder.plan(profile.id, profile.settings),
@@ -444,7 +560,28 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     return false;
   }
 
-  private open(call: CallRecord, organizationId: string, userId: string, media: CallMediaEngine, recording: RecordingPlan | null): Session {
+  /** WhatsApp Web can answer a video call with video now: its probe, bounded as readiness bounds it. */
+  private async videoSupported(media: CallMediaEngine): Promise<boolean> {
+    const support = await withTimeout(media.getSupport(), READINESS_PROBE_MS).catch(() => null);
+    return support?.videoSupported === true;
+  }
+
+  /** The call goes on as voice from now on, its video slot free again. Video is best effort: this never ends a call. */
+  private toVoice(session: Session, why: string): void {
+    if (!session.video) return;
+    session.video = false;
+    this.videoSlots.delete(session.callId);
+    this.logger.warn(`Call ${session.callId} goes on as a voice call: ${clean(why)}`);
+  }
+
+  /** How a video call ringing now would be answered: with video, or as voice and why. */
+  private videoAvailability(readiness: CallReadiness | null): 'available' | 'server_busy' | 'unsupported' | 'disabled' {
+    if (this.timing.maxVideoCalls === 0) return 'disabled';
+    if (!readiness?.video) return 'unsupported';
+    return this.videoSlots.size >= this.timing.maxVideoCalls ? 'server_busy' : 'available';
+  }
+
+  private open(call: CallRecord, organizationId: string, userId: string, media: CallMediaEngine, recording: RecordingPlan | null, video: boolean): Session {
     let resolve!: (agentProducerId: string) => void;
     let reject!: (e: Error) => void;
     const promise = new Promise<string>((res, rej) => {
@@ -456,6 +593,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       callId: call.id, waCallId: call.waCallId, profileId: call.profileId, organizationId, userId, startedAt: call.startedAt,
       connectDeadline: Date.now() + this.timing.connectMs, media, recording,
       phase: 'connecting', room: null, handle: null, agent: null, agentProducerId: null, agentListening: false,
+      video, agentVideoProducerId: null, callerVideoConsumerId: null, cameraOn: false, cameraTurn: 0,
       ready: { promise, resolve, reject }, answerTried: false, answeredAt: null, answering: null, rejoining: false, holdAgent: false, socketsLost: false, linkLost: false,
       timers: {},
     };
@@ -464,18 +602,32 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     return session;
   }
 
-  /** The room's agent peer, watched: the agent is ready once it has produced its voice AND resumed the caller. */
+  /**
+   * The room's agent peer, watched: the agent is ready once it has produced its voice AND resumed the caller's. Its camera
+   * producer is kept apart (call:camera connects it), and resuming the caller's picture is not listening to the caller.
+   */
   private watchedAgent(session: Session, agent: CallMediaSignaling): CallMediaSignaling {
     return {
       ...agent,
       produce: async (transportId, kind, rtpParameters) => {
         const produced = await agent.produce(transportId, kind, rtpParameters);
+        if (kind === 'video') {
+          session.agentVideoProducerId = produced.id;
+          return produced;
+        }
         session.agentProducerId = produced.id;
         this.agentMaybeReady(session);
         return produced;
       },
+      consume: async (transportId, producerId, rtpCapabilities) => {
+        const consumed = await agent.consume(transportId, producerId, rtpCapabilities);
+        const c = consumed as { id?: string; kind?: string } | null;
+        if (c?.kind === 'video' && c.id) session.callerVideoConsumerId = c.id;
+        return consumed;
+      },
       resumeConsumer: async (consumerId) => {
         await agent.resumeConsumer(consumerId);
+        if (consumerId === session.callerVideoConsumerId) return;
         session.agentListening = true;
         this.agentMaybeReady(session);
       },
@@ -496,9 +648,32 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       await withTimeout(session.handle!.connectAgent(agentProducerId), AGENT_CONNECT_MS, 'the agent did not reach the call in time');
       // A rejoin before connect's own connectAgent makes this the page's first consume: its link is first read here.
       if (current()) this.updatePageLink(session, session.room!.linkUp('page'));
-      if (session.phase === 'active' && current()) this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString(), agentProducerId });
+      if (session.phase === 'active' && current()) {
+        this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt!.toISOString(), agentProducerId, video: session.video });
+      }
     } catch (e) {
       if (current()) await this.end(session, 'server', 'media_failed', { failure: 'agent_connect_failed', error: e });
+    }
+  }
+
+  /**
+   * The caller's picture, attached once WhatsApp Web draws the caller. "No caller video" (the page waited 5 s) is tried
+   * again every CALLER_VIDEO_RETRY_MS while the call lasts with video: WhatsApp Web may draw the caller later. Never
+   * throws; logged once.
+   */
+  private async followCallerVideo(session: Session): Promise<void> {
+    let told = false;
+    while (session.phase === 'active' && session.video && session.handle) {
+      try {
+        await withTimeout(session.handle.attachCallerVideo(), ATTACH_MS, "the caller's video did not attach in time");
+        return; // the page follows WhatsApp Web's canvas from now on
+      } catch (e) {
+        // The bridge is gone (the call is over), or it carries no video: nothing to try again.
+        if (/No media bridge|Media bridge closed|No video on this call/.test(message(e))) return;
+        if (!told) this.logger.warn(`Call ${session.callId}: no picture of the caller yet, tried again every ${CALLER_VIDEO_RETRY_MS / 1000} s: ${message(e)}`);
+        told = true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, CALLER_VIDEO_RETRY_MS).unref());
     }
   }
 
@@ -574,7 +749,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       session.answerTried = true;
       try {
         // What is left of the connect budget: the agent's media took the rest.
-        await session.media.answer(session.waCallId, { timeoutMs: Math.max(1_000, session.connectDeadline - Date.now()) });
+        const accepted = await session.media.answer(session.waCallId, { timeoutMs: Math.max(1_000, session.connectDeadline - Date.now()), video: session.video });
+        // WhatsApp Web's video call UI did not load: it answered as voice (the engine logged why).
+        if (!accepted.video) this.toVoice(session, 'WhatsApp Web answered it as voice');
       } finally {
         // Stopped meanwhile, and hung up then: an accept already under way can still connect after that hang-up.
         if (session.phase !== 'connecting') await this.hangUpQuietly(session);
@@ -611,6 +788,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         this.logger.warn(`Call ${session.callId}: the caller's audio is a guess (${clean(pick.freshCandidates)} fresh candidate(s), fallback ${clean(pick.fallback)})`);
       }
       if (session.phase !== 'active') return;
+      // The caller's picture, beside the voice: never waited for, and never the end of the call.
+      if (session.video) void this.followCallerVideo(session);
       // A rejoin meanwhile took this producer off the call (or replaced it): reconnectAgent connects the new one. On a
       // recorded call, only once the announcement has played (holdAgent): the caller hears it before any agent's voice.
       if (session.recording) {
@@ -619,7 +798,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         await this.recorder
           .begin({
             callId: session.callId, waCallId: session.waCallId, profileId: session.profileId, organizationId: session.organizationId,
-            startedAt: session.startedAt, media: session.media, announcement: session.recording.announcement,
+            startedAt: session.startedAt, media: session.media, announcement: session.recording.announcement, video: session.video,
             live: () => session.phase === 'active',
             onAnnouncing: (durationSec) => this.gateway.emitToUsers([session.userId], 'call:announcing', { callId: session.callId, durationSec }),
           })
@@ -635,7 +814,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       this.updatePageLink(session, session.room!.linkUp('page'));
       if (session.phase !== 'active' || session.agentProducerId !== agentProducerId) return;
       // The producer on the call: the agent's tab whose own producer it is not lets go of its audio (reconnectAgent too).
-      this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString(), agentProducerId });
+      this.gateway.emitToUsers([session.userId], 'call:active', { callId: session.callId, answeredAt: session.answeredAt.toISOString(), agentProducerId, video: session.video });
     } catch (e) {
       if (session.phase === 'connecting') await this.stopConnecting(session, { failure, error: e, reRing: true });
       else if (session.phase === 'active') await this.end(session, 'server', 'media_failed', { failure, error: e });
@@ -674,6 +853,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     // From now on nothing the agent says reaches the caller or the recording, whichever tab or device has the call:
     // WhatsApp's hang-up and the recorder's stop below can take half a minute.
     void session.room?.silenceAgent();
+    // The page still holds the agent's last frame: off WhatsApp Web's camera at once too.
+    if (session.video) void session.handle?.disconnectAgentVideo().catch(() => undefined);
     this.clearTimers(session);
     // The caller's own end needs no hang-up, and neither does a shutdown: the engines close with the process.
     if (endedBy !== 'caller' && endReason !== 'server_restart') await this.hangUpQuietly(session);
@@ -722,12 +903,18 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     return session;
   }
 
+  private cameraFailed(session: Session, e: unknown): CallCommandReply<{ on: boolean }> {
+    this.logger.warn(`Call ${session.callId}: the camera did not switch: ${message(e)}`);
+    return { ok: false, reason: 'camera_failed', message: message(e) };
+  }
+
   private async hangUpQuietly(session: Session): Promise<void> {
     await withTimeout(session.media.hangUp(session.waCallId), HANGUP_MS).catch((e) => this.logger.warn(`Call ${session.callId}: the hang-up failed: ${message(e)}`));
   }
 
   /** A session's media, whatever it reached: the page's bridge (one still starting too), then the room. */
   private async teardown(session: Session): Promise<void> {
+    this.videoSlots.delete(session.callId); // every end and every undone answer comes here
     await withTimeout(session.media.closeCallMedia(session.waCallId), TEARDOWN_MS).catch(() => undefined);
     session.room?.close();
   }

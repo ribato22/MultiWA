@@ -19,6 +19,7 @@ function make(auth: unknown = principal) {
     media: vi.fn(async () => ({ ok: true, result: null })),
     rejoin: vi.fn(async () => ({ ok: true })),
     hangup: vi.fn(async () => ({ ok: true })),
+    camera: vi.fn(async () => ({ ok: true, on: true })),
     setAvailability: vi.fn(async () => ({ ok: true, available: false })),
   };
   return { gateway: new CallsGateway(events as any, sessions as any), events, sessions };
@@ -33,10 +34,10 @@ describe('CallsGateway', () => {
     expect(WS_GATEWAY_OPTIONS.namespace).toBe('/ws');
   });
 
-  it('subscribes the five call commands', () => {
+  it('subscribes the six call commands', () => {
     const proto = CallsGateway.prototype as any;
-    expect(['answer', 'media', 'rejoin', 'hangup', 'availability'].map((m) => Reflect.getMetadata(MESSAGE_METADATA, proto[m]))).toEqual([
-      'call:answer', 'call:media', 'call:rejoin', 'call:hangup', 'call:availability',
+    expect(['answer', 'media', 'rejoin', 'hangup', 'camera', 'availability'].map((m) => Reflect.getMetadata(MESSAGE_METADATA, proto[m]))).toEqual([
+      'call:answer', 'call:media', 'call:rejoin', 'call:hangup', 'call:camera', 'call:availability',
     ]);
   });
 
@@ -47,6 +48,8 @@ describe('CallsGateway', () => {
     await gateway.rejoin(socket, { callId: 'c1', ifProducerId: 'producer-1' });
     await gateway.hangup(socket, { callId: 'c1' });
     await gateway.availability(socket, { available: false });
+    await gateway.camera(socket, { callId: 'c1', on: true });
+    expect(sessions.camera).toHaveBeenCalledWith(principal, 'c1', true);
     expect(sessions.answer).toHaveBeenCalledWith(principal, 'c1');
     expect(sessions.media).toHaveBeenCalledWith(principal, 'c1', 'produce', { callId: 'c1', op: 'produce', kind: 'audio' });
     expect(sessions.rejoin).toHaveBeenCalledWith(principal, 'c1', 'producer-1');

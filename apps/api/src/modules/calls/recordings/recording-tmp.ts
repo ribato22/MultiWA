@@ -3,7 +3,7 @@
 //
 // In the store's tmpDir, per call (its calls row id, a lowercase uuid):
 //   <callId>.webm        the recording, appended chunk by chunk as the page sends them
-//   <callId>.json        what is known of it: { announced, stopped, announcedAtMs }, written whole and flushed (aside,
+//   <callId>.json        what is known of it: { announced, stopped, announcedAtMs, video }, written whole and flushed (aside,
 //                        then renamed)
 //   <callId>.final.webm  the copy with its length written in, while it is being stored
 // The state is written FIRST, so a recording never lacks one; a crash leaves both, and the next boot (or the nightly
@@ -26,6 +26,8 @@ export interface RecordingState {
    * never later than the file's own time of that end: a file that ends sooner cuts the announcement short.
    */
   announcedAtMs?: number;
+  /** Recorded with video (video/webm): a call answered with video. */
+  video?: boolean;
 }
 
 const OWN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(webm|json|final\.webm|json\.[0-9a-f]{8}\.part)$/;
@@ -63,6 +65,7 @@ export async function readState(dir: string, callId: string): Promise<RecordingS
       announced: raw?.announced === true,
       stopped: raw?.stopped === true,
       ...(Number.isFinite(raw?.announcedAtMs) ? { announcedAtMs: raw.announcedAtMs } : {}),
+      ...(raw?.video === true ? { video: true } : {}),
     };
   } catch (e) {
     if ((e as NodeJS.ErrnoException)?.code === 'ENOENT' || e instanceof SyntaxError) return null;
