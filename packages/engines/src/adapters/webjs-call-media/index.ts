@@ -14,7 +14,9 @@ import {
   attachCallerVideoInPage,
   closeBridgeInPage,
   connectAgentInPage,
+  connectAgentVideoInPage,
   disconnectAgentInPage,
+  disconnectAgentVideoInPage,
   hasMediasoupClient,
   startBridgeInPage,
 } from './bridge-page';
@@ -322,6 +324,7 @@ export class WebJsCallMedia implements CallMediaEngine {
       const callerQueue = queue();
       const agentQueue = queue();
       const callerVideoQueue = queue();
+      const cameraQueue = queue();
       return {
         callerProducerId: started.callerProducerId,
         callerVideoProducerId: started.callerVideoProducerId ?? null,
@@ -329,6 +332,8 @@ export class WebJsCallMedia implements CallMediaEngine {
         connectAgent: (producerId: string) => agentQueue(() => page.evaluate(connectAgentInPage, callId, producerId)),
         disconnectAgent: () => agentQueue(() => page.evaluate(disconnectAgentInPage, callId)),
         attachCallerVideo: () => callerVideoQueue(() => page.evaluate(attachCallerVideoInPage, callId)),
+        connectAgentVideo: (producerId: string) => cameraQueue(() => page.evaluate(connectAgentVideoInPage, callId, producerId)),
+        disconnectAgentVideo: () => cameraQueue(() => page.evaluate(disconnectAgentVideoInPage, callId)),
         close: async () => {
           if (this.bridge !== slot) return;
           try {

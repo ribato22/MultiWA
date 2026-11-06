@@ -34,6 +34,8 @@ export interface MwBridge {
   callerCanvas: HTMLCanvasElement | null;
   /** The poll that keeps "callerVideo" on WhatsApp Web's largest canvas (attachCallerVideoInPage). */
   callerVideoPoll: any;
+  /** The agent's video on the injected camera (connectAgentVideoInPage), or none. */
+  agentVideo: { consumer: any; view: HTMLVideoElement } | null;
   /** Releases everything the bridge holds in the page, synchronously, the call poll included; safe to call twice. */
   teardown(): void;
 }
@@ -100,6 +102,7 @@ export async function startBridgeInPage(
     callerVideo: null,
     callerCanvas: null,
     callerVideoPoll: null,
+    agentVideo: null,
     teardown() {
       clearInterval(poll);
       clearInterval(b.callerVideoPoll);
@@ -108,6 +111,13 @@ export async function startBridgeInPage(
         b.agent.keepAlive.srcObject = null;
         b.agent.consumer.close();
         b.agent = null;
+      }
+      if (b.agentVideo) {
+        // The camera is black again from its next frame: the agent's video never reaches the next call.
+        if (call.camera?.source === b.agentVideo.view) call.camera.source = null;
+        b.agentVideo.view.srcObject = null;
+        b.agentVideo.consumer.close();
+        b.agentVideo = null;
       }
       try { b.send?.close(); } catch { /* closes "caller" and "callerVideo" too: stopTracks false leaves WhatsApp Web's own audio track running; the video's tracks are our captures */ }
       try { b.recv?.close(); } catch { /* already closed */ }
@@ -300,6 +310,77 @@ export async function disconnectAgentInPage(callId: string): Promise<void> {
   b.agent = null;
   a.source.disconnect();
   a.keepAlive.srcObject = null;
+  a.consumer.close();
+  await w.__mwBridgeSignal(callId, 'closeConsumer', JSON.stringify({ consumerId: a.consumer.id })).catch(() => undefined);
+}
+
+/**
+ * Draw the agent's video producer into the injected camera (`__mwCall.camera`), the one WhatsApp Web sends to the
+ * caller: a <video> outside the document plays it, and the camera's canvas draws that. One agent video at a time.
+ * Refused on a voice bridge, and when the call is not WhatsApp's active call, before and after every wait; a connect
+ * that fails after the room created its consumer undoes all of it (the camera black, the consumer closed on both sides)
+ * and rejects, so a retry starts clean. It never touches the call's audio.
+ */
+export async function connectAgentVideoInPage(callId: string, producerId: string): Promise<void> {
+  const w = window as any;
+  const ours = () => {
+    const c = w.require('WAWebCallCollection').activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  const b: MwBridge | undefined = w.__mwBridge;
+  if (!b || b.callId !== callId || !b.recv) throw new Error('No media bridge for this call');
+  if (!b.callerVideo) throw new Error('No video on this call');
+  if (b.agentVideo) throw new Error('Agent video already connected');
+  if (!ours()) throw new Error('Call is not the active call');
+  const signal = async (op: string, args: unknown) => JSON.parse(await w.__mwBridgeSignal(callId, op, JSON.stringify(args)));
+  const options = await signal('consume', { transportId: b.recv.id, producerId, rtpCapabilities: b.device.rtpCapabilities });
+  const live = () => {
+    if (w.__mwBridge !== b) throw new Error('Media bridge closed');
+    if (!ours()) throw new Error('Call is not the active call');
+  };
+  const camera = w.__mwCall.ensureCamera();
+  let consumer: any;
+  let view: HTMLVideoElement | undefined;
+  let mine: MwBridge['agentVideo'] = null;
+  try {
+    live();
+    consumer = await b.recv.consume(options);
+    live();
+    if (b.agentVideo) throw new Error('Agent video already connected');
+    // Marked as ours BEFORE its srcObject is set, like every stream of ours: tap A looks at every srcObject.
+    const stream = new MediaStream([consumer.track]);
+    (stream as any).__mwOwn = true;
+    view = document.createElement('video');
+    view.muted = true;
+    view.srcObject = stream;
+    view.play().catch(() => {});
+    b.agentVideo = mine = { consumer, view };
+    camera.source = view;
+    await signal('resumeConsumer', { consumerId: consumer.id });
+    live();
+  } catch (e) {
+    if (view && camera.source === view) camera.source = null;
+    if (view) view.srcObject = null;
+    consumer?.close();
+    if (mine && b.agentVideo === mine) b.agentVideo = null;
+    try {
+      await w.__mwBridgeSignal(callId, 'closeConsumer', JSON.stringify({ consumerId: options.id }));
+    } catch { /* best effort: the room closes its consumers with the room */ }
+    throw e;
+  }
+}
+
+/** Take the agent's video off the injected camera, black again from its next frame. Does nothing when none is connected. */
+export async function disconnectAgentVideoInPage(callId: string): Promise<void> {
+  const w = window as any;
+  const b: MwBridge | undefined = w.__mwBridge;
+  if (!b || b.callId !== callId) throw new Error('No media bridge for this call');
+  const a = b.agentVideo;
+  if (!a) return;
+  b.agentVideo = null;
+  const camera = w.__mwCall.camera;
+  if (camera?.source === a.view) camera.source = null;
+  a.view.srcObject = null;
   a.consumer.close();
   await w.__mwBridgeSignal(callId, 'closeConsumer', JSON.stringify({ consumerId: a.consumer.id })).catch(() => undefined);
 }

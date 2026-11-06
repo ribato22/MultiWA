@@ -730,6 +730,8 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       await expect(stale.connectAgent('P-agent')).rejects.toThrow('Media bridge closed');
       await expect(stale.disconnectAgent()).rejects.toThrow('Media bridge closed');
       await expect(stale.attachCallerVideo()).rejects.toThrow('Media bridge closed');
+      await expect(stale.connectAgentVideo('P-av')).rejects.toThrow('Media bridge closed');
+      await expect(stale.disconnectAgentVideo()).rejects.toThrow('Media bridge closed');
       await stale.close(); // a no-op
       expect(page.evaluate).not.toHaveBeenCalled(); // the newer bridge was not touched in the page
       await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Media bridge already running'); // and still holds the slot
@@ -956,6 +958,21 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       expect(page.sent()).toEqual(['attachCallerInPage', 'attachCallerVideoInPage']);
       release();
       await both;
+    });
+
+    it("the camera queues on its own: a camera step waiting on the page holds up neither the audio nor the caller's video, and camera steps keep their order", async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling(), { video: true });
+      const release = page.holdNext(callMediaBridge.connectAgentVideoInPage);
+      page.evaluate.mockClear();
+      const all = Promise.all([handle.connectAgentVideo('P-av'), handle.disconnectAgentVideo(), handle.connectAgent('P-agent'), handle.attachCaller(), handle.attachCallerVideo()]);
+      await tick();
+      await tick();
+      expect(page.sent()).toEqual(['connectAgentVideoInPage', 'connectAgentInPage', 'attachCallerInPage', 'attachCallerVideoInPage']); // the disconnect waits for its connect
+      release();
+      const done = await all;
+      expect(page.sent()).toEqual(['connectAgentVideoInPage', 'connectAgentInPage', 'attachCallerInPage', 'attachCallerVideoInPage', 'disconnectAgentVideoInPage']);
+      expect(done.slice(0, 2)).toEqual([{ fn: 'connectAgentVideoInPage', args: ['c1', 'P-av'] }, { fn: 'disconnectAgentVideoInPage', args: ['c1'] }]);
     });
   });
 

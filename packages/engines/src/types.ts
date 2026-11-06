@@ -269,6 +269,15 @@ export interface CallMediaHandle {
    */
   attachCallerVideo(): Promise<{ width: number; height: number }>;
   /**
+   * Draw the agent's video into the injected camera, the one WhatsApp Web sends: it is black until then. One at a time:
+   * to connect another producer (the agent's camera produced anew, a rejoin), call disconnectAgentVideo() first; the page
+   * is not told when the room closes a producer, and would draw the old one's last frame. A connect that fails undoes
+   * itself, as connectAgent does. It does not unmute WhatsApp Web's camera: setCameraMuted(false) does.
+   */
+  connectAgentVideo(agentVideoProducerId: string): Promise<void>;
+  /** The injected camera goes black again. Does nothing when no agent video is connected. */
+  disconnectAgentVideo(): Promise<void>;
+  /**
    * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
    * closed") and still frees the slot, so close the room regardless of the outcome: the room closes its own side. It
    * does nothing once the bridge was closed (also by closeCallMedia), or when a newer bridge of the same call runs.
