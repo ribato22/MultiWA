@@ -66,13 +66,22 @@ export interface MwCall {
   callerTap(waitMs: number): Promise<(MwTap & MwTapPick) | null>;
   /** `noted` when answerActiveCall last started an answer: the taps with a higher `seq` belong to the current call. */
   answeredAfter?: number;
-  /** The injected microphone, created by ensure(): every audio-only getUserMedia gets a clone of `dest`'s track. */
+  /** The injected microphone, created by ensure(): every getUserMedia that asks for audio gets a clone of `dest`'s track. */
   ctx: AudioContext | null;
   dest: MediaStreamAudioDestinationNode | null;
   /** Mixed into the microphone: the announcement, and the agent (media bridge), muted while an announcement plays. */
   inputs: { announcement: GainNode; agent: GainNode } | null;
   /** Creates the microphone once, resumes its context, returns this. */
   ensure(): MwCall;
+  /**
+   * The injected camera, created by ensureCamera(): every getUserMedia that asks for video gets a clone of `track`, a
+   * capture of `canvas`. The canvas is redrawn at 15 fps, black, or with `source` (the agent's video, set by the media
+   * bridge) fitted in. Like the microphone it lasts as long as the document. It is never put in the document, so a
+   * search of WhatsApp Web's canvases never finds it.
+   */
+  camera: { canvas: HTMLCanvasElement; track: MediaStreamTrack; source: HTMLVideoElement | null } | null;
+  /** Creates the camera once, returns it. */
+  ensureCamera(): NonNullable<MwCall['camera']>;
   /** getUserMedia calls answered with the injected microphone. */
   gumCalls: number;
   /** The page's own getUserMedia (prepareCallMediaPage). */
@@ -99,9 +108,11 @@ export interface MwCall {
 
 /**
  * Document-start hooks, on every WhatsApp Web document (evalOnNewDoc), so a WA Web self-reload keeps them:
- * - the injected microphone: every audio-only getUserMedia gets a clone of one Web Audio stream, fed by a
- *   silent source (a destination without input sends no frames at all), an announcement input and an agent
+ * - the injected microphone: every getUserMedia that asks for audio gets a clone of one Web Audio stream, fed
+ *   by a silent source (a destination without input sends no frames at all), an announcement input and an agent
  *   input;
+ * - the injected camera: every getUserMedia that asks for video, with the microphone or alone, gets a clone of one
+ *   canvas capture, black until the media bridge connects the agent's video, and never Chromium's fake device;
  * - taps on what WhatsApp Web plays: tap A for `<audio>.srcObject`, tap B for nodes connected to an
  *   AudioDestinationNode. That playback is the caller's voice.
  * `window.__mwCall` is published last, so a page whose hooks did not all install never probes as supported.
@@ -119,6 +130,7 @@ export function installCallMediaHooks(): void {
     ctx: null,
     dest: null,
     inputs: null,
+    camera: null,
     gumCalls: 0,
     recorder: null,
     announcing: false,
@@ -151,6 +163,27 @@ export function installCallMediaHooks(): void {
       }
       if (call.ctx.state !== 'running') call.ctx.resume().catch(() => {});
       return call;
+    },
+    ensureCamera() {
+      if (!call.camera) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const g = canvas.getContext('2d');
+        const camera: MwCall['camera'] = { canvas, track: canvas.captureStream(15).getVideoTracks()[0], source: null };
+        // A canvas that does not change sends no frames: it is redrawn at the capture rate, black or the agent fitted in.
+        // ponytail: the redraw runs for the rest of the document once a call asked for the camera (a 640×480 fill at
+        // 15 fps); stop it between calls if many profiles take video calls.
+        setInterval(() => {
+          g.fillRect(0, 0, 640, 480);
+          const v = camera.source;
+          if (!v || v.readyState < 2 || !v.videoWidth) return;
+          const s = Math.min(640 / v.videoWidth, 480 / v.videoHeight);
+          g.drawImage(v, (640 - v.videoWidth * s) / 2, (480 - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
+        }, 1000 / 15);
+        call.camera = camera;
+      }
+      return call.camera;
     },
   };
   const note = (stream: MediaStream, via: MwTap['via'], owner: MwTap['owner']) => {
@@ -193,10 +226,16 @@ export function installCallMediaHooks(): void {
   };
   const orig = call.realGetUserMedia;
   md.getUserMedia = function (c?: MediaStreamConstraints) {
-    if (!c || !c.audio || c.video) return orig(c);
-    call.ensure();
-    call.gumCalls++;
-    const s: any = new MediaStream([call.dest.stream.getAudioTracks()[0].clone()]);
+    if (!c || (!c.audio && !c.video)) return orig(c);
+    const tracks: MediaStreamTrack[] = [];
+    if (c.audio) {
+      call.ensure();
+      call.gumCalls++;
+      tracks.push(call.dest.stream.getAudioTracks()[0].clone());
+    }
+    // WhatsApp Web asks for a camera on every video call, also one answered with the camera off: it gets ours.
+    if (c.video) tracks.push(call.ensureCamera().track.clone());
+    const s: any = new MediaStream(tracks);
     s.__mwOwn = true;
     return Promise.resolve(s);
   };

@@ -26,7 +26,7 @@ import * as mediasoup from 'mediasoup';
 import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaBridge, callMediaPage, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
 import type { CallMediaHandle } from '@multiwa/engines';
 import { CALL_MEDIA_CODECS } from './media/call-media.service';
-import { AGENT_RGB, launchCallMediaBrowser, openFakeWhatsAppPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
+import { AGENT_RGB, BLACK_RGB, NEAR, cameraCarriesInPage, launchCallMediaBrowser, openFakeWhatsAppPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
 
 const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 /** What startRecordingInPage reports on a normal call: the one tap that connected after the answer, no guessing. */
@@ -1064,6 +1064,32 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  describe('a video call', () => {
+    it("every camera WhatsApp Web asks for is ours, never Chromium's fake device: black, and with the microphone when both are asked for", async () => {
+      const p = await openPage();
+      try {
+        const got = await p.evaluate(async () => {
+          const md = navigator.mediaDevices;
+          const both: any = await md.getUserMedia({ audio: { echoCancellation: true }, video: { width: { ideal: 640 }, height: { ideal: 480 } } });
+          const first: any = await md.getUserMedia({ video: true });
+          first.getVideoTracks()[0].stop(); // WhatsApp Web stops its camera when a call ends...
+          const camera: any = await md.getUserMedia({ video: true }); // ...and the next call still gets a live one
+          (window as any).__fakeWa.camStream = camera; // what cameraCarriesInPage looks at
+          return {
+            both: [both.__mwOwn === true, both.getAudioTracks().length, both.getVideoTracks().length],
+            camera: [camera.__mwOwn === true, camera.getAudioTracks().length, camera.getVideoTracks()[0].readyState],
+            mics: (window as any).__mwCall.gumCalls,
+            canvasesInDocument: document.querySelectorAll('canvas').length,
+          };
+        });
+        expect(got).toEqual({ both: [true, 1, 1], camera: [true, 0, 'live'], mics: 1, canvasesInDocument: 0 });
+        expect(await until(async () => (await p.evaluate(cameraCarriesInPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+      } finally {
+        await p.close();
+      }
+    });
   });
 
   describe('the media bridge, against a real mediasoup router', () => {
