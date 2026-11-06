@@ -1367,6 +1367,68 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         };
       });
     const captures = (p: any): Promise<string[]> => p.evaluate(() => (window as any).__captures.map((t: MediaStreamTrack) => t.readyState));
+    /** From here on, counts the caller video's replaceTrack calls (the poll's), and keeps why any rejected: callerVideoState shows them. */
+    const watchVideoReplaces = (p: any) =>
+      p.evaluate(() => {
+        const w = window as any;
+        const producer = w.__mwBridge.callerVideo;
+        const replace = producer.replaceTrack.bind(producer);
+        const r = (w.__videoReplaces = { calls: 0, resolved: 0, errors: [] as string[] });
+        producer.replaceTrack = async (...args: any[]) => {
+          r.calls++;
+          try { await replace(...args); r.resolved++; } catch (e) { r.errors.push(String((e as Error)?.message ?? e)); throw e; }
+        };
+      });
+    /**
+     * The caller video on both sides, the message of a failed look at it: in the WhatsApp page the producer, its canvas and
+     * its encoder; in the agent's page its video element and decoder. Never throws (it runs on a passing look too).
+     */
+    const callerVideoState = async (p: any) => ({
+      wa: await p
+        .evaluate(async () => {
+          const w = window as any;
+          const b = w.__mwBridge;
+          const producer = b?.callerVideo;
+          const stats: any = {};
+          if (producer && !producer.closed) {
+            (await producer.getStats()).forEach((s: any) => {
+              if (s.type === 'media-source') stats.sourceFps = s.framesPerSecond;
+              if (s.type === 'outbound-rtp') {
+                const { framesEncoded, framesPerSecond, frameWidth, frameHeight, keyFramesEncoded, qualityLimitationReason } = s;
+                stats.outbound = { framesEncoded, framesPerSecond, frameWidth, frameHeight, keyFramesEncoded, qualityLimitationReason };
+              }
+            });
+          }
+          return {
+            bridge: !!b,
+            onFakeCanvas: b?.callerCanvas === w.__fakeWa.callerCanvas,
+            callerCanvasConnected: b?.callerCanvas?.isConnected ?? null,
+            track: producer?.track?.readyState ?? null,
+            closed: producer?.closed ?? null,
+            paused: producer?.paused ?? null,
+            canvases: Array.from(document.querySelectorAll('canvas'), (c) => `${c.width}x${c.height}`),
+            replaces: w.__videoReplaces ?? null,
+            visibility: document.visibilityState,
+            ...stats,
+          };
+        })
+        .catch((e: Error) => e.message),
+      agent: await agentPage
+        .evaluate(async () => {
+          const a = (window as any).__agent;
+          const v: HTMLVideoElement = a.video;
+          const track = (v.srcObject as MediaStream | null)?.getVideoTracks()[0];
+          let inbound: any = null; // the consumer's, among the dead ones of earlier tests on the same transport
+          (await a.recv.getStats()).forEach((s: any) => {
+            if (s.type !== 'inbound-rtp' || s.trackIdentifier !== track?.id) return;
+            const { framesReceived, framesDecoded, framesPerSecond, keyFramesDecoded, pliCount } = s;
+            inbound = { framesReceived, framesDecoded, framesPerSecond, keyFramesDecoded, pliCount };
+          });
+          const { readyState, paused, videoWidth, videoHeight } = v;
+          return { readyState, paused, videoWidth, videoHeight, totalVideoFrames: v.getVideoPlaybackQuality().totalVideoFrames, inbound, visibility: document.visibilityState };
+        })
+        .catch((e: Error) => e.message),
+    });
 
     beforeAll(async () => {
       worker = await mediasoup.createWorker({ logLevel: 'warn' });
@@ -1787,6 +1849,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await agentPage.evaluate(seeCallerVideoInPage, handle.callerVideoProducerId);
         await media.answer('CALL1', { video: true });
         expect(await handle.attachCallerVideo()).toEqual({ width: 382, height: 344 });
+        await watchVideoReplaces(p);
         expect(await until(async () => (await agentSeesInPage(agentPage, CALLER_RGB)) < NEAR, 10_000)).toBe(true);
         // a larger canvas that turns up mid-call (a picture opened in a chat, say) while the caller's is still there is not
         // the caller either: over 2.5 s, at least two of the poll's looks, the agent sees only the caller
@@ -1808,7 +1871,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await p.evaluate(() => { const pic = (window as any).__picture; clearInterval(pic.timer); pic.c.remove(); });
         // WhatsApp Web replaces its canvas mid-call: within the poll's second, the agent sees the new one
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
-        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000)).toBe(true);
+        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000), JSON.stringify(await callerVideoState(p))).toBe(true);
       });
     });
 
@@ -1828,6 +1891,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await agentPage.evaluate(seeCallerVideoInPage, handle.callerVideoProducerId);
         await media.answer('CALL1', { video: true });
         expect(await handle.attachCallerVideo()).toEqual({ width: 382, height: 344 });
+        await watchVideoReplaces(p);
         expect(await until(async () => (await agentSeesInPage(agentPage, CALLER_RGB)) < NEAR, 10_000)).toBe(true);
         // the call view goes: over 2.5 s, at least two of the poll's looks, the picture is the only canvas left, and the
         // agent never sees it
@@ -1840,7 +1904,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         expect(nearest).toBeGreaterThanOrEqual(NEAR);
         // it comes back on a new canvas: the agent sees the caller there
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
-        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000)).toBe(true);
+        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000), JSON.stringify(await callerVideoState(p))).toBe(true);
       });
     });
 
