@@ -109,11 +109,17 @@ const DEFAULT_REST: Rest[] = [
   on('GET', /^\/calls\/[^/]+$/, { status: 404, json: { message: 'Call not found' } }),
 ];
 
-/** `call:media` against no SFU: the captured parameters, which mediasoup-client completes against. */
+/** The caller's picture on a call answered with video: what a test's `call:answer` reply names (`callerVideoProducerId`). */
+export const CALLER_VIDEO_PRODUCER = media.videoConsumer.producerId;
+
+/**
+ * `call:media` against no SFU: the parameters capture-mediasoup.mjs captured, which mediasoup-client completes
+ * against. A consume of the caller's picture gets its video consumer, any other the voice's.
+ */
 const replay = (a: any) =>
   a.op === 'rtpCapabilities' ? media.routerRtpCapabilities
   : a.op === 'createTransport' ? (a.direction === 'recv' ? media.recv : media.send)
-  : a.op === 'consume' ? media.consumer
+  : a.op === 'consume' ? (a.producerId === CALLER_VIDEO_PRODUCER ? media.videoConsumer : media.consumer)
   : null;
 
 export class FakeBackend {
@@ -124,7 +130,7 @@ export class FakeBackend {
   available = true;
   /** While set, the server refuses new connections: a page whose socket dropped keeps trying (its network is down). */
   offline = false;
-  /** The agent's voices produced so far: each its own id, as the server's are (`agent-producer-1` first). */
+  /** The agent's voices and cameras produced so far: each its own id, as the server's are (`agent-producer-1` first). */
   private produced = 0;
   private readonly rest: Rest[] = [];
   private readonly replies: Record<string, Command> = {};
@@ -134,10 +140,15 @@ export class FakeBackend {
       if (typeof a?.available === 'boolean') this.available = a.available;
       return { ok: true, available: this.available };
     },
-    'call:answer': (a) => ({ ok: true, callId: a.callId, callerProducerId: media.consumer.producerId, iceServers: [] }),
-    'call:rejoin': (a) => ({ ok: true, callId: a.callId, callerProducerId: media.consumer.producerId, iceServers: [] }),
+    // A voice call; a test answers one with video by naming CALLER_VIDEO_PRODUCER in its reply.
+    'call:answer': (a) => ({ ok: true, callId: a.callId, callerProducerId: media.consumer.producerId, callerVideoProducerId: null, iceServers: [] }),
+    'call:rejoin': (a) => ({ ok: true, callId: a.callId, callerProducerId: media.consumer.producerId, callerVideoProducerId: null, cameraOn: false, iceServers: [] }),
     'call:hangup': () => ({ ok: true }),
-    'call:media': (a) => ({ ok: true, result: a.op === 'produce' ? { id: `agent-producer-${++this.produced}` } : replay(a) }),
+    'call:camera': (a) => ({ ok: true, on: a.on }),
+    'call:media': (a) => ({
+      ok: true,
+      result: a.op === 'produce' ? { id: `${a.kind === 'video' ? 'agent-camera' : 'agent-producer'}-${++this.produced}` } : replay(a),
+    }),
   };
 
   constructor(private readonly io: Server) {}
@@ -198,7 +209,7 @@ export class FakeBackend {
   }
 }
 
-const COMMANDS = ['call:availability', 'call:answer', 'call:rejoin', 'call:hangup', 'call:media'];
+const COMMANDS = ['call:availability', 'call:answer', 'call:rejoin', 'call:hangup', 'call:camera', 'call:media'];
 let current: FakeBackend | null = null;
 
 async function fulfill(backend: FakeBackend, route: Route) {

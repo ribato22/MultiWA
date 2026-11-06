@@ -283,7 +283,9 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
           if (mine !== attempt) throw new Error('This audio was given up');
           const ack = await command(socket, 'call:media', { callId, op, ...args }, ACK_MS.media);
           if (!ack.ok) throw new Error(ack.message ?? ack.reason);
-          if (op === 'produce' && mine === attempt) {
+          // The agent's voice only: the camera's producer never stands for this tab on the call (call:active and a
+          // rejoin's ifProducerId name the voice).
+          if (op === 'produce' && args?.kind !== 'video' && mine === attempt) {
             ownProducer = ack.result.id;
             keep();
           }
