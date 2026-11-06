@@ -1782,6 +1782,13 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
 
     it('a caller whose video never shows: the attach rejects after its wait, the caller video stays black, and the voice goes on', async () => {
       await withBridge({ video: true, before: (p) => p.evaluate(() => { (window as any).__fakeWa.drawsCaller = false; }) }, async ({ p, media, handle }) => {
+        // a canvas of the page's own with the area of 160×120 but narrower (a strip, say) is no caller either
+        await p.evaluate(() => {
+          const c = document.createElement('canvas');
+          c.width = 100;
+          c.height = 200;
+          document.body.appendChild(c);
+        });
         await media.answer('CALL1', { video: true });
         await expect(handle.attachCallerVideo()).rejects.toThrow('No caller video');
         // an agent that consumes only now still gets frames: black ones

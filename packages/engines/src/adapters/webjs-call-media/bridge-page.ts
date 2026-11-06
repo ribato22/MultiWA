@@ -210,11 +210,11 @@ export async function attachCallerInPage(callId: string): Promise<{ via: 'elemen
 /**
  * Swap "callerVideo" from its black placeholder to WhatsApp Web's own drawing of the caller. During a video call WhatsApp
  * Web draws the caller into a canvas of its call view (some 382×344, live): the largest canvas in the document. Ours are
- * never in the document, and one under 160×120 (an avatar, a sticker) is no video. It waits up to 5 s for one ("No
- * caller video"). Once attached, the capture follows the largest canvas, looked for every second while the bridge
- * lasts: WhatsApp Web may replace its canvas mid-call. Refused on a voice bridge and when the call is not WhatsApp's
- * active call, also when it ended during the wait. A failure leaves the call's audio as it is, and "callerVideo" on its
- * black placeholder. Resolves with the size of the canvas.
+ * never in the document, and one narrower than 160 or lower than 120 (an avatar, a sticker, a strip) is no video,
+ * whatever its area. It waits up to 5 s for one ("No caller video"). Once attached, the capture follows the largest
+ * canvas, looked for every second while the bridge lasts: WhatsApp Web may replace its canvas mid-call. Refused on a
+ * voice bridge and when the call is not WhatsApp's active call, also when it ended during the wait. A failure leaves the
+ * call's audio as it is, and "callerVideo" on its black placeholder. Resolves with the size of the canvas.
  */
 export async function attachCallerVideoInPage(callId: string): Promise<{ width: number; height: number }> {
   const w = window as any;
@@ -229,7 +229,7 @@ export async function attachCallerVideoInPage(callId: string): Promise<{ width: 
   const largest = (): HTMLCanvasElement | null => {
     let best: HTMLCanvasElement | null = null;
     for (const c of Array.from(document.querySelectorAll('canvas'))) {
-      if (c.width * c.height >= 160 * 120 && (!best || c.width * c.height > best.width * best.height)) best = c;
+      if (c.width >= 160 && c.height >= 120 && (!best || c.width * c.height > best.width * best.height)) best = c;
     }
     return best;
   };
