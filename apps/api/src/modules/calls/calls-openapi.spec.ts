@@ -96,9 +96,10 @@ describe('the calls routes in the OpenAPI document', () => {
   });
 
   it('the media status has the server, its recordings storage, and each profile with its settings and readiness', () => {
-    expect(fields('CallsMediaServerDto')).toEqual(['activeSessions', 'enabled', 'engineHost', 'port', 'recordings', 'worker']);
+    expect(fields('CallsMediaServerDto')).toEqual(['activeSessions', 'enabled', 'engineHost', 'port', 'recordings', 'videoCalls', 'worker']);
+    expect(fields('CallsVideoCallsDto')).toEqual(['active', 'max']);
     expect(fields('CallsRecordingsStorageDto')).toEqual(['configured', 'lastCheck', 'problem', 'storage']);
-    expect(fields('CallsProfileStatusDto')).toEqual(['announcement', 'answerInDashboard', 'name', 'profileId', 'ready', 'reasons', 'recording', 'retentionDays']);
+    expect(fields('CallsProfileStatusDto')).toEqual(['announcement', 'answerInDashboard', 'name', 'profileId', 'ready', 'reasons', 'recording', 'retentionDays', 'video']);
     expect(fields('CallLinkResultDto')).toEqual(['call', 'link', 'message']);
   });
 });

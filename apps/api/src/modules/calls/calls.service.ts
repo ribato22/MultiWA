@@ -294,6 +294,8 @@ export class CallsService {
         port,
         engineHost: isWorkerEngine() ? 'worker' : 'api',
         activeSessions: this.sessions.activeSessionCount(organizationId),
+        // The organization's own video calls; the cap is the server's, shared with every organization.
+        videoCalls: this.sessions.videoCalls(organizationId),
         recordings: this.recordings.storageStatus(),
       },
       profiles: await Promise.all(
