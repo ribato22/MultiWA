@@ -18,6 +18,8 @@ export type CallReadinessReason =
 export interface CallReadiness {
   ready: boolean;
   reasons: CallReadinessReason[];
+  /** Its video calls can be answered with video too (the page probe's videoSupported); never while not ready. */
+  video: boolean;
 }
 
 /** The page probe is a page round trip: a hung page must hold neither the ring nor the settings. */
@@ -31,6 +33,7 @@ export interface ReadinessDeps {
 
 export async function checkReadiness(settings: Record<string, unknown>, deps: ReadinessDeps): Promise<CallReadiness> {
   const reasons: CallReadinessReason[] = [];
+  let video = false;
   if (deps.engineHostWorker) reasons.push('engine_host_worker');
   if (!deps.media.enabled) reasons.push('media_disabled');
   else if (deps.media.worker !== 'up') reasons.push('media_server_down');
@@ -43,7 +46,8 @@ export async function checkReadiness(settings: Record<string, unknown>, deps: Re
       const support = await withTimeout(media.getSupport(), READINESS_PROBE_MS).catch(() => null);
       // A reply without its reasons list (from any engine) is a page error too, not a throw.
       if (!support?.supported) reasons.push(...(support?.reasons?.length ? support.reasons : (['page_error'] as const)));
+      else video = support.videoSupported === true;
     }
   }
-  return { ready: reasons.length === 0, reasons };
+  return { ready: reasons.length === 0, reasons, video: reasons.length === 0 && video };
 }

@@ -52,11 +52,19 @@ export interface CallTimings {
   agentGraceMs: number;
   /** The talk-time cap (CALLS_MAX_TALK_MINUTES). */
   maxTalkMs: number;
+  /** How many calls the server answers with video at once (CALLS_MAX_VIDEO_CALLS); 0: every video call as voice. */
+  maxVideoCalls: number;
 }
 
 const positive = (raw: string | undefined, fallback: number) => {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+};
+
+/** A whole number, 0 or more; anything else (unset, empty, negative, a fraction) is the fallback. */
+const count = (raw: string | undefined, fallback: number) => {
+  const n = Number(raw);
+  return raw?.trim() && Number.isInteger(n) && n >= 0 ? n : fallback;
 };
 
 /** setTimeout's longest delay: a longer one fires after 1 ms. */
@@ -67,6 +75,7 @@ export function readCallTimings(env: NodeJS.ProcessEnv = process.env): CallTimin
     connectMs: timerMs(positive(env.CALLS_CONNECT_TIMEOUT_MS, 10_000)),
     agentGraceMs: timerMs(positive(env.CALLS_AGENT_GRACE_MS, 15_000)),
     maxTalkMs: timerMs(positive(env.CALLS_MAX_TALK_MINUTES, 120) * 60_000),
+    maxVideoCalls: count(env.CALLS_MAX_VIDEO_CALLS, 2),
   };
 }
 
@@ -127,6 +136,11 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   private readonly availableAgain = new Map<string, NodeJS.Timeout>();
   /** Users whose Answer is claiming a call: busy before their session exists. */
   private readonly claiming = new Set<string>();
+  /**
+   * The calls holding one of the server's CALLS_MAX_VIDEO_CALLS video slots: from their answer's claim until they end or
+   * fall back to voice. Taken with the claim, nothing awaited in between, so two answers cannot both take the last one.
+   */
+  private readonly videoSlots = new Set<string>();
 
   constructor(
     private readonly callMedia: CallMediaService,
@@ -401,8 +415,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       if (profile.settings.callsAnswerInDashboard !== true || profile.settings.autoRejectCalls === true) return;
       const agents = await this.eligibleAgents(profile.organizationId);
       if (!agents.length || closed()) return;
-      // This engine is voice-only: a video call is answered as a voice call, and the caller sees no video.
-      const unavailableReason = call.isGroup ? 'group_call' : (await this.readiness(profile.id, profile.settings)).reasons[0];
+      const readiness = call.isGroup ? null : await this.readiness(profile.id, profile.settings);
+      const unavailableReason = call.isGroup ? 'group_call' : readiness!.reasons[0];
       if (closed()) return;
       for (const id of agents) rung.add(id);
       this.gateway.emitToUsers(agents, 'call:ringing', {
@@ -413,8 +427,9 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
         // The banner's link to the caller's chat, when the call has one.
         conversationId: call.conversationId ?? null,
         startedAt: call.startedAt.toISOString(),
-        // The agent's banner says it: the caller expects a picture and gets none.
+        // The agent's banner says it, and `video` how it would be answered.
         isVideo: call.isVideo,
+        ...(call.isVideo ? { video: this.videoAvailability(readiness) } : {}),
         answerable: !unavailableReason,
         // Recorded from before an announcement the caller hears first: the agent's banner says so.
         recorded: !!this.recorder.plan(profile.id, profile.settings),
@@ -442,6 +457,13 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     if (this.claiming.has(userId)) return true;
     for (const s of this.sessions.values()) if (s.userId === userId) return true;
     return false;
+  }
+
+  /** How a video call ringing now would be answered: with video, or as voice and why. */
+  private videoAvailability(readiness: CallReadiness | null): 'available' | 'server_busy' | 'unsupported' | 'disabled' {
+    if (this.timing.maxVideoCalls === 0) return 'disabled';
+    if (!readiness?.video) return 'unsupported';
+    return this.videoSlots.size >= this.timing.maxVideoCalls ? 'server_busy' : 'available';
   }
 
   private open(call: CallRecord, organizationId: string, userId: string, media: CallMediaEngine, recording: RecordingPlan | null): Session {

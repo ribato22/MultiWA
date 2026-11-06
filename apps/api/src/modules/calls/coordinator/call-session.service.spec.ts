@@ -226,6 +226,27 @@ describe('CallSessionService: who is rung', () => {
     expect(voice).toMatchObject({ answerable: true, isVideo: false });
   });
 
+  it('a video call says how it would be answered: with video, or as voice because the server is busy, the page cannot, or video is off', async () => {
+    const h = harness();
+    const video = async () => {
+      S.findCallForAnswer.mockResolvedValueOnce(ringing({ isVideo: true }));
+      await h.service.onCallReceived({ callId: 'c1' });
+      return h.sent('call:ringing').slice(-1)[0].payload.video;
+    };
+    h.media.getSupport.mockResolvedValue({ supported: true, reasons: [], videoSupported: true } as any);
+    expect(await video()).toBe('available');
+    (h.service as any).videoSlots.add('x1').add('x2'); // two video calls already
+    expect(await video()).toBe('server_busy');
+    (h.service as any).videoSlots.clear();
+    h.media.getSupport.mockResolvedValue({ supported: true, reasons: [] });
+    expect(await video()).toBe('unsupported');
+    (h.service as any).timing.maxVideoCalls = 0;
+    expect(await video()).toBe('disabled');
+    // A voice call carries no `video`.
+    await h.service.onCallReceived({ callId: 'c1' });
+    expect(h.sent('call:ringing').slice(-1)[0].payload).not.toHaveProperty('video');
+  });
+
   it('a LID caller has no number to show, and a call without a chat no chat to link', async () => {
     const h = harness();
     S.findCallForAnswer.mockResolvedValueOnce(ringing({ fromJid: '123456789012345@lid', conversationId: null }));
@@ -555,16 +576,22 @@ describe('CallSessionService: boot and settings', () => {
   });
 
   it('timings: 10 s to connect, 15 s of grace, a 120-minute cap; the env tunes them, and a bad value falls back', () => {
-    expect(readCallTimings({})).toEqual({ connectMs: 10_000, agentGraceMs: 15_000, maxTalkMs: 120 * 60_000 });
+    expect(readCallTimings({})).toEqual({ connectMs: 10_000, agentGraceMs: 15_000, maxTalkMs: 120 * 60_000, maxVideoCalls: 2 });
     expect(readCallTimings({ CALLS_CONNECT_TIMEOUT_MS: '5000', CALLS_AGENT_GRACE_MS: 'x', CALLS_MAX_TALK_MINUTES: '30' })).toEqual({
-      connectMs: 5_000, agentGraceMs: 15_000, maxTalkMs: 30 * 60_000,
+      connectMs: 5_000, agentGraceMs: 15_000, maxTalkMs: 30 * 60_000, maxVideoCalls: 2,
     });
   });
 
   it("timings stop at setTimeout's longest delay (2^31 - 1 ms): a longer one would fire at once", () => {
     expect(readCallTimings({ CALLS_CONNECT_TIMEOUT_MS: '1e12', CALLS_AGENT_GRACE_MS: '3000000000', CALLS_MAX_TALK_MINUTES: '100000' })).toEqual({
-      connectMs: 2 ** 31 - 1, agentGraceMs: 2 ** 31 - 1, maxTalkMs: 2 ** 31 - 1,
+      connectMs: 2 ** 31 - 1, agentGraceMs: 2 ** 31 - 1, maxTalkMs: 2 ** 31 - 1, maxVideoCalls: 2,
     });
+  });
+
+  it('CALLS_MAX_VIDEO_CALLS: 2 video calls at once by default; 0 or more from the env; anything else falls back to 2', () => {
+    expect(readCallTimings({ CALLS_MAX_VIDEO_CALLS: '0' }).maxVideoCalls).toBe(0);
+    expect(readCallTimings({ CALLS_MAX_VIDEO_CALLS: '5' }).maxVideoCalls).toBe(5);
+    for (const bad of ['', ' ', '-1', '1.5', 'x']) expect(readCallTimings({ CALLS_MAX_VIDEO_CALLS: bad }).maxVideoCalls).toBe(2);
   });
 });
 
