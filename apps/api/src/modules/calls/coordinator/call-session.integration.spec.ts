@@ -26,8 +26,8 @@ import { CallMediaService } from '../media/call-media.service';
 import { CallRecorderService } from '../recordings/call-recorder.service';
 import { CallSessionService } from './call-session.service';
 import {
-  WWEBJS_USER_AGENT, agentHearsInPage, consoleAgentBundle, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sineWav, sleep,
-  startConsoleAgentInPage, until,
+  BLACK_RGB, CALLER_RGB, WWEBJS_USER_AGENT, agentHearsInPage, consoleAgentBundle, launchCallMediaBrowser, micCarriesInPage, nearestOf, openFakeWhatsAppPage,
+  recordedPicturesInPage, sineWav, sleep, startConsoleAgentInPage, until,
 } from '../../../testing/call-media-browser';
 
 // sessions: by tokenHash, as the sessions table keys them
@@ -199,7 +199,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     const nsp = ioServer.of('/ws');
     events.server = nsp as any;
     const commands: Record<string, string> = {
-      'call:answer': 'answer', 'call:media': 'media', 'call:rejoin': 'rejoin', 'call:hangup': 'hangup', 'call:availability': 'availability',
+      'call:answer': 'answer', 'call:media': 'media', 'call:rejoin': 'rejoin', 'call:hangup': 'hangup', 'call:camera': 'camera', 'call:availability': 'availability',
     };
     nsp.on('connection', (socket) => {
       void events.handleConnection(socket as any);
@@ -258,13 +258,13 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
 
   let seq = 0;
   /** A call rings: on the fake WhatsApp Web, in the calls table, and on the bus (as the call runtime publishes it). */
-  const ring = async (profileId = 'p1') => {
+  const ring = async (profileId = 'p1', video = false) => {
     seq++;
     const waCallId = `CALL${seq}`;
     const callId = randomUUID(); // as the calls table makes them: the recorder names a recording's files by it
-    await waPage.evaluate((id: string) => (window as any).__fakeWa.ring(id), waCallId);
+    await waPage.evaluate((id: string, v: boolean) => (window as any).__fakeWa.ring(id, v), waCallId, video);
     db.calls.set(callId, {
-      id: callId, profileId, waCallId, fromJid: '628111000111@c.us', isVideo: false, isGroup: false, outcome: 'ringing',
+      id: callId, profileId, waCallId, fromJid: '628111000111@c.us', isVideo: video, isGroup: false, outcome: 'ringing',
       answeredByUserId: null, startedAt: new Date(), endedAt: null, followUp: 'open',
     });
     bus.emit(AppEvents.CALL.RECEIVED, { callId, profileId });
@@ -426,6 +426,39 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
       expect(published.some(([e, p]) => e === AppEvents.CALL.RECORDING_READY && p.callId === callId && p.recordingId === rec.id)).toBe(true);
       expect(await until(() => !tmpFilesOf(callId).length, 5000)).toBe(true); // its files go just after its row
       expect(recorderAlerts.recordingFailed).not.toHaveBeenCalled(); // a call that went well alerts nobody
+      await page.close();
+    } finally {
+      await hangUpIfUp(ana, callId);
+    }
+  }, 60_000);
+
+  it("a video call: answered with video and the camera off, the voice as always, recorded with the caller's picture, its slot given back", async () => {
+    db.settings.set(RECORDED, recordedSettings(1));
+    store.file(ANNOUNCEMENT_KEY, sineWav(550, 1));
+    const ana = await agent('u1');
+    const { callId } = await ring(RECORDED, true);
+    try {
+      expect(await until(() => ana.sent('call:ringing', callId).length > 0, 5000)).toBe(true);
+      expect(ana.sent('call:ringing', callId)[0]).toMatchObject({ isVideo: true, video: 'available', answerable: true });
+      const { page, ack } = await talk(ana, callId, 660);
+      expect(ack.callerVideoProducerId).toEqual(expect.any(String));
+      expect(ana.sent('call:active', callId)[0]).toMatchObject({ video: true });
+      // WhatsApp Web's video call UI, then the accept with the camera off
+      expect(await waPage.evaluate(() => (window as any).__fakeWa.acceptArgs.slice(-1)[0])).toEqual([true, false, null]);
+      expect(await until(async () => (await page.evaluate(agentHearsInPage, 440)) > PRESENT, 10_000)).toBe(true);
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
+      // a dashboard that has produced no camera cannot turn one on, and the call goes on
+      expect(await ana.socket.emitWithAck('call:camera', { callId, on: true })).toEqual({ ok: false, reason: 'no_video_producer' });
+      expect(sessions.videoCalls('o1')).toEqual({ active: 1, max: 2 });
+      await sleep(2000); // the caller's picture, attached in the background, long enough to be recorded
+      expect(await ana.socket.emitWithAck('call:hangup', { callId })).toEqual({ ok: true });
+      expect(sessions.videoCalls('o1')).toEqual({ active: 0, max: 2 });
+      expect(await until(() => db.recordings.has(callId), 15_000)).toBe(true);
+      const rec = db.recordings.get(callId);
+      expect(rec).toMatchObject({ mimeType: 'video/webm', channels: 2, partial: false });
+      const seen: Awaited<ReturnType<typeof recordedPicturesInPage>> = await page.evaluate(recordedPicturesInPage, store.files.get(rec.storageKey)!.body.toString('base64'));
+      expect([seen.width, seen.height]).toEqual([640, 480]);
+      expect(seen.centre.some((rgb) => nearestOf(rgb, [CALLER_RGB, BLACK_RGB]) === 0), JSON.stringify(seen.centre)).toBe(true); // the caller's picture
       await page.close();
     } finally {
       await hangUpIfUp(ana, callId);
