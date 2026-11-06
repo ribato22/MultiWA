@@ -231,8 +231,9 @@ describe('CallMediaService', () => {
     expect([room.producerId('agent'), room.producerId('agent', 'video')]).toEqual([null, null]);
     const agentSend2: any = await agent.createTransport('send');
     const again = await agent.produce(agentSend2.id, 'video', VP8(2233));
-    // The page's consumer of the old camera closed with its producer, not through closeConsumer: the worker tells it
-    // (producerclose) before it answers the requests above, so the page's video slot is free by now and no wait is needed.
+    // The page's consumer of the old camera closed with its producer, not through closeConsumer. mediasoup delivers the
+    // worker's producerclose on setImmediate (Channel.processNotification), so it is the produce round trip above, a later
+    // event-loop turn, that guarantees the page's video slot is free by now: no wait is needed.
     await expect(page.consume(pageRecv.id, again.id, caps)).resolves.toMatchObject({ producerId: again.id, kind: 'video' });
     room.close();
   });

@@ -164,7 +164,10 @@ export class CallMediaRoom {
       if (this.producers.get(key) === producer) this.producers.delete(key);
     });
     // A produce still at the worker when silenceAgent ran was not registered for its pause to reach: pause it here.
-    if (role === 'agent' && this.silenced && !producer.paused) await producer.pause();
+    if (role === 'agent' && this.silenced && !producer.paused) {
+      await producer.pause();
+      this.assertCurrent(peer, generation); // a closePeer during the pause closed the producer: fail, do not hand back its dead id
+    }
     return { id: producer.id };
   }
 
