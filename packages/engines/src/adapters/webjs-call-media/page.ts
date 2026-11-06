@@ -176,8 +176,9 @@ export function installCallMediaHooks(): void {
       // A canvas that does not change sends no frames: while a clone is live it is redrawn at the capture rate, black or
       // the agent fitted in. With none live (polled: a track the page stops fires no `ended`) the redraw stops, until
       // the next call's camera starts it again.
-      // ponytail: only the clones handed out here count; a copy the page made of one (track.clone()) freezes once ours
-      // are stopped. Follow MediaStreamTrack.prototype.clone if WhatsApp Web ever copies its camera.
+      // ponytail: only the clones handed out here count; a copy the page made of one (track.clone(), or stream.clone(),
+      // which makes live copies without going through MediaStreamTrack.prototype.clone) freezes once ours are stopped.
+      // Follow MediaStreamTrack.prototype.clone and MediaStream.prototype.clone if WhatsApp Web ever copies its camera.
       if (!camera.timer) {
         const g = camera.canvas.getContext('2d');
         camera.timer = setInterval(() => {

@@ -1106,10 +1106,18 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await p.evaluate(() => (window as any).__cams[1].getVideoTracks()[0].stop()); // WhatsApp Web stops its camera when a call ends
         expect(await until(async () => (await liveIntervals(p)) === 0, 1000)).toBe(true); // the redraw is cleared, not just idle
         expect(await p.evaluate(() => (window as any).__mwCall.camera.clones.length)).toBe(0); // and the stopped cameras are let go of
-        // the next call's camera: drawn again, so it carries a picture (a canvas that does not change sends no frames)
-        await p.evaluate(async () => { (window as any).__fakeWa.camStream = await navigator.mediaDevices.getUserMedia({ video: true }); });
+        // the next call's camera: drawn again, so a stream of frames reaches it. One frame does not show that: Chrome hands a
+        // fresh clone at most one frame of the canvas as it was, drawn again or not (a canvas that does not change sends no more)
+        const frames = await p.evaluate(async () => {
+          const view = document.createElement('video');
+          view.muted = true;
+          view.srcObject = await navigator.mediaDevices.getUserMedia({ video: true });
+          view.play().catch(() => {});
+          await new Promise((r) => setTimeout(r, 2000));
+          return view.getVideoPlaybackQuality().totalVideoFrames;
+        });
         expect(await liveIntervals(p)).toBe(1);
-        expect(await until(async () => (await cameraCarriesInPage(p, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+        expect(frames).toBeGreaterThanOrEqual(2); // about 30 when it is drawn again, none or one when not
       } finally {
         await p.close();
       }
