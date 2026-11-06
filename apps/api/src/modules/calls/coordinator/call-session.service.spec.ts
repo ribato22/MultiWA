@@ -838,6 +838,78 @@ describe('CallSessionService: video calls', () => {
     expect(h.sent('call:active')[0].payload.agentProducerId).toBe('agent-producer');
   });
 
+  /** c1 answered with video, and u1's browser has produced its camera (agent-video). */
+  async function onVideo(h: ReturnType<typeof harness>) {
+    videoCall(h);
+    await answered(h);
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-video' });
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'video', rtpParameters: {} });
+  }
+
+  it("camera on: the agent into WhatsApp Web's camera, then unmuted; off: black first, then muted", async () => {
+    const h = harness();
+    await onVideo(h);
+    expect(await h.service.camera(as('u1'), 'c1', true)).toEqual({ ok: true, on: true });
+    expect(h.handle.connectAgentVideo).toHaveBeenCalledWith('agent-video');
+    expect(h.handle.connectAgentVideo.mock.invocationCallOrder[0]).toBeLessThan(h.handle.setCameraMuted.mock.invocationCallOrder[0]);
+    expect(h.handle.setCameraMuted).toHaveBeenLastCalledWith(false);
+    expect(await h.service.camera(as('u1'), 'c1', false)).toEqual({ ok: true, on: false });
+    expect(h.handle.disconnectAgentVideo.mock.invocationCallOrder[0]).toBeLessThan(h.handle.setCameraMuted.mock.invocationCallOrder[1]);
+    expect(h.handle.setCameraMuted).toHaveBeenLastCalledWith(true);
+  });
+
+  it('a second camera-on is no error; a mute that hangs never keeps the picture on: off is black at once and answered', async () => {
+    const h = harness();
+    await onVideo(h);
+    await h.service.camera(as('u1'), 'c1', true);
+    h.handle.connectAgentVideo.mockRejectedValueOnce(new Error('Agent video already connected'));
+    expect(await h.service.camera(as('u1'), 'c1', true)).toEqual({ ok: true, on: true });
+    h.handle.setCameraMuted.mockRejectedValueOnce(new Error('The camera did not switch in time'));
+    expect(await h.service.camera(as('u1'), 'c1', false)).toEqual({ ok: true, on: false });
+    expect(h.handle.disconnectAgentVideo).toHaveBeenCalled();
+  });
+
+  it('a camera-on whose unmute fails leaves the picture black and says so; the call goes on', async () => {
+    const h = harness();
+    await onVideo(h);
+    h.handle.setCameraMuted.mockRejectedValueOnce(new Error('WhatsApp Web has no camera mute'));
+    expect(await h.service.camera(as('u1'), 'c1', true)).toMatchObject({ ok: false, reason: 'camera_failed', message: 'WhatsApp Web has no camera mute' });
+    await vi.waitFor(() => expect(h.handle.disconnectAgentVideo).toHaveBeenCalled());
+    expect(h.sent('call:ended')).toEqual([]);
+  });
+
+  it("refuses a voice call, a camera not produced yet, a value that is not a boolean, and anyone but the call's agent", async () => {
+    const h = harness();
+    videoCall(h);
+    await answered(h);
+    expect(await h.service.camera(as('u1'), 'c1', true)).toEqual({ ok: false, reason: 'no_video_producer' });
+    expect(await h.service.camera(as('u1'), 'c1', 'yes')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await h.service.camera(as('u2'), 'c1', true)).toEqual({ ok: false, reason: 'not_in_call' });
+    const voice = harness();
+    S.findCallForAnswer.mockResolvedValue(ringing());
+    await answered(voice);
+    expect(await voice.service.camera(as('u1'), 'c1', false)).toEqual({ ok: false, reason: 'no_video' });
+  });
+
+  it('a rejoin takes the old page off the camera before its producer goes, and tells the new page to turn the camera on again', async () => {
+    const h = harness();
+    await onVideo(h);
+    await h.service.camera(as('u1'), 'c1', true);
+    expect(await h.service.rejoin(as('u1'), 'c1')).toMatchObject({ ok: true, callerVideoProducerId: 'caller-video-producer', cameraOn: true });
+    expect(h.handle.disconnectAgentVideo.mock.invocationCallOrder[0]).toBeLessThan(h.room.closePeer.mock.invocationCallOrder[0]);
+    // the old join's producer is gone: the new page must produce its camera before turning it on
+    expect(await h.service.camera(as('u1'), 'c1', true)).toEqual({ ok: false, reason: 'no_video_producer' });
+  });
+
+  it("an end takes the agent off WhatsApp Web's camera at once, with the silencing", async () => {
+    const h = harness();
+    await onVideo(h);
+    await h.service.camera(as('u1'), 'c1', true);
+    await h.service.hangup(as('u1'), 'c1');
+    expect(h.handle.disconnectAgentVideo).toHaveBeenCalled();
+    expect(h.handle.disconnectAgentVideo.mock.invocationCallOrder.slice(-1)[0]).toBeLessThan(h.media.hangUp.mock.invocationCallOrder[0]);
+  });
+
   it('the recorder is told the call has video', async () => {
     const h = harness();
     videoCall(h);
@@ -1448,7 +1520,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     const h = harness();
     await answered(h);
     expect(await h.service.rejoin(as('u1'), 'c1')).toEqual({
-      ok: true, callId: 'c1', callerProducerId: 'caller-producer', iceServers: [{ urls: 'stun:stun.example.com:3478' }],
+      ok: true, callId: 'c1', callerProducerId: 'caller-producer', callerVideoProducerId: null, cameraOn: false, iceServers: [{ urls: 'stun:stun.example.com:3478' }],
     });
     expect(h.handle.disconnectAgent).toHaveBeenCalled();
     expect(h.room.closePeer).toHaveBeenCalledWith('agent');

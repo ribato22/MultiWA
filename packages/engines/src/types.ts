@@ -285,11 +285,12 @@ export interface CallMediaHandle {
   /**
    * The injected camera goes black again, from its next frame, with nothing of WhatsApp Web involved. Does nothing when
    * no agent video is connected. The caller of this API MUST call it together with the room's silenceAgent(), when the
-   * agent's link drops, when the room closes the agent's video producer, and before a rejoin connects a new one. The
-   * page is not told when the agent's video stops coming (paused, cut off, closed): the caller would see the agent's
-   * last frame, frozen, until the camera draws black after a second without a new one, and a new producer would be
-   * refused "Agent video already connected". Rejects "No media bridge for this call" once the page has released the
-   * bridge: treat that as done.
+   * room closes the agent's video producer, and before a rejoin connects a new one. The page is not told when the
+   * agent's video stops coming (paused, cut off, closed): the caller would see the agent's last frame, frozen, until the
+   * camera draws black after a second without a new one, and a new producer would be refused "Agent video already
+   * connected". A dropped agent link needs nothing: the producer and its consumer outlive it, so the camera draws black
+   * a second after the agent's frames stop, and the agent again when they come back. Rejects "No media bridge for this
+   * call" once the page has released the bridge: treat that as done.
    */
   disconnectAgentVideo(): Promise<void>;
   /**

@@ -316,6 +316,50 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
   }
 
   /**
+   * The agent's camera on or off, in the order the handle requires. On: the agent's one camera producer of this join
+   * into WhatsApp Web's camera, then its camera unmuted. Off: the camera black at once, then muted; a mute that fails
+   * or hangs only leaves WhatsApp Web sending black. Never ends the call: a camera-on that fails leaves the camera black,
+   * and says so.
+   */
+  async camera(principal: SocketPrincipal, callId: unknown, on: unknown): Promise<CallCommandReply<{ on: boolean }>> {
+    const own = await this.ownSession(principal, callId);
+    if (!own.ok) return own;
+    const { session } = own;
+    if (typeof on !== 'boolean') return { ok: false, reason: 'invalid' };
+    const handle = session.handle;
+    if (session.phase !== 'active' || !handle) return { ok: false, reason: 'not_in_call' };
+    if (!session.video) return { ok: false, reason: 'no_video' };
+    const producerId = session.agentVideoProducerId;
+    if (on && !producerId) return { ok: false, reason: 'no_video_producer' };
+    const turn = ++session.cameraTurn;
+    session.cameraOn = on;
+    if (!on) {
+      try {
+        await withTimeout(handle.disconnectAgentVideo(), AGENT_CONNECT_MS, 'the camera did not go black in time');
+      } catch (e) {
+        if (!/No media bridge/.test(message(e))) return this.cameraFailed(session, e);
+      }
+      await withTimeout(handle.setCameraMuted(true), CAMERA_MS).catch((e) => this.logger.warn(`Call ${session.callId}: the camera was not muted (it sends black): ${message(e)}`));
+      return { ok: true, on };
+    }
+    try {
+      await withTimeout(handle.connectAgentVideo(producerId!), AGENT_CONNECT_MS, "the agent's video did not reach the camera in time").catch((e) => {
+        if (!/Agent video already connected/.test(message(e))) throw e; // a second camera-on: it is there already
+      });
+      await withTimeout(handle.setCameraMuted(false), CAMERA_MS);
+      return { ok: true, on };
+    } catch (e) {
+      // A rejected unmute may still land late inside WhatsApp Web: the camera it sends is then black. A later command
+      // decides the picture, and this one's failure leaves it alone.
+      if (turn === session.cameraTurn) {
+        session.cameraOn = false;
+        void handle.disconnectAgentVideo().catch(() => undefined);
+      }
+      return this.cameraFailed(session, e);
+    }
+  }
+
+  /**
    * The agent's Hang up. While connecting it gives the call up: before WhatsApp was asked to answer, the call rings again
    * for everyone; once it was asked, the call is hung up and rings nowhere. Also for an agent deactivated or demoted
    * since the answer: every other command refuses them, and their call would run on to the cap. Not for a login that
@@ -342,7 +386,7 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     principal: SocketPrincipal,
     callId: unknown,
     ifProducerId?: unknown,
-  ): Promise<CallCommandReply<{ callId: string; callerProducerId: string; iceServers: unknown[] }>> {
+  ): Promise<CallCommandReply<{ callId: string; callerProducerId: string; callerVideoProducerId: string | null; cameraOn: boolean; iceServers: unknown[] }>> {
     const own = await this.ownSession(principal, callId);
     if (!own.ok) return own;
     const { session } = own;
@@ -365,14 +409,26 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
       }
     }
     if (session.phase !== 'active') return { ok: false, reason: 'not_in_call' }; // it ended meanwhile
+    // The old page's picture leaves WhatsApp Web's camera before its producer goes (closePeer): the page is never told
+    // the producer closed, and a new one would be refused. Best effort: video never ends a call.
+    if (session.video) {
+      await withTimeout(session.handle.disconnectAgentVideo(), AGENT_CONNECT_MS).catch((e) => this.logger.warn(`Call ${session.callId}: the old camera was not disconnected: ${message(e)}`));
+      if (session.phase !== 'active') return { ok: false, reason: 'not_in_call' };
+    }
     session.room.closePeer('agent');
     // Whatever the closed page did during the disconnect is void: its producer went with its transports.
     session.agentProducerId = null;
+    session.agentVideoProducerId = null;
+    session.callerVideoConsumerId = null;
     session.agentListening = false;
     session.rejoining = true;
     session.socketsLost = false; // it is talking to us
     this.updateGrace(session);
-    return { ok: true, callId: session.callId, callerProducerId: session.handle.callerProducerId, iceServers: this.callMedia.iceServers() };
+    return {
+      ok: true, callId: session.callId, callerProducerId: session.handle.callerProducerId,
+      callerVideoProducerId: session.video ? session.handle.callerVideoProducerId : null, cameraOn: session.video && session.cameraOn,
+      iceServers: this.callMedia.iceServers(),
+    };
   }
 
   @OnEvent(AppEvents.CALL.RECEIVED)
@@ -794,6 +850,8 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     // From now on nothing the agent says reaches the caller or the recording, whichever tab or device has the call:
     // WhatsApp's hang-up and the recorder's stop below can take half a minute.
     void session.room?.silenceAgent();
+    // The page still holds the agent's last frame: off WhatsApp Web's camera at once too.
+    if (session.video) void session.handle?.disconnectAgentVideo().catch(() => undefined);
     this.clearTimers(session);
     // The caller's own end needs no hang-up, and neither does a shutdown: the engines close with the process.
     if (endedBy !== 'caller' && endReason !== 'server_restart') await this.hangUpQuietly(session);
@@ -840,6 +898,11 @@ export class CallSessionService implements OnModuleInit, OnApplicationBootstrap,
     const session = typeof callId === 'string' ? this.sessions.get(callId) : undefined;
     if (!principal || principal.apiKeyScopes !== undefined || !session || session.userId !== principal.userId || session.phase === 'ending') return null;
     return session;
+  }
+
+  private cameraFailed(session: Session, e: unknown): CallCommandReply<{ on: boolean }> {
+    this.logger.warn(`Call ${session.callId}: the camera did not switch: ${message(e)}`);
+    return { ok: false, reason: 'camera_failed', message: message(e) };
   }
 
   private async hangUpQuietly(session: Session): Promise<void> {
