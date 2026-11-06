@@ -86,15 +86,20 @@ function harness() {
   };
   const handle = {
     callerProducerId: 'caller-producer',
+    callerVideoProducerId: null as string | null,
     attachCaller: vi.fn(async () => ({ via: 'destination', freshCandidates: 1, fallback: false })),
     connectAgent: vi.fn(async (_agentProducerId: string) => undefined),
     disconnectAgent: vi.fn(async () => undefined),
+    attachCallerVideo: vi.fn(async () => ({ width: 382, height: 344 })),
+    connectAgentVideo: vi.fn(async (_id: string) => undefined),
+    disconnectAgentVideo: vi.fn(async () => undefined),
+    setCameraMuted: vi.fn(async (_muted: boolean) => undefined),
     close: vi.fn(async () => undefined),
   };
   const media = {
-    getSupport: vi.fn(async () => ({ supported: true, reasons: [] })),
-    startCallMedia: vi.fn(async () => handle),
-    answer: vi.fn(async () => ({ connectedAfterMs: 300 })),
+    getSupport: vi.fn(async (): Promise<Record<string, unknown>> => ({ supported: true, reasons: [] })),
+    startCallMedia: vi.fn(async (_id: string, _signaling: unknown, _opts?: { video?: boolean }) => handle),
+    answer: vi.fn(async (_id: string, opts?: { timeoutMs?: number; video?: boolean }) => ({ connectedAfterMs: 300, video: opts?.video === true })),
     hangUp: vi.fn(async () => undefined),
     closeCallMedia: vi.fn(async () => undefined),
   };
@@ -147,6 +152,13 @@ async function answered(h: ReturnType<typeof harness>) {
   expect(await h.service.answer(as('u1'), 'c1')).toMatchObject({ ok: true });
   await agentReady(h);
   await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+}
+
+/** WhatsApp Web can answer with video, the call c1 is a video call, and the page's bridge produces its picture. */
+function videoCall(h: ReturnType<typeof harness>) {
+  h.media.getSupport.mockResolvedValue({ supported: true, reasons: [], videoSupported: true });
+  S.findCallForAnswer.mockResolvedValue(ringing({ isVideo: true }));
+  h.handle.callerVideoProducerId = 'caller-video-producer';
 }
 
 /** markAnswered held until the returned function stores the answer. */
@@ -233,7 +245,7 @@ describe('CallSessionService: who is rung', () => {
       await h.service.onCallReceived({ callId: 'c1' });
       return h.sent('call:ringing').slice(-1)[0].payload.video;
     };
-    h.media.getSupport.mockResolvedValue({ supported: true, reasons: [], videoSupported: true } as any);
+    h.media.getSupport.mockResolvedValue({ supported: true, reasons: [], videoSupported: true });
     expect(await video()).toBe('available');
     (h.service as any).videoSlots.add('x1').add('x2'); // two video calls already
     expect(await video()).toBe('server_busy');
@@ -326,7 +338,7 @@ describe('CallSessionService: recorded calls', () => {
     played();
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]); // the new page's producer
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2', video: false } }]); // the new page's producer
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
   });
 
@@ -600,11 +612,11 @@ describe('CallSessionService: answering', () => {
     const h = harness();
     await h.service.onCallReceived({ callId: 'c1' }); // rings u1 and u2
     expect(await h.service.answer(as('u1'), 'c1')).toEqual({
-      ok: true, callId: 'c1', callerProducerId: 'caller-producer', iceServers: [{ urls: 'stun:stun.example.com:3478' }],
+      ok: true, callId: 'c1', callerProducerId: 'caller-producer', callerVideoProducerId: null, iceServers: [{ urls: 'stun:stun.example.com:3478' }],
     });
     expect(S.claimCall).toHaveBeenCalledWith('c1', 'u1');
-    expect(h.callMedia.createRoom).toHaveBeenCalledWith('c1');
-    expect(h.media.startCallMedia).toHaveBeenCalledWith('W1', expect.anything()); // the ENGINE's call id
+    expect(h.callMedia.createRoom).toHaveBeenCalledWith('c1', { video: false });
+    expect(h.media.startCallMedia).toHaveBeenCalledWith('W1', expect.anything(), { video: false }); // the ENGINE's call id
     // Every user it rang, the one who answered too: their other tabs stop ringing (a banner compares byUserId).
     expect(h.sent('call:claimed')).toEqual([{ to: ['u1', 'u2'], payload: { callId: 'c1', byUserId: 'u1', byUserName: 'Ana' } }]);
     expect(h.media.answer).not.toHaveBeenCalled(); // not before the agent's audio is ready
@@ -615,7 +627,7 @@ describe('CallSessionService: answering', () => {
     vi.useFakeTimers(); // the clock stands still: the whole connect budget is left for the answer
     const h = harness();
     await answered(h);
-    expect(h.media.answer).toHaveBeenCalledWith('W1', { timeoutMs: 10_000 });
+    expect(h.media.answer).toHaveBeenCalledWith('W1', { timeoutMs: 10_000, video: false });
     expect(S.markAnswered).toHaveBeenCalledWith('c1', 'u1', expect.any(Date));
     expect(h.bus.emit).toHaveBeenCalledWith('call.answered', expect.objectContaining({ callId: 'c1', outcome: 'answered', answeredByUserId: 'u1' }));
     expect(h.realtime.emitCallUpdate).toHaveBeenCalledWith('p1', expect.objectContaining({ outcome: 'answered' }));
@@ -623,7 +635,7 @@ describe('CallSessionService: answering', () => {
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'answered', answerSeconds: expect.any(Number) });
     expect(h.handle.attachCaller).toHaveBeenCalled();
     expect(h.handle.connectAgent).toHaveBeenCalledWith('agent-producer');
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer' } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer', video: false } }]);
   });
 
   it('refuses a viewer, another organization, a call no longer ringing or already claimed, a call that cannot be answered here, an agent on a call', async () => {
@@ -649,7 +661,7 @@ describe('CallSessionService: answering', () => {
     expect(await h.service.answer(as('u1'), 'c2')).toEqual({ ok: false, reason: 'busy' });
   });
 
-  it('a video call is answered like a voice call: the same claim and the same WhatsApp Accept', async () => {
+  it('a video call on a page that cannot answer with video is answered like a voice call: the same claim and the same WhatsApp Accept', async () => {
     const h = harness();
     S.findCallForAnswer.mockResolvedValue(ringing({ isVideo: true }));
     await answered(h);
@@ -661,7 +673,7 @@ describe('CallSessionService: answering', () => {
     const h = harness();
     S.findCallForAnswer.mockImplementation(async (id: string) => ringing({ id, waCallId: `W-${id}` }));
     expect(await Promise.all([h.service.answer(as('u1'), 'c1'), h.service.answer(as('u1'), 'c2')])).toEqual([
-      { ok: true, callId: 'c1', callerProducerId: 'caller-producer', iceServers: [{ urls: 'stun:stun.example.com:3478' }] },
+      { ok: true, callId: 'c1', callerProducerId: 'caller-producer', callerVideoProducerId: null, iceServers: [{ urls: 'stun:stun.example.com:3478' }] },
       { ok: false, reason: 'busy' },
     ]);
     expect(S.claimCall.mock.calls).toEqual([['c1', 'u1']]);
@@ -683,12 +695,12 @@ describe('CallSessionService: answering', () => {
     await h.service.answer(as('u1'), 'c1');
     await vi.advanceTimersByTimeAsync(4_000); // the agent's browser took 4 s to produce and listen
     await agentReady(h);
-    expect(h.media.answer.mock.calls).toEqual([['W1', { timeoutMs: 6_000 }]]);
+    expect(h.media.answer.mock.calls).toEqual([['W1', { timeoutMs: 6_000, video: false }]]);
     const late = harness();
     await late.service.answer(as('u1'), 'c1');
     await vi.advanceTimersByTimeAsync(9_500);
     await agentReady(late);
-    expect(late.media.answer.mock.calls).toEqual([['W1', { timeoutMs: 1_000 }]]);
+    expect(late.media.answer.mock.calls).toEqual([['W1', { timeoutMs: 1_000, video: false }]]);
   });
 
   it('a lost claim says whether someone else has the call or it stopped ringing', async () => {
@@ -718,6 +730,120 @@ describe('CallSessionService: answering', () => {
     await flush();
     expect(h.bus.emit).toHaveBeenCalledWith('call.ended', expect.objectContaining({ callId: 'c1', endReason: 'server_restart', talkSeconds: null }));
     expect(h.realtime.emitCallUpdate).toHaveBeenCalledWith('p1', expect.objectContaining({ endReason: 'server_restart' }));
+  });
+});
+
+describe('CallSessionService: video calls', () => {
+  it("a video call is answered with video, the camera off: a video room and bridge, the caller's picture in the reply, attached once answered", async () => {
+    const h = harness();
+    videoCall(h);
+    expect(await h.service.answer(as('u1'), 'c1')).toEqual({
+      ok: true, callId: 'c1', callerProducerId: 'caller-producer', callerVideoProducerId: 'caller-video-producer', iceServers: [{ urls: 'stun:stun.example.com:3478' }],
+    });
+    expect(h.callMedia.createRoom).toHaveBeenCalledWith('c1', { video: true });
+    expect(h.media.startCallMedia).toHaveBeenCalledWith('W1', expect.anything(), { video: true });
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+    expect(h.media.answer).toHaveBeenCalledWith('W1', { timeoutMs: expect.any(Number), video: true });
+    expect(h.sent('call:active')[0].payload).toMatchObject({ video: true });
+    await vi.waitFor(() => expect(h.handle.attachCallerVideo).toHaveBeenCalled());
+    expect(h.handle.connectAgentVideo).not.toHaveBeenCalled(); // the camera starts off
+    expect(h.service.videoCalls('o1')).toEqual({ active: 1, max: 2 });
+    await h.service.hangup(as('u1'), 'c1');
+    expect(h.service.videoCalls('o1')).toEqual({ active: 0, max: 2 });
+    expect((h.service as any).videoSlots.size).toBe(0); // the end gave its slot back
+  });
+
+  it('past CALLS_MAX_VIDEO_CALLS a video call is answered as voice, and takes no slot', async () => {
+    const h = harness();
+    videoCall(h);
+    (h.service as any).timing.maxVideoCalls = 1;
+    (h.service as any).videoSlots.add('other-call');
+    expect(await h.service.answer(as('u1'), 'c1')).toMatchObject({ ok: true, callerVideoProducerId: null });
+    expect(h.callMedia.createRoom).toHaveBeenCalledWith('c1', { video: false });
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+    expect(h.media.answer).toHaveBeenCalledWith('W1', { timeoutMs: expect.any(Number), video: false });
+    expect(h.sent('call:active')[0].payload).toMatchObject({ video: false });
+    expect([...(h.service as any).videoSlots]).toEqual(['other-call']);
+  });
+
+  it('two video calls answered at once with one slot left: one gets video, the other is voice', async () => {
+    const h = harness();
+    videoCall(h);
+    (h.service as any).timing.maxVideoCalls = 1;
+    S.findCallForAnswer.mockImplementation(async (id: string) => ringing({ id, isVideo: true, waCallId: `W-${id}` }));
+    const [a, b]: any[] = await Promise.all([h.service.answer(as('u1'), 'c1'), h.service.answer(as('u2'), 'c2')]);
+    expect([a.callerVideoProducerId, b.callerVideoProducerId].filter(Boolean)).toHaveLength(1);
+    expect((h.service as any).videoSlots.size).toBe(1);
+  });
+
+  it('a lost claim gives its video slot back', async () => {
+    const h = harness();
+    videoCall(h);
+    S.claimCall.mockResolvedValueOnce(false);
+    expect(await h.service.answer(as('u1'), 'c1')).toMatchObject({ ok: false });
+    expect((h.service as any).videoSlots.size).toBe(0);
+  });
+
+  it("WhatsApp Web without video, a bridge without the caller's picture, or a voice answer: the call goes on as voice, never ends", async () => {
+    // The page cannot: a voice room from the start.
+    let h = harness();
+    videoCall(h);
+    h.media.getSupport.mockResolvedValue({ supported: true, reasons: [] });
+    expect(await h.service.answer(as('u1'), 'c1')).toMatchObject({ ok: true, callerVideoProducerId: null });
+    expect(h.callMedia.createRoom).toHaveBeenCalledWith('c1', { video: false });
+    // The room refused the caller's video: a voice reply, the slot back.
+    h = harness();
+    videoCall(h);
+    h.handle.callerVideoProducerId = null;
+    expect(await h.service.answer(as('u1'), 'c1')).toMatchObject({ ok: true, callerVideoProducerId: null });
+    expect((h.service as any).videoSlots.size).toBe(0);
+    // WhatsApp Web answered as voice (its video call UI did not load): call:active says so, the slot back.
+    h = harness();
+    videoCall(h);
+    h.media.answer.mockResolvedValueOnce({ connectedAfterMs: 300, video: false });
+    await answered(h);
+    expect(h.sent('call:active')[0].payload).toMatchObject({ video: false });
+    expect(h.handle.attachCallerVideo).not.toHaveBeenCalled();
+    expect((h.service as any).videoSlots.size).toBe(0);
+    expect(h.sent('call:ended')).toEqual([]);
+  });
+
+  it('a caller whose picture does not show yet is tried again while the call lasts; that never ends the call', async () => {
+    const h = harness();
+    videoCall(h);
+    h.handle.attachCallerVideo.mockRejectedValueOnce(new Error('No caller video')).mockResolvedValue({ width: 382, height: 344 });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    await answered(h);
+    await vi.waitFor(() => expect(h.handle.attachCallerVideo).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(h.handle.attachCallerVideo).toHaveBeenCalledTimes(2));
+    expect(h.sent('call:ended')).toEqual([]);
+  });
+
+  it("the agent's camera producer never stands for their voice, and resuming the caller's picture is not listening", async () => {
+    const h = harness();
+    videoCall(h);
+    await h.service.answer(as('u1'), 'c1');
+    h.agentPeer.produce.mockResolvedValueOnce({ id: 'agent-video' });
+    h.agentPeer.consume.mockResolvedValueOnce({ id: 'video-consumer', kind: 'video' } as any);
+    await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'video', rtpParameters: {} });
+    await h.service.media(as('u1'), 'c1', 'consume', { transportId: 't2', producerId: 'caller-video-producer', rtpCapabilities: {} });
+    await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'video-consumer' });
+    await flush();
+    expect(h.media.answer).not.toHaveBeenCalled(); // neither its camera nor the caller's picture makes the agent ready
+    await agentReady(h);
+    await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
+    expect(h.sent('call:active')[0].payload.agentProducerId).toBe('agent-producer');
+  });
+
+  it('the recorder is told the call has video', async () => {
+    const h = harness();
+    videoCall(h);
+    h.recorder.plan.mockReturnValue({ announcement: { storageKey: 'k', durationSec: 1 } });
+    await answered(h);
+    expect(h.recorder.begin.mock.calls[0][0]).toMatchObject({ video: true });
   });
 });
 
@@ -766,7 +892,7 @@ describe('CallSessionService: audio that does not connect', () => {
     vi.useFakeTimers();
     const h = harness();
     let connected!: () => void;
-    h.media.answer.mockReturnValueOnce(new Promise((r) => (connected = () => r({ connectedAfterMs: 9_000 }))));
+    h.media.answer.mockReturnValueOnce(new Promise((r) => (connected = () => r({ connectedAfterMs: 9_000, video: false }))));
     await h.service.answer(as('u1'), 'c1');
     await h.service.media(as('u1'), 'c1', 'produce', { transportId: 't1', kind: 'audio', rtpParameters: {} });
     await h.service.media(as('u1'), 'c1', 'resumeConsumer', { consumerId: 'consumer-1' });
@@ -1002,7 +1128,7 @@ describe('CallSessionService: the caller, the engine and the media server end ca
   it("neither the caller's own end nor a shutdown hangs up while WhatsApp answers; once the answer is over, it is hung up", async () => {
     const h = harness();
     let connected!: () => void;
-    h.media.answer.mockReturnValueOnce(new Promise((r) => (connected = () => r({ connectedAfterMs: 900 }))));
+    h.media.answer.mockReturnValueOnce(new Promise((r) => (connected = () => r({ connectedAfterMs: 900, video: false }))));
     await h.service.answer(as('u1'), 'c1');
     await agentReady(h);
     await h.service.onEngineSignal({ profileId: 'p1', waCallId: 'W1', state: 'ended' });
@@ -1181,7 +1307,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer-2']]);
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2', video: false } }]);
     expect(S.markEnded).not.toHaveBeenCalled();
     expect(h.service.activeSessionCount()).toBe(1);
   });
@@ -1223,7 +1349,7 @@ describe('CallSessionService: an agent lost, and back', () => {
     await vi.waitFor(() => expect(h.sent('call:active')).toHaveLength(1));
     await flush();
     expect(h.handle.connectAgent.mock.calls).toEqual([['agent-producer'], ['agent-producer-2']]);
-    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2' } }]);
+    expect(h.sent('call:active')).toEqual([{ to: ['u1'], payload: { callId: 'c1', answeredAt: expect.any(String), agentProducerId: 'agent-producer-2', video: false } }]);
     expect(S.markEnded).not.toHaveBeenCalled();
   });
 
@@ -1368,7 +1494,7 @@ describe('CallSessionService: an agent lost, and back', () => {
   it("a page reloaded while WhatsApp answers gives the answer up (answer_undone): hung up, again once the accept is over, never answered with the closed page's voice", async () => {
     const h = harness();
     let accepted!: () => void;
-    h.media.answer.mockReturnValueOnce(new Promise((r) => (accepted = () => r({ connectedAfterMs: 900 }))));
+    h.media.answer.mockReturnValueOnce(new Promise((r) => (accepted = () => r({ connectedAfterMs: 900, video: false }))));
     await h.service.answer(as('u1'), 'c1');
     await agentReady(h);
     await vi.waitFor(() => expect(h.media.answer).toHaveBeenCalled());
