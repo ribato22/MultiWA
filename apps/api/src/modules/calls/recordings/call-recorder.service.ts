@@ -2,7 +2,7 @@
 // apps/api/src/modules/calls/recordings/call-recorder.service.ts
 //
 // A call on a profile with recording on is recorded in the profile's WhatsApp Web page (left: the caller, right: what
-// the caller hears) from before the announcement, so the file itself shows the caller heard it. Only then is the agent
+// the caller hears; a call answered with video, with its pictures too) from before the announcement, so the file itself shows the caller heard it. Only then is the agent
 // connected. The chunks go to a file in the store's tmpDir as they come, next to a state file a crash leaves behind.
 // When the call ends, the recording gets its length written in, is stored (four tries), gets its call_recordings row,
 // and call.recording.ready goes out.
@@ -47,6 +47,8 @@ const announceMs = (durationSec: number) => Math.min(ANNOUNCEMENT_LIMIT_MS, dura
 const STOP_MS = 10_000; // the last chunk comes with the stop, and the agent's Hang up waits for it
 // The waits between an upload's four tries: well inside the hour the orphan sweep leaves a new file alone.
 const RETRY_AFTER_MS = [2_000, 8_000, 30_000];
+/** What a recording is stored as: a video call's has its pictures. */
+const typeOf = (video: boolean | undefined) => (video ? 'video/webm' : 'audio/webm');
 
 /** What a call on a profile is recorded with; null: it is not recorded. */
 export interface RecordingPlan {
@@ -67,6 +69,8 @@ export interface RecordedCall {
   live: () => boolean;
   /** Just before the announcement plays, with its length: the agent hears the caller meanwhile, not the announcement. */
   onAnnouncing: (durationSec: number) => void;
+  /** Answered with video: recorded with its pictures, and stored as video/webm. */
+  video?: boolean;
 }
 
 /** What keeping a recording needs of its call. */
@@ -74,6 +78,7 @@ interface CallFacts {
   profileId: string;
   organizationId: string;
   startedAt: Date;
+  video?: boolean;
 }
 
 interface Run {
@@ -205,7 +210,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
     try {
       // The state first: a recording file is never without one, whatever stops this process. Not through save, which
       // only logs: a file without its state goes unnoticed, and is discarded after a crash.
-      await writeState(this.store.tmpDir, call.callId, { announced: false, stopped: false });
+      await writeState(this.store.tmpDir, call.callId, { announced: false, stopped: false, ...(call.video ? { video: true } : {}) });
       run.out = createWriteStream(tmpFiles(this.store.tmpDir, call.callId).recording, { flags: 'a', mode: 0o600 });
       run.out.on('error', (e) => {
         run.broken = true;
@@ -214,7 +219,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
       await once(run.out, 'open'); // a file that cannot be opened fails here, before the recorder starts
       if (!call.live()) return await this.drop(run, null);
       run.recording = true;
-      await withTimeout(call.media.startRecording(call.waCallId, (chunk) => this.chunk(run, chunk)), START_MS, 'the recorder did not start in time');
+      await withTimeout(call.media.startRecording(call.waCallId, (chunk) => this.chunk(run, chunk), { video: call.video === true }), START_MS, 'the recorder did not start in time');
       run.startedAt = performance.now();
       failure = 'announcement_failed';
       if (!call.live()) return await this.drop(run, null);
@@ -287,7 +292,9 @@ export class CallRecorderService implements OnApplicationBootstrap {
   private save(run: Run): Promise<void> {
     run.saving = run.saving
       .then(() =>
-        writeState(this.store.tmpDir, run.call.callId, { announced: run.announced, stopped: run.stopped && !run.broken, announcedAtMs: run.announcedAtMs }),
+        writeState(this.store.tmpDir, run.call.callId, {
+          announced: run.announced, stopped: run.stopped && !run.broken, announcedAtMs: run.announcedAtMs, ...(run.call.video ? { video: true } : {}),
+        }),
       )
       .catch((e) => this.logger.warn(`Call ${clean(run.call.callId)}: its recording's state was not written: ${message(e)}`));
     return run.saving;
@@ -382,7 +389,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
       this.logger.warn(`An unfinished recording of call ${clean(callId)} is kept on this server: the recordings storage was not last found private`);
       return 'kept';
     }
-    return this.keep(callId, { profileId: call.profileId, organizationId, startedAt: call.startedAt }, !state.stopped, [], state.announcedAtMs);
+    return this.keep(callId, { profileId: call.profileId, organizationId, startedAt: call.startedAt, video: state.video }, !state.stopped, [], state.announcedAtMs);
   }
 
   /**
@@ -418,7 +425,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
         this.logger.warn(`The recording of call ${clean(callId)} is discarded: its file ends before its announcement did`);
         return await this.filesGone(callId, 'discarded');
       }
-      const put = await this.put(key, files.final, waits);
+      const put = await this.put(key, files.final, waits, typeOf(call.video));
       if (put === 'public') return keptHere();
       if (put === 'failed') {
         this.counter({ kind: 'upload', result: 'failed' });
@@ -431,7 +438,7 @@ export class CallRecorderService implements OnApplicationBootstrap {
         row = await prisma.callRecording.create({
           data: {
             callId, profileId: call.profileId, storageType: this.store.type, storageLocation: this.store.location, storageKey: key,
-            mimeType: 'audio/webm', bytes: webm.bytes, durationSec: Math.round(webm.durationMs / 1000), channels: 2, announcementPlayed: true, partial,
+            mimeType: typeOf(call.video), bytes: webm.bytes, durationSec: Math.round(webm.durationMs / 1000), channels: 2, announcementPlayed: true, partial,
           },
         });
       } catch (e) {
@@ -470,12 +477,12 @@ export class CallRecorderService implements OnApplicationBootstrap {
   }
 
   /** 'public': a privacy check found the storage readable without a login before a try, so it was not made. */
-  private async put(key: string, path: string, waits: number[]): Promise<'stored' | 'failed' | 'public'> {
+  private async put(key: string, path: string, waits: number[], mimeType: string): Promise<'stored' | 'failed' | 'public'> {
     for (let i = 0; ; i++) {
       // The tries span about 40 s, and a check may finish meanwhile (recording turned on for any profile, the nightly job).
       if (this.storagePublic()) return 'public';
       try {
-        await this.store.putFile(key, path, 'audio/webm');
+        await this.store.putFile(key, path, mimeType);
         return 'stored';
       } catch (e) {
         this.logger.warn(`A call recording was not stored (try ${i + 1} of ${waits.length + 1}): ${message(e)}`);

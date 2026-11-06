@@ -46,7 +46,7 @@ function fakeMedia() {
   let sink: ((chunk: Buffer) => void) | null = null;
   let sent = 0;
   return {
-    startRecording: vi.fn(async (_id: string, onChunk: (chunk: Buffer) => void) => {
+    startRecording: vi.fn(async (_id: string, onChunk: (chunk: Buffer) => void, _opts?: { video?: boolean }) => {
       sink = onChunk;
     }),
     stopRecording: vi.fn(async (_id: string) => {
@@ -388,6 +388,25 @@ describe('CallRecorderService.end', () => {
     expect(h.counted()).toEqual([{ kind: 'upload', result: 'ok' }]);
   });
 
+  it('a video call is recorded with its pictures, and stored as video/webm', async () => {
+    const h = harness();
+    await h.recorder.begin({ ...h.call, video: true });
+    expect(h.media.startRecording.mock.calls[0][2]).toEqual({ video: true });
+    expect(await readState(h.store.tmpDir, CALL)).toMatchObject({ video: true });
+    const put = vi.spyOn(h.store, 'putFile');
+    await h.recorder.end(CALL);
+    await h.idle();
+    expect(put.mock.calls[0][2]).toBe('video/webm');
+    expect(db.callRecording.create.mock.calls[0][0].data).toMatchObject({ mimeType: 'video/webm', channels: 2 });
+  });
+
+  it('a voice call asks for no picture, and is stored as audio/webm', async () => {
+    const h = harness();
+    await h.recorder.begin(h.call);
+    expect(h.media.startRecording.mock.calls[0][2]).toEqual({ video: false });
+    expect(await readState(h.store.tmpDir, CALL)).not.toHaveProperty('video');
+  });
+
   it('a stop that fails keeps what was recorded, as partial', async () => {
     const h = harness();
     await h.recorder.begin(h.call);
@@ -623,6 +642,17 @@ describe('CallRecorderService.finishLeftovers', () => {
     expect(put).toHaveBeenCalledTimes(1);
     expect(db.callRecording.create.mock.calls[0][0].data).toMatchObject({ callId: CALL, storageKey: KEY, partial: true, announcementPlayed: true });
     expect(h.files()).toEqual([]);
+  });
+
+  it('a video recording a crash left is stored as video/webm', async () => {
+    const h = harness();
+    checkedPrivate(h);
+    await leftover(h, CALL, { announced: true, stopped: false, video: true });
+    db.call.findUnique.mockResolvedValue(row());
+    const put = vi.spyOn(h.store, 'putFile');
+    expect(await h.recorder.finishLeftovers(NOW)).toEqual({ stored: 1, kept: 0, discarded: 0 });
+    expect(put.mock.calls[0][2]).toBe('video/webm');
+    expect(db.callRecording.create.mock.calls[0][0].data).toMatchObject({ mimeType: 'video/webm' });
   });
 
   it('a stopped one that could not be stored before is stored now, and not as partial', async () => {
