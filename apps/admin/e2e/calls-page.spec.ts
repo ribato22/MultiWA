@@ -66,6 +66,44 @@ test('an answered call shows who answered, how fast, the talk time and its recor
   await expectAccessible(page, 'ul[aria-label="Calls"]');
 });
 
+test('a recording with video plays in a video player, named as the sound one is', async ({ page, backend }) => {
+  listing(backend, () => ({ ...ANSWERED, isVideo: true, recording: { ...REC, partial: false, mimeType: 'video/webm' } }));
+  await openAnswered(page);
+  // A second of video, recorded in the page the way the server's WhatsApp Web page records a call.
+  const webm = await page.evaluate(async () => {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 48;
+    const g = c.getContext('2d')!;
+    const paint = setInterval(() => {
+      g.fillStyle = '#c82828';
+      g.fillRect(0, 0, 64, 48);
+    }, 50);
+    const mr = new MediaRecorder(c.captureStream(15), { mimeType: 'video/webm;codecs=vp8' });
+    const parts: Blob[] = [];
+    mr.ondataavailable = (e) => parts.push(e.data);
+    const stopped = new Promise((resolve) => (mr.onstop = resolve));
+    mr.start();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    mr.stop();
+    await stopped;
+    clearInterval(paint);
+    const bytes = new Uint8Array(await new Blob(parts).arrayBuffer());
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return btoa(bin);
+  });
+  backend.route(on('GET', '/calls/call-9/recording', { body: Buffer.from(webm, 'base64'), headers: { 'content-type': 'video/webm' } }));
+  const row = rowOf(page);
+  await expect(row).toContainText('Video recording 3:10');
+  await row.getByRole('button', { name: 'Play the recording of the call from Pak Joko' }).click();
+  const player = row.getByLabel('Recording of the call from Pak Joko', { exact: true });
+  await expect(player).toHaveAttribute('src', /^blob:/);
+  expect(await player.evaluate((el) => el.tagName)).toBe('VIDEO');
+  await expect.poll(() => player.evaluate((v: HTMLVideoElement) => v.videoWidth)).toBe(64);
+  await expectAccessible(page, 'ul[aria-label="Calls"]');
+});
+
 test('an answered call is done, so the Open tab leaves it out: the Answered tab lists it, as the server filters it', async ({ page, backend }) => {
   listing(backend, () => ANSWERED);
   await page.goto('/dashboard/calls');

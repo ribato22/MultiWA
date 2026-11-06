@@ -502,3 +502,28 @@ test.describe('a viewer', () => {
     await expect(section(page)).toHaveCount(0);
   });
 });
+
+test('Settings → Calls tests the camera: a live preview, and stopping it lets the camera go', async ({ page }) => {
+  await page.goto('/dashboard/settings?tab=calls');
+  const s = section(page);
+  await s.getByRole('button', { name: 'Test the camera' }).click();
+  const preview = s.getByLabel('Camera preview');
+  await expect.poll(() => preview.evaluate((v: HTMLVideoElement) => v.videoWidth), { timeout: 8000 }).toBeGreaterThan(0); // the fake camera
+  await preview.evaluate((v: HTMLVideoElement) => { (window as any).__camera = (v.srcObject as MediaStream).getVideoTracks()[0]; });
+  await s.getByRole('button', { name: 'Stop the camera test' }).click();
+  await expect(preview).toHaveCount(0);
+  expect(await page.evaluate(() => (window as any).__camera.readyState)).toBe('ended');
+  await expectAccessible(page, '[aria-label="Calls in this browser"]');
+});
+
+test('a camera the browser refuses says why, and the test can be tried again', async ({ page }) => {
+  await page.addInitScript(() => {
+    const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = (c) => (c?.video ? Promise.reject(new DOMException('denied', 'NotAllowedError')) : gum(c));
+  });
+  await page.goto('/dashboard/settings?tab=calls');
+  const s = section(page);
+  await s.getByRole('button', { name: 'Test the camera' }).click();
+  await expect(s.getByRole('alert')).toHaveText('Allow the camera for this site to turn it on');
+  await expect(s.getByRole('button', { name: 'Test the camera' })).toBeVisible();
+});

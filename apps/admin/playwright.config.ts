@@ -17,8 +17,8 @@ export default defineConfig({
     baseURL: 'http://localhost:3901',
     channel: 'chrome', // the installed Google Chrome: no browser download
     viewport: { width: 1280, height: 800 },
-    permissions: ['microphone'],
-    // A fake microphone (it beeps) without a prompt, and sound without a click (the ringer, the caller's voice).
+    permissions: ['microphone', 'camera'],
+    // A fake microphone (it beeps) and camera without a prompt, and sound without a click (the ringer, the caller's voice).
     launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] },
     trace: 'retain-on-failure',
   },

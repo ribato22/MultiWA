@@ -2,13 +2,13 @@
 // Settings → Calls: this browser's microphone and speaker, checked before a call, and how a call gets attention here
 // (the ringer, desktop alerts). The choices belong to this browser, per user.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Bell, Mic, Volume2 } from 'lucide-react';
+import { Bell, Mic, Video, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { currentUser } from '@/lib/current-user';
-import { micProblem } from '@/lib/calls';
+import { cameraProblem, micProblem } from '@/lib/calls';
 import { playTestTone } from '@/lib/call-console/attention';
 import { prefs } from '@/lib/call-console/prefs';
 
@@ -18,6 +18,59 @@ const PERMISSION_TEXT = {
   prompt: 'Not asked yet: test the microphone to allow it',
   unknown: 'Not known yet: test the microphone to check it',
 } as const;
+
+/** The camera a video call turns on here: a preview, to check it before a call, or why it does not open. */
+function CameraCheck() {
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const view = useRef<HTMLVideoElement>(null);
+  // Whether this check is still on the page: a camera that opens once the agent left is closed at once.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  // The preview's camera goes with the preview: stopped, or the page left.
+  useEffect(() => {
+    if (view.current) view.current.srcObject = stream;
+    return () => stream?.getTracks().forEach((t) => t.stop());
+  }, [stream]);
+  const test = async () => {
+    if (stream) return setStream(null);
+    if (starting) return;
+    setStarting(true);
+    setProblem(null);
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
+      if (!alive.current) return s.getTracks().forEach((t) => t.stop());
+      setStream(s);
+    } catch (e) {
+      setProblem(cameraProblem(e));
+    } finally {
+      setStarting(false);
+    }
+  };
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="flex items-center gap-2 text-sm text-foreground">
+          <Video className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          Camera
+        </p>
+        <p className="text-xs text-muted-foreground">A video call is answered with your camera off: you turn it on during the call.</p>
+      </div>
+      <Button variant="outline" aria-disabled={starting} onClick={test}>{stream ? 'Stop the camera test' : 'Test the camera'}</Button>
+      {/* Mirrored, as the call's own preview shows it. */}
+      {stream && (
+        <video ref={view} autoPlay playsInline muted aria-label="Camera preview" className="aspect-[4/3] w-72 -scale-x-100 rounded-lg border border-border bg-black object-cover" />
+      )}
+      {problem && <p role="alert" className="text-sm text-amber-300">{problem}</p>}
+    </div>
+  );
+}
 
 export function DeviceCheck() {
   const [me] = useState(currentUser);
@@ -187,6 +240,8 @@ export function DeviceCheck() {
           Calls in the dashboard need this page on HTTPS: ask your administrator. Until then the microphone and desktop alerts can’t be checked here.
         </p>
       )}
+
+      {secure && <CameraCheck />}
 
       <div className="space-y-2">
         <p className="flex items-center gap-2 text-sm text-foreground">
