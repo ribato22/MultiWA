@@ -55,11 +55,11 @@ export function installFakeWhatsApp() {
     endCalls: [], gumStream: null, level: () => 0, hangAccept: false, connectAfterMs: 300, connectTimer: null, accepts: 0,
     hangStack: false, releaseStack: null, stackBusyMs: 0, autoPlayback: true, playbackVia: 'destination', playbacks: [],
     // Video: `video` says the ringing call is a video call (ring(id, true)). requireBundle loads the video call UI (or
-    // fails, `bundleFails`, or never answers, `bundleHangs`); only with it loaded does an answer draw the caller, in
-    // `callerColour`, unless `drawsCaller` is off. `acceptArgs` and `videoMutes` record those calls; `camStream` is the
-    // camera the answer took.
-    video: false, bundleLoaded: false, bundleFails: false, bundleHangs: false, drawsCaller: true, callerColour: [200, 40, 40],
-    callerCanvas: null, callerTimer: null, camStream: null, acceptArgs: [], videoMutes: [],
+    // fails, `bundleFails`, or hangs, `bundleHangs`, until the test calls `releaseBundle`); only with it loaded does an
+    // answer draw the caller, in `callerColour`, unless `drawsCaller` is off. `acceptArgs` and `videoMutes` record those
+    // calls; `camStream` is the camera the answer took.
+    video: false, bundleLoaded: false, bundleFails: false, bundleHangs: false, releaseBundle: null, drawsCaller: true,
+    callerColour: [200, 40, 40], callerCanvas: null, callerTimer: null, camStream: null, acceptArgs: [], videoMutes: [],
   });
   const call: any = { id: 'CALL1', state: 3, getState() { return this.state; } };
   const CC: any = { activeCall: call };
@@ -172,7 +172,8 @@ export function installFakeWhatsApp() {
     WAWebVoipGatingUtils: { isWebCallingUiEnabled: () => true },
     WAWebVoipUiVideoCallLoadable: {
       async requireBundle() {
-        if (fake.bundleHangs) return new Promise<void>(() => {});
+        // a bundle that never loads, until the test releases it (late)
+        if (fake.bundleHangs) await new Promise<void>((resolve) => { fake.releaseBundle = resolve; });
         if (fake.bundleFails) throw new Error('ChunkLoadError: the video call bundle did not load');
         fake.bundleLoaded = true;
       },

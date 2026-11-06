@@ -1173,6 +1173,21 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       }
     });
 
+    it('a call that ends while the video call UI loads is not accepted: the answer fails', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL1', true); f.bundleHangs = true; });
+        const answering = p.evaluate(answerActiveCall, 'CALL1', 5000, true).then(() => 'answered', (e: Error) => e.message);
+        expect(await until(() => p.evaluate(() => !!(window as any).__fakeWa.releaseBundle), 2000)).toBe(true); // it loads
+        // the caller hangs up meanwhile, and only then does the video call UI finish loading
+        await p.evaluate(() => { const w = window as any; w.require('WAWebCallCollection').activeCall = null; w.__fakeWa.releaseBundle(); });
+        expect(await answering).toBe('Call ended before it connected');
+        expect(await p.evaluate(() => (window as any).__fakeWa.accepts)).toBe(0);
+      } finally {
+        await p.close();
+      }
+    });
+
     it('the probe reports video apart from voice: without the video call UI or the camera mute, voice is still supported', async () => {
       const p = await openPage();
       try {
