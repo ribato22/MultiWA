@@ -268,31 +268,38 @@ export interface CallMediaHandle {
    * Swap "callerVideo" from black to WhatsApp Web's own drawing of the caller: the largest canvas of its call view,
    * waited for up to 5 s ("No caller video" after that, and "callerVideo" stays as it was: black unless an earlier
    * attach succeeded), and followed for the rest of the call when WhatsApp Web replaces it. Call it once a call
-   * answered with video is connected. Resolves with the canvas's size. "No video on this call" on a voice bridge.
+   * answered with video is connected. After "No caller video" WhatsApp Web may still draw the caller later: call it
+   * again, while the call lasts. Resolves with the canvas's size. "No video on this call" on a voice bridge.
    */
   attachCallerVideo(): Promise<{ width: number; height: number }>;
   /**
    * Draw the agent's video into the injected camera, the one WhatsApp Web sends: it is black until then, and again after
-   * disconnectAgentVideo(), which the caller of this API MUST call when the room closes the agent's video producer or the
-   * agent leaves (see there). One at a time: to connect another producer (the agent's camera produced anew, a rejoin),
+   * disconnectAgentVideo() (see there for when the caller of this API MUST call it). The agent has ONE video producer per
+   * join: the room has no operation that closes a producer, and refuses a second video produce from the same join. So
+   * the agent's browser turns its camera off and on with replaceTrack(null) and replaceTrack(track), and every camera-on
+   * connects that same producer again (see setCameraMuted). One at a time: to connect another producer (a rejoin's),
    * disconnectAgentVideo() first, or this rejects "Agent video already connected". A connect that fails undoes itself,
    * as connectAgent does. It does not unmute WhatsApp Web's camera: setCameraMuted(false) does.
    */
   connectAgentVideo(agentVideoProducerId: string): Promise<void>;
   /**
    * The injected camera goes black again, from its next frame, with nothing of WhatsApp Web involved. Does nothing when
-   * no agent video is connected. The caller of this API MUST call it when the room closes the agent's video producer or
-   * the agent leaves: the page cannot see a producer the room closed, so the agent's last frame would keep going to the
-   * caller. Rejects "No media bridge for this call" once the page has released the bridge: treat that as done.
+   * no agent video is connected. The caller of this API MUST call it together with the room's silenceAgent(), when the
+   * agent's link drops, when the room closes the agent's video producer, and before a rejoin connects a new one. The
+   * page is not told when the agent's video stops coming (paused, cut off, closed): the caller would see the agent's
+   * last frame, frozen, until the camera draws black after a second without a new one, and a new producer would be
+   * refused "Agent video already connected". Rejects "No media bridge for this call" once the page has released the
+   * bridge: treat that as done.
    */
   disconnectAgentVideo(): Promise<void>;
   /**
    * WhatsApp Web's own camera mute: muted, the caller gets no video from us; unmuted, the injected camera. Within 5 s
    * ("The camera did not switch in time"; a switch WhatsApp Web had already started may still land after that); "No
    * video on this call" on a voice bridge; "WhatsApp Web has no camera mute" when its voip stack lacks one.
-   * To turn the camera off, disconnectAgentVideo() first (the injected camera is black from its next frame, whatever
-   * WhatsApp Web's voip stack does), then setCameraMuted(true); to turn it on, connectAgentVideo(id), then
-   * setCameraMuted(false).
+   * Camera off: disconnectAgentVideo() first (the injected camera is black from its next frame, whatever WhatsApp Web's
+   * voip stack does), then setCameraMuted(true). Camera on: connectAgentVideo() with the agent's one video producer of
+   * this join, then setCameraMuted(false). When that unmute rejects, call disconnectAgentVideo(): the unmute may still
+   * land late inside WhatsApp Web, and the injected camera it then sends stays black.
    */
   setCameraMuted(muted: boolean): Promise<void>;
   /**

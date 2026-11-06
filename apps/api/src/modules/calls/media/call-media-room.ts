@@ -191,10 +191,13 @@ export class CallMediaRoom {
 
   /**
    * The agent reaches nobody from now on (its call is ending): its voice and its camera are paused at the worker, so
-   * neither the page nor a recording gets any more of them, whatever the agent's browser does. What it produces from now
-   * on starts paused (`produce`), also a produce that was already waiting in its chain or at the worker. The peer stays as it is:
-   * closing it would fail the browser's transports, and the browser would join again. Never rejects; not awaited, the
-   * pauses are already on their way to the worker.
+   * neither the page nor a recording gets any NEW sound or frame of them, whatever the agent's browser does. The page
+   * still holds the agent's last frame: disconnect its camera from the agent's video too
+   * (CallMediaHandle.disconnectAgentVideo()), or the caller is shown that frame frozen until the page notices, a second
+   * later, that no new one comes. What the agent produces from now on starts paused (`produce`), also a produce that was
+   * already waiting in its chain or at the worker. The peer stays as it is: closing it would fail the browser's
+   * transports, and the browser would join again. Never rejects; not awaited, the pauses are already on their way to the
+   * worker.
    */
   async silenceAgent(): Promise<void> {
     if (this.isClosed) return;
