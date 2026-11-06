@@ -2,8 +2,8 @@
 import { test, expect } from '@playwright/test';
 import { PhoneCall, PhoneMissed } from 'lucide-react';
 import {
-  OUTCOME_LABEL, answeredFacts, endedText, formatDuration, fromPayload, knownOutcome, reasonTexts, recordingDeletedText, ringingCallerLabel,
-  type CallUpdatePayload,
+  CAMERA_TEXT, OUTCOME_LABEL, VIDEO_TEXT, answeredFacts, cameraProblem, endedText, formatDuration, fromPayload, knownOutcome, reasonTexts, recordingDeletedText,
+  ringingCallerLabel, type CallUpdatePayload,
 } from '@/lib/calls';
 import type { CallOutcome, CallRecord } from '@/lib/api';
 import { outcomeIcon } from '@/components/calls/outcome-icon';
@@ -87,4 +87,17 @@ test('an answered row says who, how fast and how long', () => {
   // An answer stamped before the start (clock skew) took no time.
   expect(answeredFacts({ answeredBy: null, startedAt: '2026-11-01T03:00:06.000Z', answeredAt: '2026-11-01T03:00:00.000Z', talkSeconds: null }))
     .toBe('Answered by an agent · 0 s to answer');
+});
+
+test('the camera says why it did not open, and why it did not switch; a video call says how it is answered', () => {
+  const err = (name: string) => Object.assign(new Error(name), { name });
+  expect(cameraProblem(err('NotAllowedError'))).toBe('Allow the camera for this site to turn it on');
+  expect(cameraProblem(err('NotFoundError'))).toBe('No camera found: plug one in and try again');
+  expect(cameraProblem(err('NotReadableError'))).toBe('The camera is in use by another app');
+  expect(cameraProblem(new Error('boom'))).toBe('The camera could not be opened');
+  for (const reason of ['no_video', 'no_video_producer', 'camera_failed', 'not_in_call', 'timeout', 'unavailable', 'error', 'off_failed']) {
+    expect(CAMERA_TEXT[reason], reason).toEqual(expect.any(String));
+  }
+  for (const video of ['available', 'server_busy', 'unsupported', 'disabled', 'unknown']) expect(VIDEO_TEXT[video], video).toEqual(expect.any(String));
+  expect(VIDEO_TEXT.available).toBe('Video call: your camera starts off');
 });
