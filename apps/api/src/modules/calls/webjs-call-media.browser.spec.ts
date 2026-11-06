@@ -1789,7 +1789,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         expect(await handle.attachCallerVideo()).toEqual({ width: 382, height: 344 });
         expect(await until(async () => (await agentSeesInPage(agentPage, CALLER_RGB)) < NEAR, 10_000)).toBe(true);
         // a larger canvas that turns up mid-call (a picture opened in a chat, say) while the caller's is still there is not
-        // the caller either: over 2.5 s, more than two of the poll's looks, the agent sees only the caller
+        // the caller either: over 2.5 s, at least two of the poll's looks, the agent sees only the caller
         await p.evaluate(() => {
           const c = document.createElement('canvas');
           c.width = 640;
@@ -1807,6 +1807,38 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         expect(farthest).toBeLessThan(NEAR);
         await p.evaluate(() => { const pic = (window as any).__picture; clearInterval(pic.timer); pic.c.remove(); });
         // WhatsApp Web replaces its canvas mid-call: within the poll's second, the agent sees the new one
+        await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
+        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000)).toBe(true);
+      });
+    });
+
+    it('a call view that goes for a moment and comes back on a new canvas: the agent follows it, never to a canvas that was there at the attach', async () => {
+      await withBridge({ video: true }, async ({ p, media, handle }) => {
+        // a canvas of the page's own, large enough for a video but smaller than the caller's (a picture in the chat, say),
+        // there before the attach and drawn all along
+        await p.evaluate(() => {
+          const c = document.createElement('canvas');
+          c.width = 320;
+          c.height = 240;
+          const g = c.getContext('2d')!;
+          g.fillStyle = 'rgb(200,200,200)';
+          setInterval(() => g.fillRect(0, 0, 320, 240), 66);
+          document.body.appendChild(c);
+        });
+        await agentPage.evaluate(seeCallerVideoInPage, handle.callerVideoProducerId);
+        await media.answer('CALL1', { video: true });
+        expect(await handle.attachCallerVideo()).toEqual({ width: 382, height: 344 });
+        expect(await until(async () => (await agentSeesInPage(agentPage, CALLER_RGB)) < NEAR, 10_000)).toBe(true);
+        // the call view goes: over 2.5 s, at least two of the poll's looks, the picture is the only canvas left, and the
+        // agent never sees it
+        await p.evaluate(() => (window as any).__fakeWa.callerCanvas.remove());
+        let nearest = 255;
+        for (const end = Date.now() + 2_500; Date.now() < end; ) {
+          nearest = Math.min(nearest, await agentSeesInPage(agentPage, [200, 200, 200]));
+          await sleep(100);
+        }
+        expect(nearest).toBeGreaterThanOrEqual(NEAR);
+        // it comes back on a new canvas: the agent sees the caller there
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
         expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000)).toBe(true);
       });

@@ -33,6 +33,11 @@ export interface MwBridge {
   /** The canvas of WhatsApp Web's that "callerVideo" carries a capture of, once attached. */
   callerCanvas: HTMLCanvasElement | null;
   /**
+   * The canvases that were in the document beside `callerCanvas` at the first attach: never the caller's
+   * (attachCallerVideoInPage).
+   */
+  otherCanvases: WeakSet<HTMLCanvasElement> | null;
+  /**
    * What keeps "callerVideo" sending, one timer for both: the placeholder's redraw until the attach's first capture
    * replaced it, then the poll that moves it to WhatsApp Web's new canvas once `callerCanvas` left the document
    * (attachCallerVideoInPage).
@@ -105,6 +110,7 @@ export async function startBridgeInPage(
     agent: null,
     callerVideo: null,
     callerCanvas: null,
+    otherCanvases: null,
     callerVideoPoll: null,
     agentVideo: null,
     teardown() {
@@ -214,7 +220,8 @@ export async function attachCallerInPage(callId: string): Promise<{ via: 'elemen
  * never in the document, and one narrower than 160 or lower than 120 (an avatar, a sticker, a strip) is no video,
  * whatever its area. It waits up to 5 s for one ("No caller video"). Once attached, the capture stays on that canvas
  * while it is in the document; WhatsApp Web may replace its canvas mid-call, so once it left, the capture moves to the
- * largest one, looked for every second while the bridge lasts. Refused on a voice bridge and when the call is not
+ * largest one, looked for every second while the bridge lasts. The canvases beside it at the first attach are never the
+ * caller's: no later look, nor a later attach, takes one. Refused on a voice bridge and when the call is not
  * WhatsApp's active call, also when it ended during the wait. A failure leaves the call's audio as it is, and
  * "callerVideo" as it was (black unless an earlier attach succeeded). After "No caller video" WhatsApp Web may still
  * draw the caller later, so the API's caller may attach again while the call lasts. Resolves with the size of the canvas.
@@ -232,6 +239,7 @@ export async function attachCallerVideoInPage(callId: string): Promise<{ width: 
   const largest = (): HTMLCanvasElement | null => {
     let best: HTMLCanvasElement | null = null;
     for (const c of Array.from(document.querySelectorAll('canvas'))) {
+      if (b.otherCanvases?.has(c)) continue;
       if (c.width >= 160 && c.height >= 120 && (!best || c.width * c.height > best.width * best.height)) best = c;
     }
     return best;
@@ -246,11 +254,16 @@ export async function attachCallerVideoInPage(callId: string): Promise<{ width: 
     await b.callerVideo.replaceTrack({ track: c.captureStream(15).getVideoTracks()[0] });
     b.callerCanvas = c;
   };
+  // Taken at the pick, before the capture's wait: a canvas WhatsApp Web puts in meanwhile may be the caller's next one.
+  const others = new WeakSet(Array.from(document.querySelectorAll('canvas')).filter((c) => c !== canvas));
   await capture(canvas);
   if (w.__mwBridge !== b) throw new Error('Media bridge closed'); // torn down meanwhile: no poll may outlive the bridge
+  // The first attach's only: a later one that took a larger picture for the caller would rule the caller's canvas out.
+  b.otherCanvases ??= others;
   clearInterval(b.callerVideoPoll); // the placeholder's redraw, or an earlier attach's poll
   // Only a canvas that left the document is replaced: a larger one that turns up beside it mid-call (a picture opened in a
-  // chat, say) is not the caller.
+  // chat, say) is not the caller. Nor is one that was there beside it at the first attach: while the call view is gone for
+  // a moment, that one would be the largest left, and then kept.
   b.callerVideoPoll = setInterval(() => {
     if (b.callerCanvas?.isConnected) return;
     const now = largest();
