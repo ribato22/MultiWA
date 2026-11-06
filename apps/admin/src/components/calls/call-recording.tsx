@@ -15,9 +15,10 @@ import { useToast } from '@/hooks/use-toast';
 const mb = (bytes: number) => (bytes < 100_000 ? '< 0.1 MB' : `${(bytes / 1_000_000).toFixed(1)} MB`);
 // The recording that plays on the page: playing another pauses it. Only these players, never the call console's own
 // <audio> (the caller's voice).
-let playing: HTMLAudioElement | null = null;
-// A browser that cannot play WebM/Opus (an older Safari) can still download it. Asked once, not by every row's render.
-const playable = typeof document !== 'undefined' && document.createElement('audio').canPlayType('audio/webm; codecs="opus"') !== '';
+let playing: HTMLMediaElement | null = null;
+// A browser that cannot play WebM (an older Safari) can still download it. Asked once per kind, not by every row's render.
+const canPlay = (tag: 'audio' | 'video', type: string) => typeof document !== 'undefined' && document.createElement(tag).canPlayType(type) !== '';
+const PLAYABLE = { audio: canPlay('audio', 'audio/webm; codecs="opus"'), video: canPlay('video', 'video/webm; codecs="vp8, opus"') };
 
 export function CallRecording({ call, canManage, onChange }: { call: CallRecord; canManage: boolean; onChange: (row: CallRecord) => void }) {
   const { toast } = useToast();
@@ -26,13 +27,16 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
   // others wait as aria-disabled, not disabled, and ignore a press: the one pressed keeps the focus.
   const [busy, setBusy] = useState<'play' | 'download' | 'delete' | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const player = useRef<HTMLAudioElement>(null);
+  const player = useRef<HTMLMediaElement | null>(null);
   const deletedText = useRef<HTMLSpanElement>(null);
   // Set when this row's own action deleted the recording: its buttons go, and the focus must not fall to the page.
   const focusDeleted = useRef(false);
   // Aborted when the row goes (another tab, profile or page): a file still loading is given up, not kept for nothing.
   const gone = useRef<AbortSignal>();
   const r = call.recording;
+  // A call answered with video was recorded with its pictures (an older API says nothing: sound).
+  const video = !!r?.mimeType?.startsWith('video/');
+  const playable = PLAYABLE[video ? 'video' : 'audio'];
   useEffect(() => {
     const leaving = new AbortController();
     gone.current = leaving.signal;
@@ -127,28 +131,43 @@ export function CallRecording({ call, canManage, onChange }: { call: CallRecord;
     show(row);
   };
 
+  const onPlay = (e: React.SyntheticEvent<HTMLMediaElement>) => {
+    if (playing && playing !== e.currentTarget) playing.pause();
+    playing = e.currentTarget;
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Badge variant="secondary" className="gap-1">
         <CircleDot className="h-3 w-3" aria-hidden="true" />
-        Recording {formatDuration(r.durationSec)}
+        {video ? 'Video recording' : 'Recording'} {formatDuration(r.durationSec)}
       </Badge>
       {r.partial && <Badge variant="outline">Partial: the server stopped before the call ended</Badge>}
       {canManage && (
         <>
           {url ? (
-            <audio
-              ref={player}
-              controls
-              autoPlay
-              src={url}
-              onPlay={(e) => {
-                if (playing && playing !== e.currentTarget) playing.pause();
-                playing = e.currentTarget;
-              }}
-              aria-label={`Recording of the call from ${callerLabel(call)}`}
-              className="h-8 max-w-[16rem]"
-            />
+            video ? (
+              <video
+                ref={(el) => void (player.current = el)}
+                controls
+                autoPlay
+                playsInline
+                src={url}
+                onPlay={onPlay}
+                aria-label={`Recording of the call from ${callerLabel(call)}`}
+                className="aspect-[4/3] w-full max-w-[22rem] rounded-md bg-black"
+              />
+            ) : (
+              <audio
+                ref={(el) => void (player.current = el)}
+                controls
+                autoPlay
+                src={url}
+                onPlay={onPlay}
+                aria-label={`Recording of the call from ${callerLabel(call)}`}
+                className="h-8 max-w-[16rem]"
+              />
+            )
           ) : playable ? (
             // Named with the call, as every row has one; while it loads, its text says so.
             <Button

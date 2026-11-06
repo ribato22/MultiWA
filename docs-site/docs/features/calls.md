@@ -13,7 +13,6 @@ Operators: start at [Server setup](#server-setup). Owners and admins: [Turning i
 
 It does not cover:
 
-- video: a video call is answered as a voice call, and the caller sees no video;
 - group calls: they ring with **Answer on the phone**;
 - outgoing calls;
 - profiles on the Baileys engine: answering needs whatsapp-web.js;
@@ -58,7 +57,7 @@ You need:
    ```
 
 3. **Open the firewall**: the agents' subnet must reach `CALLS_MEDIA_ANNOUNCED_ADDRESS` on `CALLS_MEDIA_PORT`, over UDP (preferred) and TCP (the fallback).
-4. **Serve the admin over HTTPS.** On plain HTTP calls still ring, but the banner says **Answer on the phone** and *Calls in the dashboard need HTTPS*. The admin sends `Permissions-Policy: microphone=(self)`. A reverse proxy in front of it must not send a `Permissions-Policy` of its own that leaves the microphone out (`microphone=()`).
+4. **Serve the admin over HTTPS.** On plain HTTP calls still ring, but the banner says **Answer on the phone** and *Calls in the dashboard need HTTPS*. The admin sends `Permissions-Policy: camera=(self), microphone=(self)`. A reverse proxy in front of it must not send a `Permissions-Policy` of its own that leaves them out (`microphone=()`, or `camera=()` for the camera of a video call).
 5. **Check the reverse proxies.** The dashboard opens its realtime connection on its own address, so the proxy there must forward `/socket.io/` to the API, with WebSocket upgrades: with the admin on a subdomain of its own, that is the admin's proxy. A proxy the announcement upload goes through must accept a request body of up to 3 MB (a file of at most 2 MB, plus the multipart framing), with a read timeout of 120 seconds. See [Docker Deployment](<../operations/deployment-docker.md#calls-answered-in-the-dashboard>).
 6. **Restart, then check.** `GET /api/v1/health` shows `"callsMedia":{"enabled":true,"worker":"up"}`. Each profile's readiness shows in its **Calls** section (below), and in `GET /api/v1/calls/media/status`.
 
@@ -143,6 +142,7 @@ The organization's owners, admins and members answer calls. Each of them who is 
 Before your first call, open Settings → Calls:
 
 - **Microphone**: whether the browser allows it. Choose one, and **Test the microphone** shows its level.
+- **Camera**: **Test the camera** shows what it sees, mirrored. A video call starts with your camera off.
 - **Speaker**: **Play a test sound**.
 - **Ring for incoming calls**: off, a call still shows its banner, without a sound.
 - **Desktop alerts**: **Turn on desktop alerts** for calls that ring while the tab is in the background.
@@ -157,7 +157,8 @@ A banner shows at the top right of every page: the profile, the caller (the chat
 
 - **Answer** takes the call. The focus moves to Answer when a call rings, unless you are typing in a field.
 - **Dismiss**, or Escape, stops the ringing for you only: the call keeps ringing for the others.
-- **Answer on the phone**, with the reason, shows when the call cannot be answered here: a video or group call, a profile that is not ready, a dashboard on plain HTTP, or a browser that cannot answer calls.
+- **Answer on the phone**, with the reason, shows when the call cannot be answered here: a group call, a profile that is not ready, a dashboard on plain HTTP, or a browser that cannot answer calls.
+- **A video call** says how it is answered: *Video call: your camera starts off*, or by voice, and why (the server is busy with other video calls, the line can't take video here, or video is off on the server). See [Video calls](#video-calls).
 - **Answered by Jane** shows when someone else took the call; the banner then fades.
 
 While a call rings:
@@ -180,6 +181,16 @@ The first time, the browser asks to use the microphone: allow it. The bar in the
 - **Hear the caller** shows when the browser holds the caller's audio back until you click, as after a reload: click it to hear the caller.
 
 Meanwhile the header shows **On a call**, and no other call rings for you.
+
+### Video calls
+
+A one-to-one video call is answered with video while the server has room for one (`CALLS_MAX_VIDEO_CALLS`, 2 by default, for the whole server) and the profile's WhatsApp Web can take video. Otherwise it is answered by voice, and its banner says why.
+
+- **The video tile**, at the bottom right of every page, shows the caller. **Hide video** folds it to its title bar while the call goes on; **Show video** brings the picture back.
+- **Your camera starts off.** **Camera** in the bar turns it on: the first time, the browser asks to use it. Your own picture then shows in a corner of the tile, mirrored. **Camera** again turns it off: the caller sees black at once, and your camera's light goes off.
+- **A camera that does not go on** stays off, and the bar says why: the browser blocks it, it is in use by another app, or WhatsApp did not take it.
+- **A reload** with the camera on turns it on again by itself.
+- **On a recorded call** the recording keeps both pictures: the caller full frame, and you in a corner while your camera is on. The Calls page plays it in a video player.
 
 ### Availability
 
@@ -244,7 +255,13 @@ Other refusals:
 
 A group call rings with **Answer on the phone** and its `unavailableReason`, `group_call` (Group calls can’t be answered in the dashboard). Answer it on the phone.
 
-A video call rings like a voice call, and its banner says **Video call: you answer by voice, the caller sees no video**.
+A video call that is answered by voice says why on its banner:
+
+| Banner | Cause | Fix |
+|---|---|---|
+| *the server is busy with other video calls* | `CALLS_MAX_VIDEO_CALLS` video calls run already | Wait, or raise `CALLS_MAX_VIDEO_CALLS` on a server with room for it: each video call costs about 1 GB and a CPU core. |
+| *this line can’t take video here* | The profile's WhatsApp Web lacks its video call UI or camera mute (WhatsApp changed it) | Answer by voice; report it with the WhatsApp Web version. |
+| *video is turned off on this server* | `CALLS_MAX_VIDEO_CALLS=0` | Set it above 0 to answer video calls with video. |
 
 Other problems:
 
@@ -256,6 +273,8 @@ Other problems:
 | No call rings in the dashboard | The agent is unavailable or a viewer, or has no dashboard tab open; the profile's **Answer calls in the dashboard** is off; or the proxy on the dashboard's address does not forward `/socket.io/` to the API | Check the header's switch and the profile's Calls section; have the dashboard's proxy forward `/socket.io/` to the API, with WebSocket upgrades. |
 | The announcement upload fails with a size error | The reverse proxy's body size limit | Allow a request body of 3 MB on `/api/v1/profiles/<id>/calls-announcement`: a 2 MB file, plus the multipart framing. |
 | *This browser cannot answer calls: use a current Chrome, Edge, Firefox or Safari* | An old browser | Update it. |
+| *Allow the camera for this site to turn it on* | The browser blocks the camera | Allow it in the browser's site settings, and check that no proxy sends `Permissions-Policy: camera=()`. |
+| *WhatsApp did not take the camera: the caller does not see you* | WhatsApp Web's camera did not switch in time, or it has no camera mute | Try **Camera** again; the call goes on as it is meanwhile. |
 
 ---
 
@@ -267,7 +286,8 @@ Other problems:
 - **Signing out during a call** ends the call after 15 seconds, without asking first.
 - **Firefox and Safari:** answering in them has not been checked on a live call yet. Use Chrome or Edge.
 - **A dialog open when a call rings** keeps the keyboard focus. The banner still shows and is announced, but a click on it also closes the dialog, and a form being filled in can be lost.
-- **The admin sends no Content-Security-Policy.** One added by a proxy must allow, for calls, the realtime connection on the dashboard's own address (`connect-src 'self' wss://<the dashboard's host>`), and the `blob:` URLs the recording and announcement players play (`media-src blob:`). The microphone is governed by the `Permissions-Policy` instead ([Server setup](#server-setup)).
+- **The admin sends no Content-Security-Policy.** One added by a proxy must allow, for calls, the realtime connection on the dashboard's own address (`connect-src 'self' wss://<the dashboard's host>`), and the `blob:` URLs the recording and announcement players play (`media-src blob:`). The microphone and the camera are governed by the `Permissions-Policy` instead ([Server setup](#server-setup)).
+- **One camera:** the call uses the browser's default camera; there is no choice of camera yet.
 
 ---
 

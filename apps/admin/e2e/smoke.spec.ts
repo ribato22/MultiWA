@@ -7,7 +7,8 @@ test('a dashboard page runs against the fake backend: REST in the browser, realt
   await expect.poll(() => backend.requests.some((r) => r.path === '/calls' && r.headers.authorization === 'Bearer test-token')).toBe(true);
 });
 
-test('pages let this origin use the microphone', async ({ page }) => {
+test('pages let this origin use the microphone and the camera, never a frame of another origin', async ({ page }) => {
   const res = await page.goto('/auth/login');
   expect(res?.headers()['permissions-policy']).toContain('microphone=(self)');
+  expect(res?.headers()['permissions-policy']).toContain('camera=(self)');
 });

@@ -317,9 +317,9 @@ Other errors of the call actions:
 
 **Auto-reject.** A profile with `autoRejectCalls` on (set with `PUT /profiles/:id`) rejects a ringing call at once (`rejectedBy` is `auto`). A non-blank `autoRejectCallMessage` is then sent to the caller, also when the reject failed because the caller had already hung up. That reply goes through the same send gate and is sent at most once per caller per 24 hours; it is never sent for a group call or for a call known only from its call log. A reply the gate refuses or the engine fails to send is not retried and does not use up the 24 hours, so the caller's next call can try again.
 
-**Recordings.** A call answered in the dashboard on a profile with `recording` on is recorded from before the profile's announcement, in stereo: left the caller, right what the caller heard. When the recorder does not start or the announcement does not play, the call goes on unrecorded. A recording is stored when its call ends ([`call.recording.ready`](<webhook-events.md#call-recording-events>)). Each call in `GET /calls` and `GET /calls/:id` has `recording`: `null`, or the recording's facts:
+**Recordings.** A call answered in the dashboard on a profile with `recording` on is recorded from before the profile's announcement, in stereo: left the caller, right what the caller heard. A call answered with video is recorded with its pictures too: the caller full frame, the agent's camera in a corner while it is on. When the recorder does not start or the announcement does not play, the call goes on unrecorded. A recording is stored when its call ends ([`call.recording.ready`](<webhook-events.md#call-recording-events>)). Each call in `GET /calls` and `GET /calls/:id` has `recording`: `null`, or the recording's facts:
 
-- `id`, `durationSec`, `bytes`, `announcementPlayed`, `createdAt`;
+- `id`, `mimeType` (`audio/webm`, or `video/webm` for a call answered with video), `durationSec`, `bytes`, `announcementPlayed`, `createdAt`;
 - `partial`: it may end before its call did (cut short by a restart, a recorder that did not stop cleanly, or a write that failed);
 - once its file is deleted, `deletedAt` and `deleteReason` (`admin` or `retention`). The row stays as evidence.
 

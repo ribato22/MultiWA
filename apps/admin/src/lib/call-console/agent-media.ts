@@ -15,13 +15,24 @@ export interface AgentMediaOptions {
   mic: MediaStreamTrack;
   /** Start muted: a call rebuilt after a reload or a failure stays muted if the agent was. */
   muted?: boolean;
+  /** The caller's picture (the reply's callerVideoProducerId), consumed once the voice is up; null on a voice call. */
+  callerVideoProducerId?: string | null;
 }
 
 export interface AgentMedia {
   /** The caller's voice, for an audio element. */
   readonly remote: MediaStream;
+  /** The caller's picture, for a muted <video>; null on a voice call, or when this browser could not take it. */
+  readonly remoteVideo: MediaStream | null;
   /** The server's id of the agent's voice. */
   readonly producerId: string;
+  /** The server's id of the agent's camera, once it was first turned on. */
+  readonly cameraProducerId: string | null;
+  /**
+   * The agent's camera: a track sends it, null stops it (the track it sent is stopped). The first track produces the
+   * camera, once per join (the server takes one); every later one replaces it.
+   */
+  setCamera(track: MediaStreamTrack | null): Promise<void>;
   /** Mute pauses the agent's voice in this browser: the agent stays connected, and the caller hears silence. */
   setMuted(muted: boolean): void;
   /** Another microphone mid-call, muted if the call is; the previous track is stopped. */
@@ -49,12 +60,13 @@ export async function mediaSupported(): Promise<boolean> {
 
 /**
  * Connects the agent in the order the server watches for: the caller is consumed and resumed first, then the agent's
- * voice is produced, and the agent counts as connected once both are done. A failure closes what was opened and stops
- * the microphone.
+ * voice is produced, and the agent counts as connected once both are done. The caller's picture comes after that. A
+ * failure closes what was opened and stops the microphone.
  */
-export async function startAgentMedia({ signal, callerProducerId, iceServers, mic, muted = false }: AgentMediaOptions): Promise<AgentMedia> {
+export async function startAgentMedia({ signal, callerProducerId, iceServers, mic, muted = false, callerVideoProducerId = null }: AgentMediaOptions): Promise<AgentMedia> {
   const transports: types.Transport[] = [];
   let track = mic;
+  let camera: types.Producer | null = null;
   let closed = false;
   let failed = false;
   let onFail: (() => void) | null = null;
@@ -63,6 +75,7 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
     closed = true;
     for (const t of transports) t.close();
     track.stop();
+    camera?.track?.stop();
   };
   // A callback given after what it waits for happened: it runs all the same, unless the media closed meanwhile.
   const later = (cb: () => void) =>
@@ -98,6 +111,18 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
     // meanwhile (a Mute, a Hang up while this connected).
     if (muted) mic.enabled = false;
     const producer = await send.produce({ track });
+    // The caller's picture, once the voice is up: the server answers WhatsApp on the voice alone. Best effort: a picture
+    // this browser cannot take leaves the call a voice call here.
+    let remoteVideo: MediaStream | null = null;
+    if (callerVideoProducerId) {
+      try {
+        const v = await recv.consume(await signal('consume', { transportId: recv.id, producerId: callerVideoProducerId, rtpCapabilities: device.rtpCapabilities }));
+        await signal('resumeConsumer', { consumerId: v.id });
+        remoteVideo = new MediaStream([v.track]);
+      } catch (e) {
+        if (closed) throw e;
+      }
+    }
 
     let last = { lost: 0, received: 0 };
     const sample = async (): Promise<LinkSample> => {
@@ -130,7 +155,19 @@ export async function startAgentMedia({ signal, callerProducerId, iceServers, mi
 
     return {
       remote: new MediaStream([consumer.track]),
+      remoteVideo,
       producerId: producer.id,
+      get cameraProducerId() {
+        return camera?.id ?? null;
+      },
+      async setCamera(next) {
+        if (closed) {
+          next?.stop();
+          throw new Error('The call media is closed');
+        }
+        if (camera) return camera.replaceTrack({ track: next }); // the track it replaces is stopped
+        if (next) camera = await send.produce({ track: next, encodings: [{ maxBitrate: 800_000 }] });
+      },
       setMuted(on) {
         // Local only (the track's `enabled`), nothing is signalled.
         if (on) producer.pause();

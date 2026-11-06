@@ -48,6 +48,7 @@ import { CallsProvider, forgetStoredCall } from '@/components/calls/calls-provid
 import { AvailabilityToggle } from '@/components/calls/availability-toggle';
 import { IncomingCallBanner } from '@/components/calls/incoming-call-banner';
 import { InCallBar } from '@/components/calls/in-call-bar';
+import { VideoTile } from '@/components/calls/video-tile';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
 // `admin`: every read of the page is an owner's or admin's, so the other roles get neither its link nor the page.
@@ -569,6 +570,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </main>
       <IncomingCallBanner />
+      <VideoTile />
     </div>
   );
   // The call console wraps every dashboard page: a call outlives page changes.

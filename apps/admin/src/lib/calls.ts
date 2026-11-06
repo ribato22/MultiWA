@@ -108,6 +108,16 @@ export const micProblem = (e: unknown) =>
       ? 'No microphone found: plug one in and try again'
       : 'The microphone could not be opened';
 
+/** Why the camera did not open (getUserMedia's error): on a call, and for the test of Settings → Calls. */
+export const cameraProblem = (e: unknown) =>
+  (e as DOMException)?.name === 'NotAllowedError'
+    ? 'Allow the camera for this site to turn it on'
+    : (e as DOMException)?.name === 'NotFoundError'
+      ? 'No camera found: plug one in and try again'
+      : (e as DOMException)?.name === 'NotReadableError'
+        ? 'The camera is in use by another app'
+        : 'The camera could not be opened';
+
 export const NO_AUDIO = 'Could not connect audio';
 export const HANG_UP_FAILED = 'The hang-up did not go through: try again';
 
@@ -123,6 +133,27 @@ export const ANSWER_FAILURE_TEXT: Record<string, string> = {
   // The server could not check this socket (its database is down): it reconnects in a few seconds.
   unavailable: 'The server is unavailable: try again in a moment',
   error: 'Something went wrong: try again',
+};
+
+/** Why the camera did not switch (the `call:camera` reply's reason, or no reply): the camera stays off. */
+export const CAMERA_TEXT: Record<string, string> = {
+  no_video: 'This call is a voice call: the camera stays off',
+  no_video_producer: 'The camera did not reach the call: try again',
+  camera_failed: 'WhatsApp did not take the camera: the caller does not see you',
+  not_in_call: 'The call is over',
+  timeout: 'The server did not answer: the camera stays off',
+  unavailable: ANSWER_FAILURE_TEXT.unavailable,
+  error: 'The camera could not be turned on: try again',
+  off_failed: 'The server did not confirm the camera off: it is off in this browser',
+};
+
+/** A video call's line on its banner: how the server answers it (`call:ringing`'s `video`); `unknown`, an older server's. */
+export const VIDEO_TEXT: Record<string, string> = {
+  available: 'Video call: your camera starts off',
+  server_busy: 'Video call, answered by voice: the server is busy with other video calls',
+  unsupported: 'Video call, answered by voice: this line can’t take video here',
+  disabled: 'Video call, answered by voice: video is turned off on this server',
+  unknown: 'Video call: you answer by voice, the caller sees no video',
 };
 
 /** The in-call bar's word on this tab's audio for the call: coming back, or gone. */

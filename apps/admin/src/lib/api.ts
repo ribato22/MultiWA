@@ -155,6 +155,8 @@ export type CallEndReason = 'hangup' | 'caller_hangup' | 'agent_lost' | 'media_f
 /** A call's recording facts: every role sees them; owner and admin play, download and delete. */
 export interface CallRecording {
   id: string;
+  /** audio/webm, or video/webm for a call answered with video; an older API sends none (sound). */
+  mimeType?: string;
   durationSec: number;
   bytes: number;
   /** The server stopped before the call ended: the file holds the call up to then. */

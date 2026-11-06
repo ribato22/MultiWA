@@ -30,6 +30,9 @@ export class CallRecordingDto {
   @ApiProperty({ type: String })
   id: string;
 
+  @ApiProperty({ type: String, example: 'audio/webm', description: 'audio/webm, or video/webm for a call answered with video.' })
+  mimeType: string;
+
   @ApiProperty({ type: Number, description: 'Seconds.' })
   durationSec: number;
 

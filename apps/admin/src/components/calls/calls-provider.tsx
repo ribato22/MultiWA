@@ -5,7 +5,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import { api } from '@/lib/api';
-import { ANSWER_FAILURE_TEXT, CALL_AUDIO_TEXT, HANG_UP_FAILED, NO_AUDIO, endedText, micProblem } from '@/lib/calls';
+import { ANSWER_FAILURE_TEXT, CALL_AUDIO_TEXT, CAMERA_TEXT, HANG_UP_FAILED, NO_AUDIO, cameraProblem, endedText, micProblem } from '@/lib/calls';
 import { getSocketUrl } from '@/lib/socket';
 import { canAnswerCalls, type CurrentUser } from '@/lib/current-user';
 import { mediaSupported, startAgentMedia, type AgentMedia } from '@/lib/call-console/agent-media';
@@ -23,8 +23,9 @@ const command = (socket: Socket, event: string, args: object, ms: number): Promi
 
 // The server's own budgets: an answer connects within 10 s; a recorded call's hang-up stops the recorder before the
 // media closes (up to about 27 s); a rejoin closes the old audio first (up to 8 s), or gives up an answer still
-// connecting: it hangs up a call WhatsApp was answering (up to 12 s), then closes its media (up to 5 s).
-const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_000, rejoin: 25_000 };
+// connecting: it hangs up a call WhatsApp was answering (up to 12 s), then closes its media (up to 5 s). A camera
+// switch connects the agent's picture (up to 8 s), then WhatsApp's own camera mute (up to 8 s).
+const ACK_MS = { availability: 5_000, answer: 15_000, media: 10_000, hangup: 40_000, rejoin: 25_000, camera: 20_000 };
 const FADE_MS = 4_000; // "Answered by …" and a call's end stay this long
 
 /**
@@ -58,6 +59,18 @@ async function openMic(userId: string): Promise<MediaStreamTrack> {
   return stream.getAudioTracks()[0];
 }
 
+/** The agent's camera: 640×480 at 15 fps, what WhatsApp Web's own camera sends anyway. */
+async function openCamera(): Promise<MediaStreamTrack> {
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 15 } } });
+  return stream.getVideoTracks()[0];
+}
+
+/** The pictures of a call answered with video in this tab: the caller's, and the agent's own camera while it is on. */
+export interface CallVideo {
+  remote: MediaStream | null;
+  local: MediaStream | null;
+}
+
 export interface CallsConsole {
   me: CurrentUser;
   state: ConsoleState;
@@ -75,6 +88,8 @@ export interface CallsConsole {
   playBlocked: boolean;
   /** The microphone this tab's call uses (its deviceId), once its audio is connected; '' while none is (it stopped). */
   micId: string | null;
+  /** The pictures of this tab's call, on a call answered with video. */
+  video: CallVideo;
   /** The console's socket is connected: while it is not, nothing about the call reaches this tab. */
   socketUp: boolean;
   /** The socket connected since the page loaded: until then, nothing says whether a call stored here goes on. */
@@ -84,6 +99,8 @@ export interface CallsConsole {
   answer(callId: string): void;
   hangUp(): void;
   setMuted(muted: boolean): void;
+  /** The agent's camera on or off, on this tab's call answered with video. */
+  setCamera(on: boolean): void;
   switchMic(deviceId: string): void;
   resumeAudio(): void;
   takeHere(): void;
@@ -91,7 +108,7 @@ export interface CallsConsole {
   profileAnswers(): void;
 }
 
-type Commands = Pick<CallsConsole, 'setAvailable' | 'dismiss' | 'answer' | 'hangUp' | 'setMuted' | 'switchMic' | 'resumeAudio' | 'takeHere'>;
+type Commands = Pick<CallsConsole, 'setAvailable' | 'dismiss' | 'answer' | 'hangUp' | 'setMuted' | 'setCamera' | 'switchMic' | 'resumeAudio' | 'takeHere'>;
 
 const CallsContext = createContext<CallsConsole | null>(null);
 /** The console, or null for a login that takes no calls (a viewer). */
@@ -114,6 +131,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
   const [quality, setQuality] = useState<Quality | null>(null);
   const [playBlocked, setPlayBlocked] = useState(false);
   const [micId, setMicId] = useState<string | null>(null);
+  const [video, setVideo] = useState<CallVideo>({ remote: null, local: null });
   const [socketUp, setSocketUp] = useState(false);
   const [connectedOnce, setConnectedOnce] = useState(false);
 
@@ -214,6 +232,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     let micSaid: string | null = null; // what the bar last said of the microphone
     let stopWaitingForMic = () => {}; // with none to open: the wait for the next microphone plugged in
     let asking = 0; // the attempt whose call:rejoin is out: only from its emit to its reply, not while its microphone opens
+    let cameraTurn = 0; // every camera press, and every stop of the audio: an older press still under way gives way
+    let voiceOnly: string | null = null; // the call the server said goes on as voice (call:active), whatever this tab built
     /**
      * A call:active naming another producer than this tab's, for the call whose rejoin this tab has out: sent before that
      * rejoin's reply, it is older than the rejoin, which decides. This tab neither lets go nor shows the call as on.
@@ -243,6 +263,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       setQuality(null);
       setPlayBlocked(false);
       setMicId(null);
+      cameraTurn++; // the camera went with the media
+      setVideo({ remote: null, local: null });
     };
     const onAudioFailed = (callId: string) => {
       // The audio failed (the network, or the server closed this peer): it goes now, its microphone too, and is built
@@ -261,13 +283,16 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
           if (mine !== attempt) throw new Error('This audio was given up');
           const ack = await command(socket, 'call:media', { callId, op, ...args }, ACK_MS.media);
           if (!ack.ok) throw new Error(ack.message ?? ack.reason);
-          if (op === 'produce' && mine === attempt) {
+          // The agent's voice only: the camera's producer never stands for this tab on the call (call:active and a
+          // rejoin's ifProducerId name the voice).
+          if (op === 'produce' && args?.kind !== 'video' && mine === attempt) {
             ownProducer = ack.result.id;
             keep();
           }
           return ack.result;
         },
         callerProducerId: reply.callerProducerId,
+        callerVideoProducerId: reply.callerVideoProducerId ?? null,
         iceServers: reply.iceServers ?? [],
         mic,
         muted,
@@ -296,6 +321,12 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
         () => setPlayBlocked(false),
         () => setPlayBlocked(true),
       );
+      // A call answered with video: the caller's picture for the tile. The camera starts off, unless a rejoin says the
+      // agent had it on: it comes back by itself.
+      const withVideo = !!media.remoteVideo && voiceOnly !== callId;
+      setVideo({ remote: withVideo ? media.remoteVideo : null, local: null });
+      dispatch({ type: 'video', callId, video: withVideo });
+      if (withVideo && reply.cameraOn) void setCamera(true);
     };
     /**
      * The call's microphone stopped (unplugged): another one opens by itself, the one chosen in Settings → Calls if it is
@@ -326,8 +357,14 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
     socket.on('call:announcing', (p: { callId: string; durationSec: number }) =>
       dispatch({ type: 'announcing', callId: p.callId, durationSec: p.durationSec, at: Date.now() }),
     );
-    socket.on('call:active', (p: { callId: string; answeredAt: string; agentProducerId?: string }) => {
+    socket.on('call:active', (p: { callId: string; answeredAt: string; agentProducerId?: string; video?: boolean }) => {
       if (!older(p)) dispatch({ type: 'active', callId: p.callId, answeredAt: p.answeredAt });
+      // WhatsApp answered it as voice: the caller's picture is the server's black, and there is no camera to turn on.
+      if (p.video === false) {
+        voiceOnly = p.callId;
+        if (p.callId === audioCallId) setVideo({ remote: null, local: null });
+        dispatch({ type: 'video', callId: p.callId, video: false });
+      }
       // Stored with the call: a reload that cannot take it back shows it as the call it is, to take here.
       if (storedCall()?.callId !== p.callId) return;
       answeredAt = p.answeredAt;
@@ -395,6 +432,8 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       hangingUp = true;
       if (pendingMic) pendingMic.enabled = false;
       mediaRef.current?.setMuted(true);
+      // The camera goes off at once too: a recorded call's hang-up takes up to half a minute.
+      if (stateRef.current.active?.camera === 'on') void setCamera(false);
       const reply = await command(socket, 'call:hangup', { callId: a.call.callId }, ACK_MS.hangup);
       hangingUp = false;
       if (reply.ok || reply.reason === 'not_in_call') {
@@ -418,6 +457,53 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       mediaRef.current?.setMuted(on);
       keep(); // a reload keeps it
       dispatch({ type: 'muted', muted: on });
+    };
+    /**
+     * The agent's camera, on this tab's call answered with video. On: the camera opens, goes to the call (produced the
+     * first time, its track replaced after), then the server puts it on WhatsApp. Off: the server blacks WhatsApp's
+     * camera while this browser stops its own, at once. Whatever fails leaves the camera off, and the bar says why.
+     */
+    const setCamera = async (on: boolean) => {
+      const media = mediaRef.current;
+      const callId = audioCallId;
+      if (!media?.remoteVideo || !callId) return;
+      const turn = ++cameraTurn;
+      const current = () => turn === cameraTurn && mediaRef.current === media;
+      const off = (text?: string) => {
+        setVideo((v) => ({ ...v, local: null }));
+        dispatch({ type: 'camera', callId, camera: 'off' });
+        if (text) dispatch({ type: 'problem', callId, text });
+      };
+      dispatch({ type: 'camera', callId, camera: 'switching' });
+      if (!on) {
+        const [, reply] = await Promise.all([media.setCamera(null).catch(() => undefined), command(socket, 'call:camera', { callId, on: false }, ACK_MS.camera)]);
+        if (current()) off(reply.ok || reply.reason === 'not_in_call' ? undefined : CAMERA_TEXT.off_failed);
+        return;
+      }
+      let track: MediaStreamTrack;
+      try {
+        track = await openCamera();
+      } catch (e) {
+        if (current()) off(cameraProblem(e));
+        return;
+      }
+      if (!current()) return track.stop();
+      try {
+        await media.setCamera(track);
+      } catch {
+        track.stop();
+        if (current()) off(CAMERA_TEXT.error);
+        return;
+      }
+      const reply = await command(socket, 'call:camera', { callId, on: true }, ACK_MS.camera);
+      if (!current()) return; // a later press, or the audio's end, decides
+      if (!reply.ok) {
+        await media.setCamera(null).catch(() => undefined);
+        off(CAMERA_TEXT[reply.reason] ?? CAMERA_TEXT.error);
+        return;
+      }
+      setVideo((v) => ({ ...v, local: new MediaStream([track]) }));
+      dispatch({ type: 'camera', callId, camera: 'on' });
     };
     const switchMic = async (deviceId: string) => {
       prefs.setMic(user.id, deviceId);
@@ -609,7 +695,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
       if (a && !a.local && (a.phase === 'announcing' || a.phase === 'active')) void rejoin(a.call, true);
     };
 
-    cmd.current = { setAvailable, dismiss, answer, hangUp, setMuted, switchMic, resumeAudio, takeHere };
+    cmd.current = { setAvailable, dismiss, answer, hangUp, setMuted, setCamera, switchMic, resumeAudio, takeHere };
     return () => {
       cmd.current = {};
       closed = true;
@@ -698,6 +784,7 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             quality,
             playBlocked,
             micId,
+            video,
             socketUp,
             connectedOnce,
             setAvailable: (on) => cmd.current.setAvailable?.(on),
@@ -705,13 +792,14 @@ export function CallsProvider({ user, children }: { user: CurrentUser; children:
             answer: (callId) => cmd.current.answer?.(callId),
             hangUp: () => cmd.current.hangUp?.(),
             setMuted: (muted) => cmd.current.setMuted?.(muted),
+            setCamera: (on) => cmd.current.setCamera?.(on),
             switchMic: (deviceId) => cmd.current.switchMic?.(deviceId),
             resumeAudio: () => cmd.current.resumeAudio?.(),
             takeHere: () => cmd.current.takeHere?.(),
             profileAnswers: () => setProfilesRing(true),
           }
         : null,
-    [agent, user, state, inUse, profilesRead, answerBlocked, soundBlocked, quality, playBlocked, micId, socketUp, connectedOnce],
+    [agent, user, state, inUse, profilesRead, answerBlocked, soundBlocked, quality, playBlocked, micId, video, socketUp, connectedOnce],
   );
   return (
     <CallsContext.Provider value={value}>
