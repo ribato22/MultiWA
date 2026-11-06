@@ -1774,7 +1774,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       }
     });
 
-    it("the agent sees the caller once the caller's video is attached: WhatsApp Web's largest canvas, followed when it is replaced", async () => {
+    it("the agent sees the caller once the caller's video is attached: WhatsApp Web's largest canvas, kept while it lasts, followed when it is replaced", async () => {
       await withBridge({ video: true }, async ({ p, media, handle }) => {
         // a smaller canvas of the page's own (a sticker, say) is not the caller
         await p.evaluate(() => {
@@ -1788,6 +1788,24 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await media.answer('CALL1', { video: true });
         expect(await handle.attachCallerVideo()).toEqual({ width: 382, height: 344 });
         expect(await until(async () => (await agentSeesInPage(agentPage, CALLER_RGB)) < NEAR, 10_000)).toBe(true);
+        // a larger canvas that turns up mid-call (a picture opened in a chat, say) while the caller's is still there is not
+        // the caller either: over 2.5 s, more than two of the poll's looks, the agent sees only the caller
+        await p.evaluate(() => {
+          const c = document.createElement('canvas');
+          c.width = 640;
+          c.height = 480;
+          const g = c.getContext('2d')!;
+          g.fillStyle = 'rgb(200,200,200)';
+          (window as any).__picture = { c, timer: setInterval(() => g.fillRect(0, 0, 640, 480), 66) };
+          document.body.appendChild(c);
+        });
+        let farthest = 0;
+        for (const end = Date.now() + 2_500; Date.now() < end; ) {
+          farthest = Math.max(farthest, await agentSeesInPage(agentPage, CALLER_RGB));
+          await sleep(100);
+        }
+        expect(farthest).toBeLessThan(NEAR);
+        await p.evaluate(() => { const pic = (window as any).__picture; clearInterval(pic.timer); pic.c.remove(); });
         // WhatsApp Web replaces its canvas mid-call: within the poll's second, the agent sees the new one
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
         expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000)).toBe(true);
