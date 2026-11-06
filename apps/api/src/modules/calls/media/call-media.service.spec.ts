@@ -298,6 +298,28 @@ describe('CallMediaService', () => {
     room.close();
   });
 
+  it('silenceAgent also holds back a produce already at the worker: its producer comes back paused', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const agent = room.signalingFor('agent');
+    const agentSend: any = await agent.createTransport('send');
+    const transport = room['transports'].get(agentSend.id)!.transport;
+    const produce = transport.produce.bind(transport);
+    const atWorker = new Promise<void>((resolve) => {
+      vi.spyOn(transport, 'produce').mockImplementationOnce((options) => {
+        resolve();
+        return produce(options); // the request goes out as the room made it: not paused
+      });
+    });
+    const producing = agent.produce(agentSend.id, 'video', VP8(2232));
+    await atWorker; // the worker has the request, and its answer is not back
+    await room.silenceAgent(); // the producer is not registered yet for it to pause
+    await producing;
+    expect((room as any).producers.get('agent:video').paused).toBe(true);
+    room.close();
+  });
+
   it("closing a room releases its transports from the WebRtcServer, and only that room's", async () => {
     switchOn();
     await service.onModuleInit();
