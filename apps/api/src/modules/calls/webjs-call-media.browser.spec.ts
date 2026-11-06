@@ -23,10 +23,14 @@
 // the bridge ends with its call, refuses a call that is over, rolls a failed agent connect back, and leaves
 // WhatsApp Web's own tracks alone.
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import * as mediasoup from 'mediasoup';
 import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaBridge, callMediaPage, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
 import type { CallMediaHandle } from '@multiwa/engines';
 import { CALL_MEDIA_CODECS } from './media/call-media.service';
+import { finalizeWebm } from './recordings/webm-duration';
 import { AGENT_RGB, BLACK_RGB, CALLER_RGB, NEAR, agentSeesInPage, cameraCarriesInPage, launchCallMediaBrowser, nearestOf, openFakeWhatsAppPage, recordedPicturesInPage, seeCallerVideoInPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
 
 const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
@@ -2084,8 +2088,9 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       });
     });
 
-    it("a video call's recording has both pictures: the caller full frame, the agent in a corner while the camera is on", async () => {
+    it("a video call's recording has both pictures: the caller full frame, the agent in a corner while the camera is on; it gets its length", async () => {
       const got: Buffer[] = [];
+      let recordedMs = 0;
       await withBridge({ video: true }, async ({ media, handle }) => {
         await media.answer('CALL1', { video: true });
         await handle.attachCallerVideo();
@@ -2094,8 +2099,18 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await handle.connectAgentVideo(agentVideoProducerId);
         await handle.setCameraMuted(false);
         await sleep(2500);
-        await media.stopRecording('CALL1');
+        recordedMs = (await media.stopRecording('CALL1')).durationMs;
       });
+      // Chrome writes some of a recording's blocks in BlockGroups once it has video: its length is still written in.
+      const dir = mkdtempSync(join(tmpdir(), 'video-recording-'));
+      try {
+        writeFileSync(join(dir, 'in.webm'), Buffer.concat(got));
+        const finalized = await finalizeWebm(join(dir, 'in.webm'), join(dir, 'out.webm'));
+        expect(finalized).toMatchObject({ rewritten: true, audio: true });
+        expect(Math.abs(finalized.durationMs - recordedMs)).toBeLessThan(1000);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
       const seen: Awaited<ReturnType<typeof recordedPicturesInPage>> = await agentPage.evaluate(recordedPicturesInPage, Buffer.concat(got).toString('base64'));
       expect([seen.width, seen.height]).toEqual([640, 480]);
       const palette = [CALLER_RGB, AGENT_RGB, BLACK_RGB];

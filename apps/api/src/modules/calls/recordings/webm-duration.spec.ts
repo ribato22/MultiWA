@@ -60,6 +60,17 @@ describe('finalizeWebm', () => {
     expect(mixed.durationMs).toBe(plain.durationMs);
   });
 
+  it('a block in a BlockGroup (Chrome writes some once a recording has video) counts as a SimpleBlock does', async () => {
+    const plain = await finalizeWebm(file(FIXTURE), out());
+    // A BlockGroup holding a Block of track 2 at the last Cluster's own time, then a BlockDuration.
+    const group = [0xa0, 0x8a, 0xa1, 0x85, 0x82, 0x00, 0x00, 0x00, 0x00, 0x9b, 0x81, 0x14];
+    const mixed = await finalizeWebm(file(withAt(FIXTURE.length, group)), out());
+    expect(mixed).toMatchObject({ rewritten: true, audio: true, durationMs: plain.durationMs, bytes: plain.bytes + group.length });
+    // One without a Block is no layout this knows: copied as it is.
+    const empty = [0xa0, 0x83, 0x9b, 0x81, 0x14];
+    expect(await finalizeWebm(file(withAt(FIXTURE.length, empty)), out())).toMatchObject({ rewritten: false, audio: null });
+  });
+
   /** The Duration in Info, in ms at the fixture's 1-ms TimecodeScale; null without one. */
   const durationIn = (webm: Buffer): number | null => {
     const at = webm.indexOf(Buffer.from([0x44, 0x89, 0x88]), INFO_AT);

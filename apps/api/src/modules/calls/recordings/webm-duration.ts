@@ -3,11 +3,12 @@
 //
 // MediaRecorder writes a live WebM: a Segment and Clusters of unknown size, an Info with no Duration, no SeekHead and
 // no Cues. A player then shows no length and cannot seek. finalizeWebm writes a copy with the Duration, counted from
-// the file's own last block (a recording cut short by a crash has no other end), and without a block cut off at the
+// the file's own latest block (a recording cut short by a crash has no other end), and without a block cut off at the
 // end. Clusters carry their own time and nothing points at a byte offset, so the 11 bytes added to Info shift nothing
-// that matters. Any other layout (a SeekHead, Cues or a Cluster Position, which point at offsets; a Segment of known
-// size, which would have to grow; blocks in BlockGroups, which MediaRecorder does not write; more than one Info, or one
-// after the Clusters) is copied as it is, and so is a file whose bytes stop making sense anywhere but at its very end.
+// that matters. A block is a SimpleBlock, or the Block of a BlockGroup: Chrome writes some blocks in BlockGroups once a
+// recording has video. Any other layout (a SeekHead, Cues or a Cluster Position, which point at offsets; a Segment of
+// known size, which would have to grow; a BlockGroup without a whole Block; more than one Info, or one after the
+// Clusters) is copied as it is, and so is a file whose bytes stop making sense anywhere but at its very end.
 // A file of that layout with no whole block in it, or that is no EBML at all, is copied too, and said to hold no
 // audio: an empty one is a recording whose first chunk never came.
 // The file is read through a window, never whole: two hours of a call are about 60 MB. Both copies are 0600: a
@@ -23,6 +24,8 @@ const TRACKS = 0x1654ae6b;
 const CLUSTER = 0x1f43b675;
 const TIMECODE = 0xe7;
 const SIMPLE_BLOCK = 0xa3;
+const BLOCK_GROUP = 0xa0;
+const BLOCK = 0xa1;
 const TIMECODE_SCALE = 0x2ad7b1;
 const DURATION = 0x4489;
 const WINDOW = 64 * 1024;
@@ -183,7 +186,7 @@ async function walk(r: Reader): Promise<Layout | false | null> {
     // MediaRecorder's own elements only. Damaged bytes mid-file (a chunk lost to a bug) can read as a header whose size
     // runs past the end, which would pass for a clean cut end and stop the copy at the damage. Any other element (a
     // SeekHead, Cues, a Position or a BlockGroup among them) is copied as it is.
-    if (e.size === null || (e.id !== INFO && e.id !== TRACKS && e.id !== TIMECODE && e.id !== SIMPLE_BLOCK)) return null;
+    if (e.size === null || (e.id !== INFO && e.id !== TRACKS && e.id !== TIMECODE && e.id !== SIMPLE_BLOCK && e.id !== BLOCK_GROUP)) return null;
     const next = e.data + e.size;
     if (next > r.size) break; // the file ends inside this element: the copy leaves it out
     if (e.id === INFO) {
@@ -196,8 +199,25 @@ async function walk(r: Reader): Promise<Layout | false | null> {
     } else if (e.id === TIMECODE) {
       if (e.size > 8) return null;
       cluster = uint(await r.at(e.data, e.size));
-    } else if (e.id === SIMPLE_BLOCK) {
-      const head = await r.at(e.data, 12);
+    } else if (e.id === SIMPLE_BLOCK || e.id === BLOCK_GROUP) {
+      // A BlockGroup's time is its Block's: its children are walked by their headers only, never read whole (a video
+      // key frame can be larger than the window).
+      let block = e.data;
+      if (e.id === BLOCK_GROUP) {
+        let found: number | null = null;
+        for (let at = e.data; at < next; ) {
+          const c = await r.header(at);
+          if (!c || c.size === null || c.data + c.size > next) return null;
+          if (c.id === BLOCK) {
+            found = c.data;
+            break;
+          }
+          at = c.data + c.size;
+        }
+        if (found === null) return null;
+        block = found;
+      }
+      const head = await r.at(block, 12);
       // Its track number, then 2 bytes of time: a block shorter than that has no time to read.
       if (head.length < lengthOf(head[0], 8) + 2) return null;
       const at = cluster + head.readInt16BE(lengthOf(head[0], 8));
