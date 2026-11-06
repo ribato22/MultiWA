@@ -6,7 +6,8 @@
 // - "WhatsApp's playback" is a 440 Hz oscillator, connected to AudioContext.destination or played through an
 //   <audio> element (`playbackVia`), started at accept (or later by the test, with `autoPlayback` off);
 // - "WhatsApp's mic capture" is the getUserMedia it gets.
-// - a video call (ring(id, true)): the video call UI's bundle, the recorded accepts and camera mutes, the caller drawn into a 382×344 canvas.
+// - a video call (ring(id, true)): the video call UI's bundle, the recorded accepts and camera mutes (or a mute that never
+//   returns, with `hangMute`), the caller drawn into a 382×344 canvas.
 // (The fake, the browser launch and the page opener are shared with the media integration spec: src/testing/call-media-browser.ts.)
 // It proves the guards, the answer flow and its timeout (which also bounds the stack lookup and the accept),
 // the hang-up and probe deadlines, that the injected mic carries the announcement (and holds the agent
@@ -1353,6 +1354,19 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     };
     const trackPolls = (p: any) => p.evaluate(trackIntervals);
     const ring = (p: any, id: string, video = false) => p.evaluate((x: string, v: boolean) => (window as any).__fakeWa.ring(x, v), id, video);
+    /** Records every capture of a canvas in the document, i.e. of WhatsApp Web's (ours never are); `captures` reads their states. */
+    const watchCaptures = (p: any) =>
+      p.evaluate(() => {
+        const w = window as any;
+        const captureStream = HTMLCanvasElement.prototype.captureStream;
+        w.__captures = [];
+        HTMLCanvasElement.prototype.captureStream = function (this: HTMLCanvasElement, frameRate?: number) {
+          const s = captureStream.call(this, frameRate);
+          if (this.isConnected) w.__captures.push(s.getVideoTracks()[0]);
+          return s;
+        };
+      });
+    const captures = (p: any): Promise<string[]> => p.evaluate(() => (window as any).__captures.map((t: MediaStreamTrack) => t.readyState));
 
     beforeAll(async () => {
       worker = await mediasoup.createWorker({ logLevel: 'warn' });
@@ -1839,6 +1853,19 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       });
     });
 
+    it("a camera connect while the agent's video is connected is refused before the room is asked, and the agent stays on the camera", async () => {
+      await withBridge({ video: true }, async ({ p, media, room, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await handle.connectAgentVideo(agentVideoProducerId);
+        await expect(handle.connectAgentVideo(agentVideoProducerId)).rejects.toThrow('Agent video already connected');
+        expect(room.ops.filter((op) => op === 'consume')).toHaveLength(1);
+        expect(await until(async () => (await cameraCarriesInPage(p, AGENT_RGB)) < NEAR, 10_000)).toBe(true);
+        await handle.disconnectAgentVideo();
+        await handle.connectAgentVideo(agentVideoProducerId); // once disconnected, it connects again
+        expect(room.consumers.map((c) => [c.kind, c.closed])).toEqual([['video', true], ['video', false]]);
+      });
+    });
+
     it('a camera connect whose resume fails is rolled back, the retry connects, and the voice is untouched', async () => {
       await withBridge({ video: true, knobs: { failOnce: { resumeConsumer: true } } }, async ({ p, media, room, handle }) => {
         await media.answer('CALL1', { video: true });
@@ -1865,7 +1892,10 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         // Chrome starts a fresh clone on the canvas's last frame, before any redraw: read that very frame
         const first = await p.evaluate(async () => {
           const track = (await navigator.mediaDevices.getUserMedia({ video: true })).getVideoTracks()[0];
-          const { value: frame } = await new (window as any).MediaStreamTrackProcessor({ track }).readable.getReader().read();
+          const { value: frame } = await Promise.race([
+            new (window as any).MediaStreamTrackProcessor({ track }).readable.getReader().read(),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('No camera frame within 2 s')), 2000)), // fails fast, not at the test's timeout
+          ]);
           const c = document.createElement('canvas');
           const g = c.getContext('2d', { willReadFrequently: true })!;
           g.drawImage(frame, 0, 0, 1, 1); // its mean colour, near enough for a flat picture
@@ -1929,6 +1959,65 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.hangStack = false; f.releaseStack(); });
         expect(await switching).toBe('Media bridge closed');
         expect(await p.evaluate(() => (window as any).__fakeWa.videoMutes)).toEqual([]);
+      });
+    });
+
+    it('a camera mute that WhatsApp Web never answers: the agent leaves the camera at once all the same, and the mute rejects at its 5 s deadline', async () => {
+      await withBridge({ video: true }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await handle.connectAgentVideo(agentVideoProducerId);
+        await handle.setCameraMuted(false);
+        expect(await until(async () => (await cameraCarriesInPage(p, AGENT_RGB)) < NEAR, 10_000)).toBe(true);
+        await p.evaluate(() => { (window as any).__fakeWa.hangMute = true; });
+        const t0 = Date.now();
+        const muting = handle.setCameraMuted(true).then(() => 'muted', (e: Error) => e.message);
+        await handle.disconnectAgentVideo();
+        expect(await until(async () => (await cameraCarriesInPage(p, BLACK_RGB)) < NEAR, 2_000)).toBe(true);
+        expect(Date.now() - t0).toBeLessThan(3000); // well before the mute's deadline
+        expect(await Promise.race([muting, sleep(8000).then(() => 'still pending after 8 s')])).toContain('The camera did not switch in time');
+        expect(await p.evaluate(() => (window as any).__fakeWa.videoMutes)).toEqual([false, true]); // started: WhatsApp Web may still switch late
+      });
+    });
+
+    it("a caller-video attach whose bridge closes while it waits for WhatsApp Web's canvas leaves no poll and captures nothing", async () => {
+      const before = async (p: any) => {
+        await p.evaluate(() => { (window as any).__fakeWa.drawsCaller = false; });
+        await trackPolls(p);
+        await watchCaptures(p);
+      };
+      await withBridge({ video: true, before }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        const attaching = handle.attachCallerVideo().then(() => 'attached', (e: Error) => e.message);
+        await sleep(300); // the attach looks for the canvas
+        await handle.close();
+        await p.evaluate(() => (window as any).__fakeWa.showCaller()); // the canvas turns up only now
+        expect(await attaching).toBe('Media bridge closed');
+        expect(await captures(p)).toEqual([]);
+        expect(await liveIntervals(p)).toBe(2); // the fake's painter and the camera's redraw: nothing of the bridge's
+      });
+    });
+
+    it("a caller-video attach whose bridge closes while it captures WhatsApp Web's canvas leaves no poll, and the capture goes with the bridge", async () => {
+      await withBridge({ video: true, before: async (p) => { await trackPolls(p); await watchCaptures(p); } }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        // the producer takes the capture, and the attach is held right after
+        await p.evaluate(() => {
+          const w = window as any;
+          const producer = w.__mwBridge.callerVideo;
+          const replace = producer.replaceTrack.bind(producer);
+          producer.replaceTrack = async (args: unknown) => {
+            await replace(args);
+            await new Promise<void>((resolve) => { w.__releaseCapture = resolve; });
+          };
+        });
+        const attaching = handle.attachCallerVideo().then(() => 'attached', (e: Error) => e.message);
+        expect(await until(() => p.evaluate(() => !!(window as any).__releaseCapture), 2000)).toBe(true);
+        expect(await captures(p)).toEqual(['live']);
+        await handle.close();
+        await p.evaluate(() => (window as any).__releaseCapture());
+        expect(await attaching).toBe('Media bridge closed');
+        expect(await captures(p)).toEqual(['ended']);
+        expect(await liveIntervals(p)).toBe(2); // the fake's painter and the camera's redraw: nothing of the bridge's
       });
     });
   });

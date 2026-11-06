@@ -57,9 +57,9 @@ export function installFakeWhatsApp() {
     // Video: `video` says the ringing call is a video call (ring(id, true)). requireBundle loads the video call UI (or
     // fails, `bundleFails`, or hangs, `bundleHangs`, until the test calls `releaseBundle`); only with it loaded does an
     // answer draw the caller, in `callerColour`, unless `drawsCaller` is off. `acceptArgs` and `videoMutes` record those
-    // calls; `camStream` is the camera the answer took.
+    // calls (a mute never returns with `hangMute`); `camStream` is the camera the answer took.
     video: false, bundleLoaded: false, bundleFails: false, bundleHangs: false, releaseBundle: null, drawsCaller: true,
-    callerColour: [200, 40, 40], callerCanvas: null, callerTimer: null, camStream: null, acceptArgs: [], videoMutes: [],
+    callerColour: [200, 40, 40], callerCanvas: null, callerTimer: null, camStream: null, acceptArgs: [], videoMutes: [], hangMute: false,
   });
   const call: any = { id: 'CALL1', state: 3, getState() { return this.state; } };
   const CC: any = { activeCall: call };
@@ -152,6 +152,7 @@ export function installFakeWhatsApp() {
     },
     setCallVideoMute(muted: boolean) {
       fake.videoMutes.push(muted);
+      if (fake.hangMute) return new Promise<void>(() => {}); // a voip stack that takes the mute and never answers
     },
   };
   const modules: Record<string, any> = {
