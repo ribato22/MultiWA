@@ -214,7 +214,8 @@ export async function attachCallerInPage(callId: string): Promise<{ via: 'elemen
  * whatever its area. It waits up to 5 s for one ("No caller video"). Once attached, the capture follows the largest
  * canvas, looked for every second while the bridge lasts: WhatsApp Web may replace its canvas mid-call. Refused on a
  * voice bridge and when the call is not WhatsApp's active call, also when it ended during the wait. A failure leaves the
- * call's audio as it is, and "callerVideo" on its black placeholder. Resolves with the size of the canvas.
+ * call's audio as it is, and "callerVideo" as it was (black unless an earlier attach succeeded). Resolves with the size
+ * of the canvas.
  */
 export async function attachCallerVideoInPage(callId: string): Promise<{ width: number; height: number }> {
   const w = window as any;

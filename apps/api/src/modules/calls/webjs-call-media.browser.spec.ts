@@ -1975,6 +1975,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         expect(await until(async () => (await cameraCarriesInPage(p, BLACK_RGB)) < NEAR, 2_000)).toBe(true);
         expect(Date.now() - t0).toBeLessThan(3000); // well before the mute's deadline
         expect(await Promise.race([muting, sleep(8000).then(() => 'still pending after 8 s')])).toContain('The camera did not switch in time');
+        expect(Date.now() - t0).toBeGreaterThanOrEqual(4500); // at the deadline, not before it
         expect(await p.evaluate(() => (window as any).__fakeWa.videoMutes)).toEqual([false, true]); // started: WhatsApp Web may still switch late
       });
     });
