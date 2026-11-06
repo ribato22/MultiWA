@@ -339,14 +339,31 @@ export async function seeCallerVideoInPage(producerId: string): Promise<void> {
 /**
  * How far a picture in this page is from `rgb`: the largest difference, over the three channels, of its mean colour,
  * 0-255; 255 while there is no picture yet. `of` picks the picture: `agent`, what the test agent sees of the caller
- * (seeCallerVideoInPage); `camera`, WhatsApp Web's camera in the fake page, the stream its last video answer took (what
- * the caller sees).
+ * (seeCallerVideoInPage), the next frame decoded on its track; `camera`, WhatsApp Web's camera in the fake page, the
+ * stream its last video answer took (what the caller sees), drawn from a <video>. The look is kept in `__lastLook`: how it
+ * was read and the mean colour it saw, null without a picture.
  */
-export function colourDistanceInPage(of: 'agent' | 'camera', rgb: number[]): number {
+export async function colourDistanceInPage(of: 'agent' | 'camera', rgb: number[]): Promise<number> {
   const w = window as any;
+  const look = (w.__lastLook = { via: of === 'agent' ? 'track frame' : 'video element', rgb: null as number[] | null });
   let v: HTMLVideoElement | undefined;
-  if (of === 'agent') v = w.__agent?.video;
-  else {
+  let frame: VideoFrame | undefined;
+  if (of === 'agent') {
+    // Off the track, not drawn from the <video>: the agent's page is a background tab, and there Chrome on Linux (CI) drew
+    // the video as it last painted it, its new frames decoded all the while. A processor per look, cancelled after its
+    // frame, which lets go of the track: each look gets the next frame. The standard has MediaStreamTrackProcessor in
+    // workers only; Chromium still has it on window, and a Chromium without it must fail with a readable message.
+    const track: MediaStreamTrack | undefined = w.__agent?.video?.srcObject?.getVideoTracks()[0];
+    if (!track) return 255;
+    const Processor = w.MediaStreamTrackProcessor;
+    if (typeof Processor !== 'function') {
+      throw new Error("The agent's look needs MediaStreamTrackProcessor on window (Chromium 94 or later) to read its frames");
+    }
+    const reader = new Processor({ track }).readable.getReader();
+    ({ value: frame } = await Promise.race([reader.read(), new Promise((r) => setTimeout(r, 2000, {}))])); // none within 2 s: no picture
+    await reader.cancel();
+    if (!frame) return 255;
+  } else {
     const f = w.__fakeWa;
     const track: MediaStreamTrack | undefined = f.camStream?.getVideoTracks()[0];
     if (!track) return 255;
@@ -359,16 +376,18 @@ export function colourDistanceInPage(of: 'agent' | 'camera', rgb: number[]): num
       f.camView = { track, view };
     }
     v = f.camView.view;
+    if (!v || v.readyState < 2 || !v.videoWidth) return 255;
   }
-  if (!v || v.readyState < 2 || !v.videoWidth) return 255;
   const c = document.createElement('canvas');
   c.width = 16;
   c.height = 12;
   const g = c.getContext('2d', { willReadFrequently: true })!;
-  g.drawImage(v, 0, 0, 16, 12);
+  g.drawImage(frame ?? v!, 0, 0, 16, 12);
+  frame?.close();
   const d = g.getImageData(0, 0, 16, 12).data;
   const mean = [0, 0, 0];
   for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += d[i + k] / (d.length / 4);
+  look.rgb = mean.map(Math.round);
   return Math.max(...mean.map((m, k) => Math.abs(m - rgb[k])));
 }
 

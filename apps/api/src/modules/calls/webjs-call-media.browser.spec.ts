@@ -1381,7 +1381,8 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       });
     /**
      * The caller video on both sides, the message of a failed look at it: in the WhatsApp page the producer, its canvas and
-     * its encoder; in the agent's page its video element and decoder. Never throws (it runs on a passing look too).
+     * its encoder; in the agent's page its video element, its decoder, and the colour its last look saw (agentSeesInPage),
+     * with how it read it. Never throws (it runs on a passing look too).
      */
     const callerVideoState = async (p: any) => ({
       wa: await p
@@ -1425,7 +1426,8 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
             inbound = { framesReceived, framesDecoded, framesPerSecond, keyFramesDecoded, pliCount };
           });
           const { readyState, paused, videoWidth, videoHeight } = v;
-          return { readyState, paused, videoWidth, videoHeight, totalVideoFrames: v.getVideoPlaybackQuality().totalVideoFrames, inbound, visibility: document.visibilityState };
+          const look = (window as any).__lastLook ?? null;
+          return { readyState, paused, videoWidth, videoHeight, totalVideoFrames: v.getVideoPlaybackQuality().totalVideoFrames, inbound, visibility: document.visibilityState, look };
         })
         .catch((e: Error) => e.message),
     });
