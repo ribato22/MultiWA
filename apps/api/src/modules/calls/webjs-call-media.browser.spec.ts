@@ -1732,6 +1732,9 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       await withBridge({ video: true }, async ({ room, handle }) => {
         expect(room.producers.map((p) => p.kind)).toEqual(['audio', 'video']);
         expect(handle.callerVideoProducerId).toBe(room.producers[1].id);
+        // an agent that consumes it before the attach gets frames all the same: black ones
+        await agentPage.evaluate(seeCallerVideoInPage, handle.callerVideoProducerId);
+        expect(await until(async () => (await agentSeesInPage(agentPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
       });
       await withBridge({}, async ({ room, handle }) => {
         expect(room.producers.map((p) => p.kind)).toEqual(['audio']);
@@ -1777,10 +1780,13 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       });
     });
 
-    it('a caller whose video never shows: the attach rejects after its wait, and the voice goes on', async () => {
+    it('a caller whose video never shows: the attach rejects after its wait, the caller video stays black, and the voice goes on', async () => {
       await withBridge({ video: true, before: (p) => p.evaluate(() => { (window as any).__fakeWa.drawsCaller = false; }) }, async ({ p, media, handle }) => {
         await media.answer('CALL1', { video: true });
         await expect(handle.attachCallerVideo()).rejects.toThrow('No caller video');
+        // an agent that consumes only now still gets frames: black ones
+        await agentPage.evaluate(seeCallerVideoInPage, handle.callerVideoProducerId);
+        expect(await until(async () => (await agentSeesInPage(agentPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
         expect(await handle.attachCaller()).toEqual({ via: 'destination', freshCandidates: 1, fallback: false });
         await handle.connectAgent(agentProducerId);
         expect(await heard(p, 5000)).toBe(true);

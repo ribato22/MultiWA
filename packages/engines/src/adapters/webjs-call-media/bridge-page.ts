@@ -26,13 +26,16 @@ export interface MwBridge {
   /** The agent on the microphone (connectAgentInPage), or none. */
   agent: { consumer: any; source: MediaStreamAudioSourceNode; keepAlive: HTMLAudioElement } | null;
   /**
-   * The "callerVideo" producer, on a video call only (else null): a black placeholder until attachCallerVideoInPage
-   * swaps in a capture of WhatsApp Web's canvas of the caller.
+   * The "callerVideo" producer, on a video call only (else null): a black placeholder, redrawn every second, until
+   * attachCallerVideoInPage swaps in a capture of WhatsApp Web's canvas of the caller.
    */
   callerVideo: any;
   /** The canvas of WhatsApp Web's that "callerVideo" carries a capture of, once attached. */
   callerCanvas: HTMLCanvasElement | null;
-  /** The poll that keeps "callerVideo" on WhatsApp Web's largest canvas (attachCallerVideoInPage). */
+  /**
+   * What keeps "callerVideo" sending, one timer for both: the placeholder's redraw until the attach's first capture
+   * replaced it, then the poll that keeps it on WhatsApp Web's largest canvas (attachCallerVideoInPage).
+   */
   callerVideoPoll: any;
   /** The agent's video on the injected camera (connectAgentVideoInPage), or none. */
   agentVideo: { consumer: any; view: HTMLVideoElement } | null;
@@ -154,9 +157,13 @@ export async function startBridgeInPage(
       const placeholder = document.createElement('canvas');
       placeholder.width = 320;
       placeholder.height = 240;
-      placeholder.getContext('2d').fillRect(0, 0, 320, 240);
+      const g = placeholder.getContext('2d');
+      g.fillRect(0, 0, 320, 240);
       try {
         b.callerVideo = await b.send.produce({ track: placeholder.captureStream(15).getVideoTracks()[0], encodings: [{ maxBitrate: 800000 }] });
+        // A canvas capture sends a frame only when its canvas is drawn: painted once, an agent that consumes before the
+        // attach (or after one that failed) would get no frame at all. Redrawn every second, it gets black within one.
+        b.callerVideoPoll = setInterval(() => g.fillRect(0, 0, 320, 240), 1000);
       } catch (e) {
         videoError = String((e as Error)?.message ?? e);
       }
@@ -206,8 +213,8 @@ export async function attachCallerInPage(callId: string): Promise<{ via: 'elemen
  * never in the document, and one under 160×120 (an avatar, a sticker) is no video. It waits up to 5 s for one ("No
  * caller video"). Once attached, the capture follows the largest canvas, looked for every second while the bridge
  * lasts: WhatsApp Web may replace its canvas mid-call. Refused on a voice bridge and when the call is not WhatsApp's
- * active call, also when it ended during the wait. A failure leaves the call's audio as it is. Resolves with the size of
- * the canvas.
+ * active call, also when it ended during the wait. A failure leaves the call's audio as it is, and "callerVideo" on its
+ * black placeholder. Resolves with the size of the canvas.
  */
 export async function attachCallerVideoInPage(callId: string): Promise<{ width: number; height: number }> {
   const w = window as any;
@@ -238,7 +245,7 @@ export async function attachCallerVideoInPage(callId: string): Promise<{ width: 
   };
   await capture(canvas);
   if (w.__mwBridge !== b) throw new Error('Media bridge closed'); // torn down meanwhile: no poll may outlive the bridge
-  clearInterval(b.callerVideoPoll);
+  clearInterval(b.callerVideoPoll); // the placeholder's redraw, or an earlier attach's poll
   b.callerVideoPoll = setInterval(() => {
     const now = largest();
     if (now && now !== b.callerCanvas) capture(now).catch(() => {});

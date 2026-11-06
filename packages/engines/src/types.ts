@@ -237,8 +237,10 @@ export interface CallMediaHandle {
   /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
   readonly callerProducerId: string;
   /**
-   * The page's "callerVideo" producer, for the agent to consume: black until attachCallerVideo(). Null on a voice
-   * bridge, and on a video bridge whose room refused the video (the engine logs why): the call is then a voice call.
+   * The page's "callerVideo" producer, for the agent to consume: black until attachCallerVideo(), and after one that
+   * failed. The black is sent at least once a second, so an agent that consumes it first sees black within a second.
+   * Null on a voice bridge, and on a video bridge whose room refused the video (the engine logs why): the call is then a
+   * voice call.
    */
   readonly callerVideoProducerId: string | null;
   /**
@@ -263,9 +265,9 @@ export interface CallMediaHandle {
   disconnectAgent(): Promise<void>;
   /**
    * Swap "callerVideo" from black to WhatsApp Web's own drawing of the caller: the largest canvas of its call view,
-   * waited for up to 5 s ("No caller video" after that), and followed for the rest of the call when WhatsApp Web
-   * replaces it. Call it once a call answered with video is connected. Resolves with the canvas's size. "No video on
-   * this call" on a voice bridge.
+   * waited for up to 5 s ("No caller video" after that, and "callerVideo" stays black), and followed for the rest of the
+   * call when WhatsApp Web replaces it. Call it once a call answered with video is connected. Resolves with the canvas's
+   * size. "No video on this call" on a voice bridge.
    */
   attachCallerVideo(): Promise<{ width: number; height: number }>;
   /**
