@@ -2,15 +2,16 @@
 // page (fake WhatsApp Web + the engine's hooks, driven through the real WebJsCallMedia). The other is an agent's
 // browser (the admin console's own agent media module). Each side plays a tone and the test listens on the other:
 // the caller at 440 Hz, the agent at 660 Hz.
+// A video call runs with a plain mediasoup-client agent (startTestAgentInPage): the caller is a 382×344 canvas of CALLER_RGB, the agent's camera a canvas of AGENT_RGB.
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Logger } from '@nestjs/common';
-import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, runCallMediaSignal } from '@multiwa/engines';
+import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
 import { CallMediaService } from './call-media.service';
 import type { CallMediaRoom } from './call-media-room';
 import {
-  WWEBJS_USER_AGENT, agentHearsInPage, consoleAgentBundle, launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, sleep,
-  startConsoleAgentInPage, until,
+  AGENT_RGB, BLACK_RGB, CALLER_RGB, NEAR, WWEBJS_USER_AGENT, agentHearsInPage, agentSeesInPage, cameraCarriesInPage, consoleAgentBundle,
+  launchCallMediaBrowser, micCarriesInPage, openFakeWhatsAppPage, seeCallerVideoInPage, sleep, startConsoleAgentInPage, startTestAgentInPage, until,
 } from '../../../testing/call-media-browser';
 
 const PRESENT = 0.05;
@@ -52,6 +53,17 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
     );
     await p.goto(launched.url);
     await p.evaluate(consoleAgentBundle());
+    return p;
+  };
+
+  /** The agent's page for a video call: a plain mediasoup-client peer (startTestAgentInPage) on the room's agent peer. */
+  const openTestAgentPage = async () => {
+    const p = await launched.browser.newPage();
+    await p.exposeFunction('__agentSignal', async (op: string, json: string) =>
+      JSON.stringify((await runCallMediaSignal(room!.signalingFor('agent'), op, JSON.parse(json))) ?? null),
+    );
+    await p.goto(launched.url);
+    await p.evaluate(mediasoupClientBundle());
     return p;
   };
 
@@ -186,6 +198,69 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
       expect(handle.callerProducerId).toBeTruthy();
       await handle.close();
     } finally {
+      await media.closeCallMedia('CALL1');
+      room?.close();
+      await waPage.close();
+    }
+  }, 60_000);
+
+  it("a video call both ways: the agent sees the caller once attached; WhatsApp Web's camera carries the agent while connected, black otherwise; the voice goes on", async () => {
+    const waPage = await openWaPage();
+    const agentPage = await openTestAgentPage();
+    const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
+    try {
+      room = await service.createRoom('CALL6', { video: true });
+      await waPage.evaluate(() => (window as any).__fakeWa.ring('CALL1', true));
+      const handle = await media.startCallMedia('CALL1', room.signalingFor('page'), { video: true });
+      expect(handle.callerVideoProducerId).toBe(room.producerId('caller', 'video'));
+      const { agentProducerId, agentVideoProducerId } = await agentPage.evaluate(startTestAgentInPage, 660, AGENT_RGB);
+      await agentPage.evaluate(seeCallerVideoInPage, handle.callerVideoProducerId);
+      expect(await media.answer('CALL1', { video: true })).toMatchObject({ video: true });
+      expect(await handle.attachCallerVideo()).toEqual({ width: 382, height: 344 });
+      expect(await until(async () => (await agentSeesInPage(agentPage, CALLER_RGB)) < NEAR, 10_000)).toBe(true);
+      // the voice, with the camera still off: WhatsApp Web's camera is black
+      await handle.attachCaller();
+      await handle.connectAgent(agentProducerId);
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 10_000)).toBe(true);
+      expect(await until(async () => (await cameraCarriesInPage(waPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+      // the camera on
+      await handle.connectAgentVideo(agentVideoProducerId);
+      await handle.setCameraMuted(false);
+      expect(await until(async () => (await cameraCarriesInPage(waPage, AGENT_RGB)) < NEAR, 10_000)).toBe(true);
+      // the worker holds what the page sends to the room's ceiling
+      const pageSend = [...(room as any).transports.values()].find((t: any) => t.peer === 'page' && t.direction === 'send').transport;
+      expect(await until(async () => (await pageSend.getStats())[0]?.maxIncomingBitrate === 1_500_000, 5_000)).toBe(true);
+      // the camera off
+      await handle.disconnectAgentVideo();
+      await handle.setCameraMuted(true);
+      expect(await until(async () => (await cameraCarriesInPage(waPage, BLACK_RGB)) < NEAR, 5_000)).toBe(true);
+      expect(await waPage.evaluate(() => (window as any).__fakeWa.videoMutes)).toEqual([false, true]);
+      expect(await until(async () => (await waPage.evaluate(micCarriesInPage, 660)) > PRESENT, 5_000)).toBe(true); // the voice went on throughout
+      await handle.close();
+    } finally {
+      await media.closeCallMedia('CALL1');
+      room?.close();
+      await waPage.close();
+      await agentPage.close();
+    }
+  }, 60_000);
+
+  it('a video bridge on a voice room is a voice bridge: the room refuses the video, the engine says why, the voice is as always', async () => {
+    const waPage = await openWaPage();
+    const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      room = await service.createRoom('CALL7');
+      await waPage.evaluate(() => (window as any).__fakeWa.ring('CALL1', true));
+      const handle = await media.startCallMedia('CALL1', room.signalingFor('page'), { video: true });
+      expect([handle.callerProducerId, handle.callerVideoProducerId]).toEqual([room.producerId('caller'), null]);
+      expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('no video'))).toEqual([
+        '[WhatsApp-WebJS] Call CALL1 for profile p1: no video, the call goes on as voice: Audio only',
+      ]);
+      await expect(handle.attachCallerVideo()).rejects.toThrow('No video on this call');
+      await handle.close();
+    } finally {
+      warn.mockRestore();
       await media.closeCallMedia('CALL1');
       room?.close();
       await waPage.close();
