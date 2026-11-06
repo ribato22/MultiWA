@@ -6,6 +6,7 @@
 // - "WhatsApp's playback" is a 440 Hz oscillator, connected to AudioContext.destination or played through an
 //   <audio> element (`playbackVia`), started at accept (or later by the test, with `autoPlayback` off);
 // - "WhatsApp's mic capture" is the getUserMedia it gets.
+// - a video call (ring(id, true)): the video call UI's bundle, the recorded accepts and camera mutes, the caller drawn into a 382×344 canvas.
 // (The fake, the browser launch and the page opener are shared with the media integration spec: src/testing/call-media-browser.ts.)
 // It proves the guards, the answer flow and its timeout (which also bounds the stack lookup and the accept),
 // the hang-up and probe deadlines, that the injected mic carries the announcement (and holds the agent
@@ -25,7 +26,7 @@ import * as mediasoup from 'mediasoup';
 import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaBridge, callMediaPage, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
 import type { CallMediaHandle } from '@multiwa/engines';
 import { CALL_MEDIA_CODECS } from './media/call-media.service';
-import { launchCallMediaBrowser, openFakeWhatsAppPage, sineWav, sleep, until } from '../../testing/call-media-browser';
+import { AGENT_RGB, launchCallMediaBrowser, openFakeWhatsAppPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
 
 const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 /** What startRecordingInPage reports on a normal call: the one tap that connected after the answer, no guessing. */
@@ -1195,32 +1196,13 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     beforeAll(async () => {
       worker = await mediasoup.createWorker({ logLevel: 'warn' });
       router = await worker.createRouter({ mediaCodecs: CALL_MEDIA_CODECS });
-      // The agent: a plain mediasoup-client peer in a page of its own, producing a 660 Hz tone into the router.
+      // The agent: a plain mediasoup-client peer in a page of its own, with a 660 Hz tone and a camera of AGENT_RGB.
       const room = makeRoom();
       agentPage = await browser.newPage();
       await agentPage.goto(url);
       await agentPage.exposeFunction('__agentSignal', async (op: string, json: string) => JSON.stringify((await runCallMediaSignal(room, op, JSON.parse(json))) ?? null));
       await agentPage.evaluate(mediasoupClientBundle());
-      agentProducerId = await agentPage.evaluate(async () => {
-        const w = window as any;
-        const sig = async (op: string, args: unknown = {}) => JSON.parse(await w.__agentSignal(op, JSON.stringify(args)));
-        const device = new w.mediasoupClient.Device({ handlerName: 'Chrome111' });
-        await device.load({ routerRtpCapabilities: await sig('rtpCapabilities') });
-        const send = device.createSendTransport(await sig('createTransport', { direction: 'send' }));
-        send.on('connect', ({ dtlsParameters }: any, ok: () => void, fail: (e: Error) => void) => {
-          sig('connectTransport', { transportId: send.id, dtlsParameters }).then(ok, fail);
-        });
-        send.on('produce', ({ kind, rtpParameters }: any, ok: (r: { id: string }) => void, fail: (e: Error) => void) => {
-          sig('produce', { transportId: send.id, kind, rtpParameters }).then(ok, fail);
-        });
-        const ctx = new AudioContext();
-        const osc = ctx.createOscillator();
-        osc.frequency.value = 660;
-        const dest = ctx.createMediaStreamDestination();
-        osc.connect(dest);
-        osc.start();
-        return (await send.produce({ track: dest.stream.getAudioTracks()[0] })).id as string;
-      });
+      agentProducerId = (await agentPage.evaluate(startTestAgentInPage, 660, AGENT_RGB)).agentProducerId;
     }, 30_000);
 
     afterAll(async () => {

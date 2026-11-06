@@ -54,13 +54,21 @@ export function installFakeWhatsApp() {
   const fake: any = (w.__fakeWa = {
     endCalls: [], gumStream: null, level: () => 0, hangAccept: false, connectAfterMs: 300, connectTimer: null, accepts: 0,
     hangStack: false, releaseStack: null, stackBusyMs: 0, autoPlayback: true, playbackVia: 'destination', playbacks: [],
+    // Video: `video` says the ringing call is a video call (ring(id, true)). requireBundle loads the video call UI (or
+    // fails, `bundleFails`, or never answers, `bundleHangs`); only with it loaded does an answer draw the caller, in
+    // `callerColour`, unless `drawsCaller` is off. `acceptArgs` and `videoMutes` record those calls; `camStream` is the
+    // camera the answer took.
+    video: false, bundleLoaded: false, bundleFails: false, bundleHangs: false, drawsCaller: true, callerColour: [200, 40, 40],
+    callerCanvas: null, callerTimer: null, camStream: null, acceptArgs: [], videoMutes: [],
   });
   const call: any = { id: 'CALL1', state: 3, getState() { return this.state; } };
   const CC: any = { activeCall: call };
   // The same call object rings again as `id` (for the tests that run after the hang-up), as a NEW call: a connect
-  // still pending from the old one must not connect it.
-  fake.ring = (id: string) => {
+  // still pending from the old one must not connect it. `video`: the new call is a video call.
+  fake.ring = (id: string, video = false) => {
     clearTimeout(fake.connectTimer);
+    fake.stopVideo();
+    fake.video = video;
     call.id = id; call.state = 3; delete call.userEndedCall; CC.activeCall = call; w._multiwaCallId = id;
   };
   // WhatsApp's playback of the caller, 440 Hz (or `hz`), on either route WA Web picks: straight to the context's
@@ -90,10 +98,34 @@ export function installFakeWhatsApp() {
     for (const p of ps) { try { p.osc.stop(); } catch {} if (p.el) p.el.srcObject = null; }
     await Promise.all([...new Set(ps.map((p: any) => p.ctx))].map((ctx: any) => (ctx.state === 'closed' ? null : ctx.close())));
   };
-  const stack = {
+  // WhatsApp Web's call view draws the caller's video into a canvas of its own, some 382×344 (live): here a flat colour,
+  // redrawn like a video. Called again, it replaces the canvas, as WhatsApp Web may mid-call.
+  fake.showCaller = () => {
+    const c = document.createElement('canvas');
+    c.width = 382;
+    c.height = 344;
+    const g = c.getContext('2d')!;
+    const paint = () => { g.fillStyle = `rgb(${fake.callerColour.join(',')})`; g.fillRect(0, 0, c.width, c.height); };
+    paint();
+    clearInterval(fake.callerTimer);
+    fake.callerTimer = setInterval(paint, 66);
+    fake.callerCanvas?.remove();
+    document.body.appendChild(c);
+    fake.callerCanvas = c;
+  };
+  // The end of a call's video: the call view goes, and WhatsApp Web stops its camera.
+  fake.stopVideo = () => {
+    clearInterval(fake.callerTimer);
+    fake.callerCanvas?.remove();
+    fake.callerCanvas = null;
+    fake.camStream?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+    fake.camStream = null;
+  };
+  const stack: any = {
     type: 'web',
-    async acceptCall() {
+    async acceptCall(...args: unknown[]) {
       fake.accepts++;
+      fake.acceptArgs.push(args);
       if (fake.hangAccept) return new Promise<void>(() => {}); // a voip stack that never answers
       call.state = 4;
       if (fake.autoPlayback) fake.play(fake.playbackVia);
@@ -104,13 +136,22 @@ export function installFakeWhatsApp() {
       fake.capture.createMediaStreamSource(fake.gumStream).connect(an);
       const buf = new Float32Array(an.fftSize);
       fake.level = () => { an.getFloatTimeDomainData(buf); let s = 0; for (const v of buf) s += v * v; return Math.sqrt(s / buf.length); };
+      // A video call takes a camera too, also one answered with the camera off or as voice (live: 640×480 ideal).
+      if (fake.video) {
+        fake.camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } });
+        if (fake.bundleLoaded && fake.drawsCaller) fake.showCaller();
+      }
       fake.connectTimer = setTimeout(() => { call.state = 6; }, fake.connectAfterMs);
     },
     async endCall(reason: number, flag: boolean) {
       fake.endCalls.push([reason, flag]);
       CC.activeCall = null;
       fake.gumStream?.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+      fake.stopVideo();
       await fake.stopPlaybacks();
+    },
+    setCallVideoMute(muted: boolean) {
+      fake.videoMutes.push(muted);
     },
   };
   const modules: Record<string, any> = {
@@ -129,6 +170,13 @@ export function installFakeWhatsApp() {
     WAWebCallRingtone: { stopCallRingtone() {} },
     WAWebVoipCallAudioUnlock: { prepareCallAudioElement() {} },
     WAWebVoipGatingUtils: { isWebCallingUiEnabled: () => true },
+    WAWebVoipUiVideoCallLoadable: {
+      async requireBundle() {
+        if (fake.bundleHangs) return new Promise<void>(() => {});
+        if (fake.bundleFails) throw new Error('ChunkLoadError: the video call bundle did not load');
+        fake.bundleLoaded = true;
+      },
+    },
   };
   w.require = (name: string) => { if (!(name in modules)) throw new Error(`unknown module ${name}`); return modules[name]; };
   w._multiwaCallId = 'CALL1';
@@ -226,4 +274,109 @@ export function micCarriesInPage(hz: number): number {
   let im = 0;
   for (let i = 0; i < x.length; i++) { re += x[i] * Math.cos(k * i); im -= x[i] * Math.sin(k * i); }
   return Math.hypot(re, im) / x.length;
+}
+
+/** The fake caller's colour (installFakeWhatsApp paints its caller canvas with it), the test agent's camera, and black. */
+export const CALLER_RGB = [200, 40, 40];
+export const AGENT_RGB = [40, 40, 200];
+export const BLACK_RGB = [0, 0, 0];
+/** A picture within this of a colour on every channel (0-255) is that colour: VP8 and the colour conversions move a flat colour a few steps. */
+export const NEAR = 40;
+
+/**
+ * In a test agent's page (mediasoupClientBundle() evaluated in, the page binding `__agentSignal(op, json)` exposed): a
+ * plain mediasoup-client peer with a send and a receive transport, the agent of the video specs. It produces a `hz`
+ * tone and a 320×240 camera of colour `rgb`; seeCallerVideoInPage shows it the caller's video.
+ */
+export async function startTestAgentInPage(hz: number, rgb: number[]): Promise<{ agentProducerId: string; agentVideoProducerId: string }> {
+  const w = window as any;
+  const sig = async (op: string, args: unknown = {}) => JSON.parse(await w.__agentSignal(op, JSON.stringify(args)));
+  const device = new w.mediasoupClient.Device({ handlerName: 'Chrome111' });
+  await device.load({ routerRtpCapabilities: await sig('rtpCapabilities') });
+  const wire = (t: any) => {
+    t.on('connect', ({ dtlsParameters }: any, ok: () => void, fail: (e: Error) => void) => {
+      sig('connectTransport', { transportId: t.id, dtlsParameters }).then(ok, fail);
+    });
+    return t;
+  };
+  const send = wire(device.createSendTransport(await sig('createTransport', { direction: 'send' })));
+  send.on('produce', ({ kind, rtpParameters }: any, ok: (r: { id: string }) => void, fail: (e: Error) => void) => {
+    sig('produce', { transportId: send.id, kind, rtpParameters }).then(ok, fail);
+  });
+  const recv = wire(device.createRecvTransport(await sig('createTransport', { direction: 'recv' })));
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator();
+  osc.frequency.value = hz;
+  const mic = ctx.createMediaStreamDestination();
+  osc.connect(mic);
+  osc.start();
+  const voice = await send.produce({ track: mic.stream.getAudioTracks()[0] });
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 240;
+  const g = canvas.getContext('2d')!;
+  g.fillStyle = `rgb(${rgb.join(',')})`;
+  g.fillRect(0, 0, 320, 240);
+  setInterval(() => g.fillRect(0, 0, 320, 240), 66); // a canvas that does not change sends no frames
+  const camera = await send.produce({ track: canvas.captureStream(15).getVideoTracks()[0], encodings: [{ maxBitrate: 800_000 }] });
+  const video = document.createElement('video');
+  video.muted = true;
+  w.__agent = { device, recv, sig, video };
+  return { agentProducerId: voice.id, agentVideoProducerId: camera.id };
+}
+
+/** In the test agent's page: consume the caller's video (`producerId`) into `__agent.video`, which plays it. */
+export async function seeCallerVideoInPage(producerId: string): Promise<void> {
+  const a = (window as any).__agent;
+  const consumer = await a.recv.consume(await a.sig('consume', { transportId: a.recv.id, producerId, rtpCapabilities: a.device.rtpCapabilities }));
+  await a.sig('resumeConsumer', { consumerId: consumer.id });
+  a.video.srcObject = new MediaStream([consumer.track]);
+  a.video.play().catch(() => {});
+}
+
+/**
+ * How far what the test agent sees of the caller (seeCallerVideoInPage) is from `rgb`: the largest difference, over the
+ * three channels, of the picture's mean colour, 0-255; 255 while there is no picture yet.
+ */
+export function agentSeesInPage(rgb: number[]): number {
+  const v: HTMLVideoElement | undefined = (window as any).__agent?.video;
+  if (!v || v.readyState < 2 || !v.videoWidth) return 255;
+  const c = document.createElement('canvas');
+  c.width = 16;
+  c.height = 12;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.drawImage(v, 0, 0, 16, 12);
+  const d = g.getImageData(0, 0, 16, 12).data;
+  const mean = [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += d[i + k] / (d.length / 4);
+  return Math.max(...mean.map((m, k) => Math.abs(m - rgb[k])));
+}
+
+/**
+ * How far WhatsApp Web's camera in the fake page (the stream its last video answer took: what the caller sees) is from
+ * `rgb`, measured as agentSeesInPage measures; 255 while there is no picture.
+ */
+export function cameraCarriesInPage(rgb: number[]): number {
+  const f = (window as any).__fakeWa;
+  const track: MediaStreamTrack | undefined = f.camStream?.getVideoTracks()[0];
+  if (!track) return 255;
+  // Each video answer takes a new camera stream: a page that takes several calls is looked at on the current one.
+  if (f.camView?.track !== track) {
+    const view = document.createElement('video');
+    view.muted = true;
+    view.srcObject = new MediaStream([track]);
+    view.play().catch(() => {});
+    f.camView = { track, view };
+  }
+  const v: HTMLVideoElement = f.camView.view;
+  if (v.readyState < 2 || !v.videoWidth) return 255;
+  const c = document.createElement('canvas');
+  c.width = 16;
+  c.height = 12;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.drawImage(v, 0, 0, 16, 12);
+  const d = g.getImageData(0, 0, 16, 12).data;
+  const mean = [0, 0, 0];
+  for (let i = 0; i < d.length; i += 4) for (let k = 0; k < 3; k++) mean[k] += d[i + k] / (d.length / 4);
+  return Math.max(...mean.map((m, k) => Math.abs(m - rgb[k])));
 }
