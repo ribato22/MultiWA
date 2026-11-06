@@ -245,6 +245,30 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
     }
   }, 60_000);
 
+  it("an agent's video that stops coming (silenced as its call ends) leaves WhatsApp Web's camera black, not on its last frame", async () => {
+    const waPage = await openWaPage();
+    const agentPage = await openTestAgentPage();
+    const media = new WebJsCallMedia(() => waPage, () => true, 'p1');
+    try {
+      room = await service.createRoom('CALL8', { video: true });
+      await waPage.evaluate(() => (window as any).__fakeWa.ring('CALL1', true));
+      const handle = await media.startCallMedia('CALL1', room.signalingFor('page'), { video: true });
+      const { agentVideoProducerId } = await agentPage.evaluate(startTestAgentInPage, 660, AGENT_RGB);
+      await media.answer('CALL1', { video: true });
+      await handle.connectAgentVideo(agentVideoProducerId);
+      expect(await until(async () => (await cameraCarriesInPage(waPage, AGENT_RGB)) < NEAR, 10_000)).toBe(true);
+      // paused at the worker: no new frame reaches the page, whose camera is still connected to the agent's video
+      await room.silenceAgent();
+      expect(await until(async () => (await cameraCarriesInPage(waPage, BLACK_RGB)) < NEAR, 2_000)).toBe(true);
+      await handle.close();
+    } finally {
+      await media.closeCallMedia('CALL1');
+      room?.close();
+      await waPage.close();
+      await agentPage.close();
+    }
+  }, 60_000);
+
   it('a video bridge on a voice room is a voice bridge: the room refuses the video, the engine says why, the voice is as always', async () => {
     const waPage = await openWaPage();
     const media = new WebJsCallMedia(() => waPage, () => true, 'p1');

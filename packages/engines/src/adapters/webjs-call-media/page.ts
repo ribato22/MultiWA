@@ -76,9 +76,9 @@ export interface MwCall {
   /**
    * The injected camera, created by ensureCamera(): every getUserMedia that asks for video gets a clone of `track`, a
    * capture of `canvas`, kept in `clones` while it is live. While one is, the canvas is redrawn at 15 fps (`timer`),
-   * black, or with `source` (the agent's video, set by the media bridge) fitted in; with none live the redraw stops, on
-   * black (`timer` null). Like the microphone it lasts as long as the document. It is never put in the document, so a
-   * search of WhatsApp Web's canvases never finds it.
+   * black, or with `source` (the agent's video, set by the media bridge) fitted in while it brings new frames (a second
+   * without one draws black); with none live the redraw stops, on black (`timer` null). Like the microphone it lasts as
+   * long as the document. It is never put in the document, so a search of WhatsApp Web's canvases never finds it.
    */
   camera: { canvas: HTMLCanvasElement; track: MediaStreamTrack; source: HTMLVideoElement | null; clones: MediaStreamTrack[]; timer: any } | null;
   /** Creates the camera once, starts its redraw when it is stopped, returns it. */
@@ -182,6 +182,12 @@ export function installCallMediaHooks(): void {
       // Follow MediaStreamTrack.prototype.clone and MediaStream.prototype.clone if WhatsApp Web ever copies its camera.
       if (!camera.timer) {
         const g = camera.canvas.getContext('2d');
+        // A <video> keeps its last frame when no new one comes (the agent's producer paused, its link down): drawn on, it
+        // would reach the caller frozen. So the source's frame count is watched (`frames`, unchanged since `movedAt`; a
+        // new source starts afresh): a second without a new frame draws black, until one comes again.
+        let shown: HTMLVideoElement | null = null;
+        let frames = 0;
+        let movedAt = 0;
         camera.timer = setInterval(() => {
           camera.clones = camera.clones.filter((t) => t.readyState === 'live');
           if (!camera.clones.length) {
@@ -193,6 +199,12 @@ export function installCallMediaHooks(): void {
           g.fillRect(0, 0, 640, 480);
           const v = camera.source;
           if (!v || v.readyState < 2 || !v.videoWidth) return;
+          const n = v.getVideoPlaybackQuality().totalVideoFrames;
+          if (v !== shown || n !== frames) {
+            shown = v;
+            frames = n;
+            movedAt = performance.now();
+          } else if (performance.now() - movedAt > 1000) return;
           const s = Math.min(640 / v.videoWidth, 480 / v.videoHeight);
           g.drawImage(v, (640 - v.videoWidth * s) / 2, (480 - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
         }, 1000 / 15);
