@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import type { CallMediaEngine, CallMediaHandle, CallMediaSignaling, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
 import {
   attachCallerInPage,
+  attachCallerVideoInPage,
   closeBridgeInPage,
   connectAgentInPage,
   disconnectAgentInPage,
@@ -301,10 +302,12 @@ export class WebJsCallMedia implements CallMediaEngine {
         );
       }
       // The handle's operations run one at a time, in call order, per piece of page state: attachCaller touches the
-      // caller (`b.caller`), connectAgent and disconnectAgent the agent (`b.agent`). A disconnect sent while a connect is
-      // pending would find no agent yet, but it must not wait for a caller tap (up to 5 s) with the agent on the
-      // microphone. A failure does not break a queue. Whether the bridge is still ours is checked when an operation's
-      // turn comes. close() stays outside the queues: it must not wait behind a hung operation.
+      // caller (`b.caller`), connectAgent and disconnectAgent the agent (`b.agent`), attachCallerVideo the caller's video
+      // (`b.callerVideo`), and the camera steps the agent's video and WhatsApp Web's camera mute. A disconnect sent while
+      // a connect is pending would find no agent yet, but it must not wait for a caller tap (up to 5 s) with the agent on
+      // the microphone; for the same reason no camera step waits for the caller's canvas (up to 5 s), and no video step
+      // for an audio one. A failure does not break a queue. Whether the bridge is still ours is checked when an
+      // operation's turn comes. close() stays outside the queues: it must not wait behind a hung operation.
       const queue = () => {
         let chain: Promise<unknown> = Promise.resolve();
         return <T>(op: () => Promise<T>): Promise<T> => {
@@ -318,12 +321,14 @@ export class WebJsCallMedia implements CallMediaEngine {
       };
       const callerQueue = queue();
       const agentQueue = queue();
+      const callerVideoQueue = queue();
       return {
         callerProducerId: started.callerProducerId,
         callerVideoProducerId: started.callerVideoProducerId ?? null,
         attachCaller: () => callerQueue(() => page.evaluate(attachCallerInPage, callId)),
         connectAgent: (producerId: string) => agentQueue(() => page.evaluate(connectAgentInPage, callId, producerId)),
         disconnectAgent: () => agentQueue(() => page.evaluate(disconnectAgentInPage, callId)),
+        attachCallerVideo: () => callerVideoQueue(() => page.evaluate(attachCallerVideoInPage, callId)),
         close: async () => {
           if (this.bridge !== slot) return;
           try {

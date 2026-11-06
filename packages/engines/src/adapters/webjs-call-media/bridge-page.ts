@@ -30,6 +30,10 @@ export interface MwBridge {
    * swaps in a capture of WhatsApp Web's canvas of the caller.
    */
   callerVideo: any;
+  /** The canvas of WhatsApp Web's that "callerVideo" carries a capture of, once attached. */
+  callerCanvas: HTMLCanvasElement | null;
+  /** The poll that keeps "callerVideo" on WhatsApp Web's largest canvas (attachCallerVideoInPage). */
+  callerVideoPoll: any;
   /** Releases everything the bridge holds in the page, synchronously, the call poll included; safe to call twice. */
   teardown(): void;
 }
@@ -94,8 +98,11 @@ export async function startBridgeInPage(
     caller: null,
     agent: null,
     callerVideo: null,
+    callerCanvas: null,
+    callerVideoPoll: null,
     teardown() {
       clearInterval(poll);
+      clearInterval(b.callerVideoPoll);
       if (b.agent) {
         b.agent.source.disconnect();
         b.agent.keepAlive.srcObject = null;
@@ -179,6 +186,52 @@ export async function attachCallerInPage(callId: string): Promise<{ via: 'elemen
   if (!tap) throw new Error('No caller audio');
   await b.caller.replaceTrack({ track: tap.stream.getAudioTracks()[0] });
   return { via: tap.via, freshCandidates: tap.freshCandidates, fallback: tap.fallback };
+}
+
+/**
+ * Swap "callerVideo" from its black placeholder to WhatsApp Web's own drawing of the caller. During a video call WhatsApp
+ * Web draws the caller into a canvas of its call view (some 382×344, live): the largest canvas in the document. Ours are
+ * never in the document, and one under 160×120 (an avatar, a sticker) is no video. It waits up to 5 s for one ("No
+ * caller video"). Once attached, the capture follows the largest canvas, looked for every second while the bridge
+ * lasts: WhatsApp Web may replace its canvas mid-call. Refused on a voice bridge and when the call is not WhatsApp's
+ * active call, also when it ended during the wait. A failure leaves the call's audio as it is. Resolves with the size of
+ * the canvas.
+ */
+export async function attachCallerVideoInPage(callId: string): Promise<{ width: number; height: number }> {
+  const w = window as any;
+  const ours = () => {
+    const c = w.require('WAWebCallCollection').activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  const b: MwBridge | undefined = w.__mwBridge;
+  if (!b || b.callId !== callId) throw new Error('No media bridge for this call');
+  if (!b.callerVideo) throw new Error('No video on this call');
+  if (!ours()) throw new Error('Call is not the active call');
+  const largest = (): HTMLCanvasElement | null => {
+    let best: HTMLCanvasElement | null = null;
+    for (const c of Array.from(document.querySelectorAll('canvas'))) {
+      if (c.width * c.height >= 160 * 120 && (!best || c.width * c.height > best.width * best.height)) best = c;
+    }
+    return best;
+  };
+  let canvas = largest();
+  for (const end = Date.now() + 5000; !canvas && Date.now() < end; canvas = largest()) await new Promise((r) => setTimeout(r, 100));
+  if (w.__mwBridge !== b) throw new Error('Media bridge closed');
+  if (!ours()) throw new Error('Call is not the active call');
+  if (!canvas) throw new Error('No caller video');
+  // replaceTrack stops the capture it replaces (the producer's stopTracks): only ours, never WhatsApp Web's canvas.
+  const capture = async (c: HTMLCanvasElement) => {
+    await b.callerVideo.replaceTrack({ track: c.captureStream(15).getVideoTracks()[0] });
+    b.callerCanvas = c;
+  };
+  await capture(canvas);
+  if (w.__mwBridge !== b) throw new Error('Media bridge closed'); // torn down meanwhile: no poll may outlive the bridge
+  clearInterval(b.callerVideoPoll);
+  b.callerVideoPoll = setInterval(() => {
+    const now = largest();
+    if (now && now !== b.callerCanvas) capture(now).catch(() => {});
+  }, 1000);
+  return { width: canvas.width, height: canvas.height };
 }
 
 /**

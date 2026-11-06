@@ -224,12 +224,14 @@ export interface CallMediaSignaling {
 
 /**
  * The call's media bridge in the page (CallMediaEngine.startCallMedia). Its operations run in call order, one at a time,
- * in two queues: attachCaller on its own, connectAgent and disconnectAgent together. A failure does not stop the next
+ * in four queues: attachCaller on its own; connectAgent and disconnectAgent together; attachCallerVideo on its own; and
+ * the camera (connectAgentVideo, disconnectAgentVideo, setCameraMuted) together. No video step waits for an audio one,
+ * nor the other way round. A video step that fails leaves the call's audio as it is. A failure does not stop the next
  * one; each rejects "Media bridge closed" once the bridge is closed. An operation the coordinator stopped waiting for is
  * NOT cancelled: it still runs when its turn comes, unless the slot was closed, so a disconnectAgent() queued after a
- * timed-out connectAgent() undoes it. The page refuses attachCaller and connectAgent for a call that is not WhatsApp's
- * active call ("Call is not the active call"), and releases the whole bridge by itself 250-500 ms after its call is
- * over. The engine's slot stays held until close() or closeCallMedia().
+ * timed-out connectAgent() undoes it. The page refuses attachCaller, connectAgent and the video steps for a call that is
+ * not WhatsApp's active call ("Call is not the active call"), and releases the whole bridge by itself 250-500 ms after
+ * its call is over. The engine's slot stays held until close() or closeCallMedia().
  */
 export interface CallMediaHandle {
   /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
@@ -259,6 +261,13 @@ export interface CallMediaHandle {
    * that as done.
    */
   disconnectAgent(): Promise<void>;
+  /**
+   * Swap "callerVideo" from black to WhatsApp Web's own drawing of the caller: the largest canvas of its call view,
+   * waited for up to 5 s ("No caller video" after that), and followed for the rest of the call when WhatsApp Web
+   * replaces it. Call it once a call answered with video is connected. Resolves with the canvas's size. "No video on
+   * this call" on a voice bridge.
+   */
+  attachCallerVideo(): Promise<{ width: number; height: number }>;
   /**
    * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
    * closed") and still frees the slot, so close the room regardless of the outcome: the room closes its own side. It

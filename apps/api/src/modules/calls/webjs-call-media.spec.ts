@@ -729,6 +729,7 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       await expect(stale.attachCaller()).rejects.toThrow('Media bridge closed');
       await expect(stale.connectAgent('P-agent')).rejects.toThrow('Media bridge closed');
       await expect(stale.disconnectAgent()).rejects.toThrow('Media bridge closed');
+      await expect(stale.attachCallerVideo()).rejects.toThrow('Media bridge closed');
       await stale.close(); // a no-op
       expect(page.evaluate).not.toHaveBeenCalled(); // the newer bridge was not touched in the page
       await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Media bridge already running'); // and still holds the slot
@@ -929,6 +930,32 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       await tick();
       await media.closeCallMedia('c2');
       expect(page.evaluate).toHaveBeenLastCalledWith(closeBridgeInPage, 'c2');
+    });
+
+    it("the caller's video queues on its own: an attach waiting for WhatsApp Web's canvas holds up none of the audio steps", async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling(), { video: true });
+      const release = page.holdNext(callMediaBridge.attachCallerVideoInPage); // the wait for the canvas
+      page.evaluate.mockClear();
+      const all = Promise.all([handle.attachCallerVideo(), handle.attachCaller(), handle.connectAgent('P-agent'), handle.disconnectAgent()]);
+      await tick();
+      await tick();
+      expect(page.sent()).toEqual(['attachCallerVideoInPage', 'attachCallerInPage', 'connectAgentInPage', 'disconnectAgentInPage']);
+      release();
+      expect((await all)[0]).toEqual({ fn: 'attachCallerVideoInPage', args: ['c1'] });
+    });
+
+    it("nor does an audio step waiting on the page hold up the caller's video", async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling(), { video: true });
+      const release = page.holdNext(callMediaBridge.attachCallerInPage); // the wait for the caller's audio tap
+      page.evaluate.mockClear();
+      const both = Promise.all([handle.attachCaller(), handle.attachCallerVideo()]);
+      await tick();
+      await tick();
+      expect(page.sent()).toEqual(['attachCallerInPage', 'attachCallerVideoInPage']);
+      release();
+      await both;
     });
   });
 

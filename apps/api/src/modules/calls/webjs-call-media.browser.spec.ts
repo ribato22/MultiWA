@@ -26,7 +26,7 @@ import * as mediasoup from 'mediasoup';
 import { CALL_MEDIA_INIT_SCRIPT, WebJsCallMedia, callMediaBridge, callMediaPage, mediasoupClientBundle, runCallMediaSignal } from '@multiwa/engines';
 import type { CallMediaHandle } from '@multiwa/engines';
 import { CALL_MEDIA_CODECS } from './media/call-media.service';
-import { AGENT_RGB, BLACK_RGB, NEAR, cameraCarriesInPage, launchCallMediaBrowser, openFakeWhatsAppPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
+import { AGENT_RGB, BLACK_RGB, CALLER_RGB, NEAR, agentSeesInPage, cameraCarriesInPage, launchCallMediaBrowser, openFakeWhatsAppPage, seeCallerVideoInPage, sineWav, sleep, startTestAgentInPage, until } from '../../testing/call-media-browser';
 
 const { answerActiveCall, hangUpActiveCall, playAnnouncementInPage, probeCallMedia, prepareCallMediaPage, startRecordingInPage, stopRecordingInPage } = callMediaPage;
 /** What startRecordingInPage reports on a normal call: the one tap that connected after the answer, no guessing. */
@@ -1754,6 +1754,59 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       } finally {
         warn.mockRestore();
       }
+    });
+
+    it("the agent sees the caller once the caller's video is attached: WhatsApp Web's largest canvas, followed when it is replaced", async () => {
+      await withBridge({ video: true }, async ({ p, media, handle }) => {
+        // a smaller canvas of the page's own (a sticker, say) is not the caller
+        await p.evaluate(() => {
+          const c = document.createElement('canvas');
+          c.width = 200;
+          c.height = 150;
+          c.getContext('2d')!.fillRect(0, 0, 200, 150);
+          document.body.appendChild(c);
+        });
+        await agentPage.evaluate(seeCallerVideoInPage, handle.callerVideoProducerId);
+        await media.answer('CALL1', { video: true });
+        expect(await handle.attachCallerVideo()).toEqual({ width: 382, height: 344 });
+        expect(await until(async () => (await agentSeesInPage(agentPage, CALLER_RGB)) < NEAR, 10_000)).toBe(true);
+        // WhatsApp Web replaces its canvas mid-call: within the poll's second, the agent sees the new one
+        await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
+        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000)).toBe(true);
+      });
+    });
+
+    it('a caller whose video never shows: the attach rejects after its wait, and the voice goes on', async () => {
+      await withBridge({ video: true, before: (p) => p.evaluate(() => { (window as any).__fakeWa.drawsCaller = false; }) }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await expect(handle.attachCallerVideo()).rejects.toThrow('No caller video');
+        expect(await handle.attachCaller()).toEqual({ via: 'destination', freshCandidates: 1, fallback: false });
+        await handle.connectAgent(agentProducerId);
+        expect(await heard(p, 5000)).toBe(true);
+        expect(await hasBridge(p)).toBe(true);
+      });
+    });
+
+    it('the video steps refuse a voice bridge, and a call that is over', async () => {
+      await withBridge({}, async ({ handle }) => {
+        await expect(handle.attachCallerVideo()).rejects.toThrow('No video on this call');
+      });
+      await withBridge({ video: true, before: holdPolls }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await ring(p, 'CALL2'); // CALL1 is over; CALL2 is the active call
+        await expect(handle.attachCallerVideo()).rejects.toThrow('Call is not the active call');
+      });
+    });
+
+    it("close() clears the caller video's poll with the bridge's own", async () => {
+      await withBridge({ video: true, before: trackPolls }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await handle.attachCallerVideo();
+        // the bridge's poll, the caller video's, the fake caller's painter, the injected camera's redraw
+        expect(await liveIntervals(p)).toBe(4);
+        await handle.close();
+        expect(await liveIntervals(p)).toBe(2); // the fake's painter, and the camera's redraw, which lasts as long as WhatsApp Web's camera
+      });
     });
   });
 }, 120_000);
