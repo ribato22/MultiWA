@@ -549,7 +549,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     const p = await openPage();
     try {
       const media = new WebJsCallMedia(() => p, () => true, 'p1');
-      const notPrepared = { supported: false, reasons: ['not_prepared'], waVersion: '2.3000.test', videoSupported: true };
+      const notPrepared = { supported: false, reasons: ['not_prepared'], waVersion: '2.3000.test', videoSupported: false };
       expect(await media.getSupport()).toEqual(notPrepared); // the hooks are there, the setup has not run
       // the setup fails the way a refused microphone permission would
       await p.evaluate(() => { const c = (window as any).__mwCall; c.permittedGetUserMedia = c.realGetUserMedia; c.realGetUserMedia = () => Promise.reject(new Error('Permission denied')); });
@@ -1121,11 +1121,15 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       }
     });
 
-    it('a video call UI that does not load answers the call as voice instead of failing it', async () => {
+    it('a video call UI that does not load answers the call as voice instead of failing it, and says why', async () => {
       const p = await openPage();
       try {
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.ring('CALL1', true); f.bundleFails = true; });
-        expect(await p.evaluate(answerActiveCall, 'CALL1', 5000, true)).toEqual({ connectedAfterMs: expect.any(Number), video: false });
+        expect(await p.evaluate(answerActiveCall, 'CALL1', 5000, true)).toEqual({
+          connectedAfterMs: expect.any(Number),
+          video: false,
+          videoError: 'ChunkLoadError: the video call bundle did not load',
+        });
         expect(await answered(p)).toEqual({ bundle: false, accepts: [[true, false, null]], camera: true, caller: false });
       } finally {
         await p.close();

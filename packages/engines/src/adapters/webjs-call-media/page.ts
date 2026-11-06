@@ -303,10 +303,14 @@ export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: stri
  * may still connect after this rejected, so the caller must then hang it up (see CallMediaEngine.answer).
  * `video`: answered the way WhatsApp Web answers a video call, its video call UI loaded first, so that it draws the
  * caller. Either way the camera starts off (setCameraMutedInPage turns it on). A video call UI that fails to load
- * answers the call as voice: `video` in the result says how it was answered.
+ * answers the call as voice: `video` in the result says how it was answered, and `videoError`, only then, why.
  * Refused without our hooks: WhatsApp Web would put Chrome's fake microphone (a beep) on the call.
  */
-export async function answerActiveCall(callId: string, timeoutMs: number, video = false): Promise<{ connectedAfterMs: number; video: boolean }> {
+export async function answerActiveCall(
+  callId: string,
+  timeoutMs: number,
+  video = false,
+): Promise<{ connectedAfterMs: number; video: boolean; videoError?: string }> {
   const w = window as any;
   const call: MwCall = w.__mwCall;
   if (!call) throw new Error('Call media hooks missing');
@@ -332,10 +336,14 @@ export async function answerActiveCall(callId: string, timeoutMs: number, video 
     if (Date.now() > deadline) throw timedOut(); // a busy page runs timers late: the clock has the last word
     if (!ours()) throw new Error('Call ended before it connected');
     let withVideo = false;
+    let videoError: string | undefined;
     if (video) {
-      // Only the deadline fails the answer here: a bundle that does not load, or a module that is gone, leaves voice.
+      // Only the deadline fails the answer here: a bundle that does not load, or a module that is gone, leaves voice,
+      // and the reason goes back with the answer for the log.
       withVideo = await Promise.race([
-        Promise.resolve().then(() => w.require('WAWebVoipUiVideoCallLoadable').requireBundle()).then(() => true, () => false),
+        Promise.resolve()
+          .then(() => w.require('WAWebVoipUiVideoCallLoadable').requireBundle())
+          .then(() => true, (e: any) => { videoError = String(e?.message ?? e); return false; }),
         expired,
       ]);
       if (Date.now() > deadline) throw timedOut();
@@ -344,7 +352,7 @@ export async function answerActiveCall(callId: string, timeoutMs: number, video 
     await Promise.race([stack.acceptCall(true, false, null), expired]);
     for (;;) {
       if (!ours()) throw new Error('Call ended before it connected');
-      if (U.isCallConnected(CC.activeCall.getState())) return { connectedAfterMs: Date.now() - t0, video: withVideo };
+      if (U.isCallConnected(CC.activeCall.getState())) return { connectedAfterMs: Date.now() - t0, video: withVideo, videoError };
       if (Date.now() > deadline) throw timedOut();
       await new Promise((r) => setTimeout(r, 100));
     }

@@ -36,7 +36,7 @@ const DEFAULT_ARGS = [
 const pageResults = new Map<unknown, unknown>([
   [prepareCallMediaPage, { hooks: true, micPermission: 'granted' }],
   [probeCallMedia, { reasons: [], waVersion: '2.3000.1' }],
-  [answerActiveCall, { connectedAfterMs: 120 }],
+  [answerActiveCall, { connectedAfterMs: 120, video: true }],
   [playAnnouncementInPage, { durationMs: 900 }],
   [startRecordingInPage, { callerVia: 'destination', freshCandidates: 1, fallback: false }],
   [stopRecordingInPage, { durationMs: 1000 }],
@@ -240,13 +240,16 @@ describe('WebJsCallMedia without a browser', () => {
     expect(page.evaluate).not.toHaveBeenCalled();
   });
 
-  it('reports video support as the page says, apart from voice support; only a true is true', async () => {
+  it('reports video support as the page says, only while voice is supported too; only a true is true', async () => {
     const page = fakePage();
     const media = new WebJsCallMedia(() => page, () => true, 'p1');
     page.evaluate.mockResolvedValueOnce({ reasons: [], waVersion: '2.3000.1', videoSupported: true });
     expect(await media.getSupport()).toEqual({ supported: true, reasons: [], waVersion: '2.3000.1', videoSupported: true });
-    page.evaluate.mockResolvedValueOnce({ reasons: ['not_prepared'], waVersion: '2.3000.1', videoSupported: true });
-    expect(await media.getSupport()).toEqual({ supported: false, reasons: ['not_prepared'], waVersion: '2.3000.1', videoSupported: true });
+    // a page that cannot carry a call carries no video call either, whatever its video call UI
+    for (const reason of ['not_prepared', 'hooks_missing']) {
+      page.evaluate.mockResolvedValueOnce({ reasons: [reason], waVersion: '2.3000.1', videoSupported: true });
+      expect(await media.getSupport()).toEqual({ supported: false, reasons: [reason], waVersion: '2.3000.1', videoSupported: false });
+    }
     page.evaluate.mockResolvedValueOnce({ reasons: [], waVersion: '2.3000.1', videoSupported: 'yes' });
     expect(await media.getSupport()).toMatchObject({ supported: true, videoSupported: false });
   });
@@ -318,7 +321,7 @@ describe('WebJsCallMedia without a browser', () => {
   it('hands the page the call id, the deadline and whether to answer with video, and returns what the page answers', async () => {
     const page = fakePage();
     const media = new WebJsCallMedia(() => page, () => true, 'p1');
-    expect(await media.answer('c1')).toEqual({ connectedAfterMs: 120 });
+    expect(await media.answer('c1')).toEqual({ connectedAfterMs: 120, video: true });
     expect(page.evaluate).toHaveBeenLastCalledWith(answerActiveCall, 'c1', 15000, false);
     await media.answer('c1', { timeoutMs: 3000 });
     expect(page.evaluate).toHaveBeenLastCalledWith(answerActiveCall, 'c1', 3000, false);
@@ -330,6 +333,31 @@ describe('WebJsCallMedia without a browser', () => {
     expect(page.evaluate).toHaveBeenLastCalledWith(playAnnouncementInPage, 'c1', 'AQID', null); // the audio as base64, no limit
     await media.playAnnouncement('c1', Buffer.from([1, 2, 3]), { maxDurationMs: 30_500 });
     expect(page.evaluate).toHaveBeenLastCalledWith(playAnnouncementInPage, 'c1', 'AQID', 30_500);
+  });
+
+  it('logs how a call was answered, and warns why a video answer came back as voice; only a true is video', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const log = vi.mocked(console.log); // spied by the beforeEach above
+    const page = fakePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    expect(await media.answer('c1', { video: true })).toEqual({ connectedAfterMs: 120, video: true });
+    expect(String(log.mock.lastCall?.[0])).toContain('Call c1 answered as video for profile p1');
+    expect(warn).not.toHaveBeenCalled();
+    // WhatsApp Web's video call UI did not load: the page answered as voice, and says why
+    page.evaluate.mockResolvedValueOnce({ connectedAfterMs: 90, video: false, videoError: 'ChunkLoadError: the video\r\ncall bundle did not load' });
+    expect(await media.answer('c1', { video: true })).toEqual({ connectedAfterMs: 90, video: false });
+    expect(String(log.mock.lastCall?.[0])).toContain('Call c1 answered as voice for profile p1');
+    expect(warn).toHaveBeenCalledTimes(1);
+    const line = String(warn.mock.calls[0][0]);
+    expect(line).toContain('Call c1 for profile p1');
+    expect(line).toContain('ChunkLoadError: the videocall bundle did not load');
+    expect(line).not.toMatch(/[\r\n]/);
+    // a voice answer asked for no video: nothing to warn about
+    page.evaluate.mockResolvedValueOnce({ connectedAfterMs: 90, video: false });
+    await media.answer('c1');
+    expect(warn).toHaveBeenCalledTimes(1);
+    page.evaluate.mockResolvedValueOnce({ connectedAfterMs: 90, video: 'yes' });
+    expect(await media.answer('c1', { video: true })).toEqual({ connectedAfterMs: 90, video: false });
   });
 
   it('a page rejection surfaces unchanged', async () => {
@@ -491,10 +519,12 @@ describe('WebJsCallMedia without a browser', () => {
     page.evaluate.mockRejectedValueOnce(new Error('boom'));
     await media.getSupport(); // the probe warning
     await media.answer('c1'); // the answered line
+    page.evaluate.mockResolvedValueOnce({ connectedAfterMs: 90, video: false, videoError: 'ChunkLoadError' });
+    await media.answer('c1', { video: true }); // the answered line and the voice fallback warning
     page.evaluate.mockResolvedValueOnce({ callerVia: 'destination', freshCandidates: 2, fallback: false });
     await media.startRecording('c1', () => undefined); // the guessed-tap warning
     const lines = [...warn.mock.calls, ...log.mock.calls].map((c) => String(c[0]));
-    expect(lines).toHaveLength(5);
+    expect(lines).toHaveLength(7);
     for (const line of lines) {
       expect(line).toContain('profile p1');
       expect(line).not.toMatch(/[\r\n]/);

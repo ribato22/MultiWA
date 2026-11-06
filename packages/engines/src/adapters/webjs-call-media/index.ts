@@ -187,7 +187,8 @@ export class WebJsCallMedia implements CallMediaEngine {
       this.probeError = null;
       // fail closed: a reason this side does not know must never read as supported
       const reasons = [...new Set<string>(r.reasons.map((x: string) => (KNOWN_REASONS.has(x) ? x : 'page_error')))] as CallMediaUnsupportedReason[];
-      return { supported: reasons.length === 0, reasons, waVersion: r.waVersion, videoSupported: r.videoSupported === true };
+      // a video call is a voice call with a camera: a page that cannot carry the one cannot carry the other
+      return { supported: reasons.length === 0, reasons, waVersion: r.waVersion, videoSupported: reasons.length === 0 && r.videoSupported === true };
     } catch (e) {
       const msg = clean((e as Error)?.message ?? String(e));
       if (msg !== this.probeError) console.warn(`[WhatsApp-WebJS] call media probe for profile ${clean(this.profileId)} failed: ${msg}`);
@@ -196,10 +197,21 @@ export class WebJsCallMedia implements CallMediaEngine {
     }
   }
 
+  /** Logs how the call was answered, and warns, with the page's reason, when a video answer came back as voice. */
   async answer(callId: string, opts?: { timeoutMs?: number; video?: boolean }): Promise<{ connectedAfterMs: number; video: boolean }> {
     const r = await this.requirePage().evaluate(answerActiveCall, callId, opts?.timeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS, opts?.video === true);
-    console.log(`[WhatsApp-WebJS] Call ${clean(callId)} answered for profile ${clean(this.profileId)}, connected after ${r.connectedAfterMs} ms`);
-    return r;
+    const video = r.video === true;
+    console.log(
+      `[WhatsApp-WebJS] Call ${clean(callId)} answered as ${video ? 'video' : 'voice'} for profile ${clean(this.profileId)}, ` +
+        `connected after ${clean(r.connectedAfterMs)} ms`,
+    );
+    if (opts?.video === true && !video) {
+      console.warn(
+        `[WhatsApp-WebJS] Call ${clean(callId)} for profile ${clean(this.profileId)}: answered as voice, ` +
+          `WhatsApp Web's video call UI did not load: ${clean(r.videoError)}`,
+      );
+    }
+    return { connectedAfterMs: r.connectedAfterMs, video };
   }
 
   async hangUp(callId: string): Promise<void> {

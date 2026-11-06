@@ -200,8 +200,8 @@ export interface CallMediaSupport {
   waVersion?: string | null;
   /**
    * WhatsApp Web has what a video answer needs: its video call UI and its camera mute. Apart from `supported`: a page
-   * without them still answers voice. Absent when the page could not be probed (not ready, or the probe failed): read it
-   * as false.
+   * without them still answers voice. Never true while `supported` is false: a video call needs everything a voice call
+   * does. Absent when the page could not be probed (not ready, or the probe failed): read it as false.
    */
   videoSupported?: boolean;
 }
