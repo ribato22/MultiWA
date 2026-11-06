@@ -162,7 +162,7 @@ export class CallMediaRoom {
   }
 
   /**
-   * Close every transport of `peer`, and with them its producer and consumers, so that it can join again: e.g. an
+   * Close every transport of `peer`, and with them its producers and consumers, so that it can join again: e.g. an
    * agent whose browser reconnected (the coordinator's agent-lost grace). Immediate. No operation the peer issued before
    * can stand in the way of its next join. One that makes a transport, producer or consumer, still waiting in its chain
    * or already at the worker, fails with "The ${peer} was closed" and keeps nothing it made. One on a transport or
