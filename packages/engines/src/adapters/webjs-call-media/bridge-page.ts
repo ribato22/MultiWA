@@ -397,9 +397,10 @@ export async function disconnectAgentVideoInPage(callId: string): Promise<void> 
 /**
  * Turn the camera WhatsApp Web sends to the caller off (`muted`) or on, with WhatsApp Web's own video mute: what it then
  * sends is the injected camera, black unless the agent's video is connected (connectAgentVideoInPage). Within
- * `timeoutMs`, as hangUpActiveCall: a voip stack that never answers must not hold the call's camera steps, and nothing
- * switches after the deadline, nor once the bridge closed. Refused on a voice bridge and for a call that is not
- * WhatsApp's active call.
+ * `timeoutMs`, as hangUpActiveCall: a voip stack that never answers must not hold the next switch until puppeteer's
+ * protocol timeout. setCallVideoMute is never STARTED after the deadline, nor once the bridge closed, but one already
+ * started cannot be cancelled: it may still switch the camera after this rejected. Refused on a voice bridge and for a
+ * call that is not WhatsApp's active call.
  */
 export async function setCameraMutedInPage(callId: string, muted: boolean, timeoutMs: number): Promise<void> {
   const w = window as any;

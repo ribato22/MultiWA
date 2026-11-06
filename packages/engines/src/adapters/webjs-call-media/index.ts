@@ -307,10 +307,12 @@ export class WebJsCallMedia implements CallMediaEngine {
       }
       // The handle's operations run one at a time, in call order, per piece of page state: attachCaller touches the
       // caller (`b.caller`), connectAgent and disconnectAgent the agent (`b.agent`), attachCallerVideo the caller's video
-      // (`b.callerVideo`), and the camera steps the agent's video and WhatsApp Web's camera mute. A disconnect sent while
-      // a connect is pending would find no agent yet, but it must not wait for a caller tap (up to 5 s) with the agent on
-      // the microphone; for the same reason no camera step waits for the caller's canvas (up to 5 s), and no video step
-      // for an audio one. A failure does not break a queue. Whether the bridge is still ours is checked when an
+      // (`b.callerVideo`), connectAgentVideo and disconnectAgentVideo the agent's video (`b.agentVideo`), and
+      // setCameraMuted WhatsApp Web's camera mute. A disconnect sent while a connect is pending would find no agent yet,
+      // but it must not wait for a caller tap (up to 5 s) with the agent on the microphone; for the same reason no camera
+      // step waits for the caller's canvas (up to 5 s), no video step for an audio one, and disconnectAgentVideo never
+      // for WhatsApp Web's voip stack (a mute, up to 5 s): taking the agent off the camera is the camera-off that needs
+      // nothing of WhatsApp Web. A failure does not break a queue. Whether the bridge is still ours is checked when an
       // operation's turn comes. close() stays outside the queues: it must not wait behind a hung operation.
       const queue = () => {
         let chain: Promise<unknown> = Promise.resolve();
@@ -327,6 +329,7 @@ export class WebJsCallMedia implements CallMediaEngine {
       const agentQueue = queue();
       const callerVideoQueue = queue();
       const cameraQueue = queue();
+      const muteQueue = queue();
       return {
         callerProducerId: started.callerProducerId,
         callerVideoProducerId: started.callerVideoProducerId ?? null,
@@ -336,7 +339,7 @@ export class WebJsCallMedia implements CallMediaEngine {
         attachCallerVideo: () => callerVideoQueue(() => page.evaluate(attachCallerVideoInPage, callId)),
         connectAgentVideo: (producerId: string) => cameraQueue(() => page.evaluate(connectAgentVideoInPage, callId, producerId)),
         disconnectAgentVideo: () => cameraQueue(() => page.evaluate(disconnectAgentVideoInPage, callId)),
-        setCameraMuted: (muted: boolean) => cameraQueue(() => page.evaluate(setCameraMutedInPage, callId, muted === true, CAMERA_TIMEOUT_MS)),
+        setCameraMuted: (muted: boolean) => muteQueue(() => page.evaluate(setCameraMutedInPage, callId, muted === true, CAMERA_TIMEOUT_MS)),
         close: async () => {
           if (this.bridge !== slot) return;
           try {

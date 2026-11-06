@@ -976,17 +976,23 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       expect(done.slice(0, 2)).toEqual([{ fn: 'connectAgentVideoInPage', args: ['c1', 'P-av'] }, { fn: 'disconnectAgentVideoInPage', args: ['c1'] }]);
     });
 
-    it('setCameraMuted hands the page the mute and its deadline, in turn with the other camera steps', async () => {
+    it("setCameraMuted queues on its own, in call order: a mute hanging in WhatsApp Web's voip stack never holds up disconnectAgentVideo", async () => {
       const page = bridgePage();
       const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling(), { video: true });
-      const release = page.holdNext(callMediaBridge.connectAgentVideoInPage);
+      const release = page.holdNext(callMediaBridge.setCameraMutedInPage); // the voip stack does not answer
       page.evaluate.mockClear();
-      const both = Promise.all([handle.connectAgentVideo('P-av'), handle.setCameraMuted(false)]);
+      let unmuted = false;
+      const unmuting = handle.setCameraMuted(false).finally(() => { unmuted = true; });
+      const muting = handle.setCameraMuted(true);
+      const disconnecting = handle.disconnectAgentVideo();
       await tick();
       await tick();
-      expect(page.sent()).toEqual(['connectAgentVideoInPage']); // the unmute waits for the camera's connect
+      expect(page.sent()).toEqual(['setCameraMutedInPage', 'disconnectAgentVideoInPage']); // the second mute waits for the first
+      await expect(disconnecting).resolves.toEqual({ fn: 'disconnectAgentVideoInPage', args: ['c1'] });
+      expect(unmuted).toBe(false); // the agent left the camera while the mute still hung
       release();
-      expect((await both)[1]).toEqual({ fn: 'setCameraMutedInPage', args: ['c1', false, 5000] });
+      expect(await unmuting).toEqual({ fn: 'setCameraMutedInPage', args: ['c1', false, 5000] });
+      expect(await muting).toEqual({ fn: 'setCameraMutedInPage', args: ['c1', true, 5000] });
     });
   });
 
