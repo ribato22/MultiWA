@@ -198,6 +198,12 @@ export interface CallMediaSupport {
   reasons: CallMediaUnsupportedReason[];
   /** WhatsApp Web build, when known. */
   waVersion?: string | null;
+  /**
+   * WhatsApp Web has what a video answer needs: its video call UI and its camera mute. Apart from `supported`: a page
+   * without them still answers voice. Absent when the page could not be probed (not ready, or the probe failed): read it
+   * as false.
+   */
+  videoSupported?: boolean;
 }
 
 /**

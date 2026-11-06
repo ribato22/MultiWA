@@ -187,7 +187,7 @@ export class WebJsCallMedia implements CallMediaEngine {
       this.probeError = null;
       // fail closed: a reason this side does not know must never read as supported
       const reasons = [...new Set<string>(r.reasons.map((x: string) => (KNOWN_REASONS.has(x) ? x : 'page_error')))] as CallMediaUnsupportedReason[];
-      return { supported: reasons.length === 0, reasons, waVersion: r.waVersion };
+      return { supported: reasons.length === 0, reasons, waVersion: r.waVersion, videoSupported: r.videoSupported === true };
     } catch (e) {
       const msg = clean((e as Error)?.message ?? String(e));
       if (msg !== this.probeError) console.warn(`[WhatsApp-WebJS] call media probe for profile ${clean(this.profileId)} failed: ${msg}`);

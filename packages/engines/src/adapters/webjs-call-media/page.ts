@@ -261,8 +261,10 @@ export async function prepareCallMediaPage(): Promise<{ hooks: boolean; micPermi
  * Can this page carry a call: modules present, calling UI on, in-browser voip stack, our hooks, and the page setup
  * done on this document (`prepared`: the microphone permission was granted). A voip stack lookup that does not
  * answer within `timeoutMs` counts as `voip_stack_unavailable`.
+ * `videoSupported` is reported apart, never as a reason: WhatsApp Web's video call UI and its camera mute are there. A
+ * page without them still answers voice.
  */
-export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: string[]; waVersion: string | null }> {
+export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: string[]; waVersion: string | null; videoSupported: boolean }> {
   const w = window as any;
   const reasons: string[] = [];
   const req = (m: string) => { try { return w.require(m); } catch { return null; } };
@@ -277,10 +279,12 @@ export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: stri
     reasons.push('web_calling_disabled');
   }
   let timer: any;
+  let videoSupported = false;
   try {
     const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('voip stack lookup timed out')), timeoutMs); });
     const stack = await Promise.race([req('WAWebVoipStackInterface')?.getVoipStackInterface(), expired]);
     if (!stack || stack.type !== 'web') reasons.push('voip_stack_unavailable');
+    else videoSupported = typeof req('WAWebVoipUiVideoCallLoadable')?.requireBundle === 'function' && typeof stack.setCallVideoMute === 'function';
   } catch {
     reasons.push('voip_stack_unavailable');
   } finally {
@@ -288,7 +292,7 @@ export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: stri
   }
   if (!w.__mwCall) reasons.push('hooks_missing');
   else if (!w.__mwCall.prepared) reasons.push('not_prepared'); // the hooks are here, the page setup is not done
-  return { reasons: [...new Set(reasons)], waVersion: w.Debug?.VERSION ?? null };
+  return { reasons: [...new Set(reasons)], waVersion: w.Debug?.VERSION ?? null, videoSupported };
 }
 
 /**

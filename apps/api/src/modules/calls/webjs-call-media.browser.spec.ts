@@ -148,9 +148,9 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
 
   it('prepares the page and reports support', async () => {
     // our hooks are on the document but the page setup has not run: not supported yet
-    expect(await page.evaluate(probeCallMedia, 5000)).toEqual({ reasons: ['not_prepared'], waVersion: '2.3000.test' });
+    expect(await page.evaluate(probeCallMedia, 5000)).toEqual({ reasons: ['not_prepared'], waVersion: '2.3000.test', videoSupported: true });
     expect(await page.evaluate(prepareCallMediaPage)).toEqual({ hooks: true, micPermission: 'granted' });
-    expect(await page.evaluate(probeCallMedia, 5000)).toEqual({ reasons: [], waVersion: '2.3000.test' });
+    expect(await page.evaluate(probeCallMedia, 5000)).toEqual({ reasons: [], waVersion: '2.3000.test', videoSupported: true });
   });
 
   it('refuses another call id, then answers the active call once it connects', async () => {
@@ -423,7 +423,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     const t0 = Date.now();
     try {
       const outcome = await Promise.race([page.evaluate(probeCallMedia, 300), sleep(3000).then(() => 'still pending after 3 s')]);
-      expect(outcome).toEqual({ reasons: ['voip_stack_unavailable'], waVersion: '2.3000.test' });
+      expect(outcome).toEqual({ reasons: ['voip_stack_unavailable'], waVersion: '2.3000.test', videoSupported: false });
       expect(Date.now() - t0).toBeLessThan(2000);
     } finally {
       await page.evaluate(() => { const f = (window as any).__fakeWa; f.hangStack = false; f.releaseStack?.(); });
@@ -549,7 +549,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     const p = await openPage();
     try {
       const media = new WebJsCallMedia(() => p, () => true, 'p1');
-      const notPrepared = { supported: false, reasons: ['not_prepared'], waVersion: '2.3000.test' };
+      const notPrepared = { supported: false, reasons: ['not_prepared'], waVersion: '2.3000.test', videoSupported: true };
       expect(await media.getSupport()).toEqual(notPrepared); // the hooks are there, the setup has not run
       // the setup fails the way a refused microphone permission would
       await p.evaluate(() => { const c = (window as any).__mwCall; c.permittedGetUserMedia = c.realGetUserMedia; c.realGetUserMedia = () => Promise.reject(new Error('Permission denied')); });
@@ -557,7 +557,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       expect(await media.getSupport()).toEqual(notPrepared);
       await p.evaluate(() => { const c = (window as any).__mwCall; c.realGetUserMedia = c.permittedGetUserMedia; });
       expect(await p.evaluate(prepareCallMediaPage)).toEqual({ hooks: true, micPermission: 'granted' });
-      expect(await media.getSupport()).toEqual({ supported: true, reasons: [], waVersion: '2.3000.test' });
+      expect(await media.getSupport()).toEqual({ supported: true, reasons: [], waVersion: '2.3000.test', videoSupported: true });
     } finally {
       await p.close();
     }
@@ -647,7 +647,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       const media = new WebJsCallMedia(() => page2, () => true, 'p1');
       await media.preparePage();
       expect(await page2.evaluate(() => ({ binding: typeof (window as any).__mwRecordingChunk, prepared: (window as any).__mwCall.prepared }))).toEqual({ binding: 'function', prepared: true });
-      expect(await media.getSupport()).toEqual({ supported: true, reasons: [], waVersion: '2.3000.test' });
+      expect(await media.getSupport()).toEqual({ supported: true, reasons: [], waVersion: '2.3000.test', videoSupported: true });
       await media.answer('CALL1'); // the fake caller starts playing at accept
       const first: Buffer[] = [];
       const second: Buffer[] = [];
@@ -1053,7 +1053,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
 
   it('the wrapper fails closed: a reason it does not know reads as page_error, and a failing probe logs once', async () => {
     const newer = new WebJsCallMedia(() => ({ evaluate: async () => ({ reasons: ['web_calling_disabled', 'from_a_newer_page'], waVersion: 'x' }) }), () => true, 'p1');
-    expect(await newer.getSupport()).toEqual({ supported: false, reasons: ['web_calling_disabled', 'page_error'], waVersion: 'x' });
+    expect(await newer.getSupport()).toEqual({ supported: false, reasons: ['web_calling_disabled', 'page_error'], waVersion: 'x', videoSupported: false });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
       const broken = new WebJsCallMedia(() => ({ evaluate: async () => { throw new Error('Execution context was\ndestroyed'); } }), () => true, 'p1');
@@ -1140,6 +1140,29 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await expect(p.evaluate(answerActiveCall, 'CALL1', 500, true)).rejects.toThrow('Call did not connect in time');
         expect(Date.now() - t0).toBeLessThan(3000);
         expect(await p.evaluate(() => (window as any).__fakeWa.accepts)).toBe(0);
+      } finally {
+        await p.close();
+      }
+    });
+
+    it('the probe reports video apart from voice: without the video call UI or the camera mute, voice is still supported', async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(prepareCallMediaPage);
+        expect(await p.evaluate(probeCallMedia, 2000)).toEqual({ reasons: [], waVersion: '2.3000.test', videoSupported: true });
+        await p.evaluate(async () => {
+          const s = await (window as any).require('WAWebVoipStackInterface').getVoipStackInterface();
+          (window as any).__mute = s.setCallVideoMute;
+          delete s.setCallVideoMute;
+        });
+        expect(await p.evaluate(probeCallMedia, 2000)).toEqual({ reasons: [], waVersion: '2.3000.test', videoSupported: false });
+        await p.evaluate(async () => {
+          const w = window as any;
+          (await w.require('WAWebVoipStackInterface').getVoipStackInterface()).setCallVideoMute = w.__mute;
+          const lookUp = w.require;
+          w.require = (name: string) => { if (name === 'WAWebVoipUiVideoCallLoadable') throw new Error(`unknown module ${name}`); return lookUp(name); };
+        });
+        expect(await p.evaluate(probeCallMedia, 2000)).toEqual({ reasons: [], waVersion: '2.3000.test', videoSupported: false });
       } finally {
         await p.close();
       }

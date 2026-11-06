@@ -240,6 +240,17 @@ describe('WebJsCallMedia without a browser', () => {
     expect(page.evaluate).not.toHaveBeenCalled();
   });
 
+  it('reports video support as the page says, apart from voice support; only a true is true', async () => {
+    const page = fakePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    page.evaluate.mockResolvedValueOnce({ reasons: [], waVersion: '2.3000.1', videoSupported: true });
+    expect(await media.getSupport()).toEqual({ supported: true, reasons: [], waVersion: '2.3000.1', videoSupported: true });
+    page.evaluate.mockResolvedValueOnce({ reasons: ['not_prepared'], waVersion: '2.3000.1', videoSupported: true });
+    expect(await media.getSupport()).toEqual({ supported: false, reasons: ['not_prepared'], waVersion: '2.3000.1', videoSupported: true });
+    page.evaluate.mockResolvedValueOnce({ reasons: [], waVersion: '2.3000.1', videoSupported: 'yes' });
+    expect(await media.getSupport()).toMatchObject({ supported: true, videoSupported: false });
+  });
+
   describe('getSupport shares a probe in flight', () => {
     it('asks a page once while its probe runs, and again once that one settled', async () => {
       const page = fakePage();
@@ -250,7 +261,7 @@ describe('WebJsCallMedia without a browser', () => {
       const second = media.getSupport();
       expect(page.evaluate).toHaveBeenCalledTimes(1);
       settle({ reasons: [], waVersion: '2.3000.1' });
-      expect(await first).toEqual({ supported: true, reasons: [], waVersion: '2.3000.1' });
+      expect(await first).toEqual({ supported: true, reasons: [], waVersion: '2.3000.1', videoSupported: false });
       expect(await second).toEqual(await first);
       await media.getSupport();
       expect(page.evaluate).toHaveBeenCalledTimes(2);
