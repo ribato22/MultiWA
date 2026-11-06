@@ -278,6 +278,12 @@ export interface CallMediaHandle {
   /** The injected camera goes black again. Does nothing when no agent video is connected. */
   disconnectAgentVideo(): Promise<void>;
   /**
+   * WhatsApp Web's own camera mute: muted, the caller gets no video from us; unmuted, the injected camera. Within 5 s
+   * ("The camera did not switch in time"); "No video on this call" on a voice bridge; "WhatsApp Web has no camera
+   * mute" when its voip stack lacks one.
+   */
+  setCameraMuted(muted: boolean): Promise<void>;
+  /**
    * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
    * closed") and still frees the slot, so close the room regardless of the outcome: the room closes its own side. It
    * does nothing once the bridge was closed (also by closeCallMedia), or when a newer bridge of the same call runs.

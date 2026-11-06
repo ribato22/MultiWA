@@ -1792,6 +1792,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       await withBridge({}, async ({ handle }) => {
         await expect(handle.attachCallerVideo()).rejects.toThrow('No video on this call');
         await expect(handle.connectAgentVideo(agentVideoProducerId)).rejects.toThrow('No video on this call');
+        await expect(handle.setCameraMuted(false)).rejects.toThrow('No video on this call');
       });
       await withBridge({ video: true, before: holdPolls }, async ({ p, media, room, handle }) => {
         await media.answer('CALL1', { video: true });
@@ -1881,6 +1882,40 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         // none left: the bridge's poll and the caller video's, the fake's painter, and the camera's redraw, as WhatsApp
         // Web stopped its camera with the call
         expect(await until(async () => (await liveIntervals(p)) === 0, 1000)).toBe(true);
+      });
+    });
+
+    it("switches the camera with WhatsApp Web's own video mute, for its call only, and within its deadline", async () => {
+      await withBridge({ video: true, before: holdPolls }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await handle.setCameraMuted(false);
+        await handle.setCameraMuted(true);
+        expect(await p.evaluate(() => (window as any).__fakeWa.videoMutes)).toEqual([false, true]);
+        // a voip stack that never answers: refused at the deadline, and nothing switches after it
+        await p.evaluate(() => { (window as any).__fakeWa.hangStack = true; });
+        await expect(p.evaluate(callMediaBridge.setCameraMutedInPage, 'CALL1', false, 300)).rejects.toThrow('The camera did not switch in time');
+        await p.evaluate(() => { const f = (window as any).__fakeWa; f.hangStack = false; f.releaseStack(); });
+        await sleep(200);
+        expect(await p.evaluate(() => (window as any).__fakeWa.videoMutes)).toEqual([false, true]);
+        // a WhatsApp Web without the camera mute
+        await p.evaluate(async () => { delete (await (window as any).require('WAWebVoipStackInterface').getVoipStackInterface()).setCallVideoMute; });
+        await expect(handle.setCameraMuted(false)).rejects.toThrow('WhatsApp Web has no camera mute');
+        // a call that is over
+        await ring(p, 'CALL2');
+        await expect(handle.setCameraMuted(true)).rejects.toThrow('Call is not the active call');
+      });
+    });
+
+    it('a camera switch whose bridge closes while the voip stack is looked up switches nothing', async () => {
+      await withBridge({ video: true }, async ({ p, media, handle }) => {
+        await media.answer('CALL1', { video: true });
+        await p.evaluate(() => { (window as any).__fakeWa.hangStack = true; });
+        const switching = handle.setCameraMuted(false).then(() => 'switched', (e: Error) => e.message);
+        expect(await until(() => p.evaluate(() => !!(window as any).__fakeWa.releaseStack), 2000)).toBe(true); // it looks the stack up
+        await handle.close(); // the coordinator closes the bridge meanwhile
+        await p.evaluate(() => { const f = (window as any).__fakeWa; f.hangStack = false; f.releaseStack(); });
+        expect(await switching).toBe('Media bridge closed');
+        expect(await p.evaluate(() => (window as any).__fakeWa.videoMutes)).toEqual([]);
       });
     });
   });

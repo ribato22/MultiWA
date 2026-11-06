@@ -732,6 +732,7 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       await expect(stale.attachCallerVideo()).rejects.toThrow('Media bridge closed');
       await expect(stale.connectAgentVideo('P-av')).rejects.toThrow('Media bridge closed');
       await expect(stale.disconnectAgentVideo()).rejects.toThrow('Media bridge closed');
+      await expect(stale.setCameraMuted(true)).rejects.toThrow('Media bridge closed');
       await stale.close(); // a no-op
       expect(page.evaluate).not.toHaveBeenCalled(); // the newer bridge was not touched in the page
       await expect(media.startCallMedia('c1', fakeSignaling())).rejects.toThrow('Media bridge already running'); // and still holds the slot
@@ -973,6 +974,19 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
       const done = await all;
       expect(page.sent()).toEqual(['connectAgentVideoInPage', 'connectAgentInPage', 'attachCallerInPage', 'attachCallerVideoInPage', 'disconnectAgentVideoInPage']);
       expect(done.slice(0, 2)).toEqual([{ fn: 'connectAgentVideoInPage', args: ['c1', 'P-av'] }, { fn: 'disconnectAgentVideoInPage', args: ['c1'] }]);
+    });
+
+    it('setCameraMuted hands the page the mute and its deadline, in turn with the other camera steps', async () => {
+      const page = bridgePage();
+      const handle = await new WebJsCallMedia(() => page, () => true, 'p1').startCallMedia('c1', fakeSignaling(), { video: true });
+      const release = page.holdNext(callMediaBridge.connectAgentVideoInPage);
+      page.evaluate.mockClear();
+      const both = Promise.all([handle.connectAgentVideo('P-av'), handle.setCameraMuted(false)]);
+      await tick();
+      await tick();
+      expect(page.sent()).toEqual(['connectAgentVideoInPage']); // the unmute waits for the camera's connect
+      release();
+      expect((await both)[1]).toEqual({ fn: 'setCameraMutedInPage', args: ['c1', false, 5000] });
     });
   });
 

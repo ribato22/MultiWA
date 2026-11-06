@@ -18,6 +18,7 @@ import {
   disconnectAgentInPage,
   disconnectAgentVideoInPage,
   hasMediasoupClient,
+  setCameraMutedInPage,
   startBridgeInPage,
 } from './bridge-page';
 import {
@@ -88,6 +89,7 @@ export function mediasoupClientBundle(): string {
 const DEFAULT_ANSWER_TIMEOUT_MS = 15_000;
 const HANG_UP_TIMEOUT_MS = 10_000;
 const PROBE_TIMEOUT_MS = 5_000;
+const CAMERA_TIMEOUT_MS = 5_000;
 const RECORDING_TIMESLICE_MS = 5_000;
 /** The page's own scripts can call the bridge binding: real mediasoup messages are a few KB. */
 const MAX_SIGNAL_JSON = 64 * 1024;
@@ -334,6 +336,7 @@ export class WebJsCallMedia implements CallMediaEngine {
         attachCallerVideo: () => callerVideoQueue(() => page.evaluate(attachCallerVideoInPage, callId)),
         connectAgentVideo: (producerId: string) => cameraQueue(() => page.evaluate(connectAgentVideoInPage, callId, producerId)),
         disconnectAgentVideo: () => cameraQueue(() => page.evaluate(disconnectAgentVideoInPage, callId)),
+        setCameraMuted: (muted: boolean) => cameraQueue(() => page.evaluate(setCameraMutedInPage, callId, muted === true, CAMERA_TIMEOUT_MS)),
         close: async () => {
           if (this.bridge !== slot) return;
           try {

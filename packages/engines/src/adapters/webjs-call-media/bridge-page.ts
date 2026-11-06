@@ -385,6 +385,39 @@ export async function disconnectAgentVideoInPage(callId: string): Promise<void> 
   await w.__mwBridgeSignal(callId, 'closeConsumer', JSON.stringify({ consumerId: a.consumer.id })).catch(() => undefined);
 }
 
+/**
+ * Turn the camera WhatsApp Web sends to the caller off (`muted`) or on, with WhatsApp Web's own video mute: what it then
+ * sends is the injected camera, black unless the agent's video is connected (connectAgentVideoInPage). Within
+ * `timeoutMs`, as hangUpActiveCall: a voip stack that never answers must not hold the call's camera steps, and nothing
+ * switches after the deadline, nor once the bridge closed. Refused on a voice bridge and for a call that is not
+ * WhatsApp's active call.
+ */
+export async function setCameraMutedInPage(callId: string, muted: boolean, timeoutMs: number): Promise<void> {
+  const w = window as any;
+  const ours = () => {
+    const c = w.require('WAWebCallCollection').activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  const b: MwBridge | undefined = w.__mwBridge;
+  if (!b || b.callId !== callId) throw new Error('No media bridge for this call');
+  if (!b.callerVideo) throw new Error('No video on this call');
+  if (!ours()) throw new Error('Call is not the active call');
+  const deadline = Date.now() + timeoutMs;
+  const timedOut = () => new Error('The camera did not switch in time');
+  let timer: any;
+  const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(timedOut()), timeoutMs); });
+  try {
+    const stack = await Promise.race([w.require('WAWebVoipStackInterface').getVoipStackInterface(), expired]);
+    if (Date.now() > deadline) throw timedOut(); // a busy page runs timers late: the clock has the last word
+    if (w.__mwBridge !== b) throw new Error('Media bridge closed');
+    if (!ours()) throw new Error('Call is not the active call');
+    if (typeof stack.setCallVideoMute !== 'function') throw new Error('WhatsApp Web has no camera mute');
+    await Promise.race([stack.setCallVideoMute(muted), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Close the bridge of `callId` and release what it holds in the page. Idempotent; another call's bridge stays. */
 export function closeBridgeInPage(callId: string): { closed: boolean } {
   const w = window as any;
