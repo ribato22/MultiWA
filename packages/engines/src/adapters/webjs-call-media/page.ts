@@ -304,22 +304,31 @@ export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: stri
     'WAWebCallRingtone', 'WAWebVoipCallAudioUnlock', 'WAWebVoipGatingUtils',
   ];
   if (needed.some((m) => !req(m))) reasons.push('module_missing');
+  // WhatsApp can show the calling UI on a number whose calls it does not let WhatsApp Web carry: the voip stack is then
+  // never downloaded, and its lookup answers null (live: a WhatsApp Business number with `enable_web_calling` off). An
+  // older WhatsApp Web without the download gate counts as allowed.
+  let callingOff = false;
   try {
-    if (req('WAWebVoipGatingUtils')?.isWebCallingUiEnabled() !== true) reasons.push('web_calling_disabled');
+    const gates = req('WAWebVoipGatingUtils');
+    callingOff = gates?.isWebCallingUiEnabled() !== true || gates?.isVoipDownloadEnabled?.() === false;
   } catch {
-    reasons.push('web_calling_disabled');
+    callingOff = true;
   }
+  if (callingOff) reasons.push('web_calling_disabled');
   let timer: any;
   let videoSupported = false;
-  try {
-    const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('voip stack lookup timed out')), timeoutMs); });
-    const stack = await Promise.race([req('WAWebVoipStackInterface')?.getVoipStackInterface(), expired]);
-    if (!stack || stack.type !== 'web') reasons.push('voip_stack_unavailable');
-    else videoSupported = typeof req('WAWebVoipUiVideoCallLoadable')?.requireBundle === 'function' && typeof stack.setCallVideoMute === 'function';
-  } catch {
-    reasons.push('voip_stack_unavailable');
-  } finally {
-    clearTimeout(timer);
+  // Only where WhatsApp Web may have a voip stack: elsewhere the lookup answers null, and "WhatsApp Web changed" is wrong.
+  if (!callingOff) {
+    try {
+      const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('voip stack lookup timed out')), timeoutMs); });
+      const stack = await Promise.race([req('WAWebVoipStackInterface')?.getVoipStackInterface(), expired]);
+      if (!stack || stack.type !== 'web') reasons.push('voip_stack_unavailable');
+      else videoSupported = typeof req('WAWebVoipUiVideoCallLoadable')?.requireBundle === 'function' && typeof stack.setCallVideoMute === 'function';
+    } catch {
+      reasons.push('voip_stack_unavailable');
+    } finally {
+      clearTimeout(timer);
+    }
   }
   if (!w.__mwCall) reasons.push('hooks_missing');
   else if (!w.__mwCall.prepared) reasons.push('not_prepared'); // the hooks are here, the page setup is not done
