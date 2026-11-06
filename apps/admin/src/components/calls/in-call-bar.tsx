@@ -2,7 +2,7 @@
 // The call this agent is on, docked in the header on every page: who, how long, the recording, the network, and the
 // controls. Another tab of the agent may hold the call's audio: the bar says so there.
 import { useEffect, useId, useRef, useState } from 'react';
-import { CircleDot, Loader2, Mic, MicOff, PhoneCall, PhoneOff, Signal, SignalLow, SignalMedium, Volume2 } from 'lucide-react';
+import { CircleDot, Loader2, Mic, MicOff, PhoneCall, PhoneOff, Signal, SignalLow, SignalMedium, Video, VideoOff, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { CALL_AUDIO_TEXT, formatDuration, ringingCallerLabel } from '@/lib/calls';
@@ -128,6 +128,25 @@ export function InCallBar() {
               >
                 {a.muted ? <MicOff className="mr-1.5 h-4 w-4" aria-hidden="true" /> : <Mic className="mr-1.5 h-4 w-4" aria-hidden="true" />}
                 Mute
+              </Button>
+            )}
+            {/* On a call answered with video, once it is on: the camera starts off, and waits while it switches. */}
+            {a.local && a.video && a.phase === 'active' && (
+              <Button
+                size="sm"
+                variant={a.camera === 'on' ? 'secondary' : 'outline'}
+                aria-pressed={a.camera === 'on'}
+                aria-disabled={a.camera === 'switching'}
+                onClick={() => a.camera !== 'switching' && calls.setCamera(a.camera !== 'on')}
+              >
+                {a.camera === 'switching' ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 mw-spin" aria-hidden="true" />
+                ) : a.camera === 'on' ? (
+                  <Video className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <VideoOff className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                )}
+                Camera
               </Button>
             )}
             {/* Once the call's audio is here: the microphone in use, or none while one that stopped is replaced. Any other
