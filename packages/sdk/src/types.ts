@@ -296,6 +296,8 @@ export type CallEndReason = 'hangup' | 'caller_hangup' | 'agent_lost' | 'media_f
 /** A call's recording: its facts. The audio is `calls.getRecording()`. */
 export interface CallRecording {
   id: string;
+  /** `audio/webm`, or `video/webm` for a call answered with video. */
+  mimeType: string;
   durationSec: number;
   bytes: number;
   /** It may end before its call did: a restart, a recorder that did not stop cleanly, or a write that failed. */
@@ -415,6 +417,8 @@ export interface CallsMediaStatus {
     port: number | null;
     engineHost: 'api' | 'worker';
     activeSessions: number;
+    /** The organization's calls answered with video now, and the server's cap on them (`CALLS_MAX_VIDEO_CALLS`). */
+    videoCalls: { active: number; max: number };
     recordings: {
       storage: 'local' | 's3';
       configured: boolean;
@@ -422,7 +426,8 @@ export interface CallsMediaStatus {
       lastCheck: { at: string; ok: boolean; reason?: string } | null;
     };
   };
-  profiles: Array<CallsSettings & { name: string; ready: boolean; reasons: string[] }>;
+  /** `video`: its video calls are answered with video now. */
+  profiles: Array<CallsSettings & { name: string; ready: boolean; reasons: string[]; video: boolean }>;
 }
 
 export interface DeletedCallRecording {

@@ -215,6 +215,8 @@ class CallRecording(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
+    #: ``audio/webm``, or ``video/webm`` for a call answered with video.
+    mime_type: str = Field("audio/webm", alias="mimeType")
     duration_sec: int = Field(alias="durationSec")
     bytes: int
     partial: bool
@@ -323,6 +325,8 @@ class CallsProfileStatus(CallsSettings):
     name: str
     ready: bool
     reasons: list[str] = []
+    #: Its video calls are answered with video now.
+    video: bool = False
 
 
 class StorageCheck(BaseModel):
@@ -347,6 +351,14 @@ class RecordingsStorage(BaseModel):
     last_check: Optional[StorageCheck] = Field(None, alias="lastCheck")
 
 
+class CallsVideoCalls(BaseModel):
+    """The organization's calls answered with video now (``active``), and the
+    server's cap on them (``max``, CALLS_MAX_VIDEO_CALLS, for every organization)."""
+
+    active: int
+    max: int
+
+
 class CallsMediaServer(BaseModel):
     """The media server: ``enabled`` is CALLS_MEDIA_ENABLED, ``engine_host`` is
     ENGINE_HOST (calls are answered in the dashboard only with ``api``)."""
@@ -358,6 +370,7 @@ class CallsMediaServer(BaseModel):
     port: Optional[int] = None
     engine_host: str = Field(alias="engineHost")
     active_sessions: int = Field(alias="activeSessions")
+    video_calls: Optional[CallsVideoCalls] = Field(None, alias="videoCalls")
     recordings: RecordingsStorage
 
 

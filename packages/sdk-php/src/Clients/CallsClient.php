@@ -144,7 +144,7 @@ class CallsClient
      * Readiness of answering calls in the dashboard: the server, its recordings storage, and every profile of the
      * organization with its call settings (owner or admin; an API key needs no scope).
      *
-     * @return array{server: array{enabled: bool, worker: string, port: int|null, engineHost: string, activeSessions: int, recordings: array{storage: string, configured: bool, problem: string|null, lastCheck: array{at: string, ok: bool, reason?: string}|null}}, profiles: list<array{profileId: string, name: string, answerInDashboard: bool, recording: bool, retentionDays: int, announcement: array{mimeType: string, durationSec: float|int}|null, ready: bool, reasons: list<string>}>}
+     * @return array{server: array{enabled: bool, worker: string, port: int|null, engineHost: string, activeSessions: int, videoCalls: array{active: int, max: int}, recordings: array{storage: string, configured: bool, problem: string|null, lastCheck: array{at: string, ok: bool, reason?: string}|null}}, profiles: list<array{profileId: string, name: string, answerInDashboard: bool, recording: bool, retentionDays: int, announcement: array{mimeType: string, durationSec: float|int}|null, ready: bool, reasons: list<string>, video: bool}>}
      */
     public function mediaStatus(): array
     {
@@ -152,7 +152,7 @@ class CallsClient
     }
 
     /**
-     * The call's recording, audio/webm (owner or admin; an API key with a scope list needs `recordings:read`).
+     * The call's recording, audio/webm, or video/webm for a call answered with video (owner or admin; an API key with a scope list needs `recordings:read`).
      * Every read is audited, a download as a download. With Guzzle's cURL handler, the default, the client's $timeout
      * (30 s by default) covers the whole download, not only the wait for the answer: a long recording may need a
      * larger one. With its stream handler (PHP without cURL), $timeout bounds each read from the connection instead.

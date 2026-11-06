@@ -91,7 +91,7 @@ describe('the calls routes in the OpenAPI document', () => {
     ]);
     const call = schema('CallDto').properties;
     for (const relation of ['assignedUser', 'answeredBy', 'conversation', 'recording']) expect(call[relation].nullable).toBe(true);
-    expect(fields('CallRecordingDto')).toEqual(['announcementPlayed', 'bytes', 'createdAt', 'deleteReason', 'deletedAt', 'durationSec', 'id', 'partial']);
+    expect(fields('CallRecordingDto')).toEqual(['announcementPlayed', 'bytes', 'createdAt', 'deleteReason', 'deletedAt', 'durationSec', 'id', 'mimeType', 'partial']);
     expect(fields('CallListDto')).toEqual(['calls', 'nextCursor']);
   });
 

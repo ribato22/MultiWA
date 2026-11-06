@@ -203,7 +203,7 @@ describe('CallsService.get', () => {
         assignedUser: { select: { id: true, name: true } },
         answeredBy: { select: { id: true, name: true } },
         conversation: { select: { id: true, name: true } },
-        recording: { select: { id: true, durationSec: true, bytes: true, partial: true, announcementPlayed: true, createdAt: true, deletedAt: true, deleteReason: true } },
+        recording: { select: { id: true, mimeType: true, durationSec: true, bytes: true, partial: true, announcementPlayed: true, createdAt: true, deletedAt: true, deleteReason: true } },
       },
     });
   });

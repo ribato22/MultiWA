@@ -61,7 +61,7 @@ const CALL_INCLUDE = {
   answeredBy: { select: { id: true, name: true } },
   conversation: { select: { id: true, name: true } },
   // A recording's facts, never its file: the audio is GET /calls/:id/recording (owner/admin, audited).
-  recording: { select: { id: true, durationSec: true, bytes: true, partial: true, announcementPlayed: true, createdAt: true, deletedAt: true, deleteReason: true } },
+  recording: { select: { id: true, mimeType: true, durationSec: true, bytes: true, partial: true, announcementPlayed: true, createdAt: true, deletedAt: true, deleteReason: true } },
 } as const;
 // A stuck WhatsApp Web page would otherwise hold the request for puppeteer's 240 s protocol timeout. The engine
 // managers give up on an agent's reject first (AGENT_REJECT_TIMEOUT_MS, 25 s), so the runtime lets go of the call before
