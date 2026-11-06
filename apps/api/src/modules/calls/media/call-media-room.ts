@@ -3,10 +3,11 @@
 //
 // A mediasoup Router with two peers. The "page" peer is the WhatsApp Web page's media bridge; it produces the
 // caller and consumes the agent. The "agent" peer is the agent's browser; it produces the agent and consumes the
-// caller. Each peer has at most one send and one receive transport, produces at most one track, and may consume only
-// the other peer's track, so a client can never reach another peer's or another call's media. A peer's signalling runs
-// one operation at a time, so these limits hold for calls made together too. Closing a peer (closePeer) voids every
-// operation it had issued before, also one still at the worker, so that the peer can join again.
+// caller. Each peer has at most one send and one receive transport, produces at most one track of each kind (video only
+// in a room opened for a video call), and may consume only the other peer's tracks, one of each kind, so a client can
+// never reach another peer's or another call's media. A peer's signalling runs one operation at a time, so these limits
+// hold for calls made together too. Closing a peer (closePeer) voids every operation it had issued before, also one
+// still at the worker, so that the peer can join again.
 // The signalling API speaks mediasoup's JSON: `signalingFor(peer)` binds it to one peer.
 // Each peer's link (its transports' ICE and DTLS state) is told to the onLinkChange listeners.
 import type { types as ms } from 'mediasoup';
@@ -20,7 +21,8 @@ const CONSUMES: Record<MediaPeer, MediaRole> = { page: 'agent', agent: 'caller' 
 
 export class CallMediaRoom {
   private readonly transports = new Map<string, { peer: MediaPeer; direction: 'send' | 'recv'; transport: ms.WebRtcTransport }>();
-  private readonly producers: Partial<Record<MediaRole, ms.Producer>> = {};
+  /** Each role's producers by kind, keyed "caller:audio", "caller:video", "agent:audio", "agent:video". */
+  private readonly producers = new Map<string, ms.Producer>();
   private readonly consumers = new Map<string, { peer: MediaPeer; consumer: ms.Consumer }>();
   /** Where each peer's signalling operations queue (see `run`). The two peers are independent of each other. */
   private readonly chains: Record<MediaPeer, Promise<unknown>> = { page: Promise.resolve(), agent: Promise.resolve() };
@@ -49,9 +51,9 @@ export class CallMediaRoom {
     return this.isClosed;
   }
 
-  /** The producer id of `role`, once produced. */
-  producerId(role: MediaRole): string | null {
-    return this.producers[role]?.id ?? null;
+  /** The producer id of `role`'s `kind`, once produced. */
+  producerId(role: MediaRole, kind: ms.MediaKind = 'audio'): string | null {
+    return this.producers.get(`${role}:${kind}`)?.id ?? null;
   }
 
   /** The signalling API for one peer (the page's media bridge, or the agent's `call:media` socket commands). */
@@ -139,14 +141,16 @@ export class CallMediaRoom {
   private async produce(peer: MediaPeer, generation: number, transportId: string, kind: string, rtpParameters: ms.RtpParameters): Promise<{ id: string }> {
     this.assertCurrent(peer, generation);
     const { transport } = this.own(peer, transportId, 'send');
-    if (kind !== 'audio') throw new Error('Audio only');
+    if (kind !== 'audio' && !(kind === 'video' && this.video)) throw new Error(this.video ? 'Audio or video only' : 'Audio only');
+    const media = kind as ms.MediaKind;
     const role = PRODUCES[peer];
-    if (this.producers[role]) throw new Error(`The ${role} is already produced`);
-    const producer = await this.keepIfCurrent(peer, generation, () => transport.produce({ kind: 'audio', rtpParameters, appData: { role } }));
-    this.producers[role] = producer;
+    const key = `${role}:${media}`;
+    if (this.producers.has(key)) throw new Error(`The ${role}'s ${media} is already produced`);
+    const producer = await this.keepIfCurrent(peer, generation, () => transport.produce({ kind: media, rtpParameters, appData: { role } }));
+    this.producers.set(key, producer);
     // A closed producer (its transport closed: closePeer, a dropped agent) can be produced again.
     producer.observer.once('close', () => {
-      if (this.producers[role] === producer) delete this.producers[role];
+      if (this.producers.get(key) === producer) this.producers.delete(key);
     });
     return { id: producer.id };
   }
@@ -177,7 +181,7 @@ export class CallMediaRoom {
    */
   async silenceAgent(): Promise<void> {
     if (this.isClosed) return;
-    await this.producers.agent?.pause().catch(() => undefined);
+    await this.producers.get('agent:audio')?.pause().catch(() => undefined);
   }
 
   /** Whether `peer` has transports and every one of them is linked. */
@@ -215,10 +219,13 @@ export class CallMediaRoom {
   private async consume(peer: MediaPeer, generation: number, transportId: string, producerId: string, rtpCapabilities: ms.RtpCapabilities) {
     this.assertCurrent(peer, generation);
     const { transport } = this.own(peer, transportId, 'recv');
-    const producer = this.producers[CONSUMES[peer]];
-    if (!producer || producer.id !== producerId) throw new Error('Not allowed to consume this producer');
-    // One live consumer per peer: the page's own scripts can reach the bridge's signalling, and the worker is shared.
-    if ([...this.consumers.values()].some((c) => c.peer === peer)) throw new Error(`The ${peer} already consumes`);
+    const role = CONSUMES[peer];
+    const producer = [this.producers.get(`${role}:audio`), this.producers.get(`${role}:video`)].find((p) => !!p && p.id === producerId);
+    if (!producer) throw new Error('Not allowed to consume this producer');
+    // One live consumer per peer and kind: the page's own scripts can reach the bridge's signalling, and the worker is shared.
+    if ([...this.consumers.values()].some((c) => c.peer === peer && c.consumer.kind === producer.kind)) {
+      throw new Error(`The ${peer} already consumes ${producer.kind}`);
+    }
     if (!this.router.canConsume({ producerId, rtpCapabilities })) throw new Error('Cannot consume this producer with these capabilities');
     const consumer = await this.keepIfCurrent(peer, generation, () => transport.consume({ producerId, rtpCapabilities, paused: true }));
     this.consumers.set(consumer.id, { peer, consumer });
