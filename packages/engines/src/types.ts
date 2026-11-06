@@ -209,8 +209,8 @@ export interface CallMediaSupport {
 /**
  * The call's media room as the WhatsApp Web page sees it: the server side of the in-page media bridge (a
  * mediasoup-client peer). Values are mediasoup's JSON objects, opaque to the engine. The room decides what a peer
- * may do: the page has one send and one receive transport, produces exactly one track (the caller), and may consume
- * only the agent.
+ * may do: the page has one send and one receive transport, produces the caller's voice (and in a video room the
+ * caller's video), and may consume only the agent's, one consumer per kind.
  */
 export interface CallMediaSignaling {
   rtpCapabilities(): Promise<unknown>;
@@ -234,6 +234,11 @@ export interface CallMediaSignaling {
 export interface CallMediaHandle {
   /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
   readonly callerProducerId: string;
+  /**
+   * The page's "callerVideo" producer, for the agent to consume: black until attachCallerVideo(). Null on a voice
+   * bridge, and on a video bridge whose room refused the video (the engine logs why): the call is then a voice call.
+   */
+  readonly callerVideoProducerId: string | null;
   /**
    * Swap "caller" from silence to WhatsApp Web's playback of the caller (callerTap, waiting up to 5 s for it). Call it
    * once the call is connected: WhatsApp Web plays the caller only after it accepted. Resolves with how the tap was
@@ -336,8 +341,9 @@ export interface CallMediaEngine {
    * waiting for can still finish: `closeCallMedia(callId)` then frees the slot at once, and the late start closes its
    * page bridge and rejects, with "Media bridge closed", "No media bridge for this call" or a room error: do not
    * depend on which.
+   * `opts.video`: the page also produces the caller's video (see callerVideoProducerId); give it a room opened for video.
    */
-  startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle>;
+  startCallMedia(callId: string, signaling: CallMediaSignaling, opts?: { video?: boolean }): Promise<CallMediaHandle>;
   /**
    * The coordinator's teardown on EVERY end path, handle-less, so it also covers a start it gave up waiting for (which
    * never produced a handle). Frees the engine's bridge slot when it belongs to `callId`, then closes the page's

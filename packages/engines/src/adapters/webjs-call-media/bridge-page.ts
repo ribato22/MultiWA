@@ -6,8 +6,10 @@
 // per-call function repeats the same call-id guard. The bridge is a mediasoup-client peer of the call's media room on
 // the server:
 // - it produces "caller": silence first (WhatsApp Web plays the caller only after it accepted the call), then
-//   WhatsApp Web's own playback of the caller (`__mwCall.callerTap`, attachCallerInPage);
-// - it consumes "agent" into the injected microphone (`__mwCall.inputs.agent`), which WhatsApp Web sends to the caller.
+//   WhatsApp Web's own playback of the caller (`__mwCall.callerTap`, attachCallerInPage); on a video call it also
+//   produces "callerVideo": black first, then WhatsApp Web's own drawing of the caller (attachCallerVideoInPage);
+// - it consumes "agent" into the injected microphone (`__mwCall.inputs.agent`), which WhatsApp Web sends to the caller,
+//   and on a video call the agent's video into the injected camera (`__mwCall.camera`, connectAgentVideoInPage).
 // mediasoup-client comes from the bundle the wrapper evaluates first (`window.mediasoupClient`). The signalling goes
 // through ONE page binding, `__mwBridgeSignal(callId, op, json)`, to the room. One bridge per document:
 // `window.__mwBridge`, tied to its call: it ends with it (startBridgeInPage). The interface below is types only,
@@ -23,6 +25,11 @@ export interface MwBridge {
   caller: any;
   /** The agent on the microphone (connectAgentInPage), or none. */
   agent: { consumer: any; source: MediaStreamAudioSourceNode; keepAlive: HTMLAudioElement } | null;
+  /**
+   * The "callerVideo" producer, on a video call only (else null): a black placeholder until attachCallerVideoInPage
+   * swaps in a capture of WhatsApp Web's canvas of the caller.
+   */
+  callerVideo: any;
   /** Releases everything the bridge holds in the page, synchronously, the call poll included; safe to call twice. */
   teardown(): void;
 }
@@ -42,8 +49,13 @@ export function hasMediasoupClient(): boolean {
  * another call, or none), when the whatsapp-web.js patch that tracks the call reports it ended (it clears
  * `_multiwaCallId`; a call the patch did not track at the start is judged by the guard alone), or when the call state
  * cannot be read. attachCallerInPage and connectAgentInPage apply the same guard.
+ * With `video` it also produces "callerVideo" on a black placeholder. Best effort: a video the room refuses leaves a
+ * voice bridge (`callerVideoProducerId` null, `videoError` says why), never a failed start.
  */
-export async function startBridgeInPage(callId: string): Promise<{ callerProducerId: string }> {
+export async function startBridgeInPage(
+  callId: string,
+  video = false,
+): Promise<{ callerProducerId: string; callerVideoProducerId: string | null; videoError: string | null }> {
   const w = window as any;
   if (!w.__mwCall) throw new Error('Call media hooks missing');
   const ours = () => {
@@ -81,6 +93,7 @@ export async function startBridgeInPage(callId: string): Promise<{ callerProduce
     recv: null,
     caller: null,
     agent: null,
+    callerVideo: null,
     teardown() {
       clearInterval(poll);
       if (b.agent) {
@@ -89,7 +102,7 @@ export async function startBridgeInPage(callId: string): Promise<{ callerProduce
         b.agent.consumer.close();
         b.agent = null;
       }
-      try { b.send?.close(); } catch { /* closes "caller" too; stopTracks false leaves WhatsApp Web's track running */ }
+      try { b.send?.close(); } catch { /* closes "caller" and "callerVideo" too: stopTracks false leaves WhatsApp Web's own audio track running; the video's tracks are our captures */ }
       try { b.recv?.close(); } catch { /* already closed */ }
       try { silence.stop(); } catch { /* already stopped */ }
       silence.disconnect();
@@ -116,6 +129,20 @@ export async function startBridgeInPage(callId: string): Promise<{ callerProduce
     // disableTrackOnPause false: replaceTrack must not write `enabled` on it either.
     b.caller = await b.send.produce({ track: dest.stream.getAudioTracks()[0], stopTracks: false, disableTrackOnPause: false });
     if (w.__mwBridge !== b) throw new Error('Media bridge closed');
+    let videoError: string | null = null;
+    if (video) {
+      // Black until the call view draws the caller (attachCallerVideoInPage). 800 kbps keeps a call near 1 Mbps each way.
+      const placeholder = document.createElement('canvas');
+      placeholder.width = 320;
+      placeholder.height = 240;
+      placeholder.getContext('2d').fillRect(0, 0, 320, 240);
+      try {
+        b.callerVideo = await b.send.produce({ track: placeholder.captureStream(15).getVideoTracks()[0], encodings: [{ maxBitrate: 800000 }] });
+      } catch (e) {
+        videoError = String((e as Error)?.message ?? e);
+      }
+      if (w.__mwBridge !== b) throw new Error('Media bridge closed');
+    }
     let gone = 0;
     poll = setInterval(() => {
       try { gone = over() ? gone + 1 : 0; } catch { gone++; } // a call state that cannot be read is not a live call
@@ -124,7 +151,7 @@ export async function startBridgeInPage(callId: string): Promise<{ callerProduce
         b.teardown();
       }
     }, 250);
-    return { callerProducerId: b.caller.id };
+    return { callerProducerId: b.caller.id, callerVideoProducerId: b.callerVideo?.id ?? null, videoError };
   } catch (e) {
     b.teardown();
     if (w.__mwBridge === b) delete w.__mwBridge;

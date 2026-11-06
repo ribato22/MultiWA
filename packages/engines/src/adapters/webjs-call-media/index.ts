@@ -277,8 +277,10 @@ export class WebJsCallMedia implements CallMediaEngine {
    * page bridge it already started signals nothing more (bridge-page). The handle acts only while its slot is current,
    * so a stale one never drives a newer bridge of the same call. A failed start frees the slot only while it is still
    * its own, for the same reason.
+   * With `opts.video` the page also produces the caller's video; a video the room refuses leaves a voice handle
+   * (`callerVideoProducerId` null) and one warning that says why.
    */
-  async startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle> {
+  async startCallMedia(callId: string, signaling: CallMediaSignaling, opts: { video?: boolean } = {}): Promise<CallMediaHandle> {
     const page = this.requirePage();
     if (this.bridge) throw new Error('Media bridge already running');
     const slot = { callId, signaling };
@@ -287,10 +289,16 @@ export class WebJsCallMedia implements CallMediaEngine {
       await this.bindBridge(page);
       if (!(await page.evaluate(hasMediasoupClient))) await page.evaluate(mediasoupClientBundle());
       if (this.bridge !== slot) throw new Error('Media bridge closed'); // given up on while the page loaded: the page is the retry's
-      const { callerProducerId } = await page.evaluate(startBridgeInPage, callId);
+      const started: Awaited<ReturnType<typeof startBridgeInPage>> = await page.evaluate(startBridgeInPage, callId, opts.video === true);
       if (this.bridge !== slot) {
         await page.evaluate(closeBridgeInPage, callId).catch(() => undefined); // closeCallMedia ran while the page started
         throw new Error('Media bridge closed');
+      }
+      if (started.videoError) {
+        console.warn(
+          `[WhatsApp-WebJS] Call ${clean(callId)} for profile ${clean(this.profileId)}: no video, the call goes on as voice: ` +
+            clean(started.videoError),
+        );
       }
       // The handle's operations run one at a time, in call order, per piece of page state: attachCaller touches the
       // caller (`b.caller`), connectAgent and disconnectAgent the agent (`b.agent`). A disconnect sent while a connect is
@@ -311,7 +319,8 @@ export class WebJsCallMedia implements CallMediaEngine {
       const callerQueue = queue();
       const agentQueue = queue();
       return {
-        callerProducerId,
+        callerProducerId: started.callerProducerId,
+        callerVideoProducerId: started.callerVideoProducerId ?? null,
         attachCaller: () => callerQueue(() => page.evaluate(attachCallerInPage, callId)),
         connectAgent: (producerId: string) => agentQueue(() => page.evaluate(connectAgentInPage, callId, producerId)),
         disconnectAgent: () => agentQueue(() => page.evaluate(disconnectAgentInPage, callId)),

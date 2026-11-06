@@ -552,7 +552,7 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
    * string); `holdNext` and `failNext` act on the NEXT evaluate of one page function (an evaluate that already started
    * is not touched).
    */
-  const bridgePage = (opts: { startFails?: boolean } = {}) => {
+  const bridgePage = (opts: { startFails?: boolean; videoError?: string } = {}) => {
     let binding: ((callId: string, op: string, json: string) => Promise<string>) | null = null;
     const held = new Map<unknown, Promise<void>>();
     const failing = new Map<unknown, Error>();
@@ -570,7 +570,8 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
         if (fn === callMediaBridge.hasMediasoupClient) return page.loaded;
         if (fn === callMediaBridge.startBridgeInPage) {
           if (opts.startFails) throw new Error('Call is not the active call');
-          return { callerProducerId: 'P-caller' };
+          const video = args[1] === true;
+          return { callerProducerId: 'P-caller', callerVideoProducerId: video && !opts.videoError ? 'P-video' : null, videoError: video ? opts.videoError ?? null : null };
         }
         if (fn === callMediaBridge.closeBridgeInPage) return { closed: true };
         return { fn: fn.name, args };
@@ -596,7 +597,7 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
     expect(handle.callerProducerId).toBe('P-caller');
     expect(page.exposeFunction).toHaveBeenCalledTimes(1);
     expect(page.evaluate.mock.calls.filter(([fn]: any[]) => typeof fn === 'string')).toHaveLength(1);
-    expect(page.evaluate).toHaveBeenCalledWith(callMediaBridge.startBridgeInPage, 'c1');
+    expect(page.evaluate).toHaveBeenCalledWith(callMediaBridge.startBridgeInPage, 'c1', false);
     expect(await handle.attachCaller()).toEqual({ fn: 'attachCallerInPage', args: ['c1'] });
     expect(await handle.connectAgent('P-agent')).toEqual({ fn: 'connectAgentInPage', args: ['c1', 'P-agent'] });
     expect(await handle.disconnectAgent()).toEqual({ fn: 'disconnectAgentInPage', args: ['c1'] });
@@ -606,6 +607,25 @@ describe('WebJsCallMedia media bridge, without a browser', () => {
     await (await media.startCallMedia('c2', fakeSignaling())).close();
     expect(page.exposeFunction).toHaveBeenCalledTimes(1);
     expect(page.evaluate.mock.calls.filter(([fn]: any[]) => typeof fn === 'string')).toHaveLength(1);
+  });
+
+  it("a video start asks the page for the caller's video too, and the handle carries its producer", async () => {
+    const page = bridgePage();
+    const media = new WebJsCallMedia(() => page, () => true, 'p1');
+    const handle = await media.startCallMedia('c1', fakeSignaling(), { video: true });
+    expect(page.evaluate).toHaveBeenCalledWith(callMediaBridge.startBridgeInPage, 'c1', true);
+    expect([handle.callerProducerId, handle.callerVideoProducerId]).toEqual(['P-caller', 'P-video']);
+    await handle.close();
+    expect((await media.startCallMedia('c2', fakeSignaling())).callerVideoProducerId).toBeNull();
+  });
+
+  it('a video the page could not start leaves a voice handle and one warning, on one line', async () => {
+    const page = bridgePage({ videoError: 'Audio\nonly' });
+    const handle = await new WebJsCallMedia(() => page, () => true, 'p\n1').startCallMedia('c1', fakeSignaling(), { video: true });
+    expect(handle.callerVideoProducerId).toBeNull();
+    expect(vi.mocked(console.warn).mock.calls.map((c) => String(c[0]))).toEqual([
+      '[WhatsApp-WebJS] Call c1 for profile p1: no video, the call goes on as voice: Audioonly',
+    ]);
   });
 
   it('refuses to start when WhatsApp is not ready, and touches nothing', async () => {

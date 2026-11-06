@@ -1226,6 +1226,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       delay?: Partial<Record<Op, number>>; // the room answers this operation late
       failOnce?: Partial<Record<Op, boolean>>; // the room refuses this operation, once
       badConsume?: boolean; // the room hands out consumer options mediasoup-client cannot use
+      refuseVideo?: boolean; // the room refuses video producers, as a voice room does
     }
     let worker: mediasoup.types.Worker;
     let router: mediasoup.types.Router;
@@ -1271,6 +1272,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         },
         async produce(id: string, kind: string, rtpParameters: unknown) {
           await gate('produce');
+          if (knobs.refuseVideo && kind === 'video') throw new Error('Audio only');
           const producer = await transport(id).produce({ kind: kind as mediasoup.types.MediaKind, rtpParameters: rtpParameters as mediasoup.types.RtpParameters });
           producers.push(producer);
           return { id: producer.id };
@@ -1288,9 +1290,12 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
     };
     type Room = ReturnType<typeof makeRoom>;
 
-    /** A WhatsApp page whose CALL1 rings, with the bridge started on a room of its own through the real wrapper; always cleaned up. */
+    /**
+     * A WhatsApp page whose CALL1 rings (a video call with `video`), with the bridge started on a room of its own through
+     * the real wrapper, with video when `video`; always cleaned up.
+     */
     const withBridge = async (
-      opts: { knobs?: Knobs; before?: (p: any) => Promise<unknown> },
+      opts: { knobs?: Knobs; before?: (p: any) => Promise<unknown>; video?: boolean },
       body: (b: { p: any; media: WebJsCallMedia; room: Room; handle: CallMediaHandle }) => Promise<void>,
     ) => {
       const p = await openPage();
@@ -1298,8 +1303,9 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       const room = makeRoom(opts.knobs);
       let handle: CallMediaHandle | undefined;
       try {
+        if (opts.video) await ring(p, 'CALL1', true);
         await opts.before?.(p);
-        handle = await media.startCallMedia('CALL1', room);
+        handle = await media.startCallMedia('CALL1', room, { video: opts.video });
         await body({ p, media, room, handle });
       } finally {
         await handle?.close().catch(() => undefined);
@@ -1345,7 +1351,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       return !(await hasBridge(p));
     };
     const trackPolls = (p: any) => p.evaluate(trackIntervals);
-    const ring = (p: any, id: string) => p.evaluate((x: string) => (window as any).__fakeWa.ring(x), id);
+    const ring = (p: any, id: string, video = false) => p.evaluate((x: string, v: boolean) => (window as any).__fakeWa.ring(x, v), id, video);
 
     beforeAll(async () => {
       worker = await mediasoup.createWorker({ logLevel: 'warn' });
@@ -1718,6 +1724,35 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await expect(p.evaluate(callMediaBridge.startBridgeInPage, 'CALL1')).rejects.toThrow('Call media hooks missing');
       } finally {
         await p.close();
+      }
+    });
+
+    it("a video bridge produces the caller's video too, black until attached; a voice bridge produces none", async () => {
+      await withBridge({ video: true }, async ({ room, handle }) => {
+        expect(room.producers.map((p) => p.kind)).toEqual(['audio', 'video']);
+        expect(handle.callerVideoProducerId).toBe(room.producers[1].id);
+      });
+      await withBridge({}, async ({ room, handle }) => {
+        expect(room.producers.map((p) => p.kind)).toEqual(['audio']);
+        expect(handle.callerVideoProducerId).toBeNull();
+      });
+    });
+
+    it('a video the room refuses leaves a voice bridge: the engine says why, once, and the voice works as always', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        await withBridge({ video: true, knobs: { refuseVideo: true } }, async ({ p, media, handle }) => {
+          expect(handle.callerVideoProducerId).toBeNull();
+          expect(warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('no video'))).toEqual([
+            '[WhatsApp-WebJS] Call CALL1 for profile p1: no video, the call goes on as voice: Audio only',
+          ]);
+          await media.answer('CALL1', { video: true });
+          expect(await handle.attachCaller()).toEqual({ via: 'destination', freshCandidates: 1, fallback: false });
+          await handle.connectAgent(agentProducerId);
+          expect(await heard(p, 5000)).toBe(true);
+        });
+      } finally {
+        warn.mockRestore();
       }
     });
   });
