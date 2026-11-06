@@ -260,7 +260,7 @@ index dd977e85b0c0c40d2625cd337264fc9ae3bed17b..6c1ca6ba736f23d50e82d5e672622ff5
          }, this.id._serialized);
  
 diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
-index 540078a9d07b3df07ccd51b030556a72af4cf650..744743b8d785bccfbdcd83340da5c33fb51c9051 100644
+index 540078a9d07b3df07ccd51b030556a72af4cf650..982eff3a6578ab6e96625fa1c3aa5853b1f6aff6 100644
 --- a/src/util/Injected/Utils.js
 +++ b/src/util/Injected/Utils.js
 @@ -470,8 +470,10 @@ exports.LoadUtils = () => {
@@ -449,7 +449,7 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..744743b8d785bccfbdcd83340da5c33f
                            ])
                    )?.messages?.[0]
                  : null;
-@@ -1263,6 +1345,30 @@ exports.LoadUtils = () => {
+@@ -1263,6 +1345,37 @@ exports.LoadUtils = () => {
      };
  
      window.WWebJS.rejectCall = async (peerJid, id) => {
@@ -465,7 +465,10 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..744743b8d785bccfbdcd83340da5c33f
 +        if (voip) {
 +            // From here on a failure reaches the caller: the stanza would not work either.
 +            const stack = await voip.getVoipStackInterface();
-+            if (!stack || typeof stack.rejectCall !== 'function') {
++            // Current WhatsApp Web (2.3000.1053x on) has no rejectCall: its own decline button calls
++            // rejectCallWithEndReason(RejectEndReason.Self). Older builds have rejectCall.
++            const canReject = !!stack && (typeof stack.rejectCall === 'function' || typeof stack.rejectCallWithEndReason === 'function');
++            if (!canReject) {
 +                throw new Error('WhatsApp voip stack cannot reject calls');
 +            }
 +            // The stack takes no call id and rejects WhatsApp's ACTIVE call: never
@@ -474,7 +477,11 @@ index 540078a9d07b3df07ccd51b030556a72af4cf650..744743b8d785bccfbdcd83340da5c33f
 +            if (active && active !== id) {
 +                throw new Error('Call is not the active call');
 +            }
-+            await stack.rejectCall();
++            if (typeof stack.rejectCall === 'function') {
++                await stack.rejectCall();
++            } else {
++                await stack.rejectCallWithEndReason(window.require('WAWebVoipWaCallEnums').RejectEndReason.Self);
++            }
 +            return;
 +        }
          let userId = window

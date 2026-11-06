@@ -455,6 +455,7 @@ describe('whatsapp-web.js rejectCall behaviour', () => {
         if (!opts.stack) throw new Error('Requiring unknown module');
         return { getVoipStackInterface: async () => opts.stack };
       }
+      if (name === 'WAWebVoipWaCallEnums') return { RejectEndReason: { Self: 2, MicPermissionDenied: 5, CameraPermissionDenied: 6 } };
       if (name === 'WAWap') return { wap: (...a: any[]) => a, generateId: () => 'id' };
       if (name === 'WADeprecatedSendIq') return { deprecatedCastStanza: async (s: unknown) => { stanzas.push(s); } };
       if (name === 'WAWebUserPrefsMeUser') return { getMaybeMePnUser: () => ({ _serialized: 'me@c.us' }) };
@@ -469,6 +470,20 @@ describe('whatsapp-web.js rejectCall behaviour', () => {
     const stack = { rejectCall: vi.fn().mockResolvedValue(undefined) };
     expect(await rejectCall({ stack, callId: 'A' })).toEqual({ result: 'ok', stanzas: [] });
     expect(stack.rejectCall).toHaveBeenCalledTimes(1);
+  });
+
+  // Live, WhatsApp Web 2.3000.1053x (2026-11-05 on): the stack has no rejectCall, and its decline button calls
+  // rejectCallWithEndReason(RejectEndReason.Self).
+  it('a stack without rejectCall rejects as WhatsApp Web\'s own decline button does: rejectCallWithEndReason(Self)', async () => {
+    const stack = { rejectCallWithEndReason: vi.fn().mockResolvedValue(undefined) };
+    expect(await rejectCall({ stack, callId: 'A' })).toEqual({ result: 'ok', stanzas: [] });
+    expect(stack.rejectCallWithEndReason).toHaveBeenCalledWith(2);
+  });
+
+  it('the new way keeps the active-call guard: another call than the one asked for is never rejected', async () => {
+    const stack = { rejectCallWithEndReason: vi.fn().mockResolvedValue(undefined) };
+    expect(await rejectCall({ stack, callId: 'B', requested: 'A' })).toEqual({ result: 'Call is not the active call', stanzas: [] });
+    expect(stack.rejectCallWithEndReason).not.toHaveBeenCalled();
   });
 
   it('lets a real voip failure reach the caller instead of "succeeding" through the stanza', async () => {

@@ -42,7 +42,7 @@ patchedDependencies:
     hash: ojyrc3cfdg34zvnmp2c5f6nlei
     path: patches/file-type@16.5.4.patch
   whatsapp-web.js@1.34.7:
-    hash: qd4hq66dktmosswvl5kfhv266e
+    hash: izl6qaamf5vthgkk6naw54xklq
     path: patches/whatsapp-web.js@1.34.7.patch
 
 importers:
@@ -535,7 +535,7 @@ importers:
         version: 0.12.0
       whatsapp-web.js:
         specifier: 1.34.7
-        version: 1.34.7(patch_hash=qd4hq66dktmosswvl5kfhv266e)(typescript@5.9.3)
+        version: 1.34.7(patch_hash=izl6qaamf5vthgkk6naw54xklq)(typescript@5.9.3)
     devDependencies:
       '@types/hapi__boom':
         specifier: ^9.0.1
@@ -15260,7 +15260,7 @@ snapshots:
       - uglify-js
     optional: true
 
-  whatsapp-web.js@1.34.7(patch_hash=qd4hq66dktmosswvl5kfhv266e)(typescript@5.9.3):
+  whatsapp-web.js@1.34.7(patch_hash=izl6qaamf5vthgkk6naw54xklq)(typescript@5.9.3):
     dependencies:
       fluent-ffmpeg: 2.1.3
       mime: 3.0.0

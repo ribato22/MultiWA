@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Auto-reject rejects calls again.** Since WhatsApp Web 2.3000.1053x (rolled out around 2026-11-05) its voip stack has no `rejectCall`, so a profile with auto-reject on let every call ring until the caller gave up, logged as missed (its auto-reply still went out). MultiWA now rejects the way WhatsApp Web's own decline button does (`rejectCallWithEndReason`), and still uses `rejectCall` on older builds.
 - A `%`, `_` or `\` typed in the contacts or templates search, or in the audit log's action filter, now matches itself. Prisma hands these to `LIKE` as wildcards, so a search for `%` matched everything.
 
 ### Security
