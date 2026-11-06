@@ -1432,6 +1432,19 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         .catch((e: Error) => e.message),
     });
 
+    /**
+     * Whether the agent sees `want` rather than any of `others`, the colours far apart. The video codec shifts a colour (on
+     * Linux a saturated green comes out some 45 brighter in its green), so a follow is the nearest colour within a loose
+     * bound, not one within the tight NEAR.
+     */
+    const agentSeesRather = async (want: number[], others: number[][]) => {
+      const d = await agentSeesInPage(agentPage, want);
+      const rgb: number[] | null = await agentPage.evaluate(() => (window as any).__lastLook?.rgb ?? null);
+      if (!rgb) return false;
+      const away = (c: number[]) => Math.hypot(rgb[0] - c[0], rgb[1] - c[1], rgb[2] - c[2]);
+      return d < 2 * NEAR && others.every((c) => away(c) > 2 * d);
+    };
+
     beforeAll(async () => {
       worker = await mediasoup.createWorker({ logLevel: 'warn' });
       router = await worker.createRouter({ mediaCodecs: CALL_MEDIA_CODECS });
@@ -1873,7 +1886,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         await p.evaluate(() => { const pic = (window as any).__picture; clearInterval(pic.timer); pic.c.remove(); });
         // WhatsApp Web replaces its canvas mid-call: within the poll's second, the agent sees the new one
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
-        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000), JSON.stringify(await callerVideoState(p))).toBe(true);
+        expect(await until(() => agentSeesRather([40, 200, 40], [CALLER_RGB]), 10_000), JSON.stringify(await callerVideoState(p))).toBe(true);
       });
     });
 
@@ -1906,7 +1919,7 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
         expect(nearest).toBeGreaterThanOrEqual(NEAR);
         // it comes back on a new canvas: the agent sees the caller there
         await p.evaluate(() => { const f = (window as any).__fakeWa; f.callerColour = [40, 200, 40]; f.showCaller(); });
-        expect(await until(async () => (await agentSeesInPage(agentPage, [40, 200, 40])) < NEAR, 10_000), JSON.stringify(await callerVideoState(p))).toBe(true);
+        expect(await until(() => agentSeesRather([40, 200, 40], [CALLER_RGB, [200, 200, 200]]), 10_000), JSON.stringify(await callerVideoState(p))).toBe(true);
       });
     });
 
