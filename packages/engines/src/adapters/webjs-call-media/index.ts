@@ -11,10 +11,14 @@ import { join } from 'node:path';
 import type { CallMediaEngine, CallMediaHandle, CallMediaSignaling, CallMediaSupport, CallMediaUnsupportedReason } from '../../types';
 import {
   attachCallerInPage,
+  attachCallerVideoInPage,
   closeBridgeInPage,
   connectAgentInPage,
+  connectAgentVideoInPage,
   disconnectAgentInPage,
+  disconnectAgentVideoInPage,
   hasMediasoupClient,
+  setCameraMutedInPage,
   startBridgeInPage,
 } from './bridge-page';
 import {
@@ -85,6 +89,7 @@ export function mediasoupClientBundle(): string {
 const DEFAULT_ANSWER_TIMEOUT_MS = 15_000;
 const HANG_UP_TIMEOUT_MS = 10_000;
 const PROBE_TIMEOUT_MS = 5_000;
+const CAMERA_TIMEOUT_MS = 5_000;
 const RECORDING_TIMESLICE_MS = 5_000;
 /** The page's own scripts can call the bridge binding: real mediasoup messages are a few KB. */
 const MAX_SIGNAL_JSON = 64 * 1024;
@@ -187,7 +192,8 @@ export class WebJsCallMedia implements CallMediaEngine {
       this.probeError = null;
       // fail closed: a reason this side does not know must never read as supported
       const reasons = [...new Set<string>(r.reasons.map((x: string) => (KNOWN_REASONS.has(x) ? x : 'page_error')))] as CallMediaUnsupportedReason[];
-      return { supported: reasons.length === 0, reasons, waVersion: r.waVersion };
+      // a video call is a voice call with a camera: a page that cannot carry the one cannot carry the other
+      return { supported: reasons.length === 0, reasons, waVersion: r.waVersion, videoSupported: reasons.length === 0 && r.videoSupported === true };
     } catch (e) {
       const msg = clean((e as Error)?.message ?? String(e));
       if (msg !== this.probeError) console.warn(`[WhatsApp-WebJS] call media probe for profile ${clean(this.profileId)} failed: ${msg}`);
@@ -196,10 +202,21 @@ export class WebJsCallMedia implements CallMediaEngine {
     }
   }
 
-  async answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }> {
-    const r = await this.requirePage().evaluate(answerActiveCall, callId, opts?.timeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS);
-    console.log(`[WhatsApp-WebJS] Call ${clean(callId)} answered for profile ${clean(this.profileId)}, connected after ${r.connectedAfterMs} ms`);
-    return r;
+  /** Logs how the call was answered, and warns, with the page's reason, when a video answer came back as voice. */
+  async answer(callId: string, opts?: { timeoutMs?: number; video?: boolean }): Promise<{ connectedAfterMs: number; video: boolean }> {
+    const r = await this.requirePage().evaluate(answerActiveCall, callId, opts?.timeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS, opts?.video === true);
+    const video = r.video === true;
+    console.log(
+      `[WhatsApp-WebJS] Call ${clean(callId)} answered as ${video ? 'video' : 'voice'} for profile ${clean(this.profileId)}, ` +
+        `connected after ${clean(r.connectedAfterMs)} ms`,
+    );
+    if (opts?.video === true && !video) {
+      console.warn(
+        `[WhatsApp-WebJS] Call ${clean(callId)} for profile ${clean(this.profileId)}: answered as voice, ` +
+          `WhatsApp Web's video call UI did not load: ${clean(r.videoError)}`,
+      );
+    }
+    return { connectedAfterMs: r.connectedAfterMs, video };
   }
 
   async hangUp(callId: string): Promise<void> {
@@ -265,8 +282,10 @@ export class WebJsCallMedia implements CallMediaEngine {
    * page bridge it already started signals nothing more (bridge-page). The handle acts only while its slot is current,
    * so a stale one never drives a newer bridge of the same call. A failed start frees the slot only while it is still
    * its own, for the same reason.
+   * With `opts.video` the page also produces the caller's video; a video the room refuses leaves a voice handle
+   * (`callerVideoProducerId` null) and one warning that says why.
    */
-  async startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle> {
+  async startCallMedia(callId: string, signaling: CallMediaSignaling, opts: { video?: boolean } = {}): Promise<CallMediaHandle> {
     const page = this.requirePage();
     if (this.bridge) throw new Error('Media bridge already running');
     const slot = { callId, signaling };
@@ -275,16 +294,26 @@ export class WebJsCallMedia implements CallMediaEngine {
       await this.bindBridge(page);
       if (!(await page.evaluate(hasMediasoupClient))) await page.evaluate(mediasoupClientBundle());
       if (this.bridge !== slot) throw new Error('Media bridge closed'); // given up on while the page loaded: the page is the retry's
-      const { callerProducerId } = await page.evaluate(startBridgeInPage, callId);
+      const started: Awaited<ReturnType<typeof startBridgeInPage>> = await page.evaluate(startBridgeInPage, callId, opts.video === true);
       if (this.bridge !== slot) {
         await page.evaluate(closeBridgeInPage, callId).catch(() => undefined); // closeCallMedia ran while the page started
         throw new Error('Media bridge closed');
       }
+      if (started.videoError) {
+        console.warn(
+          `[WhatsApp-WebJS] Call ${clean(callId)} for profile ${clean(this.profileId)}: no video, the call goes on as voice: ` +
+            clean(started.videoError),
+        );
+      }
       // The handle's operations run one at a time, in call order, per piece of page state: attachCaller touches the
-      // caller (`b.caller`), connectAgent and disconnectAgent the agent (`b.agent`). A disconnect sent while a connect is
-      // pending would find no agent yet, but it must not wait for a caller tap (up to 5 s) with the agent on the
-      // microphone. A failure does not break a queue. Whether the bridge is still ours is checked when an operation's
-      // turn comes. close() stays outside the queues: it must not wait behind a hung operation.
+      // caller (`b.caller`), connectAgent and disconnectAgent the agent (`b.agent`), attachCallerVideo the caller's video
+      // (`b.callerVideo`), connectAgentVideo and disconnectAgentVideo the agent's video (`b.agentVideo`), and
+      // setCameraMuted WhatsApp Web's camera mute. A disconnect sent while a connect is pending would find no agent yet,
+      // but it must not wait for a caller tap (up to 5 s) with the agent on the microphone; for the same reason no camera
+      // step waits for the caller's canvas (up to 5 s), no video step for an audio one, and disconnectAgentVideo never
+      // for WhatsApp Web's voip stack (a mute, up to 5 s): taking the agent off the camera is the camera-off that needs
+      // nothing of WhatsApp Web. A failure does not break a queue. Whether the bridge is still ours is checked when an
+      // operation's turn comes. close() stays outside the queues: it must not wait behind a hung operation.
       const queue = () => {
         let chain: Promise<unknown> = Promise.resolve();
         return <T>(op: () => Promise<T>): Promise<T> => {
@@ -298,11 +327,19 @@ export class WebJsCallMedia implements CallMediaEngine {
       };
       const callerQueue = queue();
       const agentQueue = queue();
+      const callerVideoQueue = queue();
+      const cameraQueue = queue();
+      const muteQueue = queue();
       return {
-        callerProducerId,
+        callerProducerId: started.callerProducerId,
+        callerVideoProducerId: started.callerVideoProducerId ?? null,
         attachCaller: () => callerQueue(() => page.evaluate(attachCallerInPage, callId)),
         connectAgent: (producerId: string) => agentQueue(() => page.evaluate(connectAgentInPage, callId, producerId)),
         disconnectAgent: () => agentQueue(() => page.evaluate(disconnectAgentInPage, callId)),
+        attachCallerVideo: () => callerVideoQueue(() => page.evaluate(attachCallerVideoInPage, callId)),
+        connectAgentVideo: (producerId: string) => cameraQueue(() => page.evaluate(connectAgentVideoInPage, callId, producerId)),
+        disconnectAgentVideo: () => cameraQueue(() => page.evaluate(disconnectAgentVideoInPage, callId)),
+        setCameraMuted: (muted: boolean) => muteQueue(() => page.evaluate(setCameraMutedInPage, callId, muted === true, CAMERA_TIMEOUT_MS)),
         close: async () => {
           if (this.bridge !== slot) return;
           try {

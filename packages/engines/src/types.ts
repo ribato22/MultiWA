@@ -198,13 +198,19 @@ export interface CallMediaSupport {
   reasons: CallMediaUnsupportedReason[];
   /** WhatsApp Web build, when known. */
   waVersion?: string | null;
+  /**
+   * WhatsApp Web has what a video answer needs: its video call UI and its camera mute. Apart from `supported`: a page
+   * without them still answers voice. Never true while `supported` is false: a video call needs everything a voice call
+   * does. Absent when the page could not be probed (not ready, or the probe failed): read it as false.
+   */
+  videoSupported?: boolean;
 }
 
 /**
  * The call's media room as the WhatsApp Web page sees it: the server side of the in-page media bridge (a
  * mediasoup-client peer). Values are mediasoup's JSON objects, opaque to the engine. The room decides what a peer
- * may do: the page has one send and one receive transport, produces exactly one track (the caller), and may consume
- * only the agent.
+ * may do: the page has one send and one receive transport, produces the caller's voice (and in a video room the
+ * caller's video), and may consume only the agent's, one consumer per kind.
  */
 export interface CallMediaSignaling {
   rtpCapabilities(): Promise<unknown>;
@@ -218,16 +224,26 @@ export interface CallMediaSignaling {
 
 /**
  * The call's media bridge in the page (CallMediaEngine.startCallMedia). Its operations run in call order, one at a time,
- * in two queues: attachCaller on its own, connectAgent and disconnectAgent together. A failure does not stop the next
- * one; each rejects "Media bridge closed" once the bridge is closed. An operation the coordinator stopped waiting for is
- * NOT cancelled: it still runs when its turn comes, unless the slot was closed, so a disconnectAgent() queued after a
- * timed-out connectAgent() undoes it. The page refuses attachCaller and connectAgent for a call that is not WhatsApp's
- * active call ("Call is not the active call"), and releases the whole bridge by itself 250-500 ms after its call is
- * over. The engine's slot stays held until close() or closeCallMedia().
+ * in five queues: attachCaller on its own; connectAgent and disconnectAgent together; attachCallerVideo on its own;
+ * connectAgentVideo and disconnectAgentVideo together; and setCameraMuted on its own, so a voip stack that hangs on a
+ * mute never keeps the agent on the camera (setCameraMuted says in which order to switch the camera). No video step
+ * waits for an audio one, nor the other way round. A video step that fails leaves the call's audio as it is. A failure
+ * does not stop the next one; each rejects "Media bridge closed" once the bridge is closed. An operation the coordinator
+ * stopped waiting for is NOT cancelled: it still runs when its turn comes, unless the slot was closed, so a
+ * disconnectAgent() queued after a timed-out connectAgent() undoes it. The page refuses attachCaller, connectAgent and
+ * the video steps for a call that is not WhatsApp's active call ("Call is not the active call"), and releases the whole
+ * bridge by itself 250-500 ms after its call is over. The engine's slot stays held until close() or closeCallMedia().
  */
 export interface CallMediaHandle {
   /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
   readonly callerProducerId: string;
+  /**
+   * The page's "callerVideo" producer, for the agent to consume: black until an attachCallerVideo() succeeds. The black
+   * is sent at least once a second, so an agent that consumes it first sees black within a second.
+   * Null on a voice bridge, and on a video bridge whose room refused the video (the engine logs why): the call is then a
+   * voice call.
+   */
+  readonly callerVideoProducerId: string | null;
   /**
    * Swap "caller" from silence to WhatsApp Web's playback of the caller (callerTap, waiting up to 5 s for it). Call it
    * once the call is connected: WhatsApp Web plays the caller only after it accepted. Resolves with how the tap was
@@ -248,6 +264,44 @@ export interface CallMediaHandle {
    * that as done.
    */
   disconnectAgent(): Promise<void>;
+  /**
+   * Swap "callerVideo" from black to WhatsApp Web's own drawing of the caller: the largest canvas of its call view,
+   * waited for up to 5 s ("No caller video" after that, and "callerVideo" stays as it was: black unless an earlier
+   * attach succeeded), and followed for the rest of the call when WhatsApp Web replaces it. Call it once a call
+   * answered with video is connected. After "No caller video" WhatsApp Web may still draw the caller later: call it
+   * again, while the call lasts. Resolves with the canvas's size. "No video on this call" on a voice bridge.
+   */
+  attachCallerVideo(): Promise<{ width: number; height: number }>;
+  /**
+   * Draw the agent's video into the injected camera, the one WhatsApp Web sends: it is black until then, and again after
+   * disconnectAgentVideo() (see there for when the caller of this API MUST call it). The agent has ONE video producer per
+   * join: the room has no operation that closes a producer, and refuses a second video produce from the same join. So
+   * the agent's browser turns its camera off and on with replaceTrack(null) and replaceTrack(track), and every camera-on
+   * connects that same producer again (see setCameraMuted). One at a time: to connect another producer (a rejoin's),
+   * disconnectAgentVideo() first, or this rejects "Agent video already connected". A connect that fails undoes itself,
+   * as connectAgent does. It does not unmute WhatsApp Web's camera: setCameraMuted(false) does.
+   */
+  connectAgentVideo(agentVideoProducerId: string): Promise<void>;
+  /**
+   * The injected camera goes black again, from its next frame, with nothing of WhatsApp Web involved. Does nothing when
+   * no agent video is connected. The caller of this API MUST call it together with the room's silenceAgent(), when the
+   * agent's link drops, when the room closes the agent's video producer, and before a rejoin connects a new one. The
+   * page is not told when the agent's video stops coming (paused, cut off, closed): the caller would see the agent's
+   * last frame, frozen, until the camera draws black after a second without a new one, and a new producer would be
+   * refused "Agent video already connected". Rejects "No media bridge for this call" once the page has released the
+   * bridge: treat that as done.
+   */
+  disconnectAgentVideo(): Promise<void>;
+  /**
+   * WhatsApp Web's own camera mute: muted, the caller gets no video from us; unmuted, the injected camera. Within 5 s
+   * ("The camera did not switch in time"; a switch WhatsApp Web had already started may still land after that); "No
+   * video on this call" on a voice bridge; "WhatsApp Web has no camera mute" when its voip stack lacks one.
+   * Camera off: disconnectAgentVideo() first (the injected camera is black from its next frame, whatever WhatsApp Web's
+   * voip stack does), then setCameraMuted(true). Camera on: connectAgentVideo() with the agent's one video producer of
+   * this join, then setCameraMuted(false). When that unmute rejects, call disconnectAgentVideo(): the unmute may still
+   * land late inside WhatsApp Web, and the injected camera it then sends stays black.
+   */
+  setCameraMuted(muted: boolean): Promise<void>;
   /**
    * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
    * closed") and still frees the slot, so close the room regardless of the outcome: the room closes its own side. It
@@ -271,10 +325,12 @@ export interface CallMediaEngine {
    * Answer the ringing call; resolves once it is connected, rejects when it is not ringing or does not connect in
    * time. WhatsApp's accept cannot be cancelled, so a call can still connect AFTER this rejected "did not connect in
    * time". After that rejection the caller MUST call `hangUp(callId)`, ignore its error, and release the call.
-   * It does not refuse a video call: this engine is voice-only and never looks at the call type, so the coordinator
-   * decides which calls to answer.
+   * `video`: answered the way WhatsApp Web answers a video call (its video call UI first, so that it draws the caller),
+   * with the camera off: the handle's setCameraMuted(false) turns it on. A video call UI that does not load answers as
+   * voice instead, and `video` in the result says which it was. Without `video` any call is answered as voice: the
+   * engine never looks at the call type, so the coordinator decides which calls to answer, and how.
    */
-  answer(callId: string, opts?: { timeoutMs?: number }): Promise<{ connectedAfterMs: number }>;
+  answer(callId: string, opts?: { timeoutMs?: number; video?: boolean }): Promise<{ connectedAfterMs: number; video: boolean }>;
   /** End the call the way WhatsApp Web's End button does; rejects when the voip stack does not end it in time (10 s). */
   hangUp(callId: string): Promise<void>;
   /**
@@ -328,8 +384,9 @@ export interface CallMediaEngine {
    * waiting for can still finish: `closeCallMedia(callId)` then frees the slot at once, and the late start closes its
    * page bridge and rejects, with "Media bridge closed", "No media bridge for this call" or a room error: do not
    * depend on which.
+   * `opts.video`: the page also produces the caller's video (see callerVideoProducerId); give it a room opened for video.
    */
-  startCallMedia(callId: string, signaling: CallMediaSignaling): Promise<CallMediaHandle>;
+  startCallMedia(callId: string, signaling: CallMediaSignaling, opts?: { video?: boolean }): Promise<CallMediaHandle>;
   /**
    * The coordinator's teardown on EVERY end path, handle-less, so it also covers a start it gave up waiting for (which
    * never produced a handle). Frees the engine's bridge slot when it belongs to `callId`, then closes the page's

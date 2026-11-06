@@ -3,10 +3,11 @@
 //
 // A mediasoup Router with two peers. The "page" peer is the WhatsApp Web page's media bridge; it produces the
 // caller and consumes the agent. The "agent" peer is the agent's browser; it produces the agent and consumes the
-// caller. Each peer has at most one send and one receive transport, produces at most one track, and may consume only
-// the other peer's track, so a client can never reach another peer's or another call's media. A peer's signalling runs
-// one operation at a time, so these limits hold for calls made together too. Closing a peer (closePeer) voids every
-// operation it had issued before, also one still at the worker, so that the peer can join again.
+// caller. Each peer has at most one send and one receive transport, produces at most one track of each kind (video only
+// in a room opened for a video call), and may consume only the other peer's tracks, one of each kind, so a client can
+// never reach another peer's or another call's media. A peer's signalling runs one operation at a time, so these limits
+// hold for calls made together too. Closing a peer (closePeer) voids every operation it had issued before, also one
+// still at the worker, so that the peer can join again.
 // The signalling API speaks mediasoup's JSON: `signalingFor(peer)` binds it to one peer.
 // Each peer's link (its transports' ICE and DTLS state) is told to the onLinkChange listeners.
 import type { types as ms } from 'mediasoup';
@@ -14,13 +15,22 @@ import type { CallMediaSignaling } from '@multiwa/engines';
 
 export type MediaPeer = 'page' | 'agent';
 export type MediaRole = 'caller' | 'agent';
+/** What a producer is filed under: its role and its kind, like "agent:video". */
+type ProducerKey = `${MediaRole}:${ms.MediaKind}`;
 /** What each peer produces, and what it may consume. */
 const PRODUCES: Record<MediaPeer, MediaRole> = { page: 'caller', agent: 'agent' };
 const CONSUMES: Record<MediaPeer, MediaRole> = { page: 'agent', agent: 'caller' };
+/**
+ * What one transport takes in: a video call's ~800 kbps of video (its producer's encodings cap it), its voice and the
+ * RTCP, with headroom for a key frame. The worker tells the sender this ceiling (REMB), so a sender that ignores its
+ * encodings (the page's own scripts can reach the bridge's signalling) is held near one call's worth.
+ */
+const MAX_INCOMING_BITRATE = 1_500_000;
 
 export class CallMediaRoom {
   private readonly transports = new Map<string, { peer: MediaPeer; direction: 'send' | 'recv'; transport: ms.WebRtcTransport }>();
-  private readonly producers: Partial<Record<MediaRole, ms.Producer>> = {};
+  /** Each role's producers by kind. */
+  private readonly producers = new Map<ProducerKey, ms.Producer>();
   private readonly consumers = new Map<string, { peer: MediaPeer; consumer: ms.Consumer }>();
   /** Where each peer's signalling operations queue (see `run`). The two peers are independent of each other. */
   private readonly chains: Record<MediaPeer, Promise<unknown>> = { page: Promise.resolve(), agent: Promise.resolve() };
@@ -32,12 +42,16 @@ export class CallMediaRoom {
   private readonly linkTold: Record<MediaPeer, boolean> = { page: false, agent: false };
   private readonly linkListeners: Array<(peer: MediaPeer, up: boolean) => void> = [];
   private isClosed = false;
+  /** Set by silenceAgent: what the agent produces from then on starts paused. */
+  private silenced = false;
 
   constructor(
     readonly callId: string,
     private readonly router: ms.Router,
     private readonly server: ms.WebRtcServer,
     private readonly onClose: () => void,
+    /** Opened for a video call: only then may its peers produce video. */
+    readonly video = false,
   ) {
     // A dead worker closes its routers: the room goes with it.
     router.observer.once('close', () => this.close());
@@ -47,9 +61,9 @@ export class CallMediaRoom {
     return this.isClosed;
   }
 
-  /** The producer id of `role`, once produced. */
-  producerId(role: MediaRole): string | null {
-    return this.producers[role]?.id ?? null;
+  /** The producer id of `role`'s `kind`, once produced. */
+  producerId(role: MediaRole, kind: ms.MediaKind = 'audio'): string | null {
+    return this.producers.get(`${role}:${kind}`)?.id ?? null;
   }
 
   /** The signalling API for one peer (the page's media bridge, or the agent's `call:media` socket commands). */
@@ -105,7 +119,7 @@ export class CallMediaRoom {
       throw new Error(`The ${peer} already has a ${direction} transport`);
     }
     const transport = await this.keepIfCurrent(peer, generation, () =>
-      this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true }),
+      this.router.createWebRtcTransport({ webRtcServer: this.server, enableUdp: true, enableTcp: true, preferUdp: true, maxIncomingBitrate: MAX_INCOMING_BITRATE }),
     );
     this.transports.set(transport.id, { peer, direction, transport });
     // Its link, from the worker's state events: the coordinator hangs up an agent whose link stays down (agent lost).
@@ -137,20 +151,28 @@ export class CallMediaRoom {
   private async produce(peer: MediaPeer, generation: number, transportId: string, kind: string, rtpParameters: ms.RtpParameters): Promise<{ id: string }> {
     this.assertCurrent(peer, generation);
     const { transport } = this.own(peer, transportId, 'send');
-    if (kind !== 'audio') throw new Error('Audio only');
+    if (kind !== 'audio' && !(kind === 'video' && this.video)) throw new Error(this.video ? 'Audio or video only' : 'Audio only');
     const role = PRODUCES[peer];
-    if (this.producers[role]) throw new Error(`The ${role} is already produced`);
-    const producer = await this.keepIfCurrent(peer, generation, () => transport.produce({ kind: 'audio', rtpParameters, appData: { role } }));
-    this.producers[role] = producer;
+    const key: ProducerKey = `${role}:${kind}`;
+    if (this.producers.has(key)) throw new Error(`The ${role}'s ${kind} is already produced`);
+    // silenceAgent pauses the producers there are: one made after it ran (a produce still waiting its turn) starts paused.
+    const paused = role === 'agent' && this.silenced;
+    const producer = await this.keepIfCurrent(peer, generation, () => transport.produce({ kind, rtpParameters, appData: { role }, paused }));
+    this.producers.set(key, producer);
     // A closed producer (its transport closed: closePeer, a dropped agent) can be produced again.
     producer.observer.once('close', () => {
-      if (this.producers[role] === producer) delete this.producers[role];
+      if (this.producers.get(key) === producer) this.producers.delete(key);
     });
+    // A produce still at the worker when silenceAgent ran was not registered for its pause to reach: pause it here.
+    if (role === 'agent' && this.silenced && !producer.paused) {
+      await producer.pause();
+      this.assertCurrent(peer, generation); // a closePeer during the pause closed the producer: fail, do not hand back its dead id
+    }
     return { id: producer.id };
   }
 
   /**
-   * Close every transport of `peer`, and with them its producer and consumers, so that it can join again: e.g. an
+   * Close every transport of `peer`, and with them its producers and consumers, so that it can join again: e.g. an
    * agent whose browser reconnected (the coordinator's agent-lost grace). Immediate. No operation the peer issued before
    * can stand in the way of its next join. One that makes a transport, producer or consumer, still waiting in its chain
    * or already at the worker, fails with "The ${peer} was closed" and keeps nothing it made. One on a transport or
@@ -168,14 +190,19 @@ export class CallMediaRoom {
   }
 
   /**
-   * The agent's voice reaches nobody from now on (its call is ending): its producer is paused at the worker, so neither
-   * the page nor a recording gets any more of it, whatever the agent's browser does. The peer stays as it is: closing it
-   * would fail the browser's transports, and the browser would join again. Never rejects; not awaited, the pause is
-   * already on its way to the worker.
+   * The agent reaches nobody from now on (its call is ending): its voice and its camera are paused at the worker, so
+   * neither the page nor a recording gets any NEW sound or frame of them, whatever the agent's browser does. The page
+   * still holds the agent's last frame: disconnect its camera from the agent's video too
+   * (CallMediaHandle.disconnectAgentVideo()), or the caller is shown that frame frozen until the page notices, a second
+   * later, that no new one comes. What the agent produces from now on starts paused (`produce`), also a produce that was
+   * already waiting in its chain or at the worker. The peer stays as it is: closing it would fail the browser's
+   * transports, and the browser would join again. Never rejects; not awaited, the pauses are already on their way to the
+   * worker.
    */
   async silenceAgent(): Promise<void> {
     if (this.isClosed) return;
-    await this.producers.agent?.pause().catch(() => undefined);
+    this.silenced = true;
+    await Promise.all((['audio', 'video'] as const).map((kind) => this.producers.get(`agent:${kind}`)?.pause().catch(() => undefined)));
   }
 
   /** Whether `peer` has transports and every one of them is linked. */
@@ -213,10 +240,13 @@ export class CallMediaRoom {
   private async consume(peer: MediaPeer, generation: number, transportId: string, producerId: string, rtpCapabilities: ms.RtpCapabilities) {
     this.assertCurrent(peer, generation);
     const { transport } = this.own(peer, transportId, 'recv');
-    const producer = this.producers[CONSUMES[peer]];
-    if (!producer || producer.id !== producerId) throw new Error('Not allowed to consume this producer');
-    // One live consumer per peer: the page's own scripts can reach the bridge's signalling, and the worker is shared.
-    if ([...this.consumers.values()].some((c) => c.peer === peer)) throw new Error(`The ${peer} already consumes`);
+    const role = CONSUMES[peer];
+    const producer = [this.producers.get(`${role}:audio`), this.producers.get(`${role}:video`)].find((p) => !!p && p.id === producerId);
+    if (!producer) throw new Error('Not allowed to consume this producer');
+    // One live consumer per peer and kind: the page's own scripts can reach the bridge's signalling, and the worker is shared.
+    if ([...this.consumers.values()].some((c) => c.peer === peer && c.consumer.kind === producer.kind)) {
+      throw new Error(`The ${peer} already consumes ${producer.kind}`);
+    }
     if (!this.router.canConsume({ producerId, rtpCapabilities })) throw new Error('Cannot consume this producer with these capabilities');
     const consumer = await this.keepIfCurrent(peer, generation, () => transport.consume({ producerId, rtpCapabilities, paused: true }));
     this.consumers.set(consumer.id, { peer, consumer });

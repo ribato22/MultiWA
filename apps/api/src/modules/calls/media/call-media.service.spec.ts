@@ -14,6 +14,12 @@ const OPUS = (ssrc: number) => ({
   encodings: [{ ssrc }],
   rtcp: { cname: `c${ssrc}`, reducedSize: true },
 });
+const VP8 = (ssrc: number) => ({
+  codecs: [{ mimeType: 'video/VP8', payloadType: 101, clockRate: 90000, parameters: {}, rtcpFeedback: [] }],
+  headerExtensions: [],
+  encodings: [{ ssrc }],
+  rtcp: { cname: `v${ssrc}`, reducedSize: true },
+});
 const until = async (ok: () => boolean, ms: number) => {
   for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await new Promise((r) => setTimeout(r, 50));
   return ok();
@@ -104,6 +110,31 @@ describe('CallMediaService', () => {
     expect(service.room('CALL1')).toBeNull();
   });
 
+  it('every router speaks Opus and VP8; a room remembers whether it was opened for video', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const voice = await service.createRoom('CALL1');
+    const video = await service.createRoom('CALL2', { video: true });
+    for (const room of [voice, video]) {
+      const caps: any = await room.signalingFor('page').rtpCapabilities();
+      expect(caps.codecs.map((c: any) => c.mimeType)).toEqual(expect.arrayContaining(['audio/opus', 'video/VP8']));
+    }
+    expect([voice.video, video.video]).toEqual([false, true]);
+    voice.close();
+    video.close();
+  });
+
+  it('every transport takes in at most 1.5 Mbps', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const made = vi.spyOn(room['router'], 'createWebRtcTransport');
+    await room.signalingFor('page').createTransport('send');
+    await room.signalingFor('agent').createTransport('recv');
+    expect(made.mock.calls.map(([options]: any[]) => options.maxIncomingBitrate)).toEqual([1_500_000, 1_500_000]);
+    room.close();
+  });
+
   it('the room lets each peer do only its own part', async () => {
     switchOn();
     await service.onModuleInit();
@@ -119,9 +150,9 @@ describe('CallMediaService', () => {
     await expect(page.createTransport('sideways' as any)).rejects.toThrow('send or recv');
     // a peer cannot use the other peer's transport
     await expect(agent.produce(pageSend.id, 'audio', OPUS(1))).rejects.toThrow("Not this peer's transport");
-    await expect(page.produce(pageSend.id, 'video', OPUS(1))).rejects.toThrow('Audio only');
+    await expect(page.produce(pageSend.id, 'video', VP8(1))).rejects.toThrow('Audio only'); // a voice room
     const caller = await page.produce(pageSend.id, 'audio', OPUS(1111));
-    await expect(page.produce(pageSend.id, 'audio', OPUS(1112))).rejects.toThrow('caller is already produced');
+    await expect(page.produce(pageSend.id, 'audio', OPUS(1112))).rejects.toThrow("The caller's audio is already produced");
     const agentP = await agent.produce(agentSend.id, 'audio', OPUS(2222));
     expect(room.producerId('caller')).toBe(caller.id);
     expect(room.producerId('agent')).toBe(agentP.id);
@@ -138,7 +169,7 @@ describe('CallMediaService', () => {
     await expect(page.rtpCapabilities()).rejects.toThrow('Media room closed');
   });
 
-  it('one live consumer per peer; a closed producer can be produced again; closePeer lets a peer rejoin', async () => {
+  it('one live consumer per peer and kind; a closed producer can be produced again; closePeer lets a peer rejoin', async () => {
     switchOn();
     await service.onModuleInit();
     const room = await service.createRoom('CALL1');
@@ -149,7 +180,7 @@ describe('CallMediaService', () => {
     const caller = await page.produce(pageSend.id, 'audio', OPUS(1111));
     let agentRecv: any = await agent.createTransport('recv');
     const c1: any = await agent.consume(agentRecv.id, caller.id, caps);
-    await expect(agent.consume(agentRecv.id, caller.id, caps)).rejects.toThrow('The agent already consumes');
+    await expect(agent.consume(agentRecv.id, caller.id, caps)).rejects.toThrow('The agent already consumes audio');
     await agent.closeConsumer(c1.id);
     const c2: any = await agent.consume(agentRecv.id, caller.id, caps);
     expect(c2.id).not.toBe(c1.id);
@@ -166,13 +197,55 @@ describe('CallMediaService', () => {
     room.close();
   });
 
-  it("silenceAgent pauses the agent's voice at the worker: the page hears none of it; with no voice yet, or a closed room, it does nothing and never throws", async () => {
+  it('a video room: each peer produces its own voice and video, and consumes one of each kind from the other peer', async () => {
     switchOn();
     await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const caps = await page.rtpCapabilities();
+    const pageSend: any = await page.createTransport('send');
+    const pageRecv: any = await page.createTransport('recv');
+    const agentSend: any = await agent.createTransport('send');
+    const agentRecv: any = await agent.createTransport('recv');
+    await expect(page.produce(pageSend.id, 'data', OPUS(1))).rejects.toThrow('Audio or video only');
+    const callerVoice = await page.produce(pageSend.id, 'audio', OPUS(1111));
+    const callerVideo = await page.produce(pageSend.id, 'video', VP8(1121));
+    await expect(page.produce(pageSend.id, 'video', VP8(1122))).rejects.toThrow("The caller's video is already produced");
+    const agentVoice = await agent.produce(agentSend.id, 'audio', OPUS(2222));
+    const agentVideo = await agent.produce(agentSend.id, 'video', VP8(2232));
+    expect([room.producerId('caller'), room.producerId('caller', 'video'), room.producerId('agent'), room.producerId('agent', 'video')]).toEqual([
+      callerVoice.id, callerVideo.id, agentVoice.id, agentVideo.id,
+    ]);
+    // the agent hears and sees the caller, the page gets the agent's voice and camera: one consumer of each kind
+    const heard: any = await agent.consume(agentRecv.id, callerVoice.id, caps);
+    const seen: any = await agent.consume(agentRecv.id, callerVideo.id, caps);
+    expect([heard.kind, seen.kind]).toEqual(['audio', 'video']);
+    await expect(agent.consume(agentRecv.id, callerVideo.id, caps)).rejects.toThrow('The agent already consumes video');
+    await expect(page.consume(pageRecv.id, callerVideo.id, caps)).rejects.toThrow('Not allowed to consume');
+    await expect(page.consume(pageRecv.id, agentVideo.id, caps)).resolves.toMatchObject({ producerId: agentVideo.id, kind: 'video' });
+    // a closed consumer frees its kind; a peer that rejoins produces its video again
+    await agent.closeConsumer(seen.id);
+    await expect(agent.consume(agentRecv.id, callerVideo.id, caps)).resolves.toMatchObject({ kind: 'video' });
+    room.closePeer('agent');
+    expect([room.producerId('agent'), room.producerId('agent', 'video')]).toEqual([null, null]);
+    const agentSend2: any = await agent.createTransport('send');
+    const again = await agent.produce(agentSend2.id, 'video', VP8(2233));
+    // The page's consumer of the old camera closed with its producer, not through closeConsumer. mediasoup delivers the
+    // worker's producerclose on setImmediate (Channel.processNotification), so it is the produce round trip above, a later
+    // event-loop turn, that guarantees the page's video slot is free by now: no wait is needed.
+    await expect(page.consume(pageRecv.id, again.id, caps)).resolves.toMatchObject({ producerId: again.id, kind: 'video' });
+    room.close();
+  });
+
+  it("silenceAgent pauses the agent's voice at the worker: the page hears none of it; with no voice yet, or a closed room, it pauses nothing and never throws", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const idle = await service.createRoom('CALL0'); // a room of its own: a silenced room also starts the agent's later voice paused
+    await expect(idle.silenceAgent()).resolves.toBeUndefined(); // nothing produced yet
     const room = await service.createRoom('CALL1');
     const page = room.signalingFor('page');
     const agent = room.signalingFor('agent');
-    await expect(room.silenceAgent()).resolves.toBeUndefined(); // nothing produced yet
     const caps = await page.rtpCapabilities();
     const agentSend: any = await agent.createTransport('send');
     const voice = await agent.produce(agentSend.id, 'audio', OPUS(2222));
@@ -182,10 +255,70 @@ describe('CallMediaService', () => {
     const consumer: ms.Consumer = (room as any).consumers.get(heard.id).consumer;
     expect(consumer.producerPaused).toBe(false);
     await room.silenceAgent();
-    expect((room as any).producers.agent.paused).toBe(true);
+    expect((room as any).producers.get('agent:audio').paused).toBe(true);
     expect(await until(() => consumer.producerPaused, 2_000)).toBe(true); // the worker told the page's consumer
     room.close();
     await expect(room.silenceAgent()).resolves.toBeUndefined();
+  });
+
+  it("silenceAgent pauses the agent's camera too: the page's consumer of it sees it paused", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const caps = await page.rtpCapabilities();
+    const agentSend: any = await agent.createTransport('send');
+    await agent.produce(agentSend.id, 'audio', OPUS(2222));
+    const camera = await agent.produce(agentSend.id, 'video', VP8(2232));
+    const pageRecv: any = await page.createTransport('recv');
+    const seen: any = await page.consume(pageRecv.id, camera.id, caps);
+    await page.resumeConsumer(seen.id);
+    const consumer: ms.Consumer = (room as any).consumers.get(seen.id).consumer;
+    await room.silenceAgent();
+    expect([(room as any).producers.get('agent:audio').paused, (room as any).producers.get('agent:video').paused]).toEqual([true, true]);
+    expect(await until(() => consumer.producerPaused, 2_000)).toBe(true); // the worker told the page's consumer
+    room.close();
+  });
+
+  it("silenceAgent holds back what the agent produces afterwards: a produce still waiting, or issued later, starts paused; the caller's does not", async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const page = room.signalingFor('page');
+    const agent = room.signalingFor('agent');
+    const pageSend: any = await page.createTransport('send');
+    const agentSend: any = await agent.createTransport('send');
+    const waiting = agent.produce(agentSend.id, 'audio', OPUS(2222)); // issued before the silence, and not run yet
+    await room.silenceAgent(); // no producer yet for it to pause
+    await waiting;
+    await agent.produce(agentSend.id, 'video', VP8(2232));
+    await page.produce(pageSend.id, 'audio', OPUS(1111));
+    const producers = (room as any).producers;
+    expect(['agent:audio', 'agent:video', 'caller:audio'].map((key) => producers.get(key).paused)).toEqual([true, true, false]);
+    room.close();
+  });
+
+  it('silenceAgent also holds back a produce already at the worker: its producer comes back paused', async () => {
+    switchOn();
+    await service.onModuleInit();
+    const room = await service.createRoom('CALL1', { video: true });
+    const agent = room.signalingFor('agent');
+    const agentSend: any = await agent.createTransport('send');
+    const transport = room['transports'].get(agentSend.id)!.transport;
+    const produce = transport.produce.bind(transport);
+    const atWorker = new Promise<void>((resolve) => {
+      vi.spyOn(transport, 'produce').mockImplementationOnce((options) => {
+        resolve();
+        return produce(options); // the request goes out as the room made it: not paused
+      });
+    });
+    const producing = agent.produce(agentSend.id, 'video', VP8(2232));
+    await atWorker; // the worker has the request, and its answer is not back
+    await room.silenceAgent(); // the producer is not registered yet for it to pause
+    await producing;
+    expect((room as any).producers.get('agent:video').paused).toBe(true);
+    room.close();
   });
 
   it("closing a room releases its transports from the WebRtcServer, and only that room's", async () => {
@@ -243,8 +376,8 @@ describe('CallMediaService', () => {
     const counts = { transports: sends.ok.length, producers: callers.ok.length, consumers: consumers.ok.length };
     expect(counts).toEqual({ transports: 1, producers: 1, consumers: 1 });
     expect(sends.errors).toEqual(Array(4).fill('The page already has a send transport'));
-    expect(callers.errors).toEqual(['The caller is already produced']);
-    expect(consumers.errors).toEqual(Array(2).fill('The agent already consumes'));
+    expect(callers.errors).toEqual(["The caller's audio is already produced"]);
+    expect(consumers.errors).toEqual(Array(2).fill('The agent already consumes audio'));
     expect(room.producerId('caller')).toBe(callers.ok[0].id); // no producer is left orphaned
 
     // An agent operation held at the worker does not hold up the page.
