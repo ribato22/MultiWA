@@ -345,7 +345,8 @@ export interface CallMediaEngine {
   playAnnouncement(callId: string, audio: Buffer, opts?: { maxDurationMs?: number }): Promise<{ durationMs: number }>;
   /**
    * Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in
-   * order. One recording at a time: another start rejects "Already recording" and leaves the running one alone.
+   * order. `video` (a call answered with video): WebM with VP8 too, of what each side saw: WhatsApp Web's picture of the
+   * caller, and the agent's camera in a corner while it is on (black where there is none). One recording at a time: another start rejects "Already recording" and leaves the running one alone.
    * A recording ends with its call: it stops by itself 250-500 ms after its call is over (WhatsApp's active call is
    * another call or none, or the engine's call tracking reported the call ended), so it never records the next call.
    * That is a backstop: stop a recording when its call is reported `ended`, and never start one for a call that was.
@@ -363,7 +364,7 @@ export interface CallMediaEngine {
    * never reaches onChunk; a later recording of the SAME call, after a stop that failed, may begin with the last
    * chunks of the earlier attempt.
    */
-  startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void>;
+  startRecording(callId: string, onChunk: (chunk: Buffer) => void, opts?: { video?: boolean }): Promise<void>;
   /**
    * Stop recording; resolves after the last chunk was delivered, with `durationMs` up to the moment the recorder
    * stopped (for one that ended with its call: 250-500 ms after the call ended, not this later stop). Rejects when the

@@ -232,12 +232,12 @@ export class WebJsCallMedia implements CallMediaEngine {
    * only when this start fails. Warns once when the caller's tap was a guess (more than one fresh candidate, or the
    * fallback to an older tap): the recording's left channel may then not be the caller. No audio is logged.
    */
-  async startRecording(callId: string, onChunk: (chunk: Buffer) => void): Promise<void> {
+  async startRecording(callId: string, onChunk: (chunk: Buffer) => void, opts: { video?: boolean } = {}): Promise<void> {
     const page = this.requirePage();
     if (this.recording) throw new Error('Already recording');
     const started = (async () => {
       await this.bindRecording(page);
-      const r: Awaited<ReturnType<typeof startRecordingInPage>> = await page.evaluate(startRecordingInPage, callId, RECORDING_TIMESLICE_MS);
+      const r: Awaited<ReturnType<typeof startRecordingInPage>> = await page.evaluate(startRecordingInPage, callId, RECORDING_TIMESLICE_MS, opts.video === true);
       if (r.freshCandidates > 1 || r.fallback) {
         console.warn(
           `[WhatsApp-WebJS] Call ${clean(callId)} for profile ${clean(this.profileId)}: the caller audio tap is a guess ` +

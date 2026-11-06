@@ -396,3 +396,45 @@ export async function colourDistanceInPage(of: 'agent' | 'camera', rgb: number[]
 export const agentSeesInPage = (agentPage: any, rgb: number[]): Promise<number> => agentPage.evaluate(colourDistanceInPage, 'agent', rgb);
 /** In the fake WhatsApp Web page: how far its camera, what the caller sees, is from `rgb` (colourDistanceInPage). */
 export const cameraCarriesInPage = (waPage: any, rgb: number[]): Promise<number> => waPage.evaluate(colourDistanceInPage, 'camera', rgb);
+
+/** The index of the colour in `palette` nearest to `rgb`: VP8 shifts saturated colours, so a check compares, never matches. */
+export const nearestOf = (rgb: number[], palette: number[][]): number => {
+  const d = palette.map((c) => Math.hypot(rgb[0] - c[0], rgb[1] - c[1], rgb[2] - c[2]));
+  return d.indexOf(Math.min(...d));
+};
+
+/**
+ * Page function: plays a recording with video, muted, and samples its picture every 100 ms: a point of the caller's
+ * picture outside the agent's corner (`centre`), and the middle of that corner (`corner`). The recorder draws the
+ * corner at 160×120, 12 px from the bottom right of its 640×480 frame.
+ */
+export async function recordedPicturesInPage(b64: string): Promise<{ width: number; height: number; centre: number[][]; corner: number[][] }> {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const v = document.createElement('video');
+  v.muted = true;
+  v.src = URL.createObjectURL(new Blob([bytes], { type: 'video/webm' }));
+  await new Promise((resolve, reject) => {
+    v.onloadeddata = resolve;
+    v.onerror = () => reject(new Error('the recording does not play'));
+  });
+  const c = document.createElement('canvas');
+  c.width = 640;
+  c.height = 480;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  const at = (x: number, y: number) => Array.from(g.getImageData(x, y, 1, 1).data.slice(0, 3));
+  const centre: number[][] = [];
+  const corner: number[][] = [];
+  await v.play();
+  await new Promise<void>((resolve) => {
+    const timer = setInterval(() => {
+      g.drawImage(v, 0, 0, 640, 480);
+      centre.push(at(200, 240));
+      corner.push(at(548, 408));
+      if (v.ended || v.currentTime > 30) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 100);
+  });
+  return { width: v.videoWidth, height: v.videoHeight, centre, corner };
+}

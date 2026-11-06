@@ -483,7 +483,10 @@ export async function playAnnouncementInPage(callId: string, b64: string, maxMs:
 
 /**
  * Record the call `callId`: left = the caller (callerTap), right = what the caller hears (the injected
- * microphone). WebM/Opus chunks, in order, go to the page binding `__mwRecordingChunk(callId, base64)`. One recorder
+ * microphone). With `video` (a call answered with video), WebM with VP8 too: a 640×480 picture of WhatsApp Web's
+ * caller canvas (`__mwBridge.callerCanvas` of this call, black while there is none), and while the agent's camera is
+ * on (`__mwCall.camera.source`), the camera as the caller gets it in a 160×120 corner. WebM/Opus chunks, in order,
+ * go to the page binding `__mwRecordingChunk(callId, base64)`. One recorder
  * at a time, also for starts that overlap while they wait for a caller tap. The call-id guard runs again after that
  * wait: a call that ended meanwhile (also as the patch reports it, see below) is refused, not recorded on whatever tap
  * was left. A chunk the binding fails to
@@ -501,7 +504,7 @@ export async function playAnnouncementInPage(callId: string, b64: string, maxMs:
  * recording".
  * Resolves with how the caller's tap was chosen (MwTapPick, see callerTap): the wrapper warns when it was a guess.
  */
-export async function startRecordingInPage(callId: string, timesliceMs: number): Promise<{ callerVia: string } & MwTapPick> {
+export async function startRecordingInPage(callId: string, timesliceMs: number, video = false): Promise<{ callerVia: string } & MwTapPick> {
   const w = window as any;
   const ours = () => {
     const c = w.require('WAWebCallCollection').activeCall;
@@ -536,12 +539,65 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
   let queue = Promise.resolve();
   let mr: MediaRecorder;
   let stopped: Promise<void>;
+  // The picture's redraw and captures: they end with the recorder, however it stops.
+  let frames: { timer: any; track: MediaStreamTrack; view: HTMLVideoElement } | null = null;
+  const stopFrames = () => {
+    if (!frames) return;
+    clearInterval(frames.timer);
+    frames.track.stop();
+    (frames.view.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
+    frames.view.srcObject = null;
+    frames = null;
+  };
   try {
-    mr = new MediaRecorder(out.stream, { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 64000 });
+    let stream: MediaStream = out.stream;
+    if (video) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const g = canvas.getContext('2d');
+      // The caller's canvas is drawn through a capture of its own: WhatsApp Web may draw it with WebGL, whose buffer
+      // reads blank outside its own frame. A canvas WhatsApp Web replaces gets a capture of its own too.
+      const view = document.createElement('video');
+      view.muted = true;
+      let shown: HTMLCanvasElement | null = null;
+      const fit = (src: CanvasImageSource, sw: number, sh: number, x: number, y: number, bw: number, bh: number) => {
+        const s = Math.min(bw / sw, bh / sh);
+        g.drawImage(src, x + (bw - sw * s) / 2, y + (bh - sh * s) / 2, sw * s, sh * s);
+      };
+      const draw = () => {
+        const b = w.__mwBridge;
+        const c: HTMLCanvasElement | null = b && b.callId === callId && b.callerCanvas?.isConnected ? b.callerCanvas : null;
+        if (c !== shown) {
+          shown = c;
+          (view.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
+          const s: any = c ? c.captureStream(15) : null;
+          if (s) s.__mwOwn = true;
+          view.srcObject = s;
+          if (s) view.play().catch(() => {});
+        }
+        g.fillStyle = '#000';
+        g.fillRect(0, 0, 640, 480);
+        if (shown && view.readyState >= 2 && view.videoWidth) fit(view, view.videoWidth, view.videoHeight, 0, 0, 640, 480);
+        // What the caller gets of the agent: the camera is redrawn only while WhatsApp Web holds a clone of it (`timer`).
+        const cam = call.camera;
+        if (cam?.source && cam.timer) fit(cam.canvas, 640, 480, 640 - 172, 480 - 132, 160, 120);
+      };
+      const track = canvas.captureStream(15).getVideoTracks()[0];
+      draw();
+      frames = { timer: setInterval(draw, 1000 / 15), track, view };
+      stream = new MediaStream([out.stream.getAudioTracks()[0], track]);
+    }
+    mr = new MediaRecorder(
+      stream,
+      video
+        ? { mimeType: 'video/webm;codecs=vp8,opus', audioBitsPerSecond: 64000, videoBitsPerSecond: 900000 }
+        : { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 64000 },
+    );
     // `stop` follows every end of the recorder (a request, the poll below, an error of its own): the one place that
     // notes when the recording ended. It reads `rec`, declared below: no await sits between `mr.start()` and that
     // declaration, so `rec` exists before any event can fire.
-    stopped = new Promise<void>((resolve) => { mr.onstop = () => { rec.endedAt ??= Date.now(); resolve(); }; });
+    stopped = new Promise<void>((resolve) => { mr.onstop = () => { rec.endedAt ??= Date.now(); stopFrames(); resolve(); }; });
     mr.onerror = (e: any) => { recorderError ??= e.error ?? e.type; }; // fatal: the recorder stops after it
     mr.ondataavailable = (e: BlobEvent) => {
       if (!e.data.size) return;
@@ -560,6 +616,7 @@ export async function startRecordingInPage(callId: string, timesliceMs: number):
     merger.connect(out);
     mr.start(timesliceMs);
   } catch (e) {
+    stopFrames();
     nodes.forEach((n) => n.disconnect());
     throw e;
   }
