@@ -36,6 +36,7 @@ export const ringing = (over: Record<string, unknown> = {}) => ({
   caller: { name: 'Pak Joko', number: '628111000111' },
   conversationId: 'conv-1',
   startedAt: new Date().toISOString(),
+  isVideo: false,
   answerable: true,
   recorded: false,
   ...over,

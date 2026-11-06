@@ -37,7 +37,7 @@ export function useRingingAttention(state: ConsoleState, userId: string) {
     for (const c of ringing) {
       if (shown.current.has(c.callId)) continue;
       shown.current.set(c.callId, { call: c, close: desktopAlert('Incoming call', `${ringingCallerLabel(c.caller)} on ${c.profileName}`, c.callId) });
-      said.push(`Incoming call from ${ringingCallerLabel(c.caller)} on ${c.profileName}${c.recorded ? '. This call is recorded' : ''}`);
+      said.push(`Incoming call from ${ringingCallerLabel(c.caller)} on ${c.profileName}${c.isVideo ? '. Video call, answered by voice' : ''}${c.recorded ? '. This call is recorded' : ''}`);
     }
     if (said.length) setAnnouncement((p) => ({ id: p.id + 1, text: said.join('. ') }));
   }, [ringingIds]);

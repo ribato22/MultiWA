@@ -10,6 +10,8 @@ export interface RingingCall {
   caller: { name: string | null; number: string | null };
   conversationId?: string | null;
   startedAt: string;
+  /** A video call: answered by voice, so the caller sees no video. */
+  isVideo?: boolean;
   answerable: boolean;
   unavailableReason?: string;
   recorded: boolean;

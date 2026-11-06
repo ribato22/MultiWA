@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A video call can be answered in the dashboard. It is answered as a voice call: the agent speaks, and the caller sees no video. Its banner says so, and `call:ringing` carries `isVideo`. It no longer rings with `unavailableReason: video_call`. Group calls still ring with **Answer on the phone**.
+
 ### Fixed
 
 - A `%`, `_` or `\` typed in the contacts or templates search, or in the audit log's action filter, now matches itself. Prisma hands these to `LIKE` as wildcards, so a search for `%` matched everything.

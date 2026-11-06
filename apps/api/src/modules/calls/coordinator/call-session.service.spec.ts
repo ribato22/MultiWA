@@ -167,7 +167,7 @@ describe('CallSessionService: who is rung', () => {
       to: ['u1', 'u2'],
       payload: {
         callId: 'c1', profileId: 'p1', profileName: 'Line 1', caller: { name: 'Pak Joko', number: '628111000111' },
-        startedAt: STARTED.toISOString(), answerable: true, recorded: false, conversationId: 'conv1',
+        startedAt: STARTED.toISOString(), isVideo: false, answerable: true, recorded: false, conversationId: 'conv1',
       },
     }]);
     expect(h.bus.emit).toHaveBeenCalledWith('internal.calls.session', { kind: 'rung' });
@@ -203,16 +203,27 @@ describe('CallSessionService: who is rung', () => {
     expect((h.service as any).rung.size).toBe(0);
   });
 
-  it('a call that cannot be answered here still rings, saying why: a video or group call, or the first readiness reason', async () => {
+  it('a call that cannot be answered here still rings, saying why: a group call, or the first readiness reason', async () => {
     const h = harness();
-    S.findCallForAnswer.mockResolvedValueOnce(ringing({ isVideo: true }));
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ isGroup: true }));
     await h.service.onCallReceived({ callId: 'c1' });
     h.callMedia.publicStatus.mockReturnValue({ enabled: true, worker: 'down' });
     await h.service.onCallReceived({ callId: 'c1' });
     expect(h.sent('call:ringing').map((s) => [s.payload.answerable, s.payload.unavailableReason])).toEqual([
-      [false, 'video_call'],
+      [false, 'group_call'],
       [false, 'media_server_down'],
     ]);
+  });
+
+  it('a video call rings as answerable and says it is one: it is answered as a voice call', async () => {
+    const h = harness();
+    S.findCallForAnswer.mockResolvedValueOnce(ringing({ isVideo: true }));
+    await h.service.onCallReceived({ callId: 'c1' });
+    await h.service.onCallReceived({ callId: 'c1' });
+    const [video, voice] = h.sent('call:ringing').map((s) => s.payload);
+    expect(video).toMatchObject({ answerable: true, isVideo: true });
+    expect(video).not.toHaveProperty('unavailableReason');
+    expect(voice).toMatchObject({ answerable: true, isVideo: false });
   });
 
   it('a LID caller has no number to show, and a call without a chat no chat to link', async () => {
@@ -597,7 +608,7 @@ describe('CallSessionService: answering', () => {
     expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'not_ringing' });
     S.findCallForAnswer.mockResolvedValueOnce(ringing({ answeredByUserId: 'u2' }));
     expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'already_claimed' });
-    for (const f of [ringing({ isVideo: true }), ringing({ isGroup: true }), ringing({}, { callsAnswerInDashboard: false })]) {
+    for (const f of [ringing({ isGroup: true }), ringing({}, { callsAnswerInDashboard: false })]) {
       S.findCallForAnswer.mockResolvedValueOnce(f);
       expect(await h.service.answer(as('u1'), 'c1')).toEqual({ ok: false, reason: 'media_unavailable' });
     }
@@ -609,6 +620,14 @@ describe('CallSessionService: answering', () => {
     await h.service.answer(as('u1'), 'c1'); // u1 is connecting this one now
     S.findCallForAnswer.mockResolvedValueOnce(ringing({ id: 'c2', waCallId: 'W2' }));
     expect(await h.service.answer(as('u1'), 'c2')).toEqual({ ok: false, reason: 'busy' });
+  });
+
+  it('a video call is answered like a voice call: the same claim and the same WhatsApp Accept', async () => {
+    const h = harness();
+    S.findCallForAnswer.mockResolvedValue(ringing({ isVideo: true }));
+    await answered(h);
+    expect(S.claimCall).toHaveBeenCalledWith('c1', 'u1');
+    expect(h.media.answer).toHaveBeenCalledTimes(1);
   });
 
   it('one agent answering two calls at once gets one of them: the other is busy', async () => {

@@ -41,6 +41,15 @@ test('a ringing call shows on any page: who, on which line, the chat link, and t
   await expectAccessible(page, '[aria-label="Incoming calls"]');
 });
 
+test('a video call rings answerable, and says it is answered by voice: the caller sees no video', async ({ page, backend }) => {
+  backend.emit('call:ringing', ringing({ isVideo: true }));
+  const card = banner(page).getByRole('group', { name: 'Call from Pak Joko' });
+  await expect(card).toContainText('Video call: you answer by voice, the caller sees no video');
+  await expect(card.getByRole('button', { name: 'Answer' })).toBeEnabled();
+  await expect(page.locator('#calls-announcer')).toHaveText('Incoming call from Pak Joko on Line 1. Video call, answered by voice');
+  await expectAccessible(page, '[aria-label="Incoming calls"]');
+});
+
 test('it rings and flashes the title; Dismiss stops both, and a re-ring of that call stays dismissed', async ({ page, backend }) => {
   backend.emit('call:ringing', ringing());
   await expect.poll(() => tones(page), { timeout: 8000 }).toBeGreaterThan(0); // the first ring, or the next one 3 s later

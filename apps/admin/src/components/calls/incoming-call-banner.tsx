@@ -3,7 +3,7 @@
 // ringing this agent.
 import { useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { CircleDot, Loader2, MessagesSquare, Phone, PhoneIncoming, VolumeX, X } from 'lucide-react';
+import { CircleDot, Loader2, MessagesSquare, Phone, PhoneIncoming, Video, VolumeX, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { READINESS_TEXT, ringingCallerLabel } from '@/lib/calls';
 import { consoleFocus, settleFocus, takeFocus } from '@/lib/call-console/focus';
@@ -64,6 +64,12 @@ export function IncomingCallBanner() {
                 <p className="text-xs text-muted-foreground">Incoming call · {b.call.profileName}</p>
                 <p className="truncate font-semibold text-foreground">{label}</p>
                 {label === b.call.caller.name && b.call.caller.number && <p className="text-xs tabular-nums text-muted-foreground">+{b.call.caller.number}</p>}
+                {b.call.isVideo && (
+                  <p className="mt-1 flex items-start gap-1 text-xs text-muted-foreground">
+                    <Video className="mt-px h-3 w-3 flex-shrink-0" aria-hidden="true" />
+                    Video call: you answer by voice, the caller sees no video
+                  </p>
+                )}
                 {b.call.recorded && (
                   <p className="mt-1 inline-flex items-center gap-1 text-xs text-rose-300">
                     <CircleDot className="h-3 w-3" aria-hidden="true" />
