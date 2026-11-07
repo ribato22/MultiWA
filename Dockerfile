@@ -44,12 +44,12 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 # (run bare it exits 41: "you don't seem to be my real father", i.e. it loaded). The ARG must not be called
 # MEDIASOUP_VERSION: an ARG is in the environment of every RUN, and the worker reads that variable to tell that
 # mediasoup spawned it, so the bare run would abort on its missing channel instead of exiting 41.
-ARG MEDIASOUP_WORKER_VERSION=3.32.0
+ARG MEDIASOUP_WORKER_VERSION=3.32.1
 ARG TARGETARCH
 RUN set -eu; \
     case "${TARGETARCH:-amd64}" in \
-      amd64) arch=x64; sum=3d98dc6de751958c46dc5b058b3571c1fde1bf6d4f7ff876855d4246650ef5da ;; \
-      arm64) arch=arm64; sum=a62c8ebc8f2591e7c4f9bc697d52e7ea8c36dc12dd085e9b5694e0cd670c5612 ;; \
+      amd64) arch=x64; sum=cc3a538be65b7a5e8bc22726d7e60d1098c652240cfcf9427a1711db0f15039b ;; \
+      arm64) arch=arm64; sum=b5d33fc027d3b7afbd49cc78adf029e326a25c7ad862a01173c0eba0ac3d008a ;; \
       *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     url="https://github.com/versatica/mediasoup/releases/download/${MEDIASOUP_WORKER_VERSION}/mediasoup-worker-${MEDIASOUP_WORKER_VERSION}-linux-${arch}-kernel6.tgz"; \

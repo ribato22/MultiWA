@@ -36,7 +36,7 @@ overrides:
   '@humanfs/node@>=0.16.0 <0.16.8': ^0.16.8
   bn.js@>=4.0.0 <4.12.3: ^4.12.3
   http-cache-semantics@>=4.0.0 <4.3.0: ^4.3.0
-  '@whiskeysockets/baileys>music-metadata': 11.16.0
+  '@whiskeysockets/baileys>music-metadata': 11.16.1
 
 patchedDependencies:
   bullmq@6.1.1:
@@ -5793,10 +5793,6 @@ packages:
   msgpackr@2.0.5:
     resolution: {integrity: sha512-cef05H/dSYpLpqp3sj/qyZh5vhUYCalnaLO7j1yOmpsR0y/XwLVtK7r5gn+U/F7CTEfMowcGhlUQJDLcLf7jcA==}
 
-  music-metadata@11.16.0:
-    resolution: {integrity: sha512-D5zZHjQUbfR+JhHjnwdbgeB4qj7zVJtisCB1I0GAI5sjSPGqPLoY14WMIzMeR8iA+4nSFswVLpO4crksZUybBg==}
-    engines: {node: '>=18'}
-
   music-metadata@11.16.1:
     resolution: {integrity: sha512-uR/mHK6eyfl8h3jVCobF5b38Mfg1IDJMiBxIVbmm5F+G1OXEFcUpQHveO84tJBAqvY93GCRY2R4kDyx7s06Rug==}
     engines: {node: '>=18'}
@@ -10809,7 +10805,7 @@ snapshots:
       libphonenumber-js: 1.12.36
       libsignal: https://codeload.github.com/WhiskeySockets/libsignal-node/tar.gz/bcea72df9ec34d9d9140ab30619cf479c7c144c7
       lodash: 4.18.1
-      music-metadata: 11.16.0
+      music-metadata: 11.16.1
       pino: 9.14.0
       protobufjs: 7.6.6
       uuid: 10.0.0
@@ -13264,21 +13260,6 @@ snapshots:
   msgpackr@2.0.5:
     optionalDependencies:
       msgpackr-extract: 3.0.4
-
-  music-metadata@11.16.0:
-    dependencies:
-      '@borewit/text-codec': 0.2.3
-      '@tokenizer/token': 0.3.0
-      content-type: 2.1.0
-      debug: 4.4.3(supports-color@11.0.0)
-      file-type: 21.3.4
-      media-typer: 2.0.0
-      strtok3: 10.7.0
-      token-types: 6.2.0
-      uint8array-extras: 1.6.0
-      win-guid: 0.2.1
-    transitivePeerDependencies:
-      - supports-color
 
   music-metadata@11.16.1:
     dependencies:
