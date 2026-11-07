@@ -1,6 +1,6 @@
 {
   "name": "multiwa",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Self-hosted WhatsApp API gateway with a built-in team inbox",
   "keywords": [

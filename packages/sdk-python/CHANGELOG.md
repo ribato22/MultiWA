@@ -6,6 +6,16 @@ this file. Its version follows the MultiWA release (tag `sdk-python-v<version>`)
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-11-07
+
+### Added
+
+- `client.calls.media_status()` reports the calls answered with video:
+  `server.video_calls` (`CallsVideoCalls`: `active` now in the organization, and
+  the server's cap `max`) and each profile's `video`. A call's `CallRecording`
+  gains `mime_type`: `audio/webm`, or `video/webm` for a call answered with
+  video. The version follows MultiWA 2.1.0.
+
 ## [2.0.0] - 2026-11-05
 
 ### Changed
