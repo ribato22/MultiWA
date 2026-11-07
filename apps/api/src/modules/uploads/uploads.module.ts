@@ -30,7 +30,7 @@ const StorageAdapterProvider = {
     if (storageType === 's3') {
       return new S3StorageAdapter({
         endpoint: config.get('S3_ENDPOINT', 'http://localhost:9000'),
-        region: config.get('S3_REGION', 'ap-tiban-1'),
+        region: config.get('S3_REGION', 'us-east-1'),
         accessKeyId: config.get('S3_ACCESS_KEY', 'minio'),
         secretAccessKey: config.get('S3_SECRET_KEY', 'minio123'),
         bucket: config.get('S3_BUCKET', 'multiwa-media'),
