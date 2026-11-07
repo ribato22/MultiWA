@@ -171,7 +171,7 @@ describe('inspectAnnouncement', () => {
   it('reads in a worker thread: a file that keeps the parser busy past the time limit is refused, and timers still fire', async () => {
     let ticked = false;
     setTimeout(() => (ticked = true), 20);
-    // 2 MB of 0xFF: the MPEG parser resyncs on every byte, ~1.8 s of CPU.
+    // 2 MB of 0xFF: the MPEG parser resyncs on every byte, ~3 s of CPU.
     const refused = await inspectAnnouncement(Buffer.alloc(2 * 1024 * 1024, 0xff), { timeoutMs: 50 }).catch((e) => e);
     expect(ticked).toBe(true);
     expect(refused).toBeInstanceOf(UnsupportedMediaTypeException);
@@ -179,8 +179,8 @@ describe('inspectAnnouncement', () => {
   });
 
   it('reads at most two at once: a third is turned away with 503 at once, and the next one after them is read', async () => {
-    // 2 MB of 0xFF keeps each of the two readers busy ~1.8 s, within the default time limit.
-    const busy = Buffer.alloc(2 * 1024 * 1024, 0xff);
+    // 512 KB of 0xFF keeps each of the two readers busy ~0.8 s, within the default time limit.
+    const busy = Buffer.alloc(512 * 1024, 0xff);
     const two = [inspectAnnouncement(busy), inspectAnnouncement(busy)].map((read) => read.catch((e) => e));
     const third = await inspectAnnouncement(busy).catch((e) => e);
     expect(third).toBeInstanceOf(ServiceUnavailableException);

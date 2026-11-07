@@ -13,12 +13,17 @@
 //     fastify with the security fixes, so the two are moved by hand and must be equal.
 //   - "next>postcss": Next 14 pins an old postcss exactly. The admin's compiled CSS was
 //     compared byte for byte against the build with the pinned one and is identical.
+//   - "@whiskeysockets/baileys>music-metadata": Baileys 6 asks for music-metadata ^7, a line with
+//     no fix for its parser advisories. It gets the version apps/api pins, so one copy is
+//     installed: 11, an ES module that Node 24 require()s, which still has the parseBuffer and
+//     parseStream Baileys reads a voice note's length with (tested below).
 //   - The two https tarballs are the SSH-lockfile guard (see the Dependabot lockfile notes).
 //
 // Remove an entry once every parent asks for a range that already excludes the vulnerable
 // versions, i.e. `pnpm audit --prod` reports nothing for that package without it.
 
 import { readFileSync } from 'fs';
+import { createRequire } from 'module';
 import path from 'path';
 import { describe, it, expect } from 'vitest';
 
@@ -52,5 +57,17 @@ describe('pnpm.overrides', () => {
 
   it('pin fastify under @nestjs/platform-fastify to the version apps/api pins', () => {
     expect(overrides['@nestjs/platform-fastify>fastify']).toBe(apiPkg.dependencies.fastify);
+  });
+
+  it('pin music-metadata under Baileys to the version apps/api pins', () => {
+    expect(overrides['@whiskeysockets/baileys>music-metadata']).toBe(apiPkg.dependencies['music-metadata']);
+  });
+
+  it("give Baileys a music-metadata it reads a voice note's length with", async () => {
+    const engines = createRequire(path.join(REPO_ROOT, 'packages', 'engines', 'package.json'));
+    const { getAudioDuration } = engines('@whiskeysockets/baileys/lib/Utils/messages-media');
+    const wav = path.join(__dirname, 'modules', 'calls', 'recordings', 'fixtures', 'tone.wav'); // one second
+    expect(await getAudioDuration(readFileSync(wav))).toBeCloseTo(1, 3); // parseBuffer
+    expect(await getAudioDuration(wav)).toBeCloseTo(1, 3); // parseStream
   });
 });
