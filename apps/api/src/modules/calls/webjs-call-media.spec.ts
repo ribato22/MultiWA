@@ -85,14 +85,17 @@ describe('call media launch pieces', () => {
 
   it('the mediasoup-client page bundle is built next to the module: one script that defines mediasoupClient, with its licenses', () => {
     const src = mediasoupClientBundle();
+    const dist = path.dirname(createRequire(__filename).resolve('@multiwa/engines'));
+    // The version the engines pin exactly (a build-time dependency: it is bundled), so a bump cannot leave this behind.
+    const pinned: string = JSON.parse(readFileSync(path.join(dist, '..', 'package.json'), 'utf8')).devDependencies['mediasoup-client'];
+    expect(pinned).toMatch(/^\d+\.\d+\.\d+$/);
     expect(src.startsWith('"use strict";var mediasoupClient=')).toBe(true);
-    expect(src).toContain('3.25.3'); // the pinned version (mediasoupClient.version)
+    expect(src).toContain(pinned); // mediasoupClient.version
     expect(() => new Script(src)).not.toThrow(); // compile only, never run in Node
     // The licenses of everything bundled ship next to it, and the bundle points there.
-    const dist = path.dirname(createRequire(__filename).resolve('@multiwa/engines'));
     const licenses = readFileSync(path.join(dist, 'adapters/webjs-call-media/mediasoup-client.iife.js.LICENSE.txt'), 'utf8');
-    expect(src.trimEnd().endsWith('/*! mediasoup-client 3.25.3 and its dependencies: licenses in mediasoup-client.iife.js.LICENSE.txt */')).toBe(true);
-    expect(licenses).toContain('=== mediasoup-client 3.25.3 (LICENSE) ===');
+    expect(src.trimEnd().endsWith(`/*! mediasoup-client ${pinned} and its dependencies: licenses in mediasoup-client.iife.js.LICENSE.txt */`)).toBe(true);
+    expect(licenses).toContain(`=== mediasoup-client ${pinned} (LICENSE) ===`);
     expect(licenses).toContain('Permission to use, copy, modify'); // the ISC text itself
     expect(licenses).toMatch(/^=== debug \S+ \(LICENSE\) ===$/m); // and a dependency's
   });

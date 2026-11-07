@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- music-metadata 11.16.0 (from 7.14.0), which reads an uploaded call announcement and, for Baileys, a voice note's length. It closes six advisories in its parsers (ASF, DSF, EBML, ID3v2, MP4 and APEv2): crafted files that loop for ever or allocate without bound. The file-type 16.5.4 patch goes with it: music-metadata 11 uses file-type 21, which has that fix.
 - A socket on `/ws` is disconnected when its API key is deleted or expires, when its login session is logged out, revoked or expires, and when its user is removed or deactivated. Deleting an API key, logging out, revoking a session and removing a member close their sockets at once; the server also checks every socket again each minute. See docs/08.
 
 ## [2.0.0] - 2026-11-05

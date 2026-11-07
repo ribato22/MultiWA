@@ -32,9 +32,9 @@ export interface AnnouncementAudio {
 // The container and codec as music-metadata names them, for the formats Chromium decodes.
 const FORMATS: Array<{ container: RegExp; codec: RegExp; bitsPerSample?: number; mimeType: string; ext: string }> = [
   { container: /^MPEG$/, codec: /^MPEG [0-9.]+ Layer 3$/, mimeType: 'audio/mpeg', ext: 'mp3' },
-  // A-law and µ-law (formats 6 and 7) have no name of their own there. WAVE_FORMAT_EXTENSIBLE (`non-PCM (65534)`,
-  // ffmpeg's 24-bit) keeps its codec in a GUID music-metadata does not read, so it stays refused.
-  { container: /^WAVE$/, codec: /^(PCM|non-PCM \([67]\))$/, mimeType: 'audio/wav', ext: 'wav' },
+  // WAVE_FORMAT_EXTENSIBLE (`non-PCM (65534)`, ffmpeg's 24-bit) keeps its codec in a GUID music-metadata does not
+  // read, so it stays refused.
+  { container: /^WAVE$/, codec: /^(PCM|ALAW|MULAW)$/, mimeType: 'audio/wav', ext: 'wav' },
   // Chromium decodes 32-bit float and fails on 64-bit.
   { container: /^WAVE$/, codec: /^IEEE_FLOAT$/, bitsPerSample: 32, mimeType: 'audio/wav', ext: 'wav' },
   { container: /^Ogg$/, codec: /^(Opus|Vorbis I)$/, mimeType: 'audio/ogg', ext: 'ogg' },
@@ -48,12 +48,13 @@ const FORMATS: Array<{ container: RegExp; codec: RegExp; bitsPerSample?: number;
 export const ANNOUNCEMENT_TYPES = [...new Set(FORMATS.map((f) => f.mimeType))];
 
 // music-metadata runs in a worker thread with a time and a memory limit. A malformed file can keep a parser busy for
-// seconds (2 MB of 0xFF: 1.8 s and 170 MB of resyncing) or for ever (file-type's ASF loop, now patched), and on this
+// seconds (2 MB of 0xFF: 3 s and 170 MB of resyncing) or for ever (file-type 16's ASF loop), and on this
 // thread that would hold every request and timer of the api. Its memory cap is about 224 MB: 128 MB of old space plus
 // the young generation. A process-wide --max-old-space-size (on the command line or in NODE_OPTIONS) overrides
 // resourceLimits and lifts the cap; the image runs `node dist/main.js` without one, so it holds there. The worker
-// requires the module by the path resolved here and posts back plain fields only. Resolved at the first inspection, not
-// at import: an install without it fails the announcement upload, not the boot of the whole API.
+// requires the module by the path resolved here (an ES module: Node 24 loads it through require) and posts back plain
+// fields only. Resolved at the first inspection, not at import: an install without it fails the announcement upload,
+// not the boot of the whole API.
 let musicMetadataPath: string | undefined;
 const READER = `
 const { parentPort, workerData } = require('worker_threads');
