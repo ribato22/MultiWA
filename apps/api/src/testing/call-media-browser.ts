@@ -170,7 +170,7 @@ export function installFakeWhatsApp() {
     WAWebVoipSignalingEnums: { EndCallReason: { Self: 1 } },
     WAWebCallRingtone: { stopCallRingtone() {} },
     WAWebVoipCallAudioUnlock: { prepareCallAudioElement() {} },
-    WAWebVoipGatingUtils: { isWebCallingUiEnabled: () => true },
+    WAWebVoipGatingUtils: { isWebCallingUiEnabled: () => true, isVoipDownloadEnabled: () => true },
     WAWebVoipUiVideoCallLoadable: {
       async requireBundle() {
         // a bundle that never loads, until the test releases it (late)

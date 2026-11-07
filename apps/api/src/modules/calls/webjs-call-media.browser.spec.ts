@@ -1201,6 +1201,23 @@ describe('call media in a real browser (fake WhatsApp Web)', () => {
       }
     });
 
+    it("a number whose calls WhatsApp keeps off WhatsApp Web (its calling UI on, its voip download off) says so, never 'changed'", async () => {
+      const p = await openPage();
+      try {
+        await p.evaluate(prepareCallMediaPage);
+        // Live, a WhatsApp Business number: enable_web_calling off, so WhatsApp Web never loads its voip stack, and the
+        // stack lookup answers null.
+        await p.evaluate(() => {
+          const w = window as any;
+          w.require('WAWebVoipGatingUtils').isVoipDownloadEnabled = () => false;
+          w.require('WAWebVoipStackInterface').getVoipStackInterface = async () => null;
+        });
+        expect(await p.evaluate(probeCallMedia, 2000)).toEqual({ reasons: ['web_calling_disabled'], waVersion: '2.3000.test', videoSupported: false });
+      } finally {
+        await p.close();
+      }
+    });
+
     it('the probe reports video apart from voice: without the video call UI or the camera mute, voice is still supported', async () => {
       const p = await openPage();
       try {
