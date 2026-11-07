@@ -163,7 +163,7 @@ describe('call coordinator end to end (real mediasoup worker, Socket.IO, two hea
     vi.stubEnv('CALLS_MEDIA_ENABLED', 'true');
     vi.stubEnv('CALLS_MEDIA_ANNOUNCED_ADDRESS', '127.0.0.1');
     vi.stubEnv('CALLS_MEDIA_LISTEN_IP', '127.0.0.1');
-    vi.stubEnv('CALLS_MEDIA_PORT', String(48000 + Math.floor(Math.random() * 1500))); // apart from the other media specs' ports
+    vi.stubEnv('CALLS_MEDIA_PORT', String(26000 + Math.floor(Math.random() * 1500))); // apart from the other media specs' ports
     vi.stubEnv('CALLS_CONNECT_TIMEOUT_MS', '6000');
     vi.stubEnv('CALLS_AGENT_GRACE_MS', '4000');
     db.users.set('u1', { id: 'u1', name: 'Ana', role: 'owner', isActive: true, organizationId: 'o1' });
