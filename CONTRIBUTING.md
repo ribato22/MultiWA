@@ -104,7 +104,7 @@ pnpm check:api-contract      # source vs snapshot vs docs/07-api-specification.m
 ### When you change an API route
 
 If you add, rename, remove, or change a method on any
-`apps/api/src/**/*.controller.ts`, update **both** of these in the same
+`apps/api/src/**/*.controller.ts`, update **all** of these in the same
 commit:
 
 1. `docs/07-api-specification.md` — add or update the table row using the
@@ -125,6 +125,15 @@ commit:
    This refreshes `scripts/api-routes.snapshot.json` from the current
    controller decorators. Commit the regenerated snapshot together with the
    docs and code change.
+
+3. Who may call it. Every route except a `GET` must carry `@Roles(...)`, and a
+   `GET` carries it too when not every role may read it (the role classes are
+   in `apps/api/src/modules/auth/roles.ts`). `scripts/api-roles.snapshot.json`
+   records each route's class. Refresh it and review its diff:
+
+   ```bash
+   UPDATE_ROLE_SNAPSHOT=1 pnpm --filter api test:meta
+   ```
 
 Controllers carrying `@ApiExcludeController()` (or methods carrying
 `@ApiExcludeEndpoint()`) are intentionally excluded from the public API

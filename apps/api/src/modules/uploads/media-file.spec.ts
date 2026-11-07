@@ -240,3 +240,17 @@ describe('MediaFileController', () => {
     await expect(c.getFile('media', `${UUID}.png`, makeReply())).rejects.toThrow(NotFoundException);
   });
 });
+
+// Recordings and announcements never live in the media folder (their store refuses to overlap STORAGE_PATH), and their
+// keys have shapes this route refuses anyway: deeper than <folder>/<name>, under folders other than media.
+describe('MediaFileController never serves a call recording or an announcement', () => {
+  it.each([
+    ['announcements', '3f2504e0-4f89-41d3-9a0c-0305e82c3301.mp3'],
+    ['11111111-1111-4111-8111-111111111111', '3f2504e0-4f89-41d3-9a0c-0305e82c3301.webm'],
+    ['probe', '3f2504e0-4f89-41d3-9a0c-0305e82c3301'],
+  ])('refuses %s/%s without reading anything', async (folder, name) => {
+    const storage = { read: vi.fn() };
+    await expect(new MediaFileController(storage as any).getFile(folder, name, makeReply())).rejects.toBeInstanceOf(NotFoundException);
+    expect(storage.read).not.toHaveBeenCalled();
+  });
+});

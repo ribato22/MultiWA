@@ -4,11 +4,23 @@
 // Use relative path - Next.js rewrite will proxy /api/* to backend API
 const API_BASE = '/api/v1';
 
+// The API's own limit on an announcement upload (its multipart `fileSize`), in bytes.
+export const ANNOUNCEMENT_MAX_BYTES = 2 * 1024 * 1024;
+
+// How long a token refresh may take before it is given up. Long enough not to abort a slow refresh the server may
+// have carried out: this browser would keep the refresh token it rotated, and the next refresh, read as reuse, would
+// sign out every tab. A refresh given up for a request outside /auth/ signs out, and the tabs waiting on the lock then
+// have no refresh token to send. One given up for an /auth/ request (api.me()) does not sign out: each waiting tab
+// then sends the same refresh token in turn, and on a dead connection each waits its own minute.
+const REFRESH_TIMEOUT_MS = 60_000;
+
 // Types
 export interface ApiResponse<T> {
   data?: T;
   error?: string;
   status: number;
+  /** The body of a failed request (a 409's `reasons`, for one); null when it was not JSON. */
+  body?: any;
 }
 
 export interface User {
@@ -17,6 +29,8 @@ export interface User {
   name: string;
   role: string;
   organizationId: string;
+  /** From `/auth/me` and the sign-in answer's `user`: the owner of the server's oldest organization, who alone sets storage and SMTP. */
+  isServerOwner?: boolean;
 }
 
 export interface Profile {
@@ -32,6 +46,7 @@ export interface Profile {
     avatar?: string;
   };
   messageCount?: number;
+  settings?: Record<string, any>;
   createdAt: string;
   updatedAt: string;
 }
@@ -133,6 +148,84 @@ export interface Conversation {
   lastMessageAt: string;
 }
 
+export type CallOutcome = 'ringing' | 'answered' | 'missed' | 'rejected' | 'answered_elsewhere' | 'unknown';
+export type CallFollowUp = 'open' | 'in_progress' | 'done';
+export type CallEndReason = 'hangup' | 'caller_hangup' | 'agent_lost' | 'media_failed' | 'time_limit' | 'server_restart';
+
+/** A call's recording facts: every role sees them; owner and admin play, download and delete. */
+export interface CallRecording {
+  id: string;
+  /** audio/webm, or video/webm for a call answered with video; an older API sends none (sound). */
+  mimeType?: string;
+  durationSec: number;
+  bytes: number;
+  /** The server stopped before the call ended: the file holds the call up to then. */
+  partial: boolean;
+  announcementPlayed: boolean;
+  createdAt: string;
+  deletedAt: string | null;
+  /** 'admin' or 'retention' today; a newer API can send another (the column is plain text). */
+  deleteReason: string | null;
+}
+
+export interface CallRecord {
+  id: string;
+  profileId: string;
+  waCallId: string;
+  fromJid: string;
+  isVideo: boolean;
+  isGroup: boolean;
+  direction: string;
+  outcome: CallOutcome;
+  rejectedBy: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  followUp: CallFollowUp;
+  assignedUserId: string | null;
+  conversationId: string | null;
+  answeredByUserId: string | null;
+  answeredAt: string | null;
+  endedBy: 'agent' | 'caller' | 'server' | null;
+  endReason: CallEndReason | null;
+  talkSeconds: number | null;
+  assignedUser: { id: string; name: string } | null;
+  answeredBy: { id: string; name: string } | null;
+  conversation: { id: string; name: string | null } | null;
+  recording: CallRecording | null;
+}
+
+export interface CallsAnnouncement {
+  mimeType: string;
+  durationSec: number;
+}
+
+/** A profile's calls settings, as `PUT /profiles/:id/calls-settings` answers them. */
+export interface CallsSettings {
+  profileId: string;
+  answerInDashboard: boolean;
+  recording: boolean;
+  retentionDays: number;
+  announcement: CallsAnnouncement | null;
+}
+
+/** `GET /calls/media/status` (owner and admin): the server's readiness, and each profile's settings and readiness. */
+export interface CallsMediaStatus {
+  server: {
+    enabled: boolean;
+    worker: 'up' | 'down';
+    port: number | null;
+    engineHost: 'api' | 'worker';
+    activeSessions: number;
+    recordings: {
+      storage: 'local' | 's3';
+      configured: boolean;
+      problem: string | null;
+      lastCheck: { at: string; ok: boolean; reason?: string } | null;
+    };
+  };
+  profiles: Array<CallsSettings & { name: string; ready: boolean; reasons: string[] }>;
+}
+
 // Result of POST /notifications/push/test — the endpoint returns per-endpoint
 // diagnostics (results[].error) alongside the summary, so these are optional.
 export interface PushTestResult {
@@ -141,6 +234,45 @@ export interface PushTestResult {
   message: string;
   error?: string;
   results?: Array<{ success?: boolean; error?: string; statusCode?: number }>;
+}
+
+// Customers: an ID of the organization's own system (an ID Pelanggan, say), linked to WhatsApp numbers. MultiWA keeps
+// the links, notes and tags; the organization's lookup endpoint answers the rest live, in a fixed format.
+export type LookupState = 'ok' | 'not_found' | 'unavailable' | 'not_configured';
+export interface LookupField { label: string; value: string }
+export interface LookupSection { title: string; rows: LookupField[] }
+export interface LookupData { id?: string; name?: string; fields: LookupField[]; sections: LookupSection[] }
+export interface LookupResult { state: LookupState; data: LookupData | null; fetchedAt: string; cached: boolean }
+export interface LookupTestResult extends LookupResult { latencyMs: number }
+
+/** Who made a link or wrote a note: a user, or a system through an API key. */
+export interface ActorView { type: 'user' | 'apiKey'; id: string; name: string }
+export interface CustomerLinkView { id: string; phone: string; lastUsedAt: string; createdAt: string; linkedBy: ActorView | null }
+export interface CustomerNoteView { id: string; body: string; createdAt: string; updatedAt: string; author: ActorView | null }
+export interface CustomerView {
+  id: string; externalId: string; displayName: string | null; tags: string[]; manualFields: LookupField[];
+  lastLookupAt: string | null; createdAt: string; updatedAt: string;
+  links: CustomerLinkView[];
+  /** The 20 newest, newest first. */
+  notes: CustomerNoteView[];
+}
+export interface CustomerListItem {
+  id: string; externalId: string; displayName: string | null; linkCount: number; noteCount: number; lastActivityAt: string | null;
+}
+export interface CustomerListPage { items: CustomerListItem[]; total: number; page: number; pageSize: number }
+/** A customer linked to a number: the number's default comes first. */
+export interface CustomerByPhoneItem { id: string; externalId: string; displayName: string | null; linkId: string; lastUsedAt: string }
+export interface CustomerHistoryItem {
+  kind: 'conversation' | 'call'; id: string; profileId: string; profileName: string; phone: string; at: string; summary: string;
+}
+/** The organization's customer settings: whether there is a secret, never the secret. */
+export interface CustomerConfigView { idLabel: string; lookupUrl: string | null; hasSecret: boolean; timeoutMs: number; configured: boolean }
+export interface LinkResult { created: boolean; customer: CustomerView; link: CustomerLinkView }
+
+/** A failed request's message. A validation 400 lists every rule the request broke: one line, for a toast. */
+function errorOf(data: any, status: number): string {
+  const message = data?.message || data?.error;
+  return (Array.isArray(message) ? message.join('; ') : message) || `Request failed with status ${status}`;
 }
 
 // API Client Class
@@ -163,33 +295,49 @@ class ApiClient {
     return localStorage.getItem('refreshToken');
   }
 
-  private async tryRefreshToken(): Promise<boolean> {
+  /** `sent`: the token the request that got the 401 carried. */
+  private async tryRefreshToken(sent: string | null): Promise<boolean> {
+    // A refresh token works once: the API reads a second use as theft and revokes the login, in every tab. A 401 that
+    // comes back after a refresh since its request left (a slow link) retries with that token, never refreshes again.
+    const stored = this.getToken();
+    if (stored && stored !== sent) return true;
     if (this.isRefreshing && this.refreshPromise) {
       return this.refreshPromise;
     }
 
     this.isRefreshing = true;
-    this.refreshPromise = (async () => {
+    // The browser's tabs refresh one at a time (a Web Lock, in a secure context), and one that waited while another
+    // refreshed takes that token instead of refreshing again.
+    const refresh = async () => {
+      const now = this.getToken();
+      if (now && now !== sent) return true;
       const refreshToken = this.getRefreshToken();
       if (!refreshToken) return false;
 
+      const res = await fetch(`${this.baseUrl}/auth/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+        // Every tab's refresh waits on this one: one that hangs is given up (see REFRESH_TIMEOUT_MS). An optional call:
+        // an older Safari has no AbortSignal.timeout, and its TypeError would sign every 401 out.
+        signal: AbortSignal.timeout?.(REFRESH_TIMEOUT_MS),
+      });
+
+      if (!res.ok) return false;
+
+      const data = await res.json();
+      const tokens = data.data || data;
+      if (tokens.accessToken) {
+        localStorage.setItem('accessToken', tokens.accessToken);
+        if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
+        return true;
+      }
+      return false;
+    };
+    this.refreshPromise = (async () => {
       try {
-        const res = await fetch(`${this.baseUrl}/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
-        });
-
-        if (!res.ok) return false;
-
-        const data = await res.json();
-        const tokens = data.data || data;
-        if (tokens.accessToken) {
-          localStorage.setItem('accessToken', tokens.accessToken);
-          if (tokens.refreshToken) localStorage.setItem('refreshToken', tokens.refreshToken);
-          return true;
-        }
-        return false;
+        const locks = globalThis.navigator?.locks;
+        return await (locks ? locks.request('multiwa-token-refresh', refresh) : refresh());
       } catch {
         return false;
       } finally {
@@ -201,13 +349,10 @@ class ApiClient {
     return this.refreshPromise;
   }
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {},
-    _isRetry = false
-  ): Promise<ApiResponse<T>> {
+  /** fetch() with the Bearer header, for JSON and bytes alike: a 401 refreshes the token once, and a failed refresh signs out. */
+  private async send(endpoint: string, options: RequestInit = {}, _isRetry = false): Promise<Response> {
     const token = this.getToken();
-    
+
     const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
     const headers: HeadersInit = {
       // Only set Content-Type for JSON bodies, not FormData (browser auto-sets multipart boundary)
@@ -216,32 +361,39 @@ class ApiClient {
       ...options.headers,
     };
 
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    // Auto-refresh on 401 (skip for auth endpoints and retries)
+    if (response.status === 401 && !_isRetry && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh')) {
+      const refreshed = await this.tryRefreshToken(token);
+      if (refreshed) {
+        return this.send(endpoint, options, true);
+      }
+      // Refresh failed — redirect to login
+      if (typeof window !== 'undefined' && !endpoint.startsWith('/auth/')) {
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        window.location.href = '/auth/login';
+      }
+    }
+
+    return response;
+  }
+
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<ApiResponse<T>> {
     try {
-      const response = await fetch(`${this.baseUrl}${endpoint}`, {
-        ...options,
-        headers,
-      });
+      const response = await this.send(endpoint, options);
 
       const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        // Auto-refresh on 401 (skip for auth endpoints and retries)
-        if (response.status === 401 && !_isRetry && !endpoint.startsWith('/auth/login') && !endpoint.startsWith('/auth/refresh')) {
-          const refreshed = await this.tryRefreshToken();
-          if (refreshed) {
-            return this.request<T>(endpoint, options, true);
-          }
-          // Refresh failed — redirect to login
-          if (typeof window !== 'undefined' && !endpoint.startsWith('/auth/')) {
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
-            window.location.href = '/auth/login';
-          }
-        }
-
         return {
-          error: data?.message || `Request failed with status ${response.status}`,
+          error: errorOf(data, response.status),
           status: response.status,
+          body: data,
         };
       }
 
@@ -254,6 +406,20 @@ class ApiClient {
         error: error instanceof Error ? error.message : 'Network error',
         status: 0,
       };
+    }
+  }
+
+  /** A route that answers bytes (a recording, an announcement), on the same auth path as request(); `signal` gives it up. */
+  async fetchBlob(endpoint: string, signal?: AbortSignal): Promise<{ blob?: Blob; error?: string; status: number }> {
+    try {
+      const response = await this.send(endpoint, { signal });
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        return { error: errorOf(data, response.status), status: response.status };
+      }
+      return { blob: await response.blob(), status: response.status };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Network error', status: 0 };
     }
   }
 
@@ -274,6 +440,11 @@ class ApiClient {
 
   async me() {
     return this.request<User>('/auth/me');
+  }
+
+  /** Public: whether the server takes new accounts (it closes after its first user, unless it allows more). */
+  async registration() {
+    return this.request<{ open: boolean }>('/auth/registration');
   }
 
   // Dashboard
@@ -524,9 +695,93 @@ class ApiClient {
     );
   }
 
+  // One conversation, shaped like a row of the list. The row of the API names the chat in `contact` (the list
+  // computes `contactName`) and comes with its messages: one is enough, they can carry inline media.
+  async getConversation(id: string) {
+    const res = await this.request<Conversation & { contact?: { name: string | null } | null }>(`/conversations/${id}?messageLimit=1`);
+    return res.data ? { ...res, data: { ...res.data, contactName: res.data.contact?.name ?? undefined } } : res;
+  }
+
   // Org-wide total unread message count (for the sidebar Chat badge).
   async getChatUnreadCount() {
     return this.request<{ count: number }>('/conversations/unread-count');
+  }
+
+  // Calls
+  // In `q`, `from` is the caller (a JID or phone number), not a date; the API's date filter is `since`.
+  async getCalls(profileId: string, q: { outcome?: CallOutcome; followUp?: CallFollowUp; from?: string; limit?: number; cursor?: string } = {}) {
+    const params = new URLSearchParams({ profileId });
+    for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== '') params.set(k, String(v));
+    return this.request<{ calls: CallRecord[]; nextCursor: string | null }>(`/calls?${params}`);
+  }
+
+  async getCall(id: string) {
+    return this.request<CallRecord>(`/calls/${id}`);
+  }
+
+  // Org-wide count of calls still waiting for a follow-up (for the sidebar Calls badge).
+  async getCallsOpenCount() {
+    return this.request<{ count: number }>('/calls/open-count');
+  }
+
+  async updateCall(id: string, data: { followUp?: CallFollowUp; assignedUserId?: string | null }) {
+    return this.request<CallRecord>(`/calls/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
+  async rejectCall(id: string) {
+    return this.request<CallRecord>(`/calls/${id}/reject`, { method: 'POST' });
+  }
+
+  async replyToCall(id: string, text?: string) {
+    return this.request<{ call: CallRecord; message: unknown }>(`/calls/${id}/reply`, { method: 'POST', body: JSON.stringify(text ? { text } : {}) });
+  }
+
+  async sendCallLink(id: string, type: 'voice' | 'video', text?: string) {
+    return this.request<{ call: CallRecord; message: unknown; link: string }>(`/calls/${id}/call-link`, { method: 'POST', body: JSON.stringify(text ? { type, text } : { type }) });
+  }
+
+  // Calls answered in the dashboard: readiness, a profile's settings and announcement, recordings (owner and admin).
+  async getCallsMediaStatus() {
+    return this.request<CallsMediaStatus>('/calls/media/status');
+  }
+
+  async updateCallsSettings(profileId: string, body: { answerInDashboard?: boolean; recording?: boolean; retentionDays?: number }) {
+    return this.request<CallsSettings>(`/profiles/${profileId}/calls-settings`, { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  async uploadCallsAnnouncement(profileId: string, file: File) {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await this.request<{ profileId: string; announcement: CallsAnnouncement }>(`/profiles/${profileId}/calls-announcement`, {
+      method: 'POST',
+      body: form,
+    });
+    if (res.status !== 413 || res.body) return res;
+    // A proxy's own size refusal (nginx answers 413 in HTML): only a file past the API's limit is too large; a smaller
+    // one met a proxy whose limit is lower. A proxy counts the whole multipart request, so one set to exactly 2 MB still
+    // refuses a file a little under 2 MB: 3 MB leaves room.
+    const limit = `${ANNOUNCEMENT_MAX_BYTES / (1024 * 1024)} MB`;
+    const error = file.size > ANNOUNCEMENT_MAX_BYTES
+      ? `The file must be at most ${limit}`
+      : 'The server refused a file of this size: ask your administrator to allow uploads of at least 3 MB';
+    return { ...res, error };
+  }
+
+  fetchCallsAnnouncement(profileId: string, signal?: AbortSignal) {
+    return this.fetchBlob(`/profiles/${profileId}/calls-announcement`, signal);
+  }
+
+  async deleteCallsAnnouncement(profileId: string) {
+    return this.request<{ profileId: string; announcement: null }>(`/profiles/${profileId}/calls-announcement`, { method: 'DELETE' });
+  }
+
+  /** The recording's bytes, for a blob: URL: an <audio src> cannot send the Bearer header. Each fetch is audited. */
+  fetchCallRecording(callId: string, download = false, signal?: AbortSignal) {
+    return this.fetchBlob(`/calls/${callId}/recording${download ? '?download=1' : ''}`, signal);
+  }
+
+  async deleteCallRecording(callId: string) {
+    return this.request<{ callId: string; recordingId: string; deletedAt: string }>(`/calls/${callId}/recording`, { method: 'DELETE' });
   }
 
   async getMessages(conversationId: string) {
@@ -900,6 +1155,89 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ type }),
     });
+  }
+
+  // ─── Customers ─────────────────────────────────
+  async getCustomers(query: { q?: string; page?: number; pageSize?: number } = {}) {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(query)) if (v !== undefined && v !== '') params.set(k, String(v));
+    const qs = params.toString();
+    return this.request<CustomerListPage>(`/customers${qs ? `?${qs}` : ''}`);
+  }
+
+  async getCustomer(id: string) {
+    return this.request<CustomerView>(`/customers/${id}`);
+  }
+
+  /** The customers linked to a number, its default first. */
+  async getCustomersByPhone(phone: string) {
+    return this.request<CustomerByPhoneItem[]>(`/customers/by-phone/${encodeURIComponent(phone)}`);
+  }
+
+  /** A customer's live lookup; `refresh` asks past the server's cache. */
+  async lookupCustomer(id: string, refresh = false) {
+    return this.request<LookupResult>(`/customers/${id}/lookup${refresh ? '?refresh=true' : ''}`);
+  }
+
+  /** What the lookup says of an ID not linked yet; the server stores nothing. */
+  async previewCustomerLookup(externalId: string) {
+    return this.request<LookupResult>(`/customers/lookup?${new URLSearchParams({ externalId })}`);
+  }
+
+  /** The chats and calls of the customer's numbers, newest first. */
+  async getCustomerHistory(id: string, limit?: number) {
+    return this.request<CustomerHistoryItem[]>(`/customers/${id}/history${limit ? `?limit=${limit}` : ''}`);
+  }
+
+  /** Links an ID to a number. A new ID makes the customer (201); a link that exists answers as it is (200). */
+  async linkCustomer(body: { externalId: string; phone: string }) {
+    return this.request<LinkResult>('/customers/links', { method: 'POST', body: JSON.stringify(body) });
+  }
+
+  /** Makes a link its number's default ID. */
+  async setDefaultCustomerLink(linkId: string) {
+    return this.request<CustomerLinkView>(`/customers/links/${linkId}/use`, { method: 'POST' });
+  }
+
+  /** Removes one number's link: the customer, its notes and its tags stay. */
+  async unlinkCustomer(linkId: string) {
+    return this.request<{ success: boolean }>(`/customers/links/${linkId}`, { method: 'DELETE' });
+  }
+
+  /** `displayName` and `manualFields` only while no lookup endpoint is configured: the server answers 409 otherwise. */
+  async updateCustomer(id: string, body: { tags?: string[]; displayName?: string; manualFields?: LookupField[] }) {
+    return this.request<CustomerView>(`/customers/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+  }
+
+  async deleteCustomer(id: string) {
+    return this.request<{ success: boolean }>(`/customers/${id}`, { method: 'DELETE' });
+  }
+
+  async addCustomerNote(customerId: string, body: string) {
+    return this.request<CustomerNoteView>(`/customers/${customerId}/notes`, { method: 'POST', body: JSON.stringify({ body }) });
+  }
+
+  /** Its author, or an owner or admin, changes a note; anyone else gets 403. */
+  async updateCustomerNote(customerId: string, noteId: string, body: string) {
+    return this.request<CustomerNoteView>(`/customers/${customerId}/notes/${noteId}`, { method: 'PATCH', body: JSON.stringify({ body }) });
+  }
+
+  async deleteCustomerNote(customerId: string, noteId: string) {
+    return this.request<{ success: boolean }>(`/customers/${customerId}/notes/${noteId}`, { method: 'DELETE' });
+  }
+
+  async getCustomerConfig() {
+    return this.request<CustomerConfigView>('/customers/config');
+  }
+
+  /** An empty `lookupUrl` turns the lookup off; a `secret` left out keeps the stored one, and an empty one clears it. */
+  async updateCustomerConfig(body: { idLabel?: string; lookupUrl?: string; secret?: string; timeoutMs?: number }) {
+    return this.request<CustomerConfigView>('/customers/config', { method: 'PUT', body: JSON.stringify(body) });
+  }
+
+  /** One lookup with the saved settings, past the cache. */
+  async testCustomerConfig(externalId: string) {
+    return this.request<LookupTestResult>('/customers/config/test', { method: 'POST', body: JSON.stringify({ externalId }) });
   }
 }
 

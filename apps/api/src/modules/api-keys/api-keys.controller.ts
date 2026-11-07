@@ -1,10 +1,12 @@
 // MultiWA Gateway - API Keys Controller
 // apps/api/src/modules/api-keys/api-keys.controller.ts
 
-import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { Controller, Get, Post, Delete, Body, Param, UseGuards, Req, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiForbiddenResponse } from '@nestjs/swagger';
 import { ApiKeysService } from './api-keys.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ANY_ROLES } from '../auth/roles';
 import { AuditService, AuditAction } from '../audit/audit.service';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
@@ -27,12 +29,16 @@ export class ApiKeysController {
   }
 
   @Post()
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Create a new API key' })
   @ApiValidationError()
+  @ApiForbiddenResponse({ description: 'Made with an API key: only a signed-in user creates API keys' })
   async create(
     @Req() req: any,
     @Body() body: { name: string; permissions?: string[]; expiresInDays?: number },
   ) {
+    // A key limited to a few scopes could otherwise make itself one with no limit.
+    if (req.user.apiKeyId) throw new ForbiddenException('API keys cannot create API keys: sign in to create one');
     const result = await this.service.create(req.user.id, body.name, body.permissions, body.expiresInDays);
     this.auditService.log({
       action: AuditAction.APIKEY_CREATE,
@@ -45,6 +51,7 @@ export class ApiKeysController {
   }
 
   @Delete(':id')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Delete an API key' })
   @ApiNotFound('API key')
   async delete(@Req() req: any, @Param('id') id: string) {

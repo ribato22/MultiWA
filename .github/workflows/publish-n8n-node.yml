@@ -5,8 +5,10 @@ name: Publish n8n node to npm
 # Decoupled tag: push `n8n-v<version>` (matching the package version) or run
 # manually.
 #
-# Keyless via a Trusted Publisher on npm (repo + this workflow file); provenance
-# is automatic. NPM_TOKEN is only the bootstrap fallback for the first publish.
+# Keyless: npm Trusted Publishing (npmjs.com -> n8n-nodes-multiwa -> Settings ->
+# Trusted Publisher: ribato22/MultiWA, this workflow file, "Allow npm publish").
+# The OIDC token authenticates the publish and signs the provenance; there is no
+# npm token in this repository.
 # See docs/21-releasing-and-distribution.md.
 
 on:
@@ -45,5 +47,3 @@ jobs:
       - name: Publish
         working-directory: packages/n8n-nodes-multiwa
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

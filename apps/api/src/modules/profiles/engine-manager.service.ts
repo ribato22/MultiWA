@@ -9,7 +9,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { REALTIME_EMITTER, RealtimeEmitter } from '@multiwa/core';
 import { prisma } from '@multiwa/database';
-import { evaluateColdCircuit, applyAckStatusUpdate, handleAutoRejectCall, isSystemMessageType, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
+import { evaluateColdCircuit, applyAckStatusUpdate, handleEngineCall, handleCallLog, closeStaleRingingCalls, rejectCallByAgent as rejectCallByAgentShared, AGENT_REJECT_TIMEOUT_MS, withTimeout, toCallPayload, type CallEngineDeps, type AutoRejectCallSettings, isSystemMessageType, isSessionInvalidReason, ConnectWatchdog, type StuckPhase, resolveEngineType as resolveEngineTypeShared, handleInboundMessage as handleInboundMessageShared } from '@multiwa/engine-runtime';
 import { EngineFactory } from '@multiwa/engines';
 import type { IWhatsAppEngine, EngineConfig, EngineType } from '@multiwa/engines';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -17,8 +17,9 @@ import { AppEvents } from '@multiwa/core';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
 import { RuleEngineService } from '../automation/rule-engine.service';
+import { MessagesService } from '../messages/messages.service';
 import { NotificationsService, NotificationType } from '../notifications/notifications.service';
-import { InternalEvents } from '../../metrics/internal-events';
+import { InternalEvents, type CallEngineSignalPayload, type EngineLostPayload } from '../../metrics/internal-events';
 
 
 interface EngineInstance {
@@ -135,6 +136,9 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     private readonly ruleEngineService: RuleEngineService,
     private readonly notificationsService: NotificationsService,
     private readonly eventEmitter: EventEmitter2,
+    // The send-gated path: the auto-reject reply of a call goes out through it, never through engine.sendText.
+    @Inject(forwardRef(() => MessagesService))
+    private readonly messagesService: MessagesService,
   ) {
     this.logger.log('EngineManagerService initialized');
   }
@@ -347,6 +351,12 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
 
     this.logger.log('EngineManagerService initializing...');
 
+    // Calls left "ringing" by the previous process lost their ring timers. Not awaited and never throws:
+    // a calls table that is missing or slow must not hold the boot (or the reconnects) back.
+    closeStaleRingingCalls()
+      .then((n) => { if (n) this.logger.log(`Closed ${n} call(s) left ringing by the previous process`); })
+      .catch((e) => this.logger.warn(`stale call sweep failed: ${(e as Error).message}`));
+
     const envEngine = process.env.DEFAULT_ENGINE;
     if (envEngine && !['whatsapp-web-js', 'baileys', 'mock'].includes(envEngine)) {
       this.logger.warn(`DEFAULT_ENGINE='${envEngine}' is not a valid engine; profiles without an explicit engine will use whatsapp-web-js`);
@@ -537,7 +547,7 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
       const entries = await fs.readdir(sessionDir, { recursive: true, withFileTypes: true });
       for (const entry of entries) {
         if (lockFiles.includes(entry.name)) {
-          const lockPath = path.join(entry.parentPath || entry.path, entry.name);
+          const lockPath = path.join(entry.parentPath, entry.name);
           try {
             await fs.unlink(lockPath);
             this.logger.log(`Removed stale Chromium lock file: ${lockPath}`);
@@ -664,6 +674,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
     const engineConfig: EngineConfig = {
       profileId,
       sessionDir,
+      // Server switch, default off: launches WhatsApp Web with call-media hooks (dashboard answering, phase 2).
+      callMedia: { enabled: process.env.CALLS_MEDIA_ENABLED === 'true' },
       onQR: async (qr: string) => {
         this.logger.log(`QR code received for profile ${profileId}`);
         // A QR means the page loaded and WhatsApp is waiting for a human: not a hang.
@@ -828,6 +840,8 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
             this.logger.warn(`Error destroying engine before retry: ${(e as Error).message}`);
           }
           this.engines.delete(profileId);
+          // Whatever held its page (a call answered in the dashboard) went with it: say so now, not after the retries.
+          this.emitEvent(InternalEvents.ENGINE_LOST, { profileId, reason } satisfies EngineLostPayload);
 
           for (let attempt = 1; attempt <= maxRetries; attempt++) {
             const delay = baseDelay * Math.pow(3, attempt - 1); // 5s, 15s, 45s
@@ -928,19 +942,33 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
           this.logger.warn(`Failed to update message ack: ${(error as Error).message}`);
         }
       },
-      onCall: async (call) => {
-        try {
-          const p = await prisma.profile.findUnique({ where: { id: profileId }, select: { settings: true } });
-          const eng = this.getEngine(profileId);
-          if (!eng) return;
-          await handleAutoRejectCall(call, (p?.settings ?? {}) as any, {
-            rejectCall: (id) => eng.rejectCall(id),
-            sendText: async (to, text) => { await eng.sendText(to, text); },
-            logger: { log: (m) => this.logger.log(m), warn: (m) => this.logger.warn(m) },
+      // Both call callbacks hand over to the runtime synchronously and return nothing: it registers the ringing
+      // step of a call when it is called, and the later signals of that call wait for the step, which only works
+      // if the offer is handed over before them. So the profile's settings are NOT awaited here: they go as the
+      // read in progress and the ringing step awaits them. Neither callback throws or rejects into the adapter.
+      onCall: (call) => {
+        const settings = prisma.profile
+          .findUnique({ where: { id: profileId }, select: { settings: true } })
+          .then((p) => (p?.settings ?? null) as AutoRejectCallSettings | null)
+          .catch((e) => {
+            this.logger.warn(`call settings read failed: ${(e as Error).message}`);
+            return null;
           });
-        } catch (e) {
-          this.logger.warn(`onCall handler failed: ${(e as Error).message}`);
-        }
+        handleEngineCall(call, this.callDeps(profileId, settings)).catch((e) =>
+          this.logger.warn(`onCall handler failed: ${(e as Error).message}`),
+        );
+        // After the hand-over, never before it (see above). The call coordinator follows the calls it answers through
+        // these: once a call is answered in the dashboard its `ended` no longer moves the stored outcome.
+        this.emitEvent(InternalEvents.CALL_ENGINE_SIGNAL, {
+          profileId,
+          waCallId: call.id,
+          state: call.state ?? 'ringing',
+        } satisfies CallEngineSignalPayload);
+      },
+      onCallLog: (entry) => {
+        handleCallLog(entry, this.callDeps(profileId, null)).catch((e) =>
+          this.logger.warn(`onCallLog handler failed: ${(e as Error).message}`),
+        );
       },
     };
 
@@ -1042,6 +1070,53 @@ export class EngineManagerService implements OnModuleDestroy, OnModuleInit {
    */
   getEngine(profileId: string): IWhatsAppEngine | null {
     return this.engines.get(profileId)?.engine || null;
+  }
+
+  /** Collaborators for the shared calls runtime, bound to one profile. */
+  private callDeps(profileId: string, settings: CallEngineDeps['settings']): CallEngineDeps {
+    const engine = this.getEngine(profileId);
+    return {
+      profileId,
+      settings,
+      emit: (event, payload) => this.emitEvent(event, payload),
+      emitRealtime: (payload) => this.realtime.emitCallUpdate(profileId, payload),
+      notify: (title, body, meta) => this.notifyOrgUsers(profileId, NotificationType.CALL, title, body, meta),
+      rejectCall: async (waCallId) => {
+        // Without an engine there is nothing to reject with: fail, so the runtime does not record a reject that never happened.
+        const live = this.getEngine(profileId);
+        if (!live) throw new Error(`no live engine for profile ${profileId}`);
+        await live.rejectCall(waCallId);
+      },
+      // The send-gated path (daily caps, repeat suppression, floor delay), never engine.sendText.
+      sendText: async (to, text) => {
+        const res: { success?: boolean; status?: string; error?: string; warning?: string } = await this.messagesService.sendText({ profileId, to, text });
+        // MessagesService.sendText throws what the send gate refuses and a profile without an engine (409
+        // PROFILE_DISCONNECTED); an engine error comes back as { success: false, status: 'failed' }.
+        // The runtime releases its once-per-24h reply claim only when sendText rejects, so a reply that was not sent has
+        // to reject here (the worker's adapter does the same), or a failed auto-reply would block the next one for 24 h.
+        if (res.success === false || res.status === 'failed') {
+          throw new Error(`reply not sent: ${res.error ?? res.warning ?? 'unknown reason'}`);
+        }
+        return res;
+      },
+      resolveIdentity: engine ? (jid) => engine.resolveIdentity(jid) : null,
+      logger: { log: (m) => this.logger.log(m), warn: (m) => this.logger.warn(m) },
+    };
+  }
+
+  /**
+   * An agent rejected a ringing call through the REST API (ENGINE_HOST=api). The worker's engine manager has the same
+   * method for the engine-commands 'reject-call'. Errors keep their runtime codes (CALL_NOT_FOUND, CALL_NOT_RINGING).
+   */
+  async rejectCallByAgent(profileId: string, callId: string): Promise<Record<string, unknown>> {
+    const engine = this.getEngine(profileId);
+    if (!engine) throw new Error(`ENGINE_NOT_CONNECTED: profile ${profileId} is not connected`);
+    const row = await rejectCallByAgentShared(callId, {
+      ...this.callDeps(profileId, null),
+      // Bounded: the runtime holds the call while this runs, however long a stuck page takes (ENGINE_TIMEOUT maps to 504).
+      rejectCall: (waCallId) => withTimeout(engine.rejectCall(waCallId), AGENT_REJECT_TIMEOUT_MS, 'ENGINE_TIMEOUT: reject'),
+    });
+    return toCallPayload(row);
   }
 
   /**

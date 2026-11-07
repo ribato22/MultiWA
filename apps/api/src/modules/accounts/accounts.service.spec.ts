@@ -8,7 +8,7 @@ vi.mock('@multiwa/database', () => ({
     user: { findUnique: vi.fn() },
     workspace: { create: vi.fn() },
     account: { findMany: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
-    profile: { create: vi.fn() },
+    profile: { create: vi.fn(), delete: vi.fn(), findMany: vi.fn(), findUnique: vi.fn() },
   },
 }));
 
@@ -24,7 +24,7 @@ describe('AccountsService', () => {
     vi.mocked(prisma.account.findMany).mockReset();
     vi.mocked(prisma.account.create).mockReset();
 
-    service = new AccountsService({} as any, {} as any);
+    service = new AccountsService({} as any, {} as any, {} as any);
   });
 
   describe('findAll', () => {
@@ -109,6 +109,47 @@ describe('AccountsService', () => {
     it('defaults to whatsapp-web-js when no engine is provided', async () => {
       await service.createProfile('a1', { displayName: 'x' });
       expect(createdEngine()).toBe('whatsapp-web-js');
+    });
+
+    it('answers whether a webhook secret is set, never the secret', async () => {
+      vi.mocked(prisma.profile.create).mockResolvedValue({ id: 'p1', settings: {}, webhookSecret: null } as any);
+      expect(await service.createProfile('a1', { displayName: 'x' })).toEqual({ id: 'p1', settings: {}, hasWebhookSecret: false });
+    });
+  });
+
+  describe('deleteProfile', () => {
+    it("deletes the profile's recording files first, then the profile", async () => {
+      const purgeProfile = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(prisma.profile.delete).mockReset().mockResolvedValue({ id: 'p1' } as any);
+      await new AccountsService({} as any, {} as any, { purgeProfile } as any).deleteProfile('a1', 'p1');
+      expect(purgeProfile).toHaveBeenCalledWith('p1');
+      expect(purgeProfile.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(prisma.profile.delete).mock.invocationCallOrder[0]);
+    });
+  });
+
+  // As on /profiles: where the announcement's file is kept stays inside the server.
+  describe('the account-scoped profile routes answer without the announcement storage key', () => {
+    const STORED = { callsAnnouncement: { storageKey: 'announcements/o1/p1/a.mp3', mimeType: 'audio/mpeg', durationSec: 4.2 } };
+    const SHOWN = { callsAnnouncement: { mimeType: 'audio/mpeg', durationSec: 4.2 } };
+    const accounts = () => new AccountsService({} as any, {} as any, { purgeProfile: vi.fn().mockResolvedValue(undefined) } as any);
+
+    beforeEach(() => {
+      vi.mocked(prisma.account.findUnique).mockReset().mockResolvedValue({ id: 'a1', workspaceId: 'w1' } as any);
+      vi.mocked(prisma.profile.findMany).mockReset().mockResolvedValue([{ id: 'p1', settings: STORED }] as any);
+      vi.mocked(prisma.profile.findUnique).mockReset().mockResolvedValue({ id: 'p1', settings: STORED } as any);
+      vi.mocked(prisma.profile.delete).mockReset().mockResolvedValue({ id: 'p1', settings: STORED } as any);
+    });
+
+    it('the list', async () => {
+      expect((await accounts().getProfiles('a1')).map((p) => p.settings)).toEqual([SHOWN]);
+    });
+
+    it('one profile', async () => {
+      expect((await accounts().getProfile('a1', 'p1')).settings).toEqual(SHOWN);
+    });
+
+    it('a deleted one', async () => {
+      expect((await accounts().deleteProfile('a1', 'p1')).settings).toEqual(SHOWN);
     });
   });
 });

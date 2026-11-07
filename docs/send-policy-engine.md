@@ -74,9 +74,10 @@ to any operator):
 - The **caller declares** the category on send (e.g. the OTP app sends
   `category: "authentication"`). Default when omitted: `utility`.
 - **Window classifier** `isWithinServiceWindow(profileId, recipient)` = there
-  exists an **inbound** message from `recipient` to `profileId` within
-  `serviceWindowHours` (default 24). If true, the effective lane is **always
-  `service`** regardless of declared category — an in-window message is a reply.
+  exists an **inbound** message from `recipient` to `profileId`, **or an
+  incoming WhatsApp call from them**, within `serviceWindowHours` (default 24).
+  If true, the effective lane is **always `service`** regardless of declared
+  category — an in-window message or call is a reply.
 
 Effective lane resolution:
 

@@ -13,6 +13,7 @@ import {
   Loader2,
   ArrowLeft,
 } from 'lucide-react';
+import { api } from '@/lib/api';
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -26,6 +27,12 @@ export default function LoginPage() {
   const [backupCode, setBackupCode] = useState('');
   const [verified, setVerified] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  // "Create one" only while the server takes new accounts: once it is closed, an admin adds people instead.
+  const [registrationOpen, setRegistrationOpen] = useState(false);
+
+  useEffect(() => {
+    api.registration().then((res) => setRegistrationOpen(res.data?.open === true));
+  }, []);
 
   useEffect(() => {
     if (requires2FA && !useBackupCode) {
@@ -415,7 +422,7 @@ export default function LoginPage() {
           )}
         </div>
 
-        {!requires2FA && (
+        {!requires2FA && registrationOpen && (
           <p className="text-center mt-6 text-muted-foreground">
             Don&apos;t have an account?{' '}
             <Link href="/auth/register" className="text-primary hover:text-primary/80 font-medium">

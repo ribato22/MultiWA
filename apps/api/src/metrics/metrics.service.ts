@@ -34,6 +34,19 @@ export class MetricsService {
   // `source="fallback"` on any sustained rate means the live chat Store is broken.
   readonly engineGroupFetchTotal: Counter<'source'>;
   readonly engineAckDroppedTotal: Counter;
+  // The call media server's mediasoup worker died: every call it carried lost its media. Any non-zero rate needs attention.
+  readonly callsMediaWorkerDeathsTotal: Counter;
+  // Calls answered in the dashboard: offered to agents, answered (with the speed of answer), media failures by reason
+  // (a call whose audio did not connect, or broke), and how the answered calls ended.
+  readonly callsDashboardRingsTotal: Counter;
+  readonly callsDashboardAnswersTotal: Counter;
+  readonly callsDashboardAnswerSeconds: Histogram;
+  readonly callsMediaFailuresTotal: Counter<'reason'>;
+  readonly callsDashboardEndedTotal: Counter<'reason'>;
+  // The recordings storage's privacy check, by result: any not_private means anyone can read the recordings.
+  readonly callsRecordingsPrivacyChecksTotal: Counter<'result'>;
+  readonly callsRecordingUploadsTotal: Counter<'result'>;
+  readonly callsRecorderFailuresTotal: Counter<'stage'>;
 
   constructor() {
     this.registry.setDefaultLabels({ app: 'multiwa-api' });
@@ -119,6 +132,90 @@ export class MetricsService {
           registers: [this.registry],
         }),
     );
+
+    this.callsMediaWorkerDeathsTotal = this.getOrCreate(
+      'multiwa_calls_media_worker_deaths_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_media_worker_deaths_total',
+          help: "Deaths of the call media server's mediasoup worker. Each one cut the media of every call it carried; the server restarts it.",
+          registers: [this.registry],
+        }),
+    );
+    this.callsDashboardRingsTotal = this.getOrCreate(
+      'multiwa_calls_dashboard_rings_total',
+      () => new Counter({ name: 'multiwa_calls_dashboard_rings_total', help: 'Incoming calls offered to agents in the dashboard.', registers: [this.registry] }),
+    );
+    this.callsDashboardAnswersTotal = this.getOrCreate(
+      'multiwa_calls_dashboard_answers_total',
+      () => new Counter({ name: 'multiwa_calls_dashboard_answers_total', help: 'Incoming calls answered in the dashboard.', registers: [this.registry] }),
+    );
+    this.callsDashboardAnswerSeconds = this.getOrCreate(
+      'multiwa_calls_dashboard_answer_seconds',
+      () =>
+        new Histogram({
+          name: 'multiwa_calls_dashboard_answer_seconds',
+          help: 'Speed of answer of the calls answered in the dashboard: from the first ring to WhatsApp connecting the agent.',
+          buckets: [1, 2, 5, 10, 15, 20, 30, 45, 60, 90],
+          registers: [this.registry],
+        }),
+    );
+    this.callsMediaFailuresTotal = this.getOrCreate(
+      'multiwa_calls_media_failures_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_media_failures_total',
+          help: "Calls answered in the dashboard whose audio did not connect or broke, by reason (the call rang again, or was ended).",
+          labelNames: ['reason'] as const,
+          registers: [this.registry],
+        }),
+    );
+    this.callsDashboardEndedTotal = this.getOrCreate(
+      'multiwa_calls_dashboard_ended_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_dashboard_ended_total',
+          help: 'Calls answered in the dashboard that ended, by end reason.',
+          labelNames: ['reason'] as const,
+          registers: [this.registry],
+        }),
+    );
+    this.callsRecordingsPrivacyChecksTotal = this.getOrCreate(
+      'multiwa_calls_recordings_privacy_checks_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_recordings_privacy_checks_total',
+          help: 'Checks that the call recordings storage refuses reads without credentials, by result (not_private: anyone can read the recordings).',
+          labelNames: ['result'] as const,
+          registers: [this.registry],
+        }),
+    );
+    // Every result from 0: a nightly check would otherwise create not_private already at 1, and an increase(...) > 0
+    // alert never fires on that first, most important, one.
+    for (const result of ['ok', 'not_private', 'check_failed'] as const) this.callsRecordingsPrivacyChecksTotal.inc({ result }, 0);
+    this.callsRecordingUploadsTotal = this.getOrCreate(
+      'multiwa_calls_recording_uploads_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_recording_uploads_total',
+          help: 'Call recordings stored (ok), and not stored after their tries (failed: kept on the server for the next try).',
+          labelNames: ['result'] as const,
+          registers: [this.registry],
+        }),
+    );
+    this.callsRecorderFailuresTotal = this.getOrCreate(
+      'multiwa_calls_recorder_failures_total',
+      () =>
+        new Counter({
+          name: 'multiwa_calls_recorder_failures_total',
+          help: 'Calls with recording on that went on unrecorded, by why: the recorder did not start, or the announcement did not play.',
+          labelNames: ['stage'] as const,
+          registers: [this.registry],
+        }),
+    );
+    // From 0, like the privacy checks: an increase(...) > 0 alert never fires on a series' first count.
+    for (const result of ['ok', 'failed'] as const) this.callsRecordingUploadsTotal.inc({ result }, 0);
+    for (const stage of ['start', 'announcement'] as const) this.callsRecorderFailuresTotal.inc({ stage }, 0);
   }
 
   metrics(): Promise<string> {

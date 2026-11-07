@@ -18,9 +18,9 @@ export default defineConfig({
       exclude: ['**/*.dto.ts', '**/*.module.ts', '**/*.guard.ts', '**/*.spec.ts', '**/dto/**'],
       // Ratchet floor set just below the current coverage so the gate passes today
       // and only fails on a REGRESSION. Raised after adding validated unit specs for
-      // organizations/api-keys/contacts/conversations/autoreply/rbac (56 tests):
+      // organizations/api-keys/contacts/conversations/autoreply:
       // locally-measured stmts/lines 15.7, funcs 24.3, branches 70.9 (a lower bound —
-      // CI additionally runs auth.service.spec on Node 20). Raise as coverage grows.
+      // CI additionally runs auth.service.spec on Node 24). Raise as coverage grows.
       thresholds: {
         lines: 14,
         statements: 14,

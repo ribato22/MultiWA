@@ -1,0 +1,672 @@
+// MultiWA Gateway - call media inside the WhatsApp Web page
+// packages/engines/src/adapters/webjs-call-media/page.ts
+//
+// Every function runs INSIDE the browser page (page.evaluate / evaluateOnNewDocument), so each one is
+// self-contained: no imports, no closures over module scope. That is why each per-call function repeats the same
+// call-id guard. The engines target (ES2021) keeps them free of TypeScript helpers (a downlevel helper
+// would not exist in the page): the browser spec runs the page functions stringified, as puppeteer sends them, and
+// the unit spec checks the init script. The interfaces below are types only, erased at compile time.
+//
+// The recipes are WhatsApp Web's own: the Accept and End buttons
+// (useWAWebVoipCallHandlers) and its playback routes (WAWebVoipAudioPlayback*). Proven live on 2026-10-29 on
+// macOS Chrome, on Linux Chromium 156 and in the production api image.
+
+/** A stream WhatsApp Web plays: a candidate for the caller's voice. */
+export interface MwTap {
+  stream: MediaStream;
+  /**
+   * - `element` (tap A): set as an `<audio>`'s srcObject; in use while that element still holds it.
+   * - `destination` (tap B): a copy of what one context connects to its AudioDestinationNode; in use until that
+   *   context is closed. Chrome keeps the track of a closed context's MediaStreamAudioDestinationNode `live` and
+   *   fires no `ended`, so only the owner tells a dead tap from a live one.
+   */
+  via: 'element' | 'destination';
+  /** The element (A) or the AudioContext (B) whose use keeps the tap in use. */
+  owner: HTMLMediaElement | AudioContext;
+  /**
+   * Note order (`MwCall.noted`): every note takes the next number, so a re-noted tap counts as new. A is noted when
+   * set as srcObject, B on EVERY connect to the destination, so a reused context is the newest again. An order, not
+   * a time: a clock has ties and steps back.
+   */
+  seq: number;
+}
+
+/**
+ * How callerTap chose its tap: the tripwire for a wrong pick. A normal call has exactly ONE fresh candidate, the
+ * playback of the caller; anything else means the pick was a guess.
+ */
+export interface MwTapPick {
+  /** In-use taps that are not ours and were noted after the answer, when the choice was made; more than one is ambiguous. */
+  freshCandidates: number;
+  /** No tap of this call turned up within the wait: an older one that is still in use was taken. */
+  fallback: boolean;
+}
+
+/**
+ * `window.__mwCall`, published by installCallMediaHooks once all its hooks are in place: the state the page
+ * functions share, and the API the media bridge builds on (its "caller" producer carries the stream of
+ * `await callerTap(5000)`, and it feeds `inputs.agent`).
+ *
+ * Our own streams carry `__mwOwn`, so the taps skip them. Mark a stream BEFORE setting it as an element's
+ * srcObject (the media bridge: the muted keep-alive of the agent's track), or tap A takes it for the caller.
+ */
+export interface MwCall {
+  /** Recent taps, oldest first. Every note drops the taps no longer in use and keeps the last 8. Read callerTap(). */
+  taps: MwTap[];
+  /** Taps noted so far on this document: the `seq` of the latest note. */
+  noted: number;
+  /**
+   * The caller's voice: the newest in-use tap that is not ours, preferring one noted after the answer started
+   * (`answeredAfter`). WhatsApp Web starts playing the caller right after `acceptCall`, before the call reads as
+   * connected (live: the tap was noted about 40 ms after the accept), and `answeredAfter` is recorded before the
+   * accept, so that tap counts as noted after the answer. This waits up to `waitMs` for such a tap, then takes the
+   * newest in-use one; null when there is none. The recorder uses it, and so does the media bridge. The tap
+   * comes as a copy with how it was chosen (MwTapPick).
+   */
+  callerTap(waitMs: number): Promise<(MwTap & MwTapPick) | null>;
+  /** `noted` when answerActiveCall last started an answer: the taps with a higher `seq` belong to the current call. */
+  answeredAfter?: number;
+  /** The injected microphone, created by ensure(): every getUserMedia that asks for audio gets a clone of `dest`'s track. */
+  ctx: AudioContext | null;
+  dest: MediaStreamAudioDestinationNode | null;
+  /** Mixed into the microphone: the announcement, and the agent (media bridge), muted while an announcement plays. */
+  inputs: { announcement: GainNode; agent: GainNode } | null;
+  /** Creates the microphone once, resumes its context, returns this. */
+  ensure(): MwCall;
+  /**
+   * The injected camera, created by ensureCamera(): every getUserMedia that asks for video gets a clone of `track`, a
+   * capture of `canvas`, kept in `clones` while it is live. While one is, the canvas is redrawn at 15 fps (`timer`),
+   * black, or with `source` (the agent's video, set by the media bridge) fitted in while it brings new frames (a second
+   * without one draws black); with none live the redraw stops, on black (`timer` null). Like the microphone it lasts as
+   * long as the document. It is never put in the document, so a search of WhatsApp Web's canvases never finds it.
+   */
+  camera: { canvas: HTMLCanvasElement; track: MediaStreamTrack; source: HTMLVideoElement | null; clones: MediaStreamTrack[]; timer: any } | null;
+  /** Creates the camera once, starts its redraw when it is stopped, returns it. */
+  ensureCamera(): NonNullable<MwCall['camera']>;
+  /** getUserMedia calls answered with the injected microphone. */
+  gumCalls: number;
+  /** The page's own getUserMedia (prepareCallMediaPage). */
+  realGetUserMedia: (c: MediaStreamConstraints) => Promise<MediaStream>;
+  /** prepareCallMediaPage got the microphone permission on this document. */
+  prepared?: boolean;
+  /**
+   * The one recorder; `done` settles once the last chunk went through the binding (it rejects when the recorder
+   * failed or chunks were lost). `endedAt` is set when the MediaRecorder stops: on request, by itself with its call
+   * (startRecordingInPage), or on an error of its own. A stopped recorder stays here until stopRecordingInPage
+   * collects it and frees the slot.
+   */
+  recorder: {
+    callId: string;
+    mr: MediaRecorder;
+    startedAt: number;
+    endedAt?: number;
+    nodes: AudioNode[];
+    done: Promise<void>;
+  } | null;
+  /** One announcement at a time. */
+  announcing: boolean;
+}
+
+/**
+ * Document-start hooks, on every WhatsApp Web document (evalOnNewDoc), so a WA Web self-reload keeps them:
+ * - the injected microphone: every getUserMedia that asks for audio gets a clone of one Web Audio stream, fed
+ *   by a silent source (a destination without input sends no frames at all), an announcement input and an agent
+ *   input;
+ * - the injected camera: every getUserMedia that asks for video, with the microphone or alone, gets a clone of one
+ *   canvas capture, black until the media bridge connects the agent's video, and never Chromium's fake device;
+ * - taps on what WhatsApp Web plays: tap A for `<audio>.srcObject`, tap B for nodes connected to an
+ *   AudioDestinationNode. That playback is the caller's voice.
+ * `window.__mwCall` is published last, so a page whose hooks did not all install never probes as supported.
+ */
+export function installCallMediaHooks(): void {
+  const w = window as any;
+  if (w !== w.top || w.__mwCall || !navigator.mediaDevices) return;
+  const md = navigator.mediaDevices;
+  const inUse = (t: MwTap) =>
+    t.stream.getAudioTracks().some((k) => k.readyState === 'live') &&
+    (t.via === 'destination' ? (t.owner as AudioContext).state !== 'closed' : (t.owner as HTMLMediaElement).srcObject === t.stream);
+  const call: MwCall = {
+    taps: [],
+    noted: 0,
+    ctx: null,
+    dest: null,
+    inputs: null,
+    camera: null,
+    gumCalls: 0,
+    recorder: null,
+    announcing: false,
+    realGetUserMedia: md.getUserMedia.bind(md),
+    async callerTap(waitMs: number) {
+      const candidates = (after: number) => call.taps.filter((t) => t.seq > after && !(t.stream as any).__mwOwn && inUse(t));
+      const end = Date.now() + waitMs;
+      while (!candidates(call.answeredAfter ?? 0).length && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+      const after = call.answeredAfter ?? 0;
+      const fresh = candidates(after);
+      const tap = fresh[fresh.length - 1] ?? candidates(0).pop();
+      if (!tap) return null;
+      return { ...tap, freshCandidates: fresh.length, fallback: tap.seq <= after };
+    },
+    ensure() {
+      if (!call.ctx) {
+        const ctx = new AudioContext({ sampleRate: 48000 });
+        const dest = ctx.createMediaStreamDestination();
+        const hum = ctx.createConstantSource();
+        hum.offset.value = 0;
+        hum.connect(dest);
+        hum.start();
+        const announcement = ctx.createGain();
+        const agent = ctx.createGain();
+        announcement.connect(dest);
+        agent.connect(dest);
+        call.ctx = ctx;
+        call.dest = dest;
+        call.inputs = { announcement, agent };
+      }
+      if (call.ctx.state !== 'running') call.ctx.resume().catch(() => {});
+      return call;
+    },
+    ensureCamera() {
+      if (!call.camera) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        call.camera = { canvas, track: canvas.captureStream(15).getVideoTracks()[0], source: null, clones: [], timer: null };
+      }
+      const camera = call.camera;
+      // A canvas that does not change sends at most its last frame: while a clone is live it is redrawn at the capture
+      // rate, black or the agent fitted in. With none live (polled: a track the page stops fires no `ended`) the redraw
+      // stops, until the next call's camera starts it again. It stops on black: Chrome starts a fresh clone on the
+      // canvas's last frame, and that must never be the last call's agent.
+      // ponytail: only the clones handed out here count; a copy the page made of one (track.clone(), or stream.clone(),
+      // which makes live copies without going through MediaStreamTrack.prototype.clone) freezes once ours are stopped.
+      // Follow MediaStreamTrack.prototype.clone and MediaStream.prototype.clone if WhatsApp Web ever copies its camera.
+      if (!camera.timer) {
+        const g = camera.canvas.getContext('2d');
+        // A <video> keeps its last frame when no new one comes (the agent's producer paused, its link down): drawn on, it
+        // would reach the caller frozen. So the source's frame count is watched (`frames`, unchanged since `movedAt`; a
+        // new source starts afresh): a second without a new frame draws black, until one comes again.
+        let shown: HTMLVideoElement | null = null;
+        let frames = 0;
+        let movedAt = 0;
+        camera.timer = setInterval(() => {
+          camera.clones = camera.clones.filter((t) => t.readyState === 'live');
+          if (!camera.clones.length) {
+            clearInterval(camera.timer);
+            camera.timer = null;
+            g.fillRect(0, 0, 640, 480);
+            return;
+          }
+          g.fillRect(0, 0, 640, 480);
+          const v = camera.source;
+          if (!v || v.readyState < 2 || !v.videoWidth) return;
+          const n = v.getVideoPlaybackQuality().totalVideoFrames;
+          if (v !== shown || n !== frames) {
+            shown = v;
+            frames = n;
+            movedAt = performance.now();
+          } else if (performance.now() - movedAt > 1000) return;
+          const s = Math.min(640 / v.videoWidth, 480 / v.videoHeight);
+          g.drawImage(v, (640 - v.videoWidth * s) / 2, (480 - v.videoHeight * s) / 2, v.videoWidth * s, v.videoHeight * s);
+        }, 1000 / 15);
+      }
+      return camera;
+    },
+  };
+  const note = (stream: MediaStream, via: MwTap['via'], owner: MwTap['owner']) => {
+    call.taps = call.taps.filter((t) => t.stream !== stream && inUse(t)).slice(-7); // with the new one: 8 at most
+    call.taps.push({ stream, via, owner, seq: ++call.noted });
+  };
+  const d = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
+  Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+    configurable: true,
+    enumerable: d.enumerable,
+    get: d.get,
+    set(v: any) {
+      d.set.call(this, v);
+      try { if (v instanceof MediaStream && !(v as any).__mwOwn && v.getAudioTracks().length) note(v, 'element', this); } catch {}
+    },
+  });
+  const connect = AudioNode.prototype.connect;
+  (AudioNode.prototype as any).connect = function (dest: any, ...rest: any[]) {
+    const r = (connect as any).call(this, dest, ...rest);
+    try {
+      if (dest instanceof AudioDestinationNode) {
+        const ctx: any = this.context;
+        ctx.__mwTap ??= ctx.createMediaStreamDestination();
+        (connect as any).call(this, ctx.__mwTap, rest[0] ?? 0); // the output the page connected
+        note(ctx.__mwTap.stream, 'destination', ctx);
+      }
+    } catch {}
+    return r;
+  };
+  // A node the page disconnects from the destination must leave our tap too, so the recording follows WhatsApp's
+  // own muting. disconnect() and disconnect(output) already drop the tap's connection; a targeted one does not.
+  const disconnect = AudioNode.prototype.disconnect;
+  (AudioNode.prototype as any).disconnect = function (...args: any[]) {
+    const r = (disconnect as any).apply(this, args);
+    try {
+      const tap = (this.context as any).__mwTap;
+      if (tap && args[0] instanceof AudioDestinationNode) (disconnect as any).call(this, tap, ...args.slice(1));
+    } catch {}
+    return r;
+  };
+  const orig = call.realGetUserMedia;
+  md.getUserMedia = function (c?: MediaStreamConstraints) {
+    if (!c || (!c.audio && !c.video)) return orig(c);
+    const tracks: MediaStreamTrack[] = [];
+    if (c.audio) {
+      call.ensure();
+      call.gumCalls++;
+      tracks.push(call.dest.stream.getAudioTracks()[0].clone());
+    }
+    // WhatsApp Web asks for a camera on every video call, also one answered with the camera off: it gets ours.
+    if (c.video) {
+      const camera = call.ensureCamera();
+      const clone = camera.track.clone();
+      camera.clones.push(clone);
+      tracks.push(clone);
+    }
+    const s: any = new MediaStream(tracks);
+    s.__mwOwn = true;
+    return Promise.resolve(s);
+  };
+  w.__mwCall = call;
+}
+
+/** Per document, on every `ready`: one real getUserMedia on the FAKE device, so the origin's mic permission reads granted. */
+export async function prepareCallMediaPage(): Promise<{ hooks: boolean; micPermission: string }> {
+  const call: MwCall = (window as any).__mwCall;
+  if (!call) return { hooks: false, micPermission: 'no hooks' };
+  if (call.prepared) return { hooks: true, micPermission: 'already granted' };
+  try {
+    const s = await call.realGetUserMedia({ audio: true });
+    s.getTracks().forEach((t: MediaStreamTrack) => t.stop());
+    call.prepared = true;
+    return { hooks: true, micPermission: 'granted' };
+  } catch (e) {
+    return { hooks: true, micPermission: `failed: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * Can this page carry a call: modules present, calling UI on, in-browser voip stack, our hooks, and the page setup
+ * done on this document (`prepared`: the microphone permission was granted). A voip stack lookup that does not
+ * answer within `timeoutMs` counts as `voip_stack_unavailable`.
+ * `videoSupported` is reported apart, never as a reason: WhatsApp Web's video call UI and its camera mute are there. A
+ * page without them still answers voice.
+ */
+export async function probeCallMedia(timeoutMs: number): Promise<{ reasons: string[]; waVersion: string | null; videoSupported: boolean }> {
+  const w = window as any;
+  const reasons: string[] = [];
+  const req = (m: string) => { try { return w.require(m); } catch { return null; } };
+  const needed = [
+    'WAWebCallCollection', 'WAWebVoipCallStateUtils', 'WAWebVoipStackInterface', 'WAWebVoipSignalingEnums',
+    'WAWebCallRingtone', 'WAWebVoipCallAudioUnlock', 'WAWebVoipGatingUtils',
+  ];
+  if (needed.some((m) => !req(m))) reasons.push('module_missing');
+  // WhatsApp can show the calling UI on a number whose calls it does not let WhatsApp Web carry: the voip stack is then
+  // never downloaded, and its lookup answers null (live: a WhatsApp Business number with `enable_web_calling` off). An
+  // older WhatsApp Web without the download gate counts as allowed.
+  let callingOff = false;
+  try {
+    const gates = req('WAWebVoipGatingUtils');
+    callingOff = gates?.isWebCallingUiEnabled() !== true || gates?.isVoipDownloadEnabled?.() === false;
+  } catch {
+    callingOff = true;
+  }
+  if (callingOff) reasons.push('web_calling_disabled');
+  let timer: any;
+  let videoSupported = false;
+  // Only where WhatsApp Web may have a voip stack: elsewhere the lookup answers null, and "WhatsApp Web changed" is wrong.
+  if (!callingOff) {
+    try {
+      const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('voip stack lookup timed out')), timeoutMs); });
+      const stack = await Promise.race([req('WAWebVoipStackInterface')?.getVoipStackInterface(), expired]);
+      if (!stack || stack.type !== 'web') reasons.push('voip_stack_unavailable');
+      else videoSupported = typeof req('WAWebVoipUiVideoCallLoadable')?.requireBundle === 'function' && typeof stack.setCallVideoMute === 'function';
+    } catch {
+      reasons.push('voip_stack_unavailable');
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  if (!w.__mwCall) reasons.push('hooks_missing');
+  else if (!w.__mwCall.prepared) reasons.push('not_prepared'); // the hooks are here, the page setup is not done
+  return { reasons: [...new Set(reasons)], waVersion: w.Debug?.VERSION ?? null, videoSupported };
+}
+
+/**
+ * Answer the ringing call `callId` (WhatsApp's active call) and wait until it is connected. ONE deadline,
+ * `timeoutMs` after the answer starts, bounds all of it: the voip stack lookup, the video call UI's load, the accept
+ * itself (a stack that never answers would otherwise hold this until puppeteer's protocol timeout) and the wait for the
+ * connected state. acceptCall is never STARTED after the deadline, but one already started cannot be cancelled: the call
+ * may still connect after this rejected, so the caller must then hang it up (see CallMediaEngine.answer).
+ * `video`: answered the way WhatsApp Web answers a video call, its video call UI loaded first, so that it draws the
+ * caller. Either way the camera starts off (setCameraMutedInPage turns it on). A video call UI that fails to load
+ * answers the call as voice: `video` in the result says how it was answered, and `videoError`, only then, why.
+ * Refused without our hooks: WhatsApp Web would put Chrome's fake microphone (a beep) on the call.
+ */
+export async function answerActiveCall(
+  callId: string,
+  timeoutMs: number,
+  video = false,
+): Promise<{ connectedAfterMs: number; video: boolean; videoError?: string }> {
+  const w = window as any;
+  const call: MwCall = w.__mwCall;
+  if (!call) throw new Error('Call media hooks missing');
+  const CC = w.require('WAWebCallCollection');
+  const U = w.require('WAWebVoipCallStateUtils');
+  const ours = () => {
+    const c = CC.activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  if (!ours()) throw new Error('Call is not the active call');
+  if (!U.isCallIncoming(CC.activeCall.getState())) throw new Error('Call is not ringing');
+  try { w.require('WAWebCallRingtone').stopCallRingtone(); } catch {}
+  try { w.require('WAWebVoipCallAudioUnlock').prepareCallAudioElement(); } catch {}
+  call.ensure();
+  call.answeredAfter = call.noted; // this call's playback is noted from now on (callerTap)
+  const t0 = Date.now();
+  const deadline = t0 + timeoutMs;
+  const timedOut = () => new Error('Call did not connect in time');
+  let timer: any;
+  const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(timedOut()), timeoutMs); });
+  try {
+    const stack = await Promise.race([w.require('WAWebVoipStackInterface').getVoipStackInterface(), expired]);
+    if (Date.now() > deadline) throw timedOut(); // a busy page runs timers late: the clock has the last word
+    if (!ours()) throw new Error('Call ended before it connected');
+    let withVideo = false;
+    let videoError: string | undefined;
+    if (video) {
+      // Only the deadline fails the answer here: a bundle that does not load, or a module that is gone, leaves voice,
+      // and the reason goes back with the answer for the log.
+      withVideo = await Promise.race([
+        Promise.resolve()
+          .then(() => w.require('WAWebVoipUiVideoCallLoadable').requireBundle())
+          .then(() => true, (e: any) => { videoError = String(e?.message ?? e); return false; }),
+        expired,
+      ]);
+      if (Date.now() > deadline) throw timedOut();
+      if (!ours()) throw new Error('Call ended before it connected');
+    }
+    await Promise.race([stack.acceptCall(true, false, null), expired]);
+    for (;;) {
+      if (!ours()) throw new Error('Call ended before it connected');
+      if (U.isCallConnected(CC.activeCall.getState())) return { connectedAfterMs: Date.now() - t0, video: withVideo, videoError };
+      if (Date.now() > deadline) throw timedOut();
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * End the call `callId` the way WhatsApp Web's End button does, within `timeoutMs`: a voip stack that never
+ * answers must not hold the caller until puppeteer's protocol timeout. Nothing is touched before the stack is in
+ * hand, and nothing is started after the deadline.
+ */
+export async function hangUpActiveCall(callId: string, timeoutMs: number): Promise<void> {
+  const w = window as any;
+  const CC = w.require('WAWebCallCollection');
+  const ours = () => {
+    const c = CC.activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  if (!ours()) throw new Error('Call is not the active call');
+  const deadline = Date.now() + timeoutMs;
+  const timedOut = () => new Error('Call did not end in time');
+  let timer: any;
+  const expired = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(timedOut()), timeoutMs); });
+  try {
+    const stack = await Promise.race([w.require('WAWebVoipStackInterface').getVoipStackInterface(), expired]);
+    if (Date.now() > deadline) throw timedOut();
+    if (!ours()) throw new Error('Call is not the active call'); // it ended, or another call took its place, meanwhile
+    CC.activeCall.userEndedCall = true;
+    await Promise.race([stack.endCall(w.require('WAWebVoipSignalingEnums').EndCallReason.Self, true), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Play an encoded audio file (base64) into the call's microphone; the agent input is silent until it ends.
+ * One at a time: a second announcement would hand the line back to the agent while the first still plays, so
+ * it is refused. The guard is set before the first await and released in `finally`, whatever happens.
+ * `maxMs` (null: no limit) is checked on the DECODED length, before any of it plays: an upload's length is read from
+ * the file's headers, which a crafted file can make lie. It ends with its call, as a recording does
+ * (startRecordingInPage): when the call is over on two polls in a row (250-500 ms after its end; 500 ms into playing
+ * for one that ended during the decode) it is cut off and rejects; played on, it would reach the next call on this
+ * page and hold that call's agent silent. A playback that has not ended 5 s after its own length (a suspended or
+ * torn-down context never reaches the end) rejects too. The same `finally` stops it and gives the agent input back
+ * the gain it had.
+ */
+export async function playAnnouncementInPage(callId: string, b64: string, maxMs: number | null = null): Promise<{ durationMs: number }> {
+  const w = window as any;
+  const ours = () => {
+    const c = w.require('WAWebCallCollection').activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  if (!ours()) throw new Error('Call is not the active call');
+  // As for a recording: a call the whatsapp-web.js patch tracked, and no longer does, is over too.
+  const tracked = w._multiwaCallId === callId;
+  const over = () => !ours() || (tracked && w._multiwaCallId !== callId);
+  const call: MwCall = w.__mwCall.ensure();
+  if (call.announcing) throw new Error('Announcement already playing');
+  call.announcing = true;
+  try {
+    const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+    const buf = await call.ctx.decodeAudioData(bytes.buffer);
+    if (maxMs !== null && buf.duration * 1000 > maxMs) throw new Error(`Announcement too long: ${Math.round(buf.duration * 10) / 10} s`);
+    const src = call.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(call.inputs.announcement);
+    const agentGain = call.inputs.agent.gain.value; // the agent may be held silent already: give back what it had
+    call.inputs.agent.gain.value = 0;
+    let watchdog: any;
+    let poll: any;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        src.onended = () => resolve();
+        src.start();
+        // a context that never reaches the end of the buffer (suspended, torn down) must not hold the line for good
+        watchdog = setTimeout(() => reject(new Error('Announcement did not finish')), buf.duration * 1000 + 5000);
+        let gone = 0;
+        poll = setInterval(() => {
+          try { gone = over() ? gone + 1 : 0; } catch { gone++; } // a call state that cannot be read is not a live call
+          if (gone >= 2) reject(new Error('The call ended'));
+        }, 250);
+      });
+    } finally {
+      clearTimeout(watchdog);
+      clearInterval(poll);
+      try { src.stop(); } catch {} // after the watchdog: it would play on once the context runs again
+      src.disconnect();
+      call.inputs.agent.gain.value = agentGain;
+    }
+    return { durationMs: Math.round(buf.duration * 1000) };
+  } finally {
+    call.announcing = false;
+  }
+}
+
+/**
+ * Record the call `callId`: left = the caller (callerTap), right = what the caller hears (the injected
+ * microphone). With `video` (a call answered with video), WebM with VP8 too: a 640×480 picture of WhatsApp Web's
+ * caller canvas (`__mwBridge.callerCanvas` of this call, black while there is none), and while the agent's camera is
+ * on (`__mwCall.camera.source`), the camera as the caller gets it in a 160×120 corner. WebM/Opus chunks, in order,
+ * go to the page binding `__mwRecordingChunk(callId, base64)`. One recorder
+ * at a time, also for starts that overlap while they wait for a caller tap. The call-id guard runs again after that
+ * wait: a call that ended meanwhile (also as the patch reports it, see below) is refused, not recorded on whatever tap
+ * was left. A chunk the binding fails to
+ * take (it refuses a chunk of any other call, too) is counted and skipped; the later ones are still delivered, and
+ * stopRecordingInPage reports the loss. So does a recorder that fails (the first error is kept): it stops, and the
+ * recording is shorter than its call.
+ * A recording ends with its call, or it would go on and record the NEXT call on this page: the call is polled every
+ * 250 ms, and when it is over on two polls in a row (so 250-500 ms after the end; a single poll can see a flicker) the
+ * recorder stops by itself. A call is over when the call-id guard fails (WhatsApp's active call is another call, or
+ * none), or when the whatsapp-web.js patch that tracks the call reports it ended (it clears `_multiwaCallId`; the call
+ * may still be WhatsApp's active call). That is a backstop with two limits: a call the patch did not track when the
+ * start began is judged by the call-id guard alone, and a call the patch reports again after its end (it sets the id
+ * back) ends only when WhatsApp's active call changes. The recorder stays in `call.recorder`, stopped, until
+ * stopRecordingInPage collects the last chunks and frees the slot; a start before that is refused with "Already
+ * recording".
+ * Resolves with how the caller's tap was chosen (MwTapPick, see callerTap): the wrapper warns when it was a guess.
+ */
+export async function startRecordingInPage(callId: string, timesliceMs: number, video = false): Promise<{ callerVia: string } & MwTapPick> {
+  const w = window as any;
+  const ours = () => {
+    const c = w.require('WAWebCallCollection').activeCall;
+    return !!c && String(c.id) === callId && (!w._multiwaCallId || w._multiwaCallId === callId);
+  };
+  // The whatsapp-web.js patch that sets `_multiwaCallId` clears it when it ends the call, also for a call that comes
+  // back in state 0 and stays in WhatsApp's active call, where `ours` lets an unset id pass. So a call the patch
+  // tracked (read before the wait for a tap) and no longer does is over; one it never tracked is judged by `ours` alone.
+  const tracked = w._multiwaCallId === callId;
+  const over = () => !ours() || (tracked && w._multiwaCallId !== callId);
+  if (!ours()) throw new Error('Call is not the active call');
+  if (typeof w.__mwRecordingChunk !== 'function') throw new Error('Recording binding missing');
+  const call: MwCall = w.__mwCall.ensure();
+  if (call.recorder) throw new Error('Already recording');
+  const tap = await call.callerTap(5000);
+  // it ended (also as the patch reports it), or another call took its place, during the wait
+  if (over()) throw new Error('Call is not the active call');
+  if (!tap) throw new Error('No caller audio to record');
+  // The recorder is claimed below, synchronously; another start may have claimed it while this one waited for a tap.
+  if (call.recorder) throw new Error('Already recording');
+  const ctx = call.ctx;
+  const caller = ctx.createMediaStreamSource(tap.stream);
+  const heard = ctx.createMediaStreamSource(call.dest.stream);
+  const merger = ctx.createChannelMerger(2);
+  const out = ctx.createMediaStreamDestination();
+  out.channelCount = 2;
+  const nodes: AudioNode[] = [caller, heard, merger, out];
+  let chunks = 0;
+  let failedChunks = 0;
+  let failed: any = null;
+  let recorderError: any = null;
+  let queue = Promise.resolve();
+  let mr: MediaRecorder;
+  let stopped: Promise<void>;
+  // The picture's redraw and captures: they end with the recorder, however it stops.
+  let frames: { timer: any; track: MediaStreamTrack; view: HTMLVideoElement } | null = null;
+  const stopFrames = () => {
+    if (!frames) return;
+    clearInterval(frames.timer);
+    frames.track.stop();
+    (frames.view.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
+    frames.view.srcObject = null;
+    frames = null;
+  };
+  try {
+    let stream: MediaStream = out.stream;
+    if (video) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const g = canvas.getContext('2d');
+      // The caller's canvas is drawn through a capture of its own: WhatsApp Web may draw it with WebGL, whose buffer
+      // reads blank outside its own frame. A canvas WhatsApp Web replaces gets a capture of its own too.
+      const view = document.createElement('video');
+      view.muted = true;
+      let shown: HTMLCanvasElement | null = null;
+      const fit = (src: CanvasImageSource, sw: number, sh: number, x: number, y: number, bw: number, bh: number) => {
+        const s = Math.min(bw / sw, bh / sh);
+        g.drawImage(src, x + (bw - sw * s) / 2, y + (bh - sh * s) / 2, sw * s, sh * s);
+      };
+      const draw = () => {
+        const b = w.__mwBridge;
+        const c: HTMLCanvasElement | null = b && b.callId === callId && b.callerCanvas?.isConnected ? b.callerCanvas : null;
+        if (c !== shown) {
+          shown = c;
+          (view.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
+          const s: any = c ? c.captureStream(15) : null;
+          if (s) s.__mwOwn = true;
+          view.srcObject = s;
+          if (s) view.play().catch(() => {});
+        }
+        g.fillStyle = '#000';
+        g.fillRect(0, 0, 640, 480);
+        if (shown && view.readyState >= 2 && view.videoWidth) fit(view, view.videoWidth, view.videoHeight, 0, 0, 640, 480);
+        // What the caller gets of the agent: the camera is redrawn only while WhatsApp Web holds a clone of it (`timer`).
+        const cam = call.camera;
+        if (cam?.source && cam.timer) fit(cam.canvas, 640, 480, 640 - 172, 480 - 132, 160, 120);
+      };
+      const track = canvas.captureStream(15).getVideoTracks()[0];
+      draw();
+      frames = { timer: setInterval(draw, 1000 / 15), track, view };
+      stream = new MediaStream([out.stream.getAudioTracks()[0], track]);
+    }
+    mr = new MediaRecorder(
+      stream,
+      video
+        ? { mimeType: 'video/webm;codecs=vp8,opus', audioBitsPerSecond: 64000, videoBitsPerSecond: 900000 }
+        : { mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 64000 },
+    );
+    // `stop` follows every end of the recorder (a request, the poll below, an error of its own): the one place that
+    // notes when the recording ended. It reads `rec`, declared below: no await sits between `mr.start()` and that
+    // declaration, so `rec` exists before any event can fire.
+    stopped = new Promise<void>((resolve) => { mr.onstop = () => { rec.endedAt ??= Date.now(); stopFrames(); resolve(); }; });
+    mr.onerror = (e: any) => { recorderError ??= e.error ?? e.type; }; // fatal: the recorder stops after it
+    mr.ondataavailable = (e: BlobEvent) => {
+      if (!e.data.size) return;
+      chunks++;
+      queue = queue
+        .then(async () => {
+          const u8 = new Uint8Array(await e.data.arrayBuffer());
+          let bin = '';
+          for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+          await w.__mwRecordingChunk(callId, btoa(bin));
+        })
+        .catch((err) => { failed ??= err; failedChunks++; });
+    };
+    caller.connect(merger, 0, 0);
+    heard.connect(merger, 0, 1);
+    merger.connect(out);
+    mr.start(timesliceMs);
+  } catch (e) {
+    stopFrames();
+    nodes.forEach((n) => n.disconnect());
+    throw e;
+  }
+  const done = stopped.then(() => queue).then(() => {
+    const problems: string[] = [];
+    if (recorderError) problems.push(`Recorder failed: ${recorderError}`);
+    if (failedChunks) problems.push(`${failedChunks} of ${chunks} recording chunks were not delivered: ${failed?.message ?? failed}`);
+    if (problems.length) throw new Error(problems.join('; '));
+  });
+  done.catch(() => {}); // stopRecordingInPage reports it; a recorder that stops by itself must not log an unhandled rejection
+  const rec: NonNullable<MwCall['recorder']> = { callId, mr, startedAt: Date.now(), nodes, done };
+  call.recorder = rec;
+  let gone = 0;
+  const poll = setInterval(() => {
+    // however the recorder stopped (a request, an error, or the stop below), the poll ends with it
+    if (mr.state === 'inactive') { clearInterval(poll); return; }
+    try { gone = over() ? gone + 1 : 0; } catch { gone++; } // a call state that cannot be read is not a live call
+    if (gone >= 2) mr.stop();
+  }, 250);
+  return { callerVia: tap.via, freshCandidates: tap.freshCandidates, fallback: tap.fallback };
+}
+
+/**
+ * Stop the recording of `callId`; resolves once the last chunk went through the binding, with its length up to the
+ * moment the recorder stopped: for a recording that ended by itself with its call, that is 250-500 ms after the end
+ * of the call (see startRecordingInPage), not this (later) stop. Rejects when the recorder failed or chunks were lost
+ * (the message says which, and how many of how many; both are reported together), but the recorder is cleared all
+ * the same: otherwise every later start would fail with "Already recording" until the page reloads. No active-call
+ * guard: a recording must stop after its call ended.
+ */
+export async function stopRecordingInPage(callId: string): Promise<{ durationMs: number }> {
+  const call: MwCall = (window as any).__mwCall;
+  const rec = call?.recorder;
+  if (!rec) throw new Error('Not recording');
+  if (rec.callId !== callId) throw new Error('Not recording this call');
+  if (rec.mr.state !== 'inactive') rec.mr.stop(); // it may have stopped with its call already
+  try {
+    await rec.done;
+  } finally {
+    rec.nodes.forEach((n: AudioNode) => n.disconnect());
+    if (call.recorder === rec) call.recorder = null;
+  }
+  return { durationMs: (rec.endedAt ?? Date.now()) - rec.startedAt };
+}

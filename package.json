@@ -1,8 +1,8 @@
 {
   "name": "multiwa",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Open Source WhatsApp Business API Gateway - Multi-engine, Self-hosted, Enterprise-ready",
+  "description": "Self-hosted WhatsApp API gateway with a built-in team inbox",
   "keywords": [
     "whatsapp",
     "api",
@@ -49,7 +49,7 @@
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@nestjs/event-emitter": "^3.1.0",
@@ -97,7 +97,8 @@
     ],
     "patchedDependencies": {
       "whatsapp-web.js@1.34.7": "patches/whatsapp-web.js@1.34.7.patch",
-      "bullmq@6.1.1": "patches/bullmq@6.1.1.patch"
+      "bullmq@6.1.1": "patches/bullmq@6.1.1.patch",
+      "file-type@16.5.4": "patches/file-type@16.5.4.patch"
     }
   }
 }

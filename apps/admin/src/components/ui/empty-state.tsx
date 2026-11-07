@@ -11,12 +11,15 @@ import {
   Search,
   AlertTriangle,
 } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 interface EmptyStateProps {
   icon?: React.ReactNode;
   title: string;
+  /** The title's heading: h3 inside a page, h1 when the empty state is the page. */
+  titleAs?: 'h1' | 'h2' | 'h3';
   description?: string;
   action?: {
     label: string;
@@ -47,6 +50,7 @@ export const EmptyStateIcons = {
 export function EmptyState({
   icon,
   title,
+  titleAs: Title = 'h3',
   description,
   action,
   secondaryAction,
@@ -65,9 +69,9 @@ export function EmptyState({
       )}
 
       {/* Title */}
-      <h3 className="text-xl font-semibold text-foreground mb-2">
+      <Title className="text-xl font-semibold text-foreground mb-2">
         {title}
-      </h3>
+      </Title>
 
       {/* Description */}
       {description && (
@@ -81,11 +85,9 @@ export function EmptyState({
         <div className="flex items-center gap-3">
           {action && (
             action.href ? (
-              <a href={action.href}>
-                <Button className="cursor-pointer">
-                  {action.label}
-                </Button>
-              </a>
+              <Button asChild className="cursor-pointer">
+                <Link href={action.href}>{action.label}</Link>
+              </Button>
             ) : (
               <Button onClick={action.onClick} className="cursor-pointer">
                 {action.label}
@@ -94,11 +96,9 @@ export function EmptyState({
           )}
           {secondaryAction && (
             secondaryAction.href ? (
-              <a href={secondaryAction.href}>
-                <Button variant="outline" className="cursor-pointer">
-                  {secondaryAction.label}
-                </Button>
-              </a>
+              <Button asChild variant="outline" className="cursor-pointer">
+                <Link href={secondaryAction.href}>{secondaryAction.label}</Link>
+              </Button>
             ) : (
               <Button variant="outline" onClick={secondaryAction.onClick} className="cursor-pointer">
                 {secondaryAction.label}
@@ -112,16 +112,14 @@ export function EmptyState({
 }
 
 // Preset empty states for common scenarios
-export function EmptyProfiles() {
+/** `canAdd`: the role may add a profile (owner, admin). The others are told who does. */
+export function EmptyProfiles({ canAdd }: { canAdd: boolean }) {
   return (
     <EmptyState
       icon={EmptyStateIcons.profiles}
       title="No WhatsApp profiles yet"
-      description="Connect your first WhatsApp device to start sending messages."
-      action={{
-        label: "Add Profile",
-        href: "/dashboard/profiles/new",
-      }}
+      description={canAdd ? "Connect your first WhatsApp device to start sending messages." : "An owner or admin connects the WhatsApp devices."}
+      action={canAdd ? { label: "Add Profile", href: "/dashboard/profiles/new" } : undefined}
     />
   );
 }
@@ -145,15 +143,7 @@ export function EmptyContacts() {
     <EmptyState
       icon={EmptyStateIcons.contacts}
       title="No contacts yet"
-      description="Add contacts manually or import from a CSV file."
-      action={{
-        label: "Add Contact",
-        href: "/dashboard/contacts/new",
-      }}
-      secondaryAction={{
-        label: "Import CSV",
-        href: "/dashboard/contacts/import",
-      }}
+      description="Someone who messages one of your profiles one-to-one is saved here, and so are contacts added by hand, synced from WhatsApp or imported."
     />
   );
 }

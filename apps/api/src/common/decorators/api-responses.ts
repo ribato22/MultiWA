@@ -35,7 +35,7 @@ export function ApiAuthErrors() {
       schema: { example: { statusCode: 401, message: 'Unauthorized' } },
     }),
     ApiForbiddenResponse({
-      description: 'Authenticated, but the resource is outside your organization/workspace.',
+      description: 'Authenticated, but your role may not call this route, or the resource is outside your organization/workspace.',
       schema: { example: { statusCode: 403, message: 'Forbidden resource', error: 'Forbidden' } },
     }),
   );
@@ -45,7 +45,8 @@ export function ApiAuthErrors() {
 export function ApiNotFound(resource = 'Resource') {
   return ApiNotFoundResponse({
     description: `${resource} not found.`,
-    schema: { example: { statusCode: 404, message: `${resource} not found`, error: 'Not Found' } },
+    // JSON by name: a schema alone is shown under each type the route produces, audio on the audio routes.
+    content: { 'application/json': { schema: { example: { statusCode: 404, message: `${resource} not found`, error: 'Not Found' } } } },
   });
 }
 

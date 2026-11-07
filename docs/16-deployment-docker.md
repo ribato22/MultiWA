@@ -149,6 +149,19 @@ server {
         proxy_set_header   X-Forwarded-Proto $scheme;
     }
 
+    # The calls announcement upload: up to 2 MB, checked by the API, above Nginx's 1 MB default. A slow
+    # recordings store can hold the API for about a minute. A regex location wins over the /api/ prefix below.
+    location ~ ^/api/v1/profiles/[^/]+/calls-announcement$ {
+        client_max_body_size 3m;
+        proxy_read_timeout   120s;
+        proxy_pass         http://127.0.0.1:3333;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+
     # API + Swagger
     location /api/ {
         proxy_pass         http://127.0.0.1:3333;
@@ -170,7 +183,30 @@ server {
 }
 ```
 
-If you put the Admin on a different subdomain than the API (e.g., `admin.example.com` and `api.example.com`), update `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` accordingly, then **rebuild the admin image** so the new API URL is baked into the client bundle.
+If you put the Admin on a different subdomain than the API (e.g., `admin.example.com` and `api.example.com`), update `NEXT_PUBLIC_API_URL` and `CORS_ORIGINS` accordingly, then **rebuild the admin image** so the new API URL is baked into the client bundle. The dashboard opens its realtime connection on its own address, so the admin's proxy must still forward `/socket.io/` to the API, as above.
+
+`docker/nginx/example.conf` is a fuller TLS example for an Nginx in front of the API alone: it serves a static landing page at `/`, not the admin.
+
+---
+
+## Calls answered in the dashboard
+
+Agents can answer WhatsApp calls in the dashboard through a media server in the API ([Calls answered in the dashboard](./23-calls.md)). It is off by default. To turn it on:
+
+1. In `.env`, set `CALLS_MEDIA_ENABLED=true`, and `CALLS_MEDIA_ANNOUNCED_ADDRESS` to the address the agents' browsers reach the host on (its LAN address or host name). The engines must run in the API: `ENGINE_HOST=api`, the default.
+2. Publish the media port, `CALLS_MEDIA_PORT` (default `40000`), UDP and TCP, with the overlay file:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.calls-media.yml up -d
+   # the full stack (MinIO and Nginx too)
+   docker compose --profile full -f docker-compose.yml -f docker-compose.calls-media.yml up -d
+   ```
+
+3. Open the firewall: the agents' subnet must reach that port on that address, over UDP (preferred) and TCP (the fallback). Call audio goes straight to the API, never through Nginx. Agents outside the LAN need a TURN server, in `CALLS_MEDIA_ICE_SERVERS`.
+4. Serve the admin over HTTPS: browsers give the microphone to a secure origin only. The admin sends `Permissions-Policy: microphone=(self)`; a proxy must not replace it with a policy that leaves the microphone out.
+5. Have the proxy on the dashboard's address forward `/socket.io/` to the API, with WebSocket upgrades: the dashboard opens its realtime connection on its own address, so with the admin on a subdomain of its own, that is the admin's proxy. Give the announcement upload a request body of 3 MB (a file of at most 2 MB, plus the multipart framing) and a 120 s read timeout. The example above does both.
+
+Recording needs a recordings storage: the stock Compose files keep the recordings on volumes of their own (see [Call recordings](./18-configuration-reference.md#call-recordings)).
 
 ---
 
@@ -226,6 +262,7 @@ Before exposing the deployment to real users, confirm:
 - [ ] `sessions_data` volume is backed up and access-controlled.
 - [ ] Webhook delivery uses HTTPS endpoints and HMAC secrets where applicable.
 - [ ] Logs and metrics are shipped somewhere persistent (Loki, ELK, CloudWatch, etc.).
+- [ ] If agents answer calls in the dashboard: the admin is on HTTPS, the media port is open to the agents only, and recording is turned on only once the recordings storage passed its privacy check.
 
 ---
 

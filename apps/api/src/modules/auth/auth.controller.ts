@@ -2,7 +2,7 @@
 // apps/api/src/modules/auth/auth.controller.ts
 
 import { Controller, Post, Body, Get, Patch, Delete, UseGuards, Request, Param, Headers } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiForbiddenResponse } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { AuthService } from './auth.service';
@@ -10,6 +10,8 @@ import { TwoFactorService } from './two-factor.service';
 import { SessionsService } from './sessions.service';
 import { LoginDto, RegisterDto, TokenResponseDto } from './dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { Roles } from './decorators/roles.decorator';
+import { ANY_ROLES } from './roles';
 import { AllowInDemo } from '../../common/guards/demo.guard';
 
 @ApiTags('Authentication')
@@ -25,9 +27,17 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @ApiOperation({ summary: 'Register a new user and organization' })
   @ApiResponse({ status: 201, description: 'User registered successfully', type: TokenResponseDto })
+  @ApiForbiddenResponse({ description: 'Registration is closed: ask an admin to add you' })
   @ApiValidationError()
   async register(@Body() dto: RegisterDto): Promise<TokenResponseDto> {
     return this.authService.register(dto);
+  }
+
+  @Get('registration')
+  @ApiOperation({ summary: 'Whether a new account can be created (the dashboard shows "Create account" only then)' })
+  @ApiResponse({ status: 200, description: '{ open: boolean }' })
+  async registration() {
+    return { open: await this.authService.registrationOpen() };
   }
 
   @Post('login')
@@ -73,9 +83,9 @@ export class AuthController {
   }
 
   @Post('logout')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Logout and revoke current session' })
   @ApiResponse({ status: 200, description: 'Logged out successfully' })
   @ApiAuthErrors()
@@ -90,7 +100,6 @@ export class AuthController {
   @Get('me')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({ status: 200, description: 'User profile' })
   @ApiAuthErrors()
@@ -101,7 +110,6 @@ export class AuthController {
   @Get('preferences')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Get notification preferences' })
   @ApiResponse({ status: 200, description: 'User preferences' })
   @ApiAuthErrors()
@@ -110,9 +118,9 @@ export class AuthController {
   }
 
   @Patch('preferences')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Update notification preferences' })
   @ApiResponse({ status: 200, description: 'Preferences updated' })
   @ApiValidationError()
@@ -122,9 +130,9 @@ export class AuthController {
   }
 
   @Post('change-password')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Change user password' })
   @ApiResponse({ status: 200, description: 'Password changed successfully' })
   @ApiResponse({ status: 400, description: 'Current password incorrect or new password too short' })
@@ -138,10 +146,11 @@ export class AuthController {
   }
 
   @Delete('account')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Delete user account' })
+  @ApiResponse({ status: 403, description: "The server's owner, while other organizations use this server" })
   @ApiResponse({ status: 200, description: 'Account deleted' })
   @ApiResponse({ status: 400, description: 'Password incorrect' })
   @ApiValidationError()
@@ -158,9 +167,9 @@ export class AuthController {
   // ==========================================
 
   @Post('2fa/setup')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Generate 2FA setup QR code' })
   @ApiResponse({ status: 200, description: 'QR code and secret returned' })
   @ApiAuthErrors()
@@ -169,9 +178,9 @@ export class AuthController {
   }
 
   @Post('2fa/enable')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Enable 2FA by verifying TOTP code' })
   @ApiResponse({ status: 200, description: '2FA enabled, backup codes returned' })
   @ApiValidationError()
@@ -184,9 +193,9 @@ export class AuthController {
   }
 
   @Post('2fa/disable')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Disable 2FA with password confirmation' })
   @ApiResponse({ status: 200, description: '2FA disabled' })
   @ApiAuthErrors()
@@ -196,9 +205,9 @@ export class AuthController {
   }
 
   @Post('2fa/backup-codes')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Regenerate 2FA backup codes' })
   @ApiResponse({ status: 200, description: 'New backup codes generated' })
   @ApiAuthErrors()
@@ -213,7 +222,6 @@ export class AuthController {
   @Get('sessions')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'List all active sessions' })
   @ApiResponse({ status: 200, description: 'List of active sessions' })
   @ApiAuthErrors()
@@ -222,9 +230,9 @@ export class AuthController {
   }
 
   @Delete('sessions/:id')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Revoke a specific session' })
   @ApiResponse({ status: 200, description: 'Session revoked' })
   @ApiNotFound('Session')
@@ -238,9 +246,9 @@ export class AuthController {
   }
 
   @Delete('sessions')
+  @Roles(...ANY_ROLES)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Revoke all other sessions', description: 'Revokes every session except the one making this request.' })
   @ApiResponse({ status: 200, description: 'All other sessions revoked' })
   @ApiAuthErrors()

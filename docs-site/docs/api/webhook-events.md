@@ -48,6 +48,13 @@ MultiWA generates the signing secret itself; a `secret` field in the request is 
 | `connection.qr` | New QR code generated |
 | `connection.ready` | WhatsApp connected |
 | `connection.disconnected` | WhatsApp disconnected |
+| `call.received` | An incoming call started ringing |
+| `call.answered` | An agent answered a ringing call in the dashboard |
+| `call.rejected` | A ringing call was rejected: automatically, by an agent, or on the phone |
+| `call.ended` | A ringing call stopped ringing without being rejected (missed, answered on another device, or unknown), or a call answered in the dashboard ended |
+| `call.updated` | The call changed after that: its outcome was settled later, or its follow-up status or assignee changed |
+| `call.recording.ready` | A call's recording is stored, after its call ended |
+| `call.recording.deleted` | A call's recording was deleted: by an admin, or at the end of its profile's retention period |
 
 ---
 
@@ -67,6 +74,118 @@ MultiWA generates the signing secret itself; a `secret` field in the request is 
   }
 }
 ```
+
+### Call events
+
+An incoming WhatsApp call produces `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated`; subscribe to them by name, like any other event. All five carry the same `data`: the call as it stands when the event is sent.
+
+```json
+{
+  "event": "call.ended",
+  "profileId": "profile-123",
+  "timestamp": "2026-10-26T03:00:31.250Z",
+  "data": {
+    "profileId": "profile-123",
+    "callId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41",
+    "waCallId": "3A9F1C5E7B2D4086A1C3E5F70912B4D6",
+    "from": "628123456789@s.whatsapp.net",
+    "isVideo": false,
+    "isGroup": false,
+    "direction": "incoming",
+    "outcome": "missed",
+    "rejectedBy": null,
+    "startedAt": "2026-10-26T03:00:00.000Z",
+    "endedAt": "2026-10-26T03:00:31.000Z",
+    "followUp": "open",
+    "assignedUserId": null,
+    "answeredByUserId": null,
+    "answeredAt": null,
+    "endedBy": null,
+    "endReason": null,
+    "talkSeconds": null
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `callId` | MultiWA's id for the call, the one `/calls/:id` takes |
+| `waCallId` | The engine's id for the call |
+| `from` | The caller as a chat JID, in the form MultiWA stores chats under: `<number>@s.whatsapp.net` (never `@c.us`), or `<id>@lid` when WhatsApp hides the number and it could not be resolved |
+| `isVideo`, `isGroup` | Video call; group call |
+| `direction` | Always `incoming` |
+| `outcome` | `ringing`; `answered` (answered in the dashboard); `missed`; `rejected`; `answered_elsewhere` (answered on another device of the account); `unknown` (it stopped ringing and the engine could not tell how) |
+| `rejectedBy` | Who rejected the call: `auto` (the profile's auto-reject), `agent` (the API or the Calls page), `device` (the phone). `null` unless `outcome` is `rejected` |
+| `startedAt`, `endedAt` | ISO 8601; `endedAt` is `null` while the call rings |
+| `followUp` | `open` (the default), `in_progress` or `done`. An `open` call becomes `done` by itself once it is answered in the dashboard or known to have been answered on another device |
+| `assignedUserId` | The user the call is assigned to, or `null` |
+| `answeredByUserId` | The agent who answered the call in the dashboard, or `null` |
+| `answeredAt` | When WhatsApp connected that agent (ISO 8601), or `null` |
+| `endedBy` | For a call answered in the dashboard: `agent`, `caller` or `server`; else `null` |
+| `endReason` | For a call answered in the dashboard: `hangup`, `caller_hangup`, `agent_lost`, `media_failed`, `time_limit` or `server_restart`; else `null` |
+| `talkSeconds` | For a call answered in the dashboard: its talk time in seconds; else `null` |
+
+**When each event is sent**
+
+- `call.received`: a call started ringing (`outcome` is `ringing`).
+- `call.answered`: an agent answered the call in the dashboard (`outcome` is `answered`).
+- `call.rejected`: a ringing call was rejected.
+- `call.ended`: a ringing call stopped ringing without being rejected; `outcome` is `missed`, `answered_elsewhere` or `unknown`. A call still ringing after `CALL_RING_TIMEOUT_MS` (90 seconds by default) ends as `unknown`. For a call answered in the dashboard it comes when the call is over, with `endedBy`, `endReason` and `talkSeconds`.
+- `call.updated`: any change after that. WhatsApp's call log settles an `unknown` outcome (to `missed`, `rejected` or `answered_elsewhere`), or the follow-up status or the assignee changes, through the API or the Calls page. An agent's reply or call link also moves `open` to `in_progress`.
+
+What the engine reports decides which event carries the final outcome (see [Engine Abstraction](<../architecture/engine-abstraction.md#calls>)), so read `outcome` rather than the event name:
+
+- Auto-rejected: `call.received`, then `call.rejected` with `rejectedBy: "auto"`.
+- Missed on whatsapp-web.js, which cannot tell how a call ended: `call.received`, `call.ended` with `outcome: "unknown"`, and moments later `call.updated` with `outcome: "missed"`, once WhatsApp's call log arrives.
+- Missed on Baileys: `call.received`, then `call.ended` with `outcome: "missed"` when the call rang out. A caller who hangs up first ends as `unknown`, and Baileys reports no call log to settle it.
+- Answered in the dashboard: `call.received`, `call.answered`, then `call.ended` with `outcome: "answered"` when it is over. A restart of MultiWA ends it with `endReason: "server_restart"`: a normal stop sends its `call.ended` as it shuts down, with the talk time up to then; a crash leaves it to the next start, which sends it with `talkSeconds: null` (unknown).
+
+A call still ringing when MultiWA restarts skips part of this: it is closed as `unknown` at the next start, without a `call.ended`, and stays `unknown`, since an engine passes on only the call log of a call it saw ringing since it last connected.
+
+**Deduplicating.** A delivery is retried when your endpoint fails or times out, and call events carry no event id, so the same event can arrive twice. A call gets at most one `call.received`, at most one `call.answered`, and at most one of `call.rejected` and `call.ended`, so `callId` plus the event name identifies those. `call.updated` can follow several times for one call, even with the same `outcome` (a follow-up or assignee change), so do not deduplicate it on `outcome`. Every event carries the whole call: keep the newest, and read `GET /calls/:id` when the order matters, since a retried delivery can arrive after a later event of the same call.
+
+### Call recording events
+
+`call.recording.ready` and `call.recording.deleted` name the recording, never its audio (that is fetched through `GET /calls/:id/recording`).
+
+`call.recording.ready` comes once a call's recording is stored: within about a minute of the call's end; after a restart, once the server is up again; or, when the storage did not take it, at a later start or night:
+
+```json
+{
+  "event": "call.recording.ready",
+  "profileId": "profile-123",
+  "timestamp": "2026-11-01T09:12:40.512Z",
+  "data": {
+    "profileId": "profile-123",
+    "callId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41",
+    "recordingId": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+    "durationSec": 184,
+    "bytes": 1478201,
+    "partial": false
+  }
+}
+```
+
+`partial: true`: the recording may end before its call did: a restart cut the call short, its recorder did not stop cleanly, or a write to its file failed. A recording is stored once, so `recordingId` identifies the event.
+
+`call.recording.deleted`:
+
+```json
+{
+  "event": "call.recording.deleted",
+  "profileId": "profile-123",
+  "timestamp": "2026-10-31T19:30:02.120Z",
+  "data": {
+    "profileId": "profile-123",
+    "callId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41",
+    "recordingId": "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+    "reason": "retention",
+    "deletedAt": "2026-10-31T19:30:02.000Z"
+  }
+}
+```
+
+`reason` is `admin` (`DELETE /calls/:id/recording`) or `retention` (the nightly job, past the profile's `retentionDays`). A recording is deleted once, so `recordingId` identifies the event.
 
 ---
 

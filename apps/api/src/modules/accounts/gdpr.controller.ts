@@ -1,9 +1,11 @@
 // MultiWA Gateway - GDPR Compliance Controller
 // apps/api/src/modules/accounts/gdpr.controller.ts
 
-import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiSecurity, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Get, Delete, Req, UseGuards, Logger, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
 import { prisma } from '@multiwa/database';
 
@@ -13,7 +15,6 @@ import { prisma } from '@multiwa/database';
  */
 @ApiTags('GDPR / Privacy')
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 @UseGuards(JwtAuthGuard)
 @Controller('account')
@@ -26,10 +27,11 @@ export class GdprController {
    * and audit logs associated with the authenticated user.
    */
   @Get('export')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({
     summary: 'Export all personal data (GDPR Art. 15)',
     description:
-      'Returns a JSON archive of the authenticated user: profile (secrets excluded), messages, contacts, automations, audit logs, notifications, push subscriptions, sessions, and profiles, plus summary statistics.',
+      "Returns a JSON archive of the authenticated user: profile (secrets excluded), messages, contacts, automations, audit logs, notifications, push subscriptions, sessions, profiles, and the organization's customers with their links and notes, plus summary statistics.",
   })
   @ApiResponse({ status: 200, description: 'JSON archive of all user data' })
   async exportData(@Req() req: any) {
@@ -38,7 +40,7 @@ export class GdprController {
     this.logger.log(`GDPR data export requested by user ${userId}`);
 
     // Gather all user-related data in parallel
-    const [user, auditLogs, pushSubscriptions, notifications, sessions] =
+    const [user, auditLogs, pushSubscriptions, notifications, sessions, customers] =
       await Promise.all([
         // User profile (exclude secrets)
         prisma.user.findUnique({
@@ -111,6 +113,23 @@ export class GdprController {
             userAgent: true,
             lastActiveAt: true,
             createdAt: true,
+          },
+        }),
+
+        // The organization's customers, with their links, notes and tags
+        prisma.customer.findMany({
+          where: { organizationId },
+          select: {
+            id: true,
+            externalId: true,
+            displayName: true,
+            tags: true,
+            manualFields: true,
+            lastLookupAt: true,
+            createdAt: true,
+            updatedAt: true,
+            links: { select: { id: true, phone: true, linkedByUserId: true, linkedByApiKeyId: true, lastUsedAt: true, createdAt: true } },
+            notes: { select: { id: true, body: true, authorUserId: true, authorApiKeyId: true, createdAt: true, updatedAt: true } },
           },
         }),
       ]);
@@ -195,11 +214,13 @@ export class GdprController {
         totalPushSubscriptions: pushSubscriptions.length,
         totalSessions: sessions.length,
         totalProfiles: profiles.length,
+        totalCustomers: customers.length,
       },
       profiles,
       messages,
       contacts,
       automations,
+      customers,
       auditLogs,
       notifications,
       pushSubscriptions,
@@ -215,12 +236,14 @@ export class GdprController {
    * This action is IRREVERSIBLE. Cascade-deletes all user data.
    */
   @Delete('delete')
+  @Roles(...ANY_ROLES)
   @ApiOperation({
     summary: 'Delete account and all data (GDPR Art. 17)',
     description:
       'Irreversibly erases the authenticated user and their push subscriptions, notifications, audit logs, sessions, API keys, and role assignments. Remaining data cascades via FK constraints.',
   })
   @ApiResponse({ status: 200, description: 'Account and all data permanently deleted' })
+  @ApiResponse({ status: 403, description: 'An owner: owners delete their account with DELETE /auth/account' })
   @ApiResponse({ status: 404, description: 'User not found' })
   @ApiNotFound('User')
   async deleteAccount(@Req() req: any) {
@@ -231,6 +254,11 @@ export class GdprController {
     // guarantees a user id, but this operation is IRREVERSIBLE, so we double-check.
     if (!userId) {
       throw new UnauthorizedException('Authenticated user id is required');
+    }
+    // Before anything is erased: this keeps the user's organization, which an owner's erasure would leave without its
+    // owner. An owner's account goes with the organization, through DELETE /auth/account.
+    if (req.user.role === 'owner') {
+      throw new ForbiddenException('An owner deletes their account with DELETE /auth/account, which deletes the organization too');
     }
     this.logger.warn(`GDPR account deletion requested by user ${userId}`);
 

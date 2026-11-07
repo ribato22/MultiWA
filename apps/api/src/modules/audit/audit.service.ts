@@ -3,6 +3,8 @@
 
 import { Injectable } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { likeLiteral } from '../../common/like-literal';
+import { pageSize } from '../../common/page-size';
 
 export enum AuditAction {
   // Auth
@@ -57,6 +59,16 @@ export enum AuditAction {
   CONTACT_EXPORT = 'contact.export',
   CONTACT_DELETE = 'contact.delete',
   CONTACT_SYNC = 'contact.sync',
+
+  // Customers
+  CUSTOMER_LINK = 'customer.link',
+  CUSTOMER_UNLINK = 'customer.unlink',
+  CUSTOMER_UPDATE = 'customer.update',
+  CUSTOMER_DELETE = 'customer.delete',
+  CUSTOMER_NOTE_CREATE = 'customer.note.create',
+  CUSTOMER_NOTE_UPDATE = 'customer.note.update',
+  CUSTOMER_NOTE_DELETE = 'customer.note.delete',
+  CUSTOMER_CONFIG_UPDATE = 'customer.config.update',
 
   // Templates
   TEMPLATE_CREATE = 'template.create',
@@ -137,7 +149,7 @@ export class AuditService {
 
     if (options.organizationId) where.organizationId = options.organizationId;
     if (options.userId) where.userId = options.userId;
-    if (options.action) where.action = { startsWith: options.action };
+    if (options.action) where.action = { startsWith: likeLiteral(options.action) };
     if (options.resourceType) where.resourceType = options.resourceType;
     if (options.resourceId) where.resourceId = options.resourceId;
 
@@ -147,10 +159,11 @@ export class AuditService {
       if (options.endDate) where.timestamp.lte = options.endDate;
     }
 
+    const limit = pageSize(options.limit);
     const [logs, total] = await Promise.all([
       prisma.auditLog.findMany({
         where,
-        take: options.limit || 50,
+        take: limit,
         skip: options.offset || 0,
         orderBy: { timestamp: 'desc' },
         include: {
@@ -163,7 +176,7 @@ export class AuditService {
     return {
       logs,
       total,
-      limit: options.limit || 50,
+      limit,
       offset: options.offset || 0,
     };
   }

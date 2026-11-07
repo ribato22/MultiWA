@@ -11,6 +11,7 @@ import {
   IsBoolean,
   ValidateNested,
   ArrayNotEmpty,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -141,6 +142,7 @@ export class ValidateBulkDto {
   })
   @IsArray()
   @ArrayNotEmpty()
+  @ArrayMaxSize(1000) // each number is a database lookup
   @IsString({ each: true })
   phones: string[];
 }

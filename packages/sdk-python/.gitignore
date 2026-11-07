@@ -1,0 +1,10 @@
+# What a local install and the checks leave in the SDK's folder.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/

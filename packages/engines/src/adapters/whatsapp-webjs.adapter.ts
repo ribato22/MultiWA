@@ -4,6 +4,9 @@
 import { Client, LocalAuth, MessageMedia, Location, Poll } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { resolveWaMessageId } from '@multiwa/core';
+import { readCallLog, isCallLogWithoutOutcome, toJidString, remember, MAX_REMEMBERED_IDS } from '../call-events';
+import { WebJsCallMedia, CALL_MEDIA_CHROME_ARGS, CALL_MEDIA_INIT_SCRIPT } from './webjs-call-media';
+import { processTreeRssAnonMb } from './process-memory';
 import type { 
   IWhatsAppEngine, 
   EngineConfig, 
@@ -13,7 +16,8 @@ import type {
   LocationOptions,
   ContactOptions,
   PollOptions,
-  SendMessageOptions
+  SendMessageOptions,
+  CallLinkType
 } from '../types';
 
 /**
@@ -34,6 +38,37 @@ export const ACK_STATUS_MAP: Record<number, string> = {
   4: 'played',
 };
 
+// Caps: ringing calls we keep a handle on (for rejectCall), and distinct unreadable call-log shapes we warn about.
+const MAX_TRACKED_CALLS = 100;
+const MAX_WARNED_SHAPES = 20;
+// At most one line per this long about dropped call logs: a fresh link's history sync drops hundreds.
+const DROPPED_CALL_LOG_NOTE_MS = 60_000;
+
+/** Reasons the adapter reports through onDisconnected when the browser side failed, not WhatsApp. */
+export const BROWSER_LOSS_REASONS = {
+  pageCrashed: 'PAGE_CRASHED',
+  browserClosed: 'BROWSER_CLOSED',
+  memoryLimit: 'MEMORY_LIMIT',
+} as const;
+
+/** How often a ready profile's Chromium memory is measured. */
+const MEMORY_CHECK_MS = 60_000;
+// A profile restarted for memory is not restarted for memory again this soon: if its normal size is above the
+// limit, a restart every few minutes would only take it offline. A crash is still recovered meanwhile.
+const MEMORY_RECYCLE_COOLDOWN_MS = 30 * 60_000;
+/** profileId -> when it was last restarted for memory (module-wide: each restart makes a new adapter). */
+const memoryRecycledAt = new Map<string, number>();
+
+/**
+ * WWEBJS_MEMORY_LIMIT_MB: the anonymous resident memory, in MB, of a profile's Chromium (browser and renderers)
+ * above which it is recycled from its stored session. 2500 by default, 0 turns the check off, anything else
+ * falls back to the default. On a 7.3 GB host one renderer reached 4.9 GB and the OOM killer took it.
+ */
+export function memoryLimitMb(raw: string | undefined): number {
+  const n = Number(raw);
+  return raw !== undefined && raw.trim() !== '' && Number.isInteger(n) && n >= 0 ? n : 2500;
+}
+
 export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   readonly engineType = 'whatsapp-web-js' as const;
   
@@ -45,13 +80,33 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   };
   private currentQR: string | null = null;
   private qrCallbacks: ((qr: string) => void)[] = [];
-  // Raw whatsapp-web.js Call objects, keyed by id, so rejectCall() can act on them.
+  // Raw whatsapp-web.js Call objects of calls still ringing, keyed by id (bounded), so rejectCall() can act on them.
   private calls = new Map<string, any>();
+  // Ids already reported as ringing, so a repeated `call` event is not a new call (bounded).
+  private seenCalls = new Set<string>();
+  // Ids of calls reported ringing since the last disconnect (bounded): only their call logs are
+  // reported. Kept after `ended`, since a call's log arrives about a second after it.
+  private callsRungThisSession = new Set<string>();
+  private droppedCallLogNotedAt = 0;
+  // Call-log message ids already reported (message_create can repeat on re-inject).
+  private seenCallLogs = new Set<string>();
+  // Shapes of call-log messages we could not read, warned about once each.
+  private warnedCallLogShapes = new Set<string>();
+  // Call media: only when the server switch is on (EngineConfig.callMedia.enabled).
+  callMedia?: WebJsCallMedia;
+  // Clients whose page or browser loss was already reported: a crash followed by the browser closing is one loss.
+  private lostClients = new WeakSet<object>();
+  // Clients the adapter let go of itself (destroy, logout): their browser closing is not a loss.
+  private releasedClients = new WeakSet<object>();
+  private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private warnedMemoryCooldown = false;
+  private warnedMemoryOnCall = false;
 
   async initialize(config: EngineConfig): Promise<void> {
     this.config = config;
     
     const sessionDir = config.sessionDir || `./sessions/${config.profileId}`;
+    const callMediaOn = config.callMedia?.enabled === true;
     
     // Platform-aware Puppeteer args
     const isLinux = process.platform === 'linux';
@@ -89,6 +144,7 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
 
     this.client = new Client({
+      ...(callMediaOn ? { evalOnNewDoc: CALL_MEDIA_INIT_SCRIPT } : {}),
       ...webVersionOpts,
       authStrategy: new LocalAuth({
         clientId: config.profileId,
@@ -99,10 +155,20 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || config.puppeteerOptions?.executablePath,
         timeout: 60000, // 60 seconds for browser launch
         protocolTimeout: 240000, // 240 seconds for CDP protocol operations
-        args: config.puppeteerOptions?.args || defaultArgs,
+        args: [...(config.puppeteerOptions?.args || defaultArgs), ...(callMediaOn ? CALL_MEDIA_CHROME_ARGS : [])],
       },
     });
 
+    // The wrapper belongs to THIS client: once the adapter lets go of it (destroy(), or a newer initialize()) it has
+    // no page. whatsapp-web.js destroy() only closes the browser; client.pupPage stays set.
+    const client = this.client;
+    this.callMedia = callMediaOn
+      ? new WebJsCallMedia(
+          () => (this.client === client ? (client as any).pupPage : null),
+          () => this.isReady(),
+          config.profileId,
+        )
+      : undefined;
     this.setupEventHandlers();
   }
 
@@ -146,6 +212,19 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       this.config?.onReady?.(info?.wid?.user || '', info?.pushname || '');
     });
 
+    // Call media setup on EVERY ready: WhatsApp Web can reload its page (seen 3 s after the first ready),
+    // and the handler above deliberately ignores every ready after the first.
+    if (this.callMedia) {
+      const media = this.callMedia;
+      this.client.on('ready', () => {
+        media.preparePage().catch((e) => {
+          const profile = String(this.config?.profileId).replace(/[\r\n]/g, '');
+          const why = String((e as Error)?.message ?? e).replace(/[\r\n]/g, '');
+          console.warn(`[WhatsApp-WebJS] call media setup failed for profile ${profile}: ${why}`);
+        });
+      });
+    }
+
     // Authenticated (repeated for the same reason as 'ready')
     this.client.on('authenticated', () => {
       if (this.status.isAuthenticated) return;
@@ -155,12 +234,19 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     });
 
     // Disconnected
+    const client = this.client;
     this.client.on('disconnected', (reason: string) => {
+      // A browser loss already reported for this client is the same disconnect: report it once.
+      if (this.lostClients.has(client)) return;
       console.log(`[WhatsApp-WebJS] Disconnected for profile ${this.config?.profileId}: ${reason}`);
       this.status = {
         isConnected: false,
         isAuthenticated: false,
       };
+      // The page that held the ringing calls is gone: none of them can be rejected or ended now,
+      // and a call log from here on is reported only for a call that rings after this.
+      this.calls.clear();
+      this.callsRungThisSession.clear();
       this.config?.onDisconnected?.(reason);
     });
 
@@ -213,24 +299,123 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
       this.config?.onMessageAck?.(ackId, statusMap[ack] || 'unknown');
     });
 
-    // Incoming voice/video call — surface it so the engine-manager can auto-reject.
+    // Incoming voice/video call (the offer), reported once per call: whatsapp-web.js can
+    // fire `call` again for the same call (its hook and page re-injection).
     this.client.on('call', (call: any) => {
-      if (call?.id) this.calls.set(call.id, call);
+      if (!call?.id || call.fromMe || this.seenCalls.has(call.id)) return; // incoming calls, once each
+      remember(this.seenCalls, call.id, MAX_REMEMBERED_IDS);
+      remember(this.callsRungThisSession, call.id, MAX_REMEMBERED_IDS);
+      this.calls.set(call.id, call);
+      while (this.calls.size > MAX_TRACKED_CALLS) {
+        const oldest = this.calls.keys().next().value;
+        if (oldest !== undefined) this.calls.delete(oldest);
+      }
+      console.log(`[WhatsApp-WebJS] Call ${String(call.id).replace(/[\r\n]/g, '')} ringing for profile ${this.config?.profileId}`);
       this.config?.onCall?.({
-        id: call?.id,
-        from: call?.from || call?.peerJid || '',
-        isVideo: !!call?.isVideo,
-        isGroup: !!call?.isGroup,
+        id: call.id,
+        from: toJidString(call.from ?? call.peerJid),
+        isVideo: !!call.isVideo,
+        isGroup: !!call.isGroup,
+        state: 'ringing',
       });
     });
+
+    // MultiWA patch event: the call stopped being the active call. Reported only for a
+    // call we reported ringing and still track (not for unknown ids, repeats, own calls,
+    // or the echo of our own reject). whatsapp-web.js cannot tell how it ended; the
+    // call-log message below carries the outcome.
+    this.client.on('multiwa_call_ended', (data: any) => {
+      const id = data?.id;
+      const call = id ? this.calls.get(id) : undefined;
+      if (!call) return;
+      this.calls.delete(id);
+      console.log(`[WhatsApp-WebJS] Call ${String(id).replace(/[\r\n]/g, '')} ended for profile ${this.config?.profileId}`);
+      this.config?.onCall?.({
+        id,
+        from: toJidString(call.from ?? call.peerJid),
+        isVideo: !!call.isVideo,
+        isGroup: !!call.isGroup,
+        state: 'ended',
+      });
+    });
+
+    // Call-log messages ("Missed voice call"). whatsapp-web.js 1.34.7 never emits `message_create`
+    // for them (it drops a message that is not new when it is added, and a call log is added
+    // before WhatsApp marks it new), so the patch forwards them as `multiwa_call_log`: on add
+    // and on every change, as the outcome goes Ongoing -> Missed / Rejected / AcceptedElsewhere.
+    // `message_create` stays for builds that do emit them. Both share one handler and one dedupe.
+    this.client.on('message_create', (message: any) => this.handleCallLogMessage(message));
+    this.client.on('multiwa_call_log', (message: any) => this.handleCallLogMessage(message));
+  }
+
+  /**
+   * One call-log message, from either event. Reported once per message, when its outcome is
+   * final and its call id is a call reported ringing since the last disconnect. A log without
+   * a final result (Ongoing, Failed) is normal, so it is neither warned about nor remembered:
+   * its change to the final outcome must still get through.
+   */
+  private handleCallLogMessage(message: any): void {
+    if (message?.type !== 'call_log') return;
+    const entry = readCallLog(message);
+    if (!entry) {
+      // Own outgoing calls are ignored on purpose, and so is a log that gives no final result (Ongoing, Failed).
+      if (!message.fromMe && !isCallLogWithoutOutcome(message)) this.warnUnreadableCallLog(message);
+      return;
+    }
+    // Right after a fresh link, WhatsApp's history sync adds old call logs as new (171 in the live
+    // smoke of 2026-10-28); each would become a bogus call, webhook and missed-call notice. So only
+    // the log of a call seen ringing is reported: a call that rang while the device was offline
+    // never reaches whatsapp-web.js at all. Dropped logs are not remembered, so they never push a
+    // real log's id out of the dedupe.
+    if (!entry.callId || !this.callsRungThisSession.has(entry.callId)) {
+      if (Date.now() - this.droppedCallLogNotedAt >= DROPPED_CALL_LOG_NOTE_MS) {
+        this.droppedCallLogNotedAt = Date.now();
+        console.debug(`[WhatsApp-WebJS] Ignoring call logs of calls not seen ringing for profile ${this.config?.profileId} (e.g. the history a fresh link syncs); more within a minute are not logged`);
+      }
+      return;
+    }
+    if (this.seenCallLogs.has(entry.messageId)) return;
+    remember(this.seenCallLogs, entry.messageId, MAX_REMEMBERED_IDS);
+    try {
+      this.config?.onCallLog?.(entry);
+    } catch (e) {
+      console.warn(`[WhatsApp-WebJS] onCallLog handler failed: ${(e as Error).message}`);
+    }
   }
 
   async rejectCall(callId: string): Promise<void> {
     const call = this.calls.get(callId);
-    if (call?.reject) {
-      await call.reject();
-    }
+    if (!call?.reject) throw new Error('Call is not ringing any more');
+    // Forget it first, so the end-of-call echo of our own reject is not reported as `ended`.
     this.calls.delete(callId);
+    try {
+      await call.reject();
+    } catch (e) {
+      this.calls.set(callId, call);
+      throw e;
+    }
+  }
+
+  async createCallLink(type: CallLinkType): Promise<string | null> {
+    if (!this.isReady() || !this.client) throw new Error('Client not ready');
+    const link = await this.client.createCallLink(new Date(), type);
+    if (typeof link !== 'string' || !link.startsWith('https://')) {
+      throw new Error('WhatsApp did not return a call link');
+    }
+    return link;
+  }
+
+  /**
+   * An incoming call's call-log message that yields no entry and is not merely without a
+   * final result (Ongoing, Failed) has no caller, or WhatsApp Web renamed its fields or outcomes. Say so
+   * once per shape (at most MAX_WARNED_SHAPES), never with content.
+   */
+  private warnUnreadableCallLog(message: any): void {
+    const data = message?._data ?? {};
+    const shape = JSON.stringify({ fromMe: !!message?.fromMe, keys: Object.keys(data).sort(), outcome: data.callOutcome ?? data.outcome ?? null });
+    if (this.warnedCallLogShapes.has(shape) || this.warnedCallLogShapes.size >= MAX_WARNED_SHAPES) return;
+    this.warnedCallLogShapes.add(shape);
+    console.warn(`[WhatsApp-WebJS] call_log message without a readable final outcome: ${shape}`);
   }
 
   async connect(): Promise<void> {
@@ -239,11 +424,16 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
     }
     
     console.log(`[WhatsApp-WebJS] Connecting profile ${this.config?.profileId}...`);
-    await this.client.initialize();
+    const client = this.client;
+    await client.initialize();
+    this.watchBrowser(client);
   }
 
   async disconnect(): Promise<void> {
     if (this.client) {
+      // whatsapp-web.js logout() closes the browser: that close is ours, not a loss.
+      this.releasedClients.add(this.client);
+      this.stopMemoryWatch();
       try {
         await this.client.logout();
       } catch (e) {
@@ -254,15 +444,100 @@ export class WhatsAppWebJsAdapter implements IWhatsAppEngine {
   }
 
   async destroy(): Promise<void> {
-    if (this.client) {
-      try {
-        await this.client.destroy();
-      } catch (e) {
-        // Ignore destroy errors
-      }
-      this.client = null;
-      this.status = { isConnected: false, isAuthenticated: false };
+    const client = this.client;
+    if (!client) return;
+    // Closing the browser below fires its 'disconnected', which is not a loss. The client stays set until it is
+    // closed, so a send still in flight fails against the closing browser instead of finding no client and
+    // reading as sent.
+    this.releasedClients.add(client);
+    this.stopMemoryWatch();
+    try {
+      await client.destroy();
+    } catch (e) {
+      // Ignore destroy errors
     }
+    this.client = null;
+    this.status = { isConnected: false, isAuthenticated: false };
+  }
+
+  /**
+   * whatsapp-web.js reports WhatsApp's own disconnects, never a crashed page or a dead browser: on 2026-10-31
+   * the OOM killer took a profile's renderer and the profile read "connected" with a dead page for 21 hours.
+   * Report those as disconnects, so the engine-managers recycle the engine from its stored session, and do the
+   * same for a Chromium whose memory passes WWEBJS_MEMORY_LIMIT_MB, before the host runs out.
+   */
+  private watchBrowser(client: Client): void {
+    if (client !== this.client || this.releasedClients.has(client)) return; // destroyed while connecting
+    (client as any).pupPage?.on?.('error', () => this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.pageCrashed));
+    (client as any).pupBrowser?.on?.('disconnected', () =>
+      this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.browserClosed),
+    );
+    const limitMb = memoryLimitMb(process.env.WWEBJS_MEMORY_LIMIT_MB);
+    this.stopMemoryWatch();
+    if (limitMb > 0) {
+      this.memoryTimer = setInterval(() => this.checkMemory(client, limitMb), MEMORY_CHECK_MS);
+      this.memoryTimer.unref?.();
+    }
+  }
+
+  /**
+   * Measured only while ready: a profile still loading its chats is not a leak. Not restarted while its page carries a
+   * call, which the restart would drop: the first check after the call restarts it if it is still over the limit.
+   */
+  private checkMemory(client: Client, limitMb: number): void {
+    if (client !== this.client || !this.isReady()) return;
+    const onCall = this.callMedia?.inUse() === true;
+    if (!onCall) this.warnedMemoryOnCall = false; // a later call that holds the restart back warns again
+    const pid = (client as any).pupBrowser?.process?.()?.pid;
+    const mb = typeof pid === 'number' ? this.readBrowserMemoryMb(pid) : null;
+    if (mb === null || mb <= limitMb) return;
+    const profileId = this.config?.profileId ?? '';
+    const last = memoryRecycledAt.get(profileId);
+    if (last !== undefined && Date.now() - last < MEMORY_RECYCLE_COOLDOWN_MS) {
+      if (!this.warnedMemoryCooldown) {
+        this.warnedMemoryCooldown = true;
+        console.warn(
+          `[WhatsApp-WebJS] Chromium of profile ${profileId} holds ${mb} MB (limit ${limitMb} MB) within 30 minutes of its last memory restart; not restarting it again yet. Raise WWEBJS_MEMORY_LIMIT_MB if this is its normal size.`,
+        );
+      }
+      return;
+    }
+    if (onCall) {
+      if (!this.warnedMemoryOnCall) {
+        this.warnedMemoryOnCall = true;
+        console.warn(
+          `[WhatsApp-WebJS] Chromium of profile ${profileId.replace(/[\r\n]/g, '')} holds ${mb} MB (limit ${limitMb} MB) during a call; not restarting it until the call is over.`,
+        );
+      }
+      return;
+    }
+    memoryRecycledAt.set(profileId, Date.now());
+    console.warn(`[WhatsApp-WebJS] Chromium of profile ${profileId} holds ${mb} MB (limit ${limitMb} MB)`);
+    this.reportBrowserLoss(client, BROWSER_LOSS_REASONS.memoryLimit);
+  }
+
+  /** The measurement, as a method so a test can stand in for /proc. */
+  private readBrowserMemoryMb(pid: number): number | null {
+    return processTreeRssAnonMb(pid);
+  }
+
+  private stopMemoryWatch(): void {
+    if (this.memoryTimer) clearInterval(this.memoryTimer);
+    this.memoryTimer = null;
+  }
+
+  /** Once per client, and only for the client this adapter still holds: its own destroy() is not a loss. */
+  private reportBrowserLoss(client: Client, reason: string): void {
+    if (client !== this.client || this.releasedClients.has(client) || this.lostClients.has(client)) return;
+    this.lostClients.add(client);
+    this.stopMemoryWatch();
+    console.warn(
+      `[WhatsApp-WebJS] ${reason} for profile ${this.config?.profileId}: reported as a disconnect to recycle its engine from the stored session`,
+    );
+    this.status = { isConnected: false, isAuthenticated: false };
+    this.calls.clear();
+    this.callsRungThisSession.clear();
+    this.config?.onDisconnected?.(reason);
   }
 
   getStatus(): EngineStatus {

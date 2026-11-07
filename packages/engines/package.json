@@ -1,13 +1,13 @@
 {
   "name": "@multiwa/engines",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "private": true,
   "description": "MultiWA WhatsApp Engine Adapters",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "tsc && node scripts/bundle-mediasoup-client.mjs",
+    "dev": "node scripts/bundle-mediasoup-client.mjs && tsc --watch",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
@@ -21,7 +21,9 @@
   },
   "devDependencies": {
     "@types/hapi__boom": "^9.0.1",
-    "@types/node": "^20.19.43",
+    "@types/node": "^24.19.2",
+    "esbuild": "0.28.2",
+    "mediasoup-client": "3.25.3",
     "typescript": "^5.7.0"
   }
 }

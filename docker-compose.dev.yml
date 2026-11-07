@@ -91,6 +91,8 @@ services:
       API_PORT: 3333
       API_HOST: 0.0.0.0
       JWT_SECRET: dev-jwt-secret-change-in-production
+      # Sign-up is open only to the first account (the server's owner), unless exactly true.
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       CORS_ORIGINS: http://localhost:3001,http://admin:3001,http://localhost:3333
       # S3/MinIO configuration for media uploads
       S3_ENDPOINT: http://minio:9000
@@ -103,10 +105,30 @@ services:
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
       SESSIONS_DIR: /data/sessions
+      # Calls answered in the dashboard (docs/23-calls.md): off by default. Media is UDP+TCP straight to the api,
+      # never through the HTTP proxy: switched on, add docker-compose.calls-media.yml, which publishes the media port.
+      CALLS_MEDIA_ENABLED: ${CALLS_MEDIA_ENABLED:-false}
+      CALLS_MEDIA_PORT: ${CALLS_MEDIA_PORT:-40000}
+      CALLS_MEDIA_ANNOUNCED_ADDRESS: ${CALLS_MEDIA_ANNOUNCED_ADDRESS:-}
+      CALLS_MEDIA_LISTEN_IP: ${CALLS_MEDIA_LISTEN_IP:-}
+      CALLS_MEDIA_ICE_SERVERS: ${CALLS_MEDIA_ICE_SERVERS:-}
+      CALLS_MAX_TALK_MINUTES: ${CALLS_MAX_TALK_MINUTES:-120}
+      # Recordings of the calls answered in the dashboard: private, on a volume of their own (never the sessions volume,
+      # whose snapshots would carry every recording). For S3 instead: CALL_RECORDINGS_STORAGE=s3 with the S3_* settings.
+      CALL_RECORDINGS_STORAGE: ${CALL_RECORDINGS_STORAGE:-}
+      CALL_RECORDINGS_PATH: ${CALL_RECORDINGS_PATH:-/data/call-recordings}
+      CALL_RECORDINGS_BUCKET: ${CALL_RECORDINGS_BUCKET:-}
+      CALL_RECORDINGS_PREFIX: ${CALL_RECORDINGS_PREFIX:-}
+      CALL_RECORDINGS_SSE: ${CALL_RECORDINGS_SSE:-}
+      # Recordings in progress, on a volume of their own too: a restart in the middle of a call leaves its recording
+      # to be stored (partial) at the next start.
+      CALL_RECORDINGS_TMP: ${CALL_RECORDINGS_TMP:-/data/call-recordings-tmp}
     ports:
       - "3333:3333"
     volumes:
       - sessions_data:/data/sessions
+      - call_recordings:/data/call-recordings
+      - call_recordings_tmp:/data/call-recordings-tmp
     networks:
       - multiwa-network
     depends_on:
@@ -126,7 +148,7 @@ services:
   # Admin Dashboard (Next.js)
   # ==============================================
   admin:
-    image: node:20-alpine
+    image: node:24-alpine
     container_name: multiwa-admin
     restart: unless-stopped
     working_dir: /app
@@ -155,3 +177,5 @@ volumes:
   redis_data:
   minio_data:
   sessions_data:
+  call_recordings:
+  call_recordings_tmp:

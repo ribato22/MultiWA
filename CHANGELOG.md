@@ -7,6 +7,144 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Video calls answered with video.** A one-to-one video call is answered with WhatsApp Web's video call UI while the server has a video slot free (`CALLS_MAX_VIDEO_CALLS`, default 2) and the profile's WhatsApp Web can. The agent's camera starts off, and `call:camera` turns it on and off. `call:ringing` says how a video call will be answered (`video`), `call:answer` carries the caller's picture (`callerVideoProducerId`), and `GET /calls/media/status` reports `videoCalls` and each profile's `video`. Video is best effort: whatever of it fails, the call goes on as voice.
+- **Video calls in the dashboard.** The caller shows in a video tile on every page, which folds to its title with **Hide video**. **Camera** in the in-call bar turns the agent's camera on and off (off at first), with the agent's own picture in a corner of the tile. A reload with the camera on turns it on again. The banner says how a video call is answered; Settings → Calls gains **Test the camera**; the Calls page plays a video call's recording in a video player. The admin sends `Permissions-Policy: camera=(self)`.
+- A call's `recording` carries its `mimeType` (`audio/webm`, or `video/webm`), and the SDKs' types gain `videoCalls`, each profile's `video` and the recording's `mimeType`.
+- A video call's recording has the pictures: the caller full frame, and the agent in a corner while their camera is on, stored as `video/webm` in the same local or S3 storage (about 450 MB an hour).
+
+### Changed
+
+- A video call can be answered in the dashboard. Without a free video slot, or where WhatsApp Web cannot answer with video, it is answered as a voice call: the agent speaks, and the caller sees no video. Its banner says so, and `call:ringing` carries `isVideo`. It no longer rings with `unavailableReason: video_call`. Group calls still ring with **Answer on the phone**.
+
+### Fixed
+
+- **Auto-reject rejects calls again.** Since WhatsApp Web 2.3000.1053x (rolled out around 2026-11-05) its voip stack has no `rejectCall`, so a profile with auto-reject on let every call ring until the caller gave up, logged as missed (its auto-reply still went out). MultiWA now rejects the way WhatsApp Web's own decline button does (`rejectCallWithEndReason`), and still uses `rejectCall` on older builds.
+- A `%`, `_` or `\` typed in the contacts or templates search, or in the audit log's action filter, now matches itself. Prisma hands these to `LIKE` as wildcards, so a search for `%` matched everything.
+
+### Security
+
+- A socket on `/ws` is disconnected when its API key is deleted or expires, when its login session is logged out, revoked or expires, and when its user is removed or deactivated. Deleting an API key, logging out, revoking a session and removing a member close their sockets at once; the server also checks every socket again each minute. See docs/08.
+
+## [2.0.0] - 2026-11-05
+
+### Added
+
+- **Customer profile.** An agent sees the customer behind a WhatsApp number in a one-to-one chat's Contact Info and under a one-to-one call on the Calls page, and on a new Customers page:
+  - customer IDs linked to numbers, many to many, linked by agents or through the API (`POST /customers/links`);
+  - master data fetched live from an endpoint the organization sets in Settings → Customers, in a fixed format ([docs/24](docs/24-customers.md)); only the name is stored;
+  - notes and tags on the customer, and the history of the linked numbers' conversations and calls;
+  - new API-key scopes `customers:read` and `customers:write`.
+- `GET /auth/registration` tells whether registration is open.
+- `GET /auth/me` and the `user` of the sign-in answer carry `isServerOwner`, which says whether the caller is the server's owner.
+
+### Changed
+
+- `GET` and `PUT /organizations/current` and `GET /auth/me` never answer the customers lookup's encrypted secret, and a `PUT /organizations/current` keeps the customers settings whatever `settings` it is sent: `PUT /customers/config` changes them.
+- **Roles are enforced in the API, the socket and the dashboard.** A viewer reads; a member does the daily work (messages, chats, calls, contacts); an admin configures and manages members and viewers; the owner also manages admins. A route a role may not call answers `403`. `scripts/api-roles.snapshot.json` lists each route's class, and CI holds the code to it. See docs/07 § Roles.
+- **Breaking:**
+  - a viewer's changes, including those made with a viewer's API keys, now get `403`; move integrations that send onto a member's or admin's key. A viewer keeps their own account and the lookups that are `POST`s:
+    - the account: `POST /auth/logout`, `POST /auth/change-password`, `PATCH /auth/preferences`, `DELETE /auth/sessions` and `DELETE /auth/sessions/:id`, `POST /auth/2fa/setup`, `/enable`, `/disable` and `/backup-codes`, `DELETE /auth/account`, `DELETE /account/delete`, the notification routes (mark read, delete, push subscribe, unsubscribe and test), `POST /api-keys` and `DELETE /api-keys/:id`;
+    - the lookups: `POST /templates/:id/preview`, `POST /automation/:id/test`, `POST /contacts/profile/:profileId/validate` and `POST /ai/knowledge/:profileId/search`;
+  - a member's configuration calls now get `403`: accounts, profiles, workspaces, broadcasts, bulk sends, automation, auto-replies, webhooks, templates, groups, the knowledge base, deleting, importing and syncing contacts (and saving them to, or deleting them from, the WhatsApp address book), and deleting chats and stored messages; a member still sends one message at a time;
+  - an admin no longer adds, promotes, demotes or removes another admin (only the owner does), and nobody changes their own role;
+  - these reads are now for owners and admins only: `GET /webhooks`, `GET /webhooks/:id`, `GET /audit/logs`, `GET /audit/summary`, `GET /audit/actions`, `GET /contacts/export/csv`, `GET /account/export`, `GET /groups/:groupId/invite-link`, `GET /autoreply/webhook-reply/:profileId`, `GET /autoreply/ai-hook/:profileId` and `GET /accounts/:accountId/profiles/:profileId/qr`;
+  - an API key with a scope list needs the scope of every route that asks for one:
+    - `contacts:read|write`, `webhooks:read|write`, `broadcast:write` (broadcasts and bulk sends) and `profiles:read|write` (profiles, an account's profiles, the pairing QR) are now enforced;
+    - the conversations routes ask for `messages:read|write`;
+    - a socket gets the pairing QR only with `profiles:write`;
+    - a key with no scope list keeps full access;
+    - the TypeScript SDK's `conversations.archive`, `unarchive` and `markAsRead` read the conversation back, so on a key with a scope list they need both `messages:write` and `messages:read`;
+  - registration is open only to the first user of a new server, unless `ALLOW_REGISTRATION=true`;
+  - the server-wide settings (`/settings/*`) are for the server's owner, the owner of the oldest organization;
+  - the server's owner cannot delete their account (`DELETE /auth/account`) while other organizations use the server;
+  - an owner's `DELETE /account/delete` gets `403`: that erasure keeps the organization, so an owner deletes their account with `DELETE /auth/account`, which deletes the organization too;
+  - profile responses carry `hasWebhookSecret` instead of `webhookSecret`;
+  - the pairing QR (`qr:update`) reaches owners and admins only;
+  - a call's assignee must be an owner, admin or member;
+  - the contacts, audit-log and notification lists answer at most 1000 rows per request and the message lists at most 500 (a message row can carry its media), and a bulk validation takes at most 1000 numbers;
+  - the integrations routes (`/integrations/*`) are for the server's owner: their configuration is the server's.
+
+### Removed
+
+- The unused RBAC routes (`/rbac/*`).
+
+### Security
+
+- `POST /api-keys` takes only a signed-in user: a request made with an API key gets `403`.
+- `POST /automation/reorder` orders only the rules of the profile it names. An order naming any other rule gets `404` and changes nothing.
+
+## [1.4.0] - 2026-11-03
+
+### Added
+
+- **Calls answered in the dashboard** (off by default) — agents answer a profile's incoming WhatsApp voice calls in the browser: a banner with a ringtone and desktop alerts, a bar in the header with mute, the microphone and the network quality, availability, and a device check in Settings → Calls. Calls can also be recorded, and the caller then always hears an announcement first: recordings go to private storage with a privacy check, a retention period per profile, and audited playback, download and delete. New: `GET /calls/media/status`, the calls settings, announcement and recording routes, the `recordings:read` and `recordings:delete` API-key scopes, and the `call.answered`, `call.recording.ready` and `call.recording.deleted` webhooks. whatsapp-web.js with `ENGINE_HOST=api` only; see `docs/23-calls.md`. (#279, #280, #284, #285, #289, #294, #295)
+- **SDKs 1.4.0** — a calls resource in the TypeScript (`client.calls`), Python (`client.calls`) and PHP (`$client->calls()`) SDKs for every calls route: the list and the follow-up, reject, reply and the call link, the media status, the call settings, the announcement, and the recordings as bytes. Each method's documentation names the role it needs and the scope an API key with a scope list needs. The TypeScript SDK now exports `MultiWAError`, as its README showed, and gains `patch()` and `request(..., { binary: true })`, which resolves to the bytes and their Content-Type; the PHP SDK gains `requestAudio()`, which returns them as an `AudioFile`. See `packages/sdk-python/CHANGELOG.md`.
+- The OpenAPI document (`/api/docs`) describes what each calls route answers.
+- Alert rules and documented metrics for calls (`docs/monitoring/`).
+
+### Changed
+
+- **Runtime: Node.js 24 LTS.** The Docker images (api, worker, admin) and CI run Node.js 24. Node.js 20 reached end-of-life on 2026-04-30. Running MultiWA from source now needs Node.js 24 or newer. The SDK and the n8n node keep their own, older Node floors.
+- **A send the engine has not finished within `SEND_TIMEOUT_MS` (60 s) answers `504 SEND_TIMEOUT`**, and the profile's next send goes; a hung send used to hold every later send of its profile. It may still be delivered, so nothing in the gateway retries it. The daily counters count only the sends that went out. (#291)
+- The api and worker images are 626 MiB smaller: puppeteer no longer downloads a Chrome the engine never uses. (#278)
+
+### Fixed
+
+- `docker/nginx/example.conf` proxies the realtime connection (`/socket.io/`) to the API: a Socket.IO client connecting through it got the landing page.
+- TypeScript SDK: the request `timeout` now covers reading the response body too, not only the wait for the headers.
+- The quick start (`docker compose up`) builds again: the root `Dockerfile` copies `patches/` and installs from the lockfile. (#275)
+- A whatsapp-web.js profile whose page crashed, whose browser died, or whose Chromium outgrew `WWEBJS_MEMORY_LIMIT_MB` (2500; `0` turns the check off) restarts by itself; it used to stay connected with a dead page. `multiwa_connected_profiles` no longer drifts upward. (#292)
+- Behind a reverse proxy, set `TRUST_PROXY` to the proxy's addresses: the rate limit and the login records then see each client's own address, not the proxy's, which put every client in one rate-limit bucket. `docker-compose.production.yml` sets `172.16.0.0/12`. (#290)
+- The stock Compose files give the api the `ENGINE_HOST` the worker gets: with `ENGINE_HOST=worker`, the api no longer hosts every profile as well. (#282)
+
+### Security
+
+- A profile's routes (`GET /profiles`, `GET /profiles/:id`, `PUT /profiles/:id`, the account-scoped profile routes and `GET /workspaces/:id`) no longer show where its call announcement is stored (`settings.callsAnnouncement.storageKey`); its type and length remain.
+- A `.env` file of the build context is no longer copied into a Docker image. (#278)
+
+Full list of changes: [v1.3.0...v1.4.0](https://github.com/ribato22/MultiWA/compare/v1.3.0...v1.4.0)
+
+## [1.3.0] - 2026-10-29
+
+### Added
+
+- **WhatsApp calls (incoming)** — calls are recorded per profile with their outcome (missed, rejected, answered on another device, unknown) and a follow-up queue: `/api/v1/calls` (list, assign, follow up, reject a ringing call, reply, send a call link), `call.received` / `call.rejected` / `call.ended` / `call.updated` webhooks, the realtime `call:update` event, a Calls page and call rows in the chat, per-profile auto-reject with a reply (at most once per caller per 24 hours, through the send gate), and missed-call notifications. whatsapp-web.js only. (#248, #262, #263, #264)
+- **Quiet-profile alarm** — a connected profile that receives nothing for a set number of hours raises one alarm (admin notification plus a WhatsApp message to your ops numbers through another profile) and one notice when it recovers; `QUIET_ALARM_ACTIVE_HOURS` and `QUIET_ALARM_TIMEZONE`. (#260)
+- **PHP SDK, release-ready** — `multiwa/multiwa-php` calls the real routes, throws typed exceptions (`MultiWAException`, `ApiException`, `AuthenticationException`, `ValidationException`, `NotFoundException`, `RateLimitException`) and is tested on PHP 8.1–8.4; a workflow publishes it to Packagist from a split repository once that is set up (`docs/21-releasing-and-distribution.md`). (#270)
+- Copy a profile's UUID from the profile page. (#222)
+- Alerts on silent engine degradation (group-list fallback, dropped acks). (#146)
+- Scripts to recover inbound media that was stored without its file, and to ship an exported image to an air-gapped host as a per-layer delta. (#245, #247)
+
+### Changed
+
+- **A send through a disconnected profile answers `409 PROFILE_DISCONNECTED`** and the message is marked `failed`; it used to answer `201` with a message that stayed `pending` and was never sent. Scheduled messages, broadcasts and automation replies record such failures as failed. (#256, #257)
+- **Python SDK** — every call uses a real route with the API's request bodies; broadcast `create` takes the API's `recipients` and `message` objects (a list or a string is converted), and `resume` and `schedule` are new; arguments the API never accepted (`template_id`, contact `email`, webhook `secret`, profile `is_active`) raise `ValueError`, and `get_qr` raises because QR codes arrive over the WebSocket `qr:update` event. See `packages/sdk-python/CHANGELOG.md`. (#269)
+- Dependencies: Fastify 5.12, Prisma 7.10, Next 15.5, nodemailer 10.1, BullMQ 6.1 (patched) and the remaining security updates; Docker images are built from the lockfile. (#173, #174, #185, #212, #214, #220, #221, #230–#243, #252)
+- Docs: the WebSocket API page documents the real Socket.IO gateway, and the webhook pages match the API. (#258, #265)
+
+### Fixed
+
+- The admin chat shows inbound media and plays voice notes again. (#266)
+- Inbound images are downloaded with their media on current WhatsApp Web. (#246)
+- TypeScript SDK: conversation archive, unarchive and read use `PUT`; calls without a body no longer send a JSON Content-Type (the API answered 400); `removeTags` sends its body; `tags` filters are sent as repeated parameters. (#268)
+- Engine: a remote logout no longer crashes the process; a QR wait is kept until it is scanned or times out; `authenticated` and `ready` are reported once per connect. (#224, #226, #228)
+- The worker is no longer wedged after a Redis outage. (#168)
+- A socket `join` waits for the handshake auth, and a live message only appears in its own chat. (#254, #255)
+- Uploads: every accepted MIME type keeps its extension, and the stored media URL is served. (#209, #227)
+- Media sends, the message page size, the conversation list's memory use, recorded send-failure reasons, and identical replies repeated within a minute (now suppressed by the send gate). (#170, #205, #207, #208)
+- whatsapp-web.js is patched for WhatsApp Web's message-key rename (groups, history sync, outbound acks). (#144, #145)
+
+### Security
+
+- `GET /profiles?workspaceId=` only lists the caller's own workspaces, and the tenant-coverage test now fails when an allowlisted route reads a tenant id from the query or body. (#267)
+- An API key stops working once its user is deactivated. (#249)
+- The Redis URL logged at startup no longer shows its credentials. (#225)
+- Dependency security updates: the production audit went from 5 critical / 62 high to 0 / 5, and Dependabot alerts are enabled. (#230–#243)
+
+Full list of changes: [v1.2.0...v1.3.0](https://github.com/ribato22/MultiWA/compare/v1.2.0...v1.3.0)
+
 ## [1.2.0] - 2026-07-21
 
 Unified versioning: the app, all workspace packages, and every SDK now share a

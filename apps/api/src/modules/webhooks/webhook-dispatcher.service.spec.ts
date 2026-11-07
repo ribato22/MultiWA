@@ -70,3 +70,28 @@ describe('WebhookDispatcherService', () => {
     expect(queue.add.mock.calls[0][2].jobId).toBeUndefined();
   });
 });
+
+describe('WebhookDispatcherService with ENGINE_HOST=worker', () => {
+  // The worker dispatches the engine's events; these the api produces itself, and they never reach the worker.
+  it('still dispatches the events the API produces itself (call.updated, the recording events), nothing else', () => {
+    process.env.ENGINE_HOST = 'worker';
+    try {
+      let handler: (event: string, payload: unknown) => void = () => undefined;
+      const emitter = { onAny: (fn: any) => { handler = fn; } };
+      const svc = new WebhookDispatcherService(emitter as any, { add: vi.fn() } as any);
+      const dispatch = vi.spyOn(svc as any, 'dispatch').mockResolvedValue(undefined);
+      svc.onModuleInit();
+      handler(AppEvents.MESSAGE.RECEIVED, { profileId: 'p1' });
+      handler(AppEvents.CALL.UPDATED, { profileId: 'p1', callId: 'c1' });
+      handler(AppEvents.CALL.RECORDING_DELETED, { profileId: 'p1', callId: 'c1', recordingId: 'r1' });
+      handler(AppEvents.CALL.RECORDING_READY, { profileId: 'p1', callId: 'c1', recordingId: 'r1' });
+      expect(dispatch.mock.calls).toEqual([
+        [AppEvents.CALL.UPDATED, { profileId: 'p1', callId: 'c1' }],
+        [AppEvents.CALL.RECORDING_DELETED, { profileId: 'p1', callId: 'c1', recordingId: 'r1' }],
+        [AppEvents.CALL.RECORDING_READY, { profileId: 'p1', callId: 'c1', recordingId: 'r1' }],
+      ]);
+    } finally {
+      delete process.env.ENGINE_HOST;
+    }
+  });
+});

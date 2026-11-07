@@ -4,169 +4,240 @@ MultiWA Python SDK - Contacts Client
 Client for managing WhatsApp contacts.
 """
 
-from typing import Optional, List, Dict, Any
-import httpx
+from __future__ import annotations
 
+from typing import Any, cast
+
+from ._base import AsyncResource, SyncResource
 from .types import Contact
 
 
-class ContactsClient:
+def _reject_email(email: str | None) -> None:
+    if email is not None:
+        raise ValueError(
+            "The MultiWA API stores no email for a contact; "
+            "keep it in metadata instead, e.g. metadata={'email': ...}"
+        )
+
+
+def _list_params(
+    profile_id: str,
+    limit: int,
+    offset: int,
+    search: str | None,
+    tags: list[str] | None,
+) -> dict[str, Any]:
+    # A list value is sent as a repeated parameter: ?tags=a&tags=b
+    return {
+        "profileId": profile_id,
+        "limit": limit,
+        "offset": offset,
+        "search": search,
+        "tags": tags or None,
+    }
+
+
+class ContactsClient(SyncResource):
     """Synchronous Contacts API client"""
-    
-    def __init__(self, http: httpx.Client):
-        self._http = http
-    
+
     def create(
         self,
         profile_id: str,
         phone: str,
-        name: Optional[str] = None,
-        email: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        name: str | None = None,
+        email: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Contact:
-        """Create a new contact"""
-        response = self._http.post("/contacts", json={
-            "profileId": profile_id,
-            "phone": phone,
-            "name": name,
-            "email": email,
-            "tags": tags or [],
-            "metadata": metadata or {},
-        })
-        response.raise_for_status()
-        return Contact(**response.json())
-    
+        """Create a contact. An existing phone number is updated instead
+        (tags and metadata are merged).
+
+        ``email`` is not supported by the API and raises ``ValueError``.
+        """
+        _reject_email(email)
+        return Contact.model_validate(
+            self._request(
+                "POST",
+                "/contacts",
+                json={
+                    "profileId": profile_id,
+                    "phone": phone,
+                    "name": name,
+                    "tags": tags,
+                    "metadata": metadata,
+                },
+            )
+        )
+
     def get(self, contact_id: str) -> Contact:
         """Get a contact by ID"""
-        response = self._http.get(f"/contacts/{contact_id}")
-        response.raise_for_status()
-        return Contact(**response.json())
-    
+        return Contact.model_validate(self._request("GET", f"/contacts/{contact_id}"))
+
     def update(
         self,
         contact_id: str,
-        name: Optional[str] = None,
-        email: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        name: str | None = None,
+        email: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Contact:
-        """Update a contact"""
-        data = {}
-        if name is not None:
-            data["name"] = name
-        if email is not None:
-            data["email"] = email
-        if tags is not None:
-            data["tags"] = tags
-        if metadata is not None:
-            data["metadata"] = metadata
-            
-        response = self._http.patch(f"/contacts/{contact_id}", json=data)
-        response.raise_for_status()
-        return Contact(**response.json())
-    
-    def delete(self, contact_id: str) -> Dict[str, bool]:
+        """Update a contact. ``tags`` and ``metadata`` replace the stored values.
+
+        ``email`` is not supported by the API and raises ``ValueError``.
+        """
+        _reject_email(email)
+        return Contact.model_validate(
+            self._request(
+                "PUT",
+                f"/contacts/{contact_id}",
+                json={"name": name, "tags": tags, "metadata": metadata},
+            )
+        )
+
+    def delete(self, contact_id: str) -> dict[str, Any]:
         """Delete a contact"""
-        response = self._http.delete(f"/contacts/{contact_id}")
-        response.raise_for_status()
-        return response.json()
-    
+        return cast(
+            "dict[str, Any]", self._request("DELETE", f"/contacts/{contact_id}")
+        )
+
+    def add_tags(
+        self,
+        contact_id: str,
+        tags: list[str],
+    ) -> Contact:
+        """Add tags to a contact"""
+        return Contact.model_validate(
+            self._request("POST", f"/contacts/{contact_id}/tags", json={"tags": tags})
+        )
+
+    def remove_tags(
+        self,
+        contact_id: str,
+        tags: list[str],
+    ) -> Contact:
+        """Remove tags from a contact"""
+        return Contact.model_validate(
+            self._request("DELETE", f"/contacts/{contact_id}/tags", json={"tags": tags})
+        )
+
     def list(
         self,
         profile_id: str,
         limit: int = 50,
         offset: int = 0,
-        search: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-    ) -> List[Contact]:
-        """List contacts for a profile"""
-        params: Dict[str, Any] = {
-            "limit": limit,
-            "offset": offset,
-        }
-        if search:
-            params["search"] = search
-        if tags:
-            params["tags"] = ",".join(tags)
-            
-        response = self._http.get(f"/contacts/profile/{profile_id}", params=params)
-        response.raise_for_status()
-        return [Contact(**c) for c in response.json()]
-    
-    def add_tags(
-        self,
-        contact_id: str,
-        tags: List[str],
-    ) -> Contact:
-        """Add tags to a contact"""
-        response = self._http.post(f"/contacts/{contact_id}/tags", json={
-            "tags": tags,
-        })
-        response.raise_for_status()
-        return Contact(**response.json())
-    
-    def remove_tags(
-        self,
-        contact_id: str,
-        tags: List[str],
-    ) -> Contact:
-        """Remove tags from a contact"""
-        response = self._http.delete(f"/contacts/{contact_id}/tags", json={
-            "tags": tags,
-        })
-        response.raise_for_status()
-        return Contact(**response.json())
+        search: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[Contact]:
+        """List contacts for a profile. ``tags`` matches contacts with any of them."""
+        page = self._request(
+            "GET",
+            "/contacts",
+            params=_list_params(profile_id, limit, offset, search, tags),
+        )
+        return [Contact.model_validate(c) for c in page["contacts"]]
 
 
-class AsyncContactsClient:
+class AsyncContactsClient(AsyncResource):
     """Asynchronous Contacts API client"""
-    
-    def __init__(self, http: httpx.AsyncClient):
-        self._http = http
-    
+
     async def create(
         self,
         profile_id: str,
         phone: str,
-        name: Optional[str] = None,
-        email: Optional[str] = None,
-        tags: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        name: str | None = None,
+        email: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Contact:
-        """Create a new contact"""
-        response = await self._http.post("/contacts", json={
-            "profileId": profile_id,
-            "phone": phone,
-            "name": name,
-            "email": email,
-            "tags": tags or [],
-            "metadata": metadata or {},
-        })
-        response.raise_for_status()
-        return Contact(**response.json())
-    
+        """Create a contact. An existing phone number is updated instead
+        (tags and metadata are merged).
+
+        ``email`` is not supported by the API and raises ``ValueError``.
+        """
+        _reject_email(email)
+        return Contact.model_validate(
+            await self._request(
+                "POST",
+                "/contacts",
+                json={
+                    "profileId": profile_id,
+                    "phone": phone,
+                    "name": name,
+                    "tags": tags,
+                    "metadata": metadata,
+                },
+            )
+        )
+
     async def get(self, contact_id: str) -> Contact:
         """Get a contact by ID"""
-        response = await self._http.get(f"/contacts/{contact_id}")
-        response.raise_for_status()
-        return Contact(**response.json())
-    
+        return Contact.model_validate(
+            await self._request("GET", f"/contacts/{contact_id}")
+        )
+
+    async def update(
+        self,
+        contact_id: str,
+        name: str | None = None,
+        email: str | None = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Contact:
+        """Update a contact. ``tags`` and ``metadata`` replace the stored values.
+
+        ``email`` is not supported by the API and raises ``ValueError``.
+        """
+        _reject_email(email)
+        return Contact.model_validate(
+            await self._request(
+                "PUT",
+                f"/contacts/{contact_id}",
+                json={"name": name, "tags": tags, "metadata": metadata},
+            )
+        )
+
+    async def delete(self, contact_id: str) -> dict[str, Any]:
+        """Delete a contact"""
+        return cast(
+            "dict[str, Any]", await self._request("DELETE", f"/contacts/{contact_id}")
+        )
+
+    async def add_tags(
+        self,
+        contact_id: str,
+        tags: list[str],
+    ) -> Contact:
+        """Add tags to a contact"""
+        return Contact.model_validate(
+            await self._request(
+                "POST", f"/contacts/{contact_id}/tags", json={"tags": tags}
+            )
+        )
+
+    async def remove_tags(
+        self,
+        contact_id: str,
+        tags: list[str],
+    ) -> Contact:
+        """Remove tags from a contact"""
+        return Contact.model_validate(
+            await self._request(
+                "DELETE", f"/contacts/{contact_id}/tags", json={"tags": tags}
+            )
+        )
+
     async def list(
         self,
         profile_id: str,
         limit: int = 50,
         offset: int = 0,
-        search: Optional[str] = None,
-    ) -> List[Contact]:
-        """List contacts for a profile"""
-        params: Dict[str, Any] = {
-            "limit": limit,
-            "offset": offset,
-        }
-        if search:
-            params["search"] = search
-            
-        response = await self._http.get(f"/contacts/profile/{profile_id}", params=params)
-        response.raise_for_status()
-        return [Contact(**c) for c in response.json()]
+        search: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[Contact]:
+        """List contacts for a profile. ``tags`` matches contacts with any of them."""
+        page = await self._request(
+            "GET",
+            "/contacts",
+            params=_list_params(profile_id, limit, offset, search, tags),
+        )
+        return [Contact.model_validate(c) for c in page["contacts"]]

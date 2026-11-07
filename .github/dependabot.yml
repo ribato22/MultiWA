@@ -29,7 +29,7 @@ version: 2
 #   - the NestJS family (@nestjs/*): one framework, one coordinated migration.
 #     Bumping one package alone pairs mismatched majors and the app cannot even
 #     load (Nest 12 PRs #177-#184 were each individually unbuildable).
-#   - typescript 7 and @types/node 26: they outrun the pinned runtime (Node 20/22,
+#   - typescript 7 and @types/node 26: they outrun the pinned runtime (Node 24,
 #     TS 5.x).
 updates:
   - package-ecosystem: npm # covers the pnpm workspace (pnpm-lock.yaml)

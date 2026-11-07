@@ -4,6 +4,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   Plus,
   RefreshCw,
@@ -16,6 +17,7 @@ import {
   Tag,
 } from 'lucide-react';
 import { api, Contact, Profile } from '@/lib/api';
+import { canAct, canConfigure, currentUser } from '@/lib/current-user';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -51,6 +53,8 @@ import { Textarea } from '@/components/ui/textarea';
 
 export default function ContactsPage() {
   const { toast } = useToast();
+  // Adding and messaging a contact are an agent's; syncing and deleting contacts an owner's or admin's.
+  const [role] = useState(() => currentUser()?.role);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -250,19 +254,22 @@ export default function ContactsPage() {
               </SelectContent>
             </Select>
           )}
-          <Button
-            variant="outline"
-            className="gap-2"
-            onClick={handleSyncFromWhatsApp}
-            disabled={syncing || !selectedProfile}
-            aria-label="Sync contacts from WhatsApp"
-          >
-            <RefreshCw
-              className={`w-4 h-4 ${syncing ? 'mw-spin' : ''}`}
-              aria-hidden="true"
-            />
-            {syncing ? 'Syncing...' : 'Sync from WhatsApp'}
-          </Button>
+          {canConfigure(role) && (
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={handleSyncFromWhatsApp}
+              disabled={syncing || !selectedProfile}
+              aria-label="Sync contacts from WhatsApp"
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${syncing ? 'mw-spin' : ''}`}
+                aria-hidden="true"
+              />
+              {syncing ? 'Syncing...' : 'Sync from WhatsApp'}
+            </Button>
+          )}
+        {canAct(role) && (
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="gap-2">
@@ -331,6 +338,7 @@ export default function ContactsPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        )}
         </div>
       </div>
 
@@ -447,25 +455,29 @@ export default function ContactsPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        asChild
-                        aria-label={`Message ${contact.name}`}
-                      >
-                        <a href={`/dashboard/messages?to=${contact.phone}`}>
-                          <MessageCircle className="w-4 h-4" aria-hidden="true" />
-                        </a>
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => handleDeleteContact(contact.id)}
-                        aria-label={`Delete ${contact.name}`}
-                      >
-                        <Trash2 className="w-4 h-4" aria-hidden="true" />
-                      </Button>
+                      {canAct(role) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          asChild
+                          aria-label={`Message ${contact.name}`}
+                        >
+                          <Link href={`/dashboard/messages?to=${contact.phone}`}>
+                            <MessageCircle className="w-4 h-4" aria-hidden="true" />
+                          </Link>
+                        </Button>
+                      )}
+                      {canConfigure(role) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => handleDeleteContact(contact.id)}
+                          aria-label={`Delete ${contact.name}`}
+                        >
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -487,15 +499,17 @@ export default function ContactsPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-medium text-foreground truncate">{contact.name}</div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive hover:bg-destructive/10 -mt-1 -mr-2 cursor-pointer"
-                    onClick={() => handleDeleteContact(contact.id)}
-                    aria-label={`Delete ${contact.name}`}
-                  >
-                    <Trash2 className="w-4 h-4" aria-hidden="true" />
-                  </Button>
+                  {canConfigure(role) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive hover:bg-destructive/10 -mt-1 -mr-2 cursor-pointer"
+                      onClick={() => handleDeleteContact(contact.id)}
+                      aria-label={`Delete ${contact.name}`}
+                    >
+                      <Trash2 className="w-4 h-4" aria-hidden="true" />
+                    </Button>
+                  )}
                 </div>
                 <div className="text-sm text-muted-foreground font-mono">{contact.phone}</div>
                 {contact.email && (

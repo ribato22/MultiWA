@@ -4,10 +4,13 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import * as crypto from 'crypto';
+import { EventsGateway } from '../events/events.gateway';
 
 @Injectable()
 export class SessionsService {
   private readonly logger = new Logger(SessionsService.name);
+
+  constructor(private readonly gateway: EventsGateway) {}
 
   // Throttle lastActiveAt writes: the session is checked on every authenticated
   // request, but we only persist activity at most once per this interval.
@@ -130,6 +133,7 @@ export class SessionsService {
     }
 
     await prisma.session.delete({ where: { id: sessionId } });
+    this.gateway.disconnectSession(session.tokenHash);
     this.logger.log(`Session ${sessionId} revoked for user ${userId}`);
   }
 
@@ -141,13 +145,12 @@ export class SessionsService {
     // (WHERE 1=1) and delete EVERY user's sessions. Guard the destructive path.
     if (!userId) return 0;
     const where: any = { userId };
+    const currentHash = currentToken ? this.hashToken(currentToken) : undefined;
 
-    if (currentToken) {
-      const currentHash = this.hashToken(currentToken);
-      where.tokenHash = { not: currentHash };
-    }
+    if (currentHash) where.tokenHash = { not: currentHash };
 
     const result = await prisma.session.deleteMany({ where });
+    this.gateway.disconnectOtherSessions(userId, currentHash);
     this.logger.log(`Revoked ${result.count} sessions for user ${userId}`);
     return result.count;
   }
@@ -158,6 +161,7 @@ export class SessionsService {
   async removeSessionByToken(accessToken: string): Promise<void> {
     const tokenHash = this.hashToken(accessToken);
     await prisma.session.deleteMany({ where: { tokenHash } });
+    this.gateway.disconnectSession(tokenHash);
   }
 
   /**

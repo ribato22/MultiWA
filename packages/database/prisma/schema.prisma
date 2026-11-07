@@ -30,6 +30,7 @@ model Organization {
   roles      Role[]
   userRoles  UserRole[]
   auditLogs  AuditLog[]
+  customers  Customer[]
 
   @@map("organizations")
 }
@@ -97,6 +98,8 @@ model User {
   auditLogs           AuditLog[]
   notifications       Notification[]
   assignedConversations Conversation[] @relation("AssignedAgent")
+  assignedCalls         Call[]         @relation("AssignedCalls")
+  answeredCalls         Call[]         @relation("AnsweredCalls")
   sessions            Session[]
   refreshTokens       RefreshToken[]
   pushSubscriptions   PushSubscription[]
@@ -166,6 +169,8 @@ model Profile {
   // Per-profile engine selection. whatsapp-web-js (default, production) | baileys (EXPERIMENTAL) | mock (testing).
   engine          String   @default("whatsapp-web-js")
   lastConnectedAt DateTime?
+  // Quiet-profile alarm: when the open alarm fired; null = none open (QuietProfileCron).
+  quietAlarmAt    DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -180,6 +185,7 @@ model Profile {
   webhooks      Webhook[]
   scheduledMessages ScheduledMessage[]
   knowledgeDocuments KnowledgeDocument[]
+  calls         Call[]
 
   @@map("profiles")
 }
@@ -206,9 +212,81 @@ model Conversation {
   contact      Contact?  @relation(fields: [contactId], references: [id])
   assignedUser User?     @relation("AssignedAgent", fields: [assignedUserId], references: [id])
   messages     Message[]
+  calls        Call[]
 
   @@unique([profileId, jid])
   @@map("conversations")
+}
+
+// Incoming WhatsApp calls (phase 1). One row per engine call id; rows built from a
+// call-log message alone use waCallId "log:<messageId>". Outcomes only move forward
+// (packages/engine-runtime/src/call-state.ts).
+model Call {
+  id              String    @id @default(uuid())
+  profileId       String
+  waCallId        String                          // engine call id
+  fromJid         String                          // caller, stored like Conversation.jid
+  isVideo         Boolean   @default(false)
+  isGroup         Boolean   @default(false)
+  direction       String    @default("incoming")  // incoming | outgoing (phase 2)
+  outcome         String    @default("ringing")   // ringing | answered | missed | rejected | answered_elsewhere | unknown
+  rejectedBy      String?                         // auto | agent | device
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?                       // when it stopped ringing; for an answered call, when the conversation ended
+  followUp        String    @default("open")      // open | in_progress | done
+  assignedUserId  String?
+  // Answered in the dashboard (phase 2). answeredByUserId is the claim while the agent's audio connects (released to
+  // null when that fails) and the answering agent once outcome = answered.
+  answeredByUserId String?
+  answeredAt       DateTime?
+  endedBy          String?                        // agent | caller | server
+  endReason        String?                        // hangup | caller_hangup | agent_lost | media_failed | time_limit | server_restart
+  talkSeconds      Int?
+  autoReplySentAt DateTime?
+  conversationId  String?
+  metadata        Json      @default("{}")        // lidJid, source, callLogMessageId, callLinks
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  profile      Profile       @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  assignedUser User?         @relation("AssignedCalls", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  answeredBy   User?         @relation("AnsweredCalls", fields: [answeredByUserId], references: [id], onDelete: SetNull)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  recording    CallRecording?
+
+  @@unique([profileId, waCallId])
+  @@index([profileId, startedAt])
+  @@index([profileId, followUp, startedAt])
+  @@index([profileId, fromJid, startedAt])
+  @@index([profileId, outcome, startedAt])
+  @@map("calls")
+}
+
+// The recording of a call answered in the dashboard, made after the caller heard the profile's announcement. The row
+// stays after its file is deleted (by the retention job or an admin) as the evidence of what was recorded and when it
+// went. A profile's recordings go with the profile (its calls cascade), their files first.
+model CallRecording {
+  id                 String    @id @default(uuid())
+  callId             String    @unique
+  profileId          String
+  storageType        String                          // local | s3: the storage the file was written to
+  storageLocation    String                          // where in that storage: "s3:<bucket>/<prefix>" or "local:<root>"; a recording elsewhere is neither played nor deleted here
+  storageKey         String    @unique               // its key there; never a phone number
+  mimeType           String    @default("audio/webm")
+  bytes              Int
+  durationSec        Int
+  channels           Int       @default(2)           // the caller and the agent
+  announcementPlayed Boolean
+  partial            Boolean   @default(false)       // it may end before its call did: a restart, a recorder that did not stop cleanly, or a write that failed
+  createdAt          DateTime  @default(now())
+  deletedAt          DateTime?
+  deletedByUserId    String?                         // a plain id, not a relation: the evidence outlives the user
+  deleteReason       String?                         // retention | admin
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, createdAt])
+  @@map("call_recordings")
 }
 
 // ============================================
@@ -304,6 +382,67 @@ model Contact {
 }
 
 // ============================================
+// Customers (the customer profile)
+// ============================================
+
+// A customer as the organization's own system knows them: their ID there, linked to WhatsApp numbers. Their data is
+// looked up live (Organization.settings.customers): only the last successful lookup's name is kept, for the list and
+// the search, and a name and fields typed by hand while no lookup is configured.
+model Customer {
+  id             String    @id @default(uuid())
+  organizationId String
+  externalId     String    // the customer's ID in the organization's system, e.g. an ID Pelanggan
+  displayName    String?   // the last successful lookup's name, or typed by hand without a lookup
+  manualFields   Json      @default("[]") // [{ label, value }], used only while no lookup is configured
+  tags           String[]  @default([])
+  lastLookupAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  links        CustomerLink[]
+  notes        CustomerNote[]
+
+  @@unique([organizationId, externalId])
+  @@index([organizationId, displayName])
+  @@map("customers")
+}
+
+// A number linked to a customer: many to many. Among a number's links in an organization, the one with the newest
+// lastUsedAt is the ID an agent sees first for it.
+model CustomerLink {
+  id               String   @id @default(uuid())
+  organizationId   String
+  customerId       String
+  phone            String   // digits only, country code first (628…)
+  linkedByUserId   String?
+  linkedByApiKeyId String?
+  lastUsedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, phone])
+  @@index([organizationId, phone])
+  @@map("customer_links")
+}
+
+model CustomerNote {
+  id             String   @id @default(uuid())
+  customerId     String
+  authorUserId   String?
+  authorApiKeyId String?
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@map("customer_notes")
+}
+
+// ============================================
 // Broadcast
 // ============================================
 
@@ -384,6 +523,7 @@ model Automation {
 // RBAC (Role-Based Access Control)
 // ============================================
 
+// Unused since the /rbac routes were removed; kept so that the boot-time prisma db push drops no data.
 model Role {
   id             String   @id @default(uuid())
   organizationId String

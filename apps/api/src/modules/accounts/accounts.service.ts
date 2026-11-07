@@ -6,6 +6,8 @@ import { prisma } from '@multiwa/database';
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { CallRecordingsService } from '../calls/recordings/call-recordings.service';
+import { publicProfile } from '../profiles/profile-settings';
 
 @Injectable()
 export class AccountsService {
@@ -15,6 +17,7 @@ export class AccountsService {
     @Inject(forwardRef(() => EngineManagerService))
     private readonly engineManager: EngineManagerService,
     private readonly engineCommands: EngineCommandsService,
+    private readonly recordings: CallRecordingsService,
   ) {}
 
   async findAll(userId: string) {
@@ -139,10 +142,11 @@ export class AccountsService {
       return [];
     }
     
-    return prisma.profile.findMany({
+    const profiles = await prisma.profile.findMany({
       where: { workspaceId: account.workspaceId },
       orderBy: { createdAt: 'desc' },
     });
+    return profiles.map(publicProfile);
   }
 
   async createProfile(accountId: string, dto: any) {
@@ -163,7 +167,7 @@ export class AccountsService {
     const requestedEngine = dto.settings?.engine ?? dto.engine;
     const engine = VALID_ENGINES.includes(requestedEngine) ? requestedEngine : 'whatsapp-web-js';
 
-    return prisma.profile.create({
+    return publicProfile(await prisma.profile.create({
       data: {
         accountId: accountId,
         workspaceId: account.workspaceId,
@@ -173,7 +177,7 @@ export class AccountsService {
         engine,
         settings: {},
       },
-    });
+    }));
   }
 
   async getProfile(accountId: string, profileId: string) {
@@ -185,13 +189,15 @@ export class AccountsService {
       throw new NotFoundException('Profile not found');
     }
 
-    return profile;
+    return publicProfile(profile);
   }
 
   async deleteProfile(accountId: string, profileId: string) {
-    return prisma.profile.delete({
+    // As DELETE /profiles/:id: the recording files and the announcement go before the rows that point at them.
+    await this.recordings.purgeProfile(profileId);
+    return publicProfile(await prisma.profile.delete({
       where: { id: profileId },
-    });
+    }));
   }
 
   async connectProfile(accountId: string, profileId: string) {

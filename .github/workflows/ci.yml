@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -71,10 +71,32 @@ jobs:
       - name: Typecheck Admin
         run: pnpm --filter admin typecheck
 
+      # The TypeScript SDK: a real typecheck of its sources, then the build npm would publish (tsup, a few seconds).
+      - name: Typecheck SDK
+        run: pnpm --filter @multiwa/sdk typecheck
+
+      - name: Build SDK
+        run: pnpm --filter @multiwa/sdk build
+
       # Lint gate (ESLint 9 flat config). Backend TS only (admin uses Next's own
       # eslint). Errors fail the build; stylistic/any rules are warnings for now.
       - name: Lint (ESLint)
         run: pnpm run lint
+
+      # The admin's end-to-end tests: the pages of the build above, in the runner's Chrome, against a fake backend
+      # (REST answered in the browser, realtime from a socket.io server on the build's NEXT_PUBLIC_API_URL port).
+      - name: Admin e2e (fake backend)
+        id: admin-e2e
+        timeout-minutes: 20
+        run: pnpm --filter admin test:e2e
+
+      - name: Upload the admin e2e traces
+        if: failure() && steps.admin-e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: admin-e2e-traces
+          path: apps/admin/test-results/
+          retention-days: 7
 
   docker-build:
     name: Docker Build Test
@@ -153,7 +175,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: 'pnpm'
 
       - name: Install dependencies
@@ -168,10 +190,10 @@ jobs:
       - name: Build API workspace dependencies
         run: pnpm --filter "api^..." build
 
-      # Coverage gate. Excludes the tenant route-coverage meta-test: it imports
-      # every controller to reflect route metadata, which would pull untested
+      # Coverage gate. Excludes the tenant and role route-coverage meta-tests: they
+      # import every controller to reflect route metadata, which would pull untested
       # controller/service methods into the coverage denominator and skew the
-      # number. It runs as its own structural check below.
+      # number. They run as their own structural check below.
       - name: Run API tests (with coverage gate)
         run: pnpm --filter api run test:cov
         env:
@@ -180,9 +202,12 @@ jobs:
           JWT_SECRET: test-jwt-secret
           JWT_REFRESH_SECRET: test-jwt-refresh-secret
           ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          # The runner's Chrome, for the call-media browser spec: puppeteer's own download is skipped on a cached store.
+          PUPPETEER_EXECUTABLE_PATH: /usr/bin/google-chrome
 
       # Structural IDOR guard: every tenant-scoped route must carry @RequireTenant.
-      - name: Tenant route-coverage check
+      # Role guard: who may call each route matches scripts/api-roles.snapshot.json.
+      - name: Tenant and role route-coverage checks
         run: pnpm --filter api run test:meta
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/multiwa_test

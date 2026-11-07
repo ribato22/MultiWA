@@ -8,7 +8,7 @@ import { NotFoundException, BadRequestException } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({
   prisma: {
-    message: { findUnique: vi.fn() },
+    message: { findUnique: vi.fn(), findMany: vi.fn() },
     profile: { findUnique: vi.fn() },
     conversation: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
   },
@@ -116,6 +116,18 @@ describe('MessagesService', () => {
         'audio',
         expect.objectContaining({ ptt: false, mimetype: 'audio/mpeg' }),
       );
+    });
+  });
+
+  // ?limit=1000000 would load a whole table into one answer, and a message row can hold its media inline: a page is at
+  // most 500 rows, and a full one says there is more, whatever limit was asked for.
+  describe('message lists', () => {
+    it('load at most 500 rows, and a full page has more', async () => {
+      const findMany = vi.mocked(prisma.message.findMany).mockReset().mockResolvedValue(Array.from({ length: 500 }, (_, i) => ({ id: `m${i}` })) as any);
+      await service.findByProfile('p', { limit: 1_000_000 });
+      expect(findMany.mock.calls[0][0]).toMatchObject({ take: 500 });
+      expect((await service.findByConversation('c', { limit: 1_000_000 })).hasMore).toBe(true);
+      expect(findMany.mock.calls[1][0]).toMatchObject({ take: 500 });
     });
   });
 });

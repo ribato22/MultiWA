@@ -3,11 +3,15 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback, Fragment } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getSocketUrl } from '@/lib/socket';
-import { api, Profile, Conversation } from '@/lib/api';
+import { api, Profile, Conversation, type CallRecord } from '@/lib/api';
+import { fromPayload, isCallEntry, mergeTimeline, type CallUpdatePayload } from '@/lib/calls';
+import { canAct, canConfigure, currentUser } from '@/lib/current-user';
+import { CallTimelineRow } from '@/components/calls/call-timeline-row';
+import { CustomerPanel, phoneOfJid } from '@/components/customers/customer-panel';
 import { formatRelative, formatFull, formatTime, formatDate, formatDateTime, formatDaySeparator, dayBucket } from '@/lib/datetime';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,7 +89,57 @@ const fixMediaUrl = (url?: string): string => {
   return normalized;
 };
 
-// Check if a name looks like a raw JID (e.g. "120363421805328930@g.us" or "6282283011108@s.whatsapp.net" or all digits)
+// Inbound media is stored inline as a base64 data URL (engine-runtime applyInboundMedia), which
+// fixMediaUrl rejects. A media element may show a data URL of its own kind, never SVG (it can
+// carry script); links and new tabs only ever get http(s), or a blob made from the data URL.
+const DATA_URL = /^data:([a-z]+)\/([a-z0-9.+_-]+)[^,]*;base64,/i;
+
+const mediaSrc = (url: string | undefined, kind: 'image' | 'audio' | 'video'): string => {
+  const m = url?.match(DATA_URL);
+  if (!m) return fixMediaUrl(url);
+  return m[1].toLowerCase() === kind && m[2].toLowerCase() !== 'svg+xml' ? (url as string) : '';
+};
+
+// Open an image in a new tab, or download a file. Browsers block navigating to a data: URL, so
+// one goes through a blob: only a non-SVG image is opened, anything else is downloaded.
+const openMedia = (url?: string, filename?: string) => {
+  const m = url?.match(DATA_URL);
+  if (!m) {
+    const href = fixMediaUrl(url);
+    if (href) window.open(href, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  const type = `${m[1]}/${m[2]}`.toLowerCase();
+  const bytes = Uint8Array.from(atob((url as string).slice(m[0].length)), (c) => c.charCodeAt(0));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type }));
+  if (type.startsWith('image/') && type !== 'image/svg+xml') {
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+  } else {
+    a.download = filename || 'download';
+  }
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+};
+
+// Why a media message has nothing to show (engine-runtime sets mediaOmitted above the size cap).
+const missingMedia = (content: any): string =>
+  content?.mediaOmitted
+    ? `Too large to store${content.mediaBytes ? ` (${(content.mediaBytes / 1048576).toFixed(1)} MB)` : ''}`
+    : 'Not available';
+
+const MediaUnavailable = ({ icon, label, content }: { icon: string; label: string; content: any }) => (
+  <div className="bg-secondary/30 rounded-lg p-4 flex items-center gap-3 min-w-[200px]">
+    <span className="text-3xl">{icon}</span>
+    <div>
+      <p className="text-sm font-medium">{label}</p>
+      <p className="text-xs text-muted-foreground">{missingMedia(content)}</p>
+    </div>
+  </div>
+);
+
+// Check if a name looks like a raw JID (e.g. "120363421805328930@g.us" or "628123456789@s.whatsapp.net" or all digits)
 const isJidLikeName = (name: string) => {
   if (!name) return true;
   const trimmed = name.trim();
@@ -131,15 +185,23 @@ export default function ChatPage() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
+  // A viewer reads the chats: no composer, no chat actions, and opening one leaves it unread (the count is the team's).
+  const [role] = useState(() => currentUser()?.role);
+  const agent = canAct(role);
   const [mobileView, setMobileView] = useState<'list' | 'messages'>('list');
   const [loading, setLoading] = useState(true);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationsLoaded, setConversationsLoaded] = useState(false); // the list has been asked for once (it may have failed)
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationCalls, setConversationCalls] = useState<CallRecord[]>([]);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  // What the API says about older messages in the DB. Unlike hasMoreOlder (optimistic, keeps the
+  // "load older" button), this decides whether a call older than the first message is shown.
+  const [olderInDb, setOlderInDb] = useState(true);
   const [msgLimit, setMsgLimit] = useState(50);
   const [messageInput, setMessageInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -163,6 +225,13 @@ export default function ChatPage() {
   // The socket handlers are bound once per profile, so they read the open conversation here.
   const openConversationId = useRef<string | null>(null);
   openConversationId.current = selectedConversation?.id ?? null;
+  // Bumped each time a conversation is opened: the messages answer, the calls answer and a load-older
+  // of a chat we already left are dropped, so none of them lands in the open one.
+  const loadSeq = useRef(0);
+  // Set right before the calls answer of a load is stored: only that change scrolls to the end, not a live update of a row.
+  const scrollForCalls = useRef(false);
+
+  const timeline = useMemo(() => mergeTimeline(messages, conversationCalls, olderInDb), [messages, conversationCalls, olderInDb]);
 
   // Emoji categories
   const emojiCategories: Record<string, { label: string; emojis: string[] }> = {
@@ -181,13 +250,24 @@ export default function ChatPage() {
   // URL → state sync. On mount or URL change, hydrate selected conversation.
   useEffect(() => {
     const convId = searchParams.get('conv');
-    if (!convId) return;
+    if (!convId || selectedConversation?.id === convId) return;
     const found = conversations.find(c => c.id === convId);
-    if (found && (!selectedConversation || selectedConversation.id !== convId)) {
+    if (found) {
       setSelectedConversation(found);
       setMobileView('messages');
+      return;
     }
-  }, [searchParams, conversations]);
+    if (!conversationsLoaded) return;
+    // Not among the profile's latest conversations (all the list holds): ask for it.
+    let stale = false;
+    api.getConversation(convId).then(({ data: conv }) => {
+      // Only the open profile's: a message sent from here goes out through the open profile.
+      if (stale || !conv || conv.profileId !== selectedProfile) return;
+      setSelectedConversation(conv);
+      setMobileView('messages');
+    });
+    return () => { stale = true; };
+  }, [searchParams, conversations, conversationsLoaded, selectedProfile]);
 
   // WebSocket connection for real-time message status updates
   useEffect(() => {
@@ -231,6 +311,11 @@ export default function ChatPage() {
       }
     });
 
+    // A call of the open chat changes (it ends, is rejected...): its row follows. Rows are not added here: the load has them.
+    socket.on('call:update', (p: CallUpdatePayload) => {
+      setConversationCalls(prev => prev.map(c => (c.id === p.callId ? fromPayload(p, c) : c)));
+    });
+
     // Real-time incoming messages
     // Backend emits: { type: 'message:received', message: savedMessage, conversation }
     socket.on('message', (data: any) => {
@@ -253,7 +338,7 @@ export default function ChatPage() {
           // If this message belongs to the currently open conversation, 
           // mark it as read immediately so badge doesn't increment
           setSelectedConversation(current => {
-            if (current && msg.conversationId === current.id) {
+            if (agent && current && msg.conversationId === current.id) {
               api.markAsRead(current.id).catch(() => {});
               // Also clear badge in conversation list
               setConversations(prev => prev.map(c =>
@@ -281,9 +366,9 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (selectedConversation) {
-      loadMessages(selectedConversation.id);
-      // Mark as read when opening a conversation
-      if (selectedConversation.unreadCount > 0) {
+      loadMessages(selectedConversation);
+      // Mark as read when opening a conversation: an agent's, a viewer leaves it unread for the team
+      if (agent && selectedConversation.unreadCount > 0) {
         api.markAsRead(selectedConversation.id).catch(() => {});
         // Clear unread badge in local state
         setConversations(prev => prev.map(c =>
@@ -294,9 +379,21 @@ export default function ChatPage() {
     }
   }, [selectedConversation?.id]);
 
+  // Scroll only when the newest entry changes: opening a chat, a new message, or a call arriving (in a second
+  // request) that ends the chat. Not on every timeline change: a load-older prepend keeps its own anchor and an
+  // ack update must not pull someone reading the history down.
+  const newestKey = timeline[timeline.length - 1]?.id ?? '';
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [newestKey]);
+
+  // The calls answer can add rows above the last message after the scroll above has started: scroll again. Only for
+  // that answer (loadMessages flags it): a live update of a row must not pull someone reading the history down.
+  useEffect(() => {
+    if (!scrollForCalls.current) return;
+    scrollForCalls.current = false;
+    if (conversationCalls.length) scrollToBottom();
+  }, [conversationCalls]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -307,7 +404,8 @@ export default function ChatPage() {
     if (res.data) {
       setProfiles(res.data);
       if (res.data.length > 0) {
-        setSelectedProfile(res.data[0].id);
+        const wanted = searchParams.get('profile');
+        setSelectedProfile(res.data.find((p) => p.id === wanted)?.id ?? res.data[0].id);
       }
     }
     setLoading(false);
@@ -343,25 +441,39 @@ export default function ChatPage() {
       }
       setConversations(Array.from(jidMap.values()));
     }
+    setConversationsLoaded(true);
   };
 
-  const loadMessages = async (conversationId: string) => {
+  const loadMessages = async (conv: Conversation) => {
     // Reset load-older state for the newly opened conversation (optimistic: assume
     // WhatsApp may have deeper history than the DB snapshot).
     setHasMoreOlder(true);
     setMsgLimit(50);
-    const res = await api.getMessages(conversationId);
+    const seq = ++loadSeq.current;
+    // Never show the previous conversation's calls, also when this load fails.
+    setConversationCalls([]);
+    const res = await api.getMessages(conv.id);
+    if (seq !== loadSeq.current) return; // another conversation was opened meanwhile
     if (res.data) {
       // API returns { messages: [...], hasMore } or possibly an array
       const raw = res.data as any;
       const msgArray = Array.isArray(raw) ? raw : (raw.messages || []);
       setMessages(msgArray);
+      setOlderInDb(Array.isArray(raw) ? false : !!raw.hasMore);
+      // The conversation's own profile, not selectedProfile: after a profile switch the open conversation can still be the old one's.
+      // ponytail: the newest 50 calls only, not refetched on load-older; refetch with since=<oldest message> if older periods need their calls
+      const callsRes = await api.getCalls(conv.profileId, { from: conv.jid, limit: 50 });
+      if (seq === loadSeq.current) {
+        scrollForCalls.current = true;
+        setConversationCalls(callsRes.data?.calls ?? []);
+      }
     }
   };
 
   // On-demand "load older": pull deeper history from WhatsApp, persist it, prepend
   // to the view while preserving scroll position.
   const handleLoadOlder = async () => {
+    const seq = loadSeq.current;
     if (!selectedConversation || loadingOlder) return;
     setLoadingOlder(true);
     const container = messagesContainerRef.current;
@@ -370,11 +482,13 @@ export default function ChatPage() {
     const newLimit = msgLimit + 50;
     try {
       const res = await api.loadOlderMessages(selectedConversation.id, newLimit);
+      if (seq !== loadSeq.current) return; // another conversation was opened meanwhile
       if (res.data) {
         const data = res.data as any;
         setMessages(data.messages || []);
         setMsgLimit(newLimit);
         setHasMoreOlder(!!data.hasMore);
+        setOlderInDb(!!data.hasMore);
         // Keep the viewport anchored where the user was after prepend.
         requestAnimationFrame(() => {
           const c = messagesContainerRef.current;
@@ -565,6 +679,7 @@ export default function ChatPage() {
     setMobileView('messages');
     const params = new URLSearchParams(window.location.search);
     params.set('conv', conv.id);
+    params.set('profile', conv.profileId); // a reload opens this chat's profile, not the one the link named
     router.replace(`/dashboard/chat?${params.toString()}`, { scroll: false });
   }, [router]);
 
@@ -653,7 +768,7 @@ export default function ChatPage() {
   // Render loading skeleton
   if (loading) {
     return (
-      <div className="h-[calc(100vh-120px)] flex">
+      <div className="h-[calc(100vh-var(--header-height,77px)-43px)] flex">
         <div className="w-96 border-r border-border p-4 space-y-4">
           <Skeleton className="h-10 w-full" />
           {[1, 2, 3, 4, 5].map(i => (
@@ -667,8 +782,15 @@ export default function ChatPage() {
     );
   }
 
+  // A message's key uses its index among the messages only, so a call row landing before it does not remount it.
+  let msgIdx = 0;
+  // A one-to-one chat's number has a customer; a group, or a number WhatsApp hides, has none.
+  const customerPhone = selectedConversation?.type === 'user' ? phoneOfJid(selectedConversation.jid) : null;
+
+  // The screen below the header, less the page's padding: the header grows while a call's bar takes a row of its own,
+  // and the chat shrinks with it, so the message field stays on the screen.
   return (
-    <div className="h-[calc(100vh-120px)] flex bg-card rounded-2xl border border-border overflow-hidden">
+    <div className="h-[calc(100vh-var(--header-height,77px)-43px)] flex bg-card rounded-2xl border border-border overflow-hidden">
       {/* Conversation Sidebar */}
       <div className={`${mobileView === 'list' ? 'flex' : 'hidden'} lg:flex w-full lg:w-96 border-r border-border flex-col`}>
         {/* Sidebar Header */}
@@ -816,6 +938,9 @@ export default function ChatPage() {
                     <button onClick={() => { setShowThreeDotMenu(false); setShowContactInfo(!showContactInfo); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
                       <User className="w-4 h-4 inline mr-1.5 -mt-0.5" /> Contact Info
                     </button>
+                    {/* Mute and pin are an agent's; clearing the chat an owner's or admin's. */}
+                    {agent && (
+                    <>
                     <button onClick={() => { setShowThreeDotMenu(false); handleToggleMute(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary flex items-center gap-3">
                       {(selectedConversation as any)?.metadata?.isMuted
                         ? <Bell className="w-4 h-4" aria-hidden="true" />
@@ -826,10 +951,16 @@ export default function ChatPage() {
                       <span>📌</span>
                       {(selectedConversation as any)?.metadata?.isPinned ? 'Unpin Chat' : 'Pin Chat'}
                     </button>
+                    </>
+                    )}
+                    {canConfigure(role) && (
+                    <>
                     <hr className="my-1 border-border" />
                     <button onClick={() => { setShowThreeDotMenu(false); handleClearChat(); }} className="w-full px-4 py-2.5 text-sm text-left hover:bg-secondary text-red-500 flex items-center gap-3">
                       <span>🗑️</span> Clear Chat
                     </button>
+                    </>
+                    )}
                   </div>
                 )}
               </div>
@@ -853,7 +984,7 @@ export default function ChatPage() {
                   </button>
                 </div>
               )}
-              {messages.length === 0 ? (
+              {timeline.length === 0 ? (
                 <div className="flex items-center justify-center h-full">
                   <div className="text-center">
                     <div className="text-6xl mb-4">🔐</div>
@@ -861,10 +992,25 @@ export default function ChatPage() {
                   </div>
                 </div>
               ) : (
-                messages.map((msg, idx) => {
-                  const showDaySeparator = idx === 0 || dayBucket(msg.timestamp) !== dayBucket(messages[idx - 1]?.timestamp);
+                timeline.map((entry, idx) => {
+                  const showDaySeparator = idx === 0 || dayBucket(entry.timestamp) !== dayBucket(timeline[idx - 1]?.timestamp);
+                  if (isCallEntry(entry)) {
+                    return (
+                      <Fragment key={entry.id}>
+                        {showDaySeparator && (
+                          <div className="flex justify-center my-3">
+                            <span className="text-xs text-muted-foreground bg-secondary/60 px-3 py-1 rounded-full">
+                              {formatDaySeparator(entry.timestamp)}
+                            </span>
+                          </div>
+                        )}
+                        <CallTimelineRow call={entry.call} />
+                      </Fragment>
+                    );
+                  }
+                  const msg = entry;
                   return (
-                  <Fragment key={`${msg.id}-${idx}`}>
+                  <Fragment key={`${msg.id}-${msgIdx++}`}>
                     {showDaySeparator && (
                       <div className="flex justify-center my-3">
                         <span className="text-xs text-muted-foreground bg-secondary/60 px-3 py-1 rounded-full">
@@ -875,8 +1021,8 @@ export default function ChatPage() {
                   <div
                     className={`flex group ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                   >
-                    {/* Delete button for outgoing messages (appears on hover) */}
-                    {msg.direction === 'outgoing' && (
+                    {/* Delete button for outgoing messages (appears on hover): an agent's */}
+                    {agent && msg.direction === 'outgoing' && (
                       <div className="flex items-center mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {showDeleteConfirm === (msg.messageId || msg.id) ? (
                           <div className="flex items-center gap-1 bg-card rounded-lg shadow-lg border border-border p-1">
@@ -918,58 +1064,64 @@ export default function ChatPage() {
                       )}
                       {msg.type === 'image' && (
                         <div>
-                          {msg.content?.url ? (
-                            <>
-                              <img 
-                                src={fixMediaUrl(msg.content.url)} 
-                                alt="Image" 
-                                className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer"
-                                onClick={() => window.open(fixMediaUrl(msg.content?.url), '_blank')}
-                              />
-                              {msg.content?.caption && (
-                                <p className="mt-2 text-sm">{msg.content.caption}</p>
-                              )}
-                            </>
+                          {mediaSrc(msg.content?.url, 'image') ? (
+                            <img
+                              src={mediaSrc(msg.content?.url, 'image')}
+                              alt="Image"
+                              loading="lazy"
+                              className="rounded-lg max-w-full max-h-64 object-cover cursor-pointer"
+                              onClick={() => openMedia(msg.content?.url)}
+                            />
                           ) : (
-                            <div className="bg-secondary/30 rounded-lg p-4 flex items-center gap-3 min-w-[200px]">
-                              <span className="text-3xl">📷</span>
-                              <div>
-                                <p className="text-sm font-medium">Photo</p>
-                                <p className="text-xs text-muted-foreground">Image not available</p>
-                              </div>
-                            </div>
+                            <MediaUnavailable icon="📷" label="Photo" content={msg.content} />
                           )}
-                        </div>
-                      )}
-                      {msg.type === 'video' && (
-                        <div>
-                          <video 
-                            src={fixMediaUrl(msg.content?.url)} 
-                            controls
-                            className="rounded-lg max-w-full max-h-64"
-                          />
                           {msg.content?.caption && (
                             <p className="mt-2 text-sm">{msg.content.caption}</p>
                           )}
                         </div>
                       )}
-                      {msg.type === 'audio' && (
+                      {msg.type === 'video' && (
+                        <div>
+                          {mediaSrc(msg.content?.url, 'video') ? (
+                            <video
+                              src={mediaSrc(msg.content?.url, 'video')}
+                              controls
+                              className="rounded-lg max-w-full max-h-64"
+                            />
+                          ) : (
+                            <MediaUnavailable icon="🎬" label="Video" content={msg.content} />
+                          )}
+                          {msg.content?.caption && (
+                            <p className="mt-2 text-sm">{msg.content.caption}</p>
+                          )}
+                        </div>
+                      )}
+                      {(msg.type === 'audio' || msg.type === 'ptt') && (
                         <div className="min-w-[200px]">
-                          <audio src={fixMediaUrl(msg.content?.url)} controls className="w-full" />
+                          {mediaSrc(msg.content?.url, 'audio') ? (
+                            <audio src={mediaSrc(msg.content?.url, 'audio')} controls className="w-full" />
+                          ) : (
+                            <MediaUnavailable icon={msg.type === 'ptt' ? '🎙️' : '🎵'} label={msg.type === 'ptt' ? 'Voice message' : 'Audio'} content={msg.content} />
+                          )}
                         </div>
                       )}
                       {msg.type === 'document' && (
                         <div>
-                          <a 
-                            href={fixMediaUrl(msg.content?.url)} 
-                            target="_blank" 
+                          <a
+                            href={fixMediaUrl(msg.content?.url) || '#'}
+                            target="_blank"
                             rel="noopener noreferrer"
+                            onClick={(e) => {
+                              if (fixMediaUrl(msg.content?.url)) return;
+                              e.preventDefault();
+                              openMedia(msg.content?.url, msg.content?.filename);
+                            }}
                             className="flex items-center gap-3 bg-secondary/50 rounded-lg p-3 hover:bg-secondary/70 transition-colors cursor-pointer no-underline text-inherit max-w-[300px] overflow-hidden"
                           >
                             <div className="text-3xl">📄</div>
                             <div className="flex-1 min-w-0">
                               <p className="font-medium truncate">{msg.content?.filename || 'Document'}</p>
-                              <p className="text-xs text-muted-foreground">Document</p>
+                              <p className="text-xs text-muted-foreground">{fixMediaUrl(msg.content?.url) || msg.content?.url?.match(DATA_URL) ? 'Document' : missingMedia(msg.content)}</p>
                             </div>
                             <div className="text-muted-foreground">⬇️</div>
                           </a>
@@ -1077,15 +1229,15 @@ export default function ChatPage() {
                       )}
                       {msg.type === 'sticker' && (
                         <div className="w-32 h-32 flex items-center justify-center">
-                          {msg.content?.url ? (
-                            <img src={fixMediaUrl(msg.content.url)} alt="Sticker" className="max-w-full max-h-full object-contain" />
+                          {mediaSrc(msg.content?.url, 'image') ? (
+                            <img src={mediaSrc(msg.content?.url, 'image')} alt="Sticker" loading="lazy" className="max-w-full max-h-full object-contain" />
                           ) : (
                             <div className="text-6xl">🏷️</div>
                           )}
                         </div>
                       )}
                       {/* Fallback for unknown types */}
-                      {!['text', 'image', 'video', 'audio', 'document', 'location', 'vcard', 'contact', 'contacts', 'poll', 'poll_creation', 'event', 'event_creation', 'sticker', 'chat'].includes(msg.type) && (
+                      {!['text', 'image', 'video', 'audio', 'ptt', 'document', 'location', 'vcard', 'contact', 'contacts', 'poll', 'poll_creation', 'event', 'event_creation', 'sticker', 'chat'].includes(msg.type) && (
                         <div className="bg-secondary/50 rounded-lg p-3 text-sm">
                           <p className="text-muted-foreground italic">📎 {msg.type} message</p>
                           {msg.content?.text && <p className="mt-1">{msg.content.text}</p>}
@@ -1108,7 +1260,12 @@ export default function ChatPage() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Message Input */}
+            {/* Message Input: an agent's; a viewer reads the chat */}
+            {!agent ? (
+              <p className="p-4 border-t border-border bg-secondary/30 text-sm text-muted-foreground">
+                Your role can read this chat but not send messages.
+              </p>
+            ) : (
             <div className="p-4 border-t border-border bg-secondary/30 pb-safe">
               <div className="flex items-center gap-3">
                 {/* Emoji Button */}
@@ -1284,6 +1441,7 @@ export default function ChatPage() {
                 </Button>
               </div>
             </div>
+            )}
           </>
         ) : (
           /* No Conversation Selected */
@@ -1333,6 +1491,11 @@ export default function ChatPage() {
 
           {/* Details */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Keyed by the number: another chat's never shows this one's customer. */}
+            {customerPhone && (
+              <CustomerPanel key={customerPhone} phone={customerPhone} profileId={selectedConversation.profileId} />
+            )}
+
             {/* Phone */}
             <div className="bg-secondary/30 rounded-xl p-3">
               <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1.5"><Smartphone className="w-3 h-3" /> Phone</p>

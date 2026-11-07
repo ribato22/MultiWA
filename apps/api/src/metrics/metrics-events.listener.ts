@@ -12,6 +12,10 @@ import { AppEvents } from '@multiwa/core';
 import { MetricsService } from './metrics.service';
 import {
   InternalEvents,
+  type CallRecorderPayload,
+  type CallRecordingsPrivacyPayload,
+  type CallsMediaWorkerDiedPayload,
+  type CallsSessionPayload,
   type EngineAckDroppedPayload,
   type EngineGroupFetchPayload,
 } from './internal-events';
@@ -20,14 +24,20 @@ import {
 export class MetricsEventsListener implements OnModuleInit {
   private readonly logger = new Logger(MetricsEventsListener.name);
 
+  // Profiles counted as connected. A set, not a counter: a profile that comes back after a
+  // transient drop (an engine recycle) is ready again with no disconnect event in between, and
+  // counting events made the gauge climb, so the "all profiles disconnected" alert (== 0) went blind.
+  private readonly connected = new Set<string>();
+
   constructor(private readonly metrics: MetricsService) {}
 
   // Resync the connected-profiles gauge from the source of truth at startup so a
   // process restart doesn't leave it stuck at 0 until profiles reconnect.
   async onModuleInit(): Promise<void> {
     try {
-      const connected = await prisma.profile.count({ where: { status: 'connected' } });
-      this.metrics.connectedProfiles.set(connected);
+      const rows = await prisma.profile.findMany({ where: { status: 'connected' }, select: { id: true } });
+      for (const row of rows) this.connected.add(row.id);
+      this.metrics.connectedProfiles.set(this.connected.size);
     } catch (err) {
       this.logger.debug(`connected-profiles resync failed: ${(err as Error).message}`);
     }
@@ -52,20 +62,22 @@ export class MetricsEventsListener implements OnModuleInit {
   }
 
   @OnEvent(AppEvents.CONNECTION.READY)
-  onConnectionReady(): void {
+  onConnectionReady(payload?: { profileId?: string }): void {
     try {
-      this.metrics.connectedProfiles.inc();
+      if (payload?.profileId) this.connected.add(payload.profileId);
+      this.metrics.connectedProfiles.set(this.connected.size);
     } catch (err) {
-      this.logger.debug(`connectedProfiles.inc failed: ${(err as Error).message}`);
+      this.logger.debug(`connectedProfiles (ready) failed: ${(err as Error).message}`);
     }
   }
 
   @OnEvent(AppEvents.CONNECTION.DISCONNECTED)
-  onConnectionDisconnected(): void {
+  onConnectionDisconnected(payload?: { profileId?: string }): void {
     try {
-      this.metrics.connectedProfiles.dec();
+      if (payload?.profileId) this.connected.delete(payload.profileId);
+      this.metrics.connectedProfiles.set(this.connected.size);
     } catch (err) {
-      this.logger.debug(`connectedProfiles.dec failed: ${(err as Error).message}`);
+      this.logger.debug(`connectedProfiles (disconnected) failed: ${(err as Error).message}`);
     }
   }
 
@@ -85,6 +97,57 @@ export class MetricsEventsListener implements OnModuleInit {
       this.metrics.engineAckDroppedTotal.inc();
     } catch (err) {
       this.logger.debug(`engineAckDropped metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.CALLS_MEDIA_WORKER_DIED)
+  onCallsMediaWorkerDied(_payload: CallsMediaWorkerDiedPayload): void {
+    try {
+      this.metrics.callsMediaWorkerDeathsTotal.inc();
+    } catch (err) {
+      this.logger.debug(`callsMediaWorkerDied metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.CALLS_SESSION)
+  onCallsSession(payload: CallsSessionPayload): void {
+    try {
+      switch (payload.kind) {
+        case 'rung':
+          this.metrics.callsDashboardRingsTotal.inc();
+          break;
+        case 'answered':
+          this.metrics.callsDashboardAnswersTotal.inc();
+          this.metrics.callsDashboardAnswerSeconds.observe(payload.answerSeconds);
+          break;
+        case 'media_failed':
+          this.metrics.callsMediaFailuresTotal.inc({ reason: payload.reason });
+          break;
+        case 'ended':
+          this.metrics.callsDashboardEndedTotal.inc({ reason: payload.endReason });
+          break;
+      }
+    } catch (err) {
+      this.logger.debug(`callsSession metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.CALL_RECORDINGS_PRIVACY)
+  onCallRecordingsPrivacy(payload: CallRecordingsPrivacyPayload): void {
+    try {
+      this.metrics.callsRecordingsPrivacyChecksTotal.inc({ result: payload.result });
+    } catch (err) {
+      this.logger.debug(`callRecordingsPrivacy metric failed: ${(err as Error).message}`);
+    }
+  }
+
+  @OnEvent(InternalEvents.CALL_RECORDER)
+  onCallRecorder(payload: CallRecorderPayload): void {
+    try {
+      if (payload.kind === 'upload') this.metrics.callsRecordingUploadsTotal.inc({ result: payload.result });
+      else this.metrics.callsRecorderFailuresTotal.inc({ stage: payload.stage });
+    } catch (err) {
+      this.logger.debug(`callRecorder metric failed: ${(err as Error).message}`);
     }
   }
 }

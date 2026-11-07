@@ -70,6 +70,10 @@ const PERMISSIONS = [
   { value: 'webhooks:read', label: 'Read Webhooks', group: 'Webhooks' },
   { value: 'webhooks:write', label: 'Manage Webhooks', group: 'Webhooks' },
   { value: 'broadcast:write', label: 'Send Broadcasts', group: 'Broadcast' },
+  { value: 'recordings:read', label: 'Read Recordings', group: 'Recordings' },
+  { value: 'recordings:delete', label: 'Delete Recordings', group: 'Recordings' },
+  { value: 'customers:read', label: 'Read Customers', group: 'Customers' },
+  { value: 'customers:write', label: 'Manage Customers', group: 'Customers' },
 ];
 
 export default function ApiKeysPage() {
@@ -294,7 +298,7 @@ export default function ApiKeysPage() {
                     <div className="flex flex-wrap gap-1">
                       {(apiKey.permissions || []).slice(0, 2).map(p => (
                         <Badge key={p} variant="secondary" className="text-xs">
-                          {p.split(':')[0]}
+                          {PERMISSIONS.find((x) => x.value === p)?.label ?? p}
                         </Badge>
                       ))}
                       {(apiKey.permissions || []).length > 2 && (
@@ -364,7 +368,7 @@ export default function ApiKeysPage() {
               <div className="flex flex-wrap gap-1">
                 {(apiKey.permissions || []).slice(0, 3).map(p => (
                   <Badge key={p} variant="secondary" className="text-xs">
-                    {p.split(':')[0]}
+                    {PERMISSIONS.find((x) => x.value === p)?.label ?? p}
                   </Badge>
                 ))}
                 {(apiKey.permissions || []).length > 3 && (
@@ -398,9 +402,9 @@ export default function ApiKeysPage() {
         </div>
       </div>
 
-      {/* Create Modal */}
+      {/* Create Modal: the scope list is taller than a short window, so the dialog scrolls and Create Key stays reachable. */}
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create API Key</DialogTitle>
             <DialogDescription>
@@ -544,7 +548,7 @@ export default function ApiKeysPage() {
             <AlertDialogCancel className="cursor-pointer">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
+              className="bg-red-600 text-white hover:bg-red-700 cursor-pointer"
             >
               Revoke Key
             </AlertDialogAction>

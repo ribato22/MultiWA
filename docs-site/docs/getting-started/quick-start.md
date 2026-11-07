@@ -12,7 +12,7 @@ Get MultiWA running in under 5 minutes.
 ## Prerequisites
 
 - Docker & Docker Compose installed (recommended)
-- OR Node.js 20+, pnpm 9+, PostgreSQL 16+, and Redis 7+ for local development
+- OR Node.js 24+, pnpm 9+, PostgreSQL 16+, and Redis 7+ for local development
 
 ---
 
@@ -82,59 +82,108 @@ Replace `http://localhost:3333` with your API base if you are not using the defa
 
 ### 1. Register an account
 
+The first account becomes the server's owner, and until it exists anyone who reaches the server can claim it: create it before you expose the server.
+
 ```bash
 curl -X POST http://localhost:3333/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@example.com",
-    "password": "ChangeMe1!",
-    "name": "Admin"
+    "password": "ChangeMe1234!",
+    "name": "Admin",
+    "organizationName": "My Company"
   }'
 ```
 
 The response includes an `accessToken`. Use it as `Authorization: Bearer ...` for the next calls.
 
-### 2. Create a Profile
+> **Prefer the dashboard?** Sign in at http://localhost:3001 with the same email and password, open **Profiles → Add Profile**, and scan the QR it shows. That covers steps 2 to 4; carry on with step 5.
+
+### 2. Find your workspace
+
+Registering also created a workspace named `Default`, and every profile belongs to one. List your workspaces and copy the `id` of `Default`:
+
+```bash
+curl http://localhost:3333/api/v1/workspaces \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### 3. Create a Profile
+
+A profile is one WhatsApp number. Use the workspace `id` from step 2:
 
 ```bash
 curl -X POST http://localhost:3333/api/v1/profiles \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  -d '{"name": "My WhatsApp"}'
+  -d '{"workspaceId": "YOUR_WORKSPACE_ID", "name": "My WhatsApp"}'
 ```
 
-### 3. Connect and Fetch the QR
+Copy the `id` from the answer: it is `YOUR_PROFILE_ID` below.
 
-The recommended path is the Admin Dashboard at http://localhost:3001 — it polls the API and renders the QR for you. If you prefer raw API calls, use the account-scoped endpoints:
+### 4. Link your number
+
+WhatsApp links a number when you scan a QR code with the phone. No REST call returns that QR: the server sends it over the WebSocket as the `qr:update` event, to owners and admins only (see [WebSocket API](<../api/websocket-api.md>)).
+
+**In the dashboard:** sign in at http://localhost:3001 with the account from step 1, open **Profiles**, choose the profile and press **Connect WhatsApp**. The QR appears on the profile's page and refreshes by itself.
+
+**Over the API:** open a Socket.IO connection, join the profile, and only then start the connection: a QR is sent only to the sockets that have joined the profile. Save this as `link.mjs` (it needs Node.js 18 or newer and `npm install socket.io-client`):
+
+```js
+import { io } from 'socket.io-client';
+import { writeFileSync } from 'node:fs';
+
+const API = 'http://localhost:3333';
+const { TOKEN, PROFILE_ID } = process.env;
+
+const socket = io(`${API}/ws`, { auth: { token: TOKEN } });
+
+socket.on('connect', () => {
+  socket.emit('join', { profileId: PROFILE_ID }, async (res) => {
+    if (!res?.success) {
+      console.error('join refused:', res?.error);
+      process.exit(1);
+    }
+    const connect = await fetch(`${API}/api/v1/profiles/${PROFILE_ID}/connect`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    console.log('connect:', connect.status, await connect.text());
+  });
+});
+
+// A PNG data URL; a new code replaces it every 20 seconds or so until it is scanned.
+socket.on('qr:update', ({ qrCode }) => {
+  writeFileSync('qr.png', Buffer.from(qrCode.split(',')[1], 'base64'));
+  console.log('Scan qr.png with WhatsApp');
+});
+
+socket.on('connection:status', ({ status, phoneNumber }) => {
+  console.log('status:', status, phoneNumber ?? '');
+  if (status === 'connected') process.exit(0);
+});
+
+socket.on('disconnect', (reason) => console.log('disconnected:', reason));
+```
 
 ```bash
-# Start the engine for the profile (account-scoped path)
-curl -X POST http://localhost:3333/api/v1/accounts/{accountId}/profiles/{profileId}/connect \
-  -H "Authorization: Bearer YOUR_TOKEN"
-
-# Retrieve the QR (account-scoped)
-curl http://localhost:3333/api/v1/accounts/{accountId}/profiles/{profileId}/qr \
-  -H "Authorization: Bearer YOUR_TOKEN"
+TOKEN=YOUR_TOKEN PROFILE_ID=YOUR_PROFILE_ID node link.mjs
 ```
 
-> The QR endpoint is exposed under `/accounts/:accountId/profiles/:profileId/qr` because profiles live inside an account in MultiWA's multi-tenant model. The Admin UI handles the account resolution for you. To list your accounts: `GET /api/v1/accounts`.
+Open `qr.png`, then on your phone open WhatsApp → **Linked devices** → **Link a device** → scan the QR. The file is rewritten with each new code, so reopen it if a scan fails. The script exits once the profile is `connected`.
 
-Open WhatsApp on your phone → **Linked devices** → **Link a device** → scan the QR.
-
-### 4. Send a Text Message
+### 5. Send a Text Message
 
 ```bash
 curl -X POST http://localhost:3333/api/v1/messages/text \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{
-    "profileId": "your-profile-id",
+    "profileId": "YOUR_PROFILE_ID",
     "to": "628123456789",
     "text": "Hello from MultiWA!"
   }'
 ```
-
-The Admin Dashboard at http://localhost:3001 also has a guided onboarding for the same flow if you prefer a UI.
 
 ---
 
@@ -142,10 +191,12 @@ The Admin Dashboard at http://localhost:3001 also has a guided onboarding for th
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `docker compose up -d` exits, no containers | Ports `3001` / `3333` / `5432` / `6379` already in use | Stop the conflicting service or override ports in `.env` (`API_PORT`, `ADMIN_PORT`) |
+| `docker compose up -d` exits, no containers | Ports `3001` / `3333` / `5433` / `6380` already in use | Stop the conflicting service or override the ports in `.env` (`ADMIN_PORT`, `API_PORT`, `DB_PORT`, `REDIS_PORT`) |
 | Swagger at `/api/docs` returns 404 | API still booting | Wait for the `MultiWA Gateway API running` log line, then retry |
-| `401 Unauthorized` | Missing or expired token | Re-run step 1 to get a fresh `accessToken` and re-send with `Authorization: Bearer ...` |
-| QR endpoint returns 404 | Profile not started yet | Call `POST /api/v1/profiles/{id}/connect` first |
+| `401 Unauthorized` | Missing or expired token | Log in again with `POST /api/v1/auth/login` (`{"email": "...", "password": "..."}`) for a fresh `accessToken`, and send it as `Authorization: Bearer ...` |
+| `link.mjs` prints `disconnected: io server disconnect` | The token is missing, wrong or expired | Log in again, then run it with the new `TOKEN` |
+| `link.mjs` prints `join refused: Forbidden` | `PROFILE_ID` is not a profile of your organization | Copy the `id` from the answer of step 3 again |
+| `link.mjs` prints `connect:` but no QR follows | The profile is already linked (`connect:` shows `already_connected`), or the engine is still starting: the first start can take up to 30 seconds | Read `GET /api/v1/profiles/YOUR_PROFILE_ID/status`: `connected` needs nothing more, `connecting` means the engine is still starting |
 
 ---
 

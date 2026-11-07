@@ -1,6 +1,6 @@
 # 07 - API Specification
 
-> This document is source-verified against the controllers in `apps/api/src/**/*.controller.ts` as of MultiWA `1.0.0` (2026-05-24). For interactive exploration, use Swagger UI at `<API base host>:<API port>/api/docs`.
+> The tables below follow the controllers in `apps/api/src/**/*.controller.ts`: `pnpm check:api-contract` fails when a route is missing from them. For interactive exploration, use Swagger UI at `<API base host>:<API port>/api/docs`.
 
 ## 7.1 Overview
 
@@ -33,7 +33,44 @@ Issued by `POST /auth/register` and `POST /auth/login`. Refresh with `POST /auth
 x-api-key: YOUR_API_KEY
 ```
 
-The Swagger UI registers the API key under the `api-key` security scheme; the header name is lowercase `x-api-key`. Create keys with `POST /api-keys`.
+The Swagger UI registers the API key under the `api-key` security scheme; the header name is lowercase `x-api-key`. Create keys in the dashboard, or with `POST /api-keys` while signed in: an API key cannot create another.
+
+### API-key scopes
+
+A key can carry a list of scopes. A route that asks for a scope answers `403` to a key whose list lacks it. A key with no scope list, or with `*`, keeps full access. A scope only narrows a key: it still acts with its user's role (see Roles below), so `messages:write` on a viewer's key sends nothing.
+
+| Scope (its name in the dashboard) | Routes it guards |
+|---|---|
+| `messages:read` (Read Messages) | `GET /conversations`, `GET /conversations/unread-count`, `GET /conversations/:id`, `GET /conversations/:id/messages`, `GET /messages/:id`, `GET /messages/profile/:profileId`, `GET /messages/conversation/:conversationId` and its `/load-older`, `GET /messages/schedule/:profileId` |
+| `messages:write` (Send Messages) | every `POST /messages/...` (the sends, `schedule` and `otp` included), `DELETE /messages/:id`, `DELETE /messages/schedule/:id`; `PUT /conversations/:id/read`, `/archive`, `/unarchive`, `/mute` and `/pin`, `DELETE /conversations/:id`, `DELETE /conversations/:id/messages`; `POST /calls/:id/reply` and `POST /calls/:id/call-link` |
+| `contacts:read` (Read Contacts) | `GET /contacts`, `GET /contacts/:id`, `GET /contacts/export/csv`, and the number checks `GET /contacts/profile/:profileId/validate/:phone` and `POST /contacts/profile/:profileId/validate` |
+| `contacts:write` (Manage Contacts) | the other contact routes: `POST /contacts`, `PUT` and `DELETE /contacts/:id`, `POST` and `DELETE /contacts/:id/tags`, `POST /contacts/import`, `/contacts/import/csv` and `/contacts/sync/whatsapp`, `POST /contacts/profile/:profileId/save-to-whatsapp`, `DELETE /contacts/profile/:profileId/whatsapp/:phone` |
+| `customers:read` (Read Customers) | every `GET /customers/...`: the search, a customer, a number's customers, the lookup and its preview, the history, the notes and the lookup settings |
+| `customers:write` (Manage Customers) | the other customer routes: `POST /customers/links`, `POST /customers/links/:linkId/use`, `DELETE /customers/links/:linkId`, `PATCH` and `DELETE /customers/:id`, `POST /customers/:id/notes`, `PATCH` and `DELETE /customers/:id/notes/:noteId`, `PUT /customers/config` and `POST /customers/config/test` |
+| `profiles:read` (Read Profiles) | `GET /profiles`, `GET /profiles/:id`, `GET /profiles/:id/status`, `GET /accounts/:accountId/profiles`, `GET /accounts/:accountId/profiles/:profileId` |
+| `profiles:write` (Manage Profiles) | `POST /profiles`, `PUT` and `DELETE /profiles/:id`, `POST /profiles/:id/connect` and `/disconnect`, `PUT /profiles/:id/calls-settings`, `POST`, `GET` and `DELETE /profiles/:id/calls-announcement`; under `/accounts/:accountId/profiles`: the create, the delete, `connect`, `disconnect` and `GET .../:profileId/qr`; and the pairing QR on the socket |
+| `webhooks:read` (Read Webhooks) | `GET /webhooks`, `GET /webhooks/:id` (they show each webhook's signing secret and custom headers) |
+| `webhooks:write` (Manage Webhooks) | `POST /webhooks`, `PUT` and `DELETE /webhooks/:id`, `POST /webhooks/:id/test` |
+| `broadcast:write` (Send Broadcasts) | `POST /broadcast`, `PUT` and `DELETE /broadcast/:id`, `POST /broadcast/:id/schedule`, `/start`, `/pause`, `/resume` and `/cancel`; `POST /bulk/send` and `POST /bulk/batch/:batchId/cancel`. Their reads ask for no scope |
+| `recordings:read` (Read Recordings) | `GET /calls/:id/recording` |
+| `recordings:delete` (Delete Recordings) | `DELETE /calls/:id/recording`, and, together with `profiles:write`, a `PUT /profiles/:id/calls-settings` that carries `retentionDays` |
+
+Every other route asks for no scope. On the socket, the pairing QR (`qr:update`) needs `profiles:write` too; the rest of the events need none ([WebSocket API](./08-websocket-api.md)).
+
+### Roles
+
+Each organization member has one role. An API key acts with its user's role, at the time of each request.
+
+| Role | May |
+|---|---|
+| `viewer` | read; their own account: sign-in and sign-out, password, preferences, sessions, 2FA, notifications, API keys, and deleting the account |
+| `member` | as a viewer, plus send messages one at a time, upload media, work the chats (read, archive, pin, mute), schedule messages, handle calls (answer, follow-up, assign, reject, reply, call link), add and edit contacts and their tags, link numbers to customers and write their notes and tags, use the AI routes |
+| `admin` | as a member, plus configure the organization, accounts, profiles, workspaces, broadcasts, automation, auto-replies, webhooks, templates, the knowledge base, groups, contact import and sync, send and cancel bulk batches, delete chats, delete customers and set the customer lookup, read webhooks and audit logs, export contacts, and manage members and viewers |
+| `owner` | as an admin, plus manage admins |
+
+A viewer's reads include the lookups that are `POST`s: a template preview, an automation test, a number check and a knowledge-base search. A few reads are for owners and admins only (webhooks, audit logs, the exports, a group's invite link, the auto-reply hooks' settings, call recordings, the calls media status, a profile's call announcement and the QR route): the notes under each section below say which.
+
+The server-wide settings (`/settings/*`) and the integrations (`/integrations/*`) are for the server's owner: the owner of the oldest organization. A role that may not call a route gets `403`. `scripts/api-roles.snapshot.json` lists each route's class; the CI checks it against the code.
 
 ---
 
@@ -41,25 +78,25 @@ The Swagger UI registers the API key under the `api-key` security scheme; the he
 
 ### Success Response
 
+A response is the JSON of what was asked for, with no envelope around it: an object, or a list.
+
 ```json
-{
-  "success": true,
-  "data": { ... },
-  "meta": { "timestamp": "2026-02-05T10:00:00Z" }
-}
+{ "id": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "displayName": "Sales", "status": "connected" }
 ```
 
 ### Error Response
 
+An error has its HTTP status, and a body with the status, a message and the status's name:
+
 ```json
-{
-  "success": false,
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Phone number is required"
-  }
-}
+{ "statusCode": 403, "message": "Resource not found in your organization", "error": "Forbidden" }
 ```
+
+- On the routes of your workspaces' resources (profiles, contacts, conversations, calls and the like), an id outside your organization, or of nothing at all, is this `403`: the API does not say which.
+- The customer routes (`/customers/...`) answer `404` instead, for an id outside your organization as for an id of nothing.
+- A validation error (`400`) lists every problem in `message`.
+- Some errors carry a code of their own in `error`: a send through a disconnected profile is `409` `PROFILE_DISCONNECTED`, and the send gate's `429` is `{ "error": "DAILY_LIMIT_REACHED", … }` without `statusCode` (see [Messaging](./10-messaging.md)).
+- A refusal with reasons is `409` `{ "message": "…", "reasons": ["…"] }`, from the call settings and the announcement (see [Calls](#calls-calls)).
 
 ---
 
@@ -71,7 +108,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/auth/register` | Register an account and receive tokens |
+| `POST` | `/auth/register` | Register an account, with its organization, and receive tokens. Open to the first user of a new server; after that it answers `403` unless [`ALLOW_REGISTRATION`](./18-configuration-reference.md#allow_registration) is `true` |
+| `GET` | `/auth/registration` | Whether registration is open: `{ "open": boolean }` (public) |
 | `POST` | `/auth/login` | Log in and receive tokens |
 | `POST` | `/auth/2fa/verify` | Verify a 2FA challenge during login |
 | `POST` | `/auth/refresh` | Exchange refresh token for a new access token |
@@ -80,7 +118,7 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/auth/preferences` | Get user preferences |
 | `PATCH` | `/auth/preferences` | Update user preferences |
 | `POST` | `/auth/change-password` | Change the current user's password |
-| `DELETE` | `/auth/account` | Delete the current user account |
+| `DELETE` | `/auth/account` | Delete the current user account (an owner's deletes their organization; the server's owner gets `403` while other organizations use the server) |
 | `POST` | `/auth/2fa/setup` | Begin 2FA enrollment |
 | `POST` | `/auth/2fa/enable` | Confirm and enable 2FA |
 | `POST` | `/auth/2fa/disable` | Disable 2FA |
@@ -98,6 +136,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Accounts (`/accounts`)
 
+Every role reads, except the QR route, which is for owners and admins and also needs `profiles:write` on an API key with a scope list ([scopes](#api-key-scopes)). Owners and admins create, change and delete accounts, and create, delete, connect and disconnect their profiles.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/accounts` | List accounts |
@@ -111,9 +151,11 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `DELETE` | `/accounts/:accountId/profiles/:profileId` | Delete profile (account-scoped) |
 | `POST` | `/accounts/:accountId/profiles/:profileId/connect` | Start WhatsApp connection |
 | `POST` | `/accounts/:accountId/profiles/:profileId/disconnect` | Disconnect |
-| `GET` | `/accounts/:accountId/profiles/:profileId/qr` | Retrieve current QR code |
+| `GET` | `/accounts/:accountId/profiles/:profileId/qr` | A placeholder: answers `{ "qr": null, "status": "pending" }` whatever the profile's state. The QR arrives over the WebSocket as `qr:update`, to owners and admins ([WebSocket API](./08-websocket-api.md)), and the dashboard shows it on the profile's page |
 
 ### Profiles (`/profiles`) — flat alternative to the account-scoped routes
+
+Every role lists and reads profiles, and their status. Owners and admins create, change, delete, connect and disconnect profiles, set their call settings, and upload, listen to or remove their announcement.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -121,14 +163,20 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/profiles` | Create profile |
 | `GET` | `/profiles/:id` | Get profile |
 | `PUT` | `/profiles/:id` | Update profile |
+| `PUT` | `/profiles/:id/calls-settings` | The profile's call settings: `answerInDashboard`, `recording`, `retentionDays` (1-3650); 409 with `reasons` when one cannot be turned on |
+| `POST` | `/profiles/:id/calls-announcement` | Upload the announcement callers hear before a recorded call (multipart `file`: mp3, wav, ogg, webm or m4a, at most 2 MB and 30 seconds; half a second more is allowed for encoders' padding) |
+| `GET` | `/profiles/:id/calls-announcement` | The profile's announcement, to listen to |
+| `DELETE` | `/profiles/:id/calls-announcement` | Remove the announcement (409 while recording is on; its file goes at a nightly sweep once it is an hour old) |
 | `DELETE` | `/profiles/:id` | Delete profile |
 | `POST` | `/profiles/:id/connect` | Start WhatsApp connection |
 | `POST` | `/profiles/:id/disconnect` | Disconnect |
 | `GET` | `/profiles/:id/status` | Get connection status |
 
-> The QR endpoint lives under the account-scoped `/accounts/.../qr` route, not on the flat `/profiles` resource.
+> No `/profiles` route returns the QR either: after `POST /profiles/:id/connect` it arrives over the WebSocket as `qr:update` ([WebSocket API](./08-websocket-api.md)), to the owners and admins that joined the profile.
 
 ### Messages (`/messages`)
+
+Owners, admins and members send; deleting a stored message (`DELETE /messages/:id`) is for owners and admins.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -155,6 +203,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/messages/:id` | Get a single message |
 | `DELETE` | `/messages/:id` | Delete a message locally |
 
+Message lists answer at most 500 rows per request (`limit`).
+
 > **Disconnected profile.** The endpoints that deliver a message (`text`, `image`, `video`, `audio`, `document`, `location`, `contact`, `reaction`, `reply`, `poll`) answer **`409 Conflict`** when the profile has no live WhatsApp connection, instead of reporting success:
 >
 > ```json
@@ -163,7 +213,11 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 >
 > The message is stored with `status: "failed"` and a `message.failed` event is emitted. Nothing is retried automatically, so reconnect the profile and send again. `POST /messages/otp` does not return the 409: it fails over to its secondary channel, or answers `502 OTP_DELIVERY_FAILED` when no channel delivers. Bulk batches, broadcasts and scheduled messages record the message as `failed` instead of returning an error. With `DURABLE_SEND=true` a send is enqueued instead and retried a bounded number of times before it ends `failed` (see [Durable Sending](./10-messaging.md#durable-sending-optional)).
 
+> **Send timeout.** The same endpoints answer **`504 Gateway Timeout`** with `"error": "SEND_TIMEOUT"` when the WhatsApp engine has not finished the send after `SEND_TIMEOUT_MS` (60 s by default). The message is stored as `failed` and `message.failed` is emitted, but WhatsApp may still deliver it, so a retry can send it twice. See [Send Gate](./10-messaging.md#send-gate-pacing--daily-limit).
+
 ### Bulk Messaging (`/bulk`)
+
+Every role reads batches. Sending a batch and cancelling one are for owners and admins, and an API key with a scope list needs `broadcast:write` for both. A member sends one message at a time ([Messages](#messages-messages)).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -191,6 +245,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Groups (`/groups`)
 
+Every role lists and reads groups. Everything else is for owners and admins, the invite link included: `GET /groups/:groupId/invite-link` is a read that only they may make.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/groups/profile/:profileId` | List groups for a profile |
@@ -207,6 +263,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 
 ### Conversations (`/conversations`)
 
+An API key needs `messages:read` for the reads and `messages:write` for the changes.
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/conversations` | List conversations |
@@ -221,7 +279,134 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `DELETE` | `/conversations/:id` | Delete conversation |
 | `DELETE` | `/conversations/:id/messages` | Clear messages in conversation |
 
+### Calls (`/calls`)
+
+Incoming WhatsApp calls, stored per profile and published as the `call.received`, `call.answered`, `call.rejected`, `call.ended` and `call.updated` [webhook events](./09-webhook-events.md); a call's recording sends `call.recording.ready` when it is stored and `call.recording.deleted` when it is deleted.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/calls` | List calls of a profile, newest first (`profileId` required; filters `outcome`, `followUp`, `from` (caller JID or phone number, e.g. `628111000111`), `since` (ISO 8601 date); paging `limit` 1-100, `cursor`) |
+| `GET` | `/calls/open-count` | Open call follow-ups across the org |
+| `GET` | `/calls/media/status` | Readiness of answering calls in the dashboard and of recording them: the media server, the recordings storage and every profile of the organization (owner or admin) |
+| `GET` | `/calls/:id` | Get a call |
+| `PATCH` | `/calls/:id` | Update the follow-up status (`open`, `in_progress`, `done`) or the assignee |
+| `POST` | `/calls/:id/reject` | Reject a call that is still ringing |
+| `POST` | `/calls/:id/reply` | Send a text to the caller (default: the profile's `callReplyMessage`) |
+| `POST` | `/calls/:id/call-link` | Create a WhatsApp call link (`voice` / `video`) and send it to the caller |
+| `GET` | `/calls/:id/recording` | The call's recording, `audio/webm` (owner or admin; HTTP Range; `?download=1` as an attachment; audited) |
+| `DELETE` | `/calls/:id/recording` | Delete the call's recording (owner or admin) |
+
+`reply` and `call-link` send a WhatsApp message to the caller, so they behave like a send from `/messages`:
+
+- **API-key scope.** An API key with an explicit scope list needs `messages:write` (*Send Messages*) for them, and gets `403` without it. Keys with no scopes or with `*`, and JWT logins, skip this check. The reads, `PATCH` and `reject` ask for no scope.
+- **Send gate.** The text goes through the profile's send gate (see [Messaging](./10-messaging.md)): it waits out the pacing delay and can be refused with `429` and a code in the body. `DAILY_LIMIT_REACHED` and `REPEAT_SUPPRESSED` (the same text to the same caller within a minute, by default) can happen at any time; `COLD_DAILY_LIMIT_REACHED` and `COLD_CIRCUIT_OPEN` only once the service window has closed. An incoming call opens the service window (`serviceWindowHours`, 24 hours by default) the way an incoming message does, so answering a recent call is a reply, not cold outreach. With `DURABLE_SEND=true` or `ENGINE_HOST=worker` the text is queued instead (the `message` in the response has `status: "queued"`), and a delivery failure arrives as a `message.failed` webhook.
+
+Other errors of the call actions:
+
+| Status | When |
+|--------|------|
+| `409` | `reject`: the call is not ringing any more. Any action: the profile is not connected. `call-link`: the engine cannot create call links (Baileys) |
+| `422` | `reply` or `call-link` for a group call |
+| `502` | The text to the caller was not sent, or WhatsApp returned no call link |
+| `504` | `reject` or the creation of the call link: WhatsApp did not answer in time (about 30 seconds) |
+
+**Auto-reject.** A profile with `autoRejectCalls` on (set with `PUT /profiles/:id`) rejects a ringing call at once (`rejectedBy` is `auto`). A non-blank `autoRejectCallMessage` is then sent to the caller, also when the reject failed because the caller had already hung up. That reply goes through the same send gate and is sent at most once per caller per 24 hours; it is never sent for a group call or for a call known only from its call log. A reply the gate refuses or the engine fails to send is not retried and does not use up the 24 hours, so the caller's next call can try again.
+
+**Recordings.** A call answered in the dashboard on a profile with `recording` on is recorded from before the profile's announcement, in stereo: left the caller, right what the caller heard. A call answered with video is recorded with its pictures too: the caller full frame, the agent's camera in a corner while it is on. When the recorder does not start or the announcement does not play, the call goes on unrecorded. A recording is stored when its call ends ([`call.recording.ready`](./09-webhook-events.md#call-recording-events)). Each call in `GET /calls` and `GET /calls/:id` has `recording`: `null`, or the recording's facts:
+
+- `id`, `mimeType` (`audio/webm`, or `video/webm` for a call answered with video), `durationSec`, `bytes`, `announcementPlayed`, `createdAt`;
+- `partial`: it may end before its call did (cut short by a restart, a recorder that did not stop cleanly, or a write that failed);
+- once its file is deleted, `deletedAt` and `deleteReason` (`admin` or `retention`). The row stays as evidence.
+
+The audio itself:
+
+- **Owner or admin only**, on a call of their organization. An API key with an explicit scope list needs `recordings:read` to play or download and `recordings:delete` to delete. Such a key also needs `profiles:write` for `PUT /profiles/:id/calls-settings`, the announcement routes and deleting a profile (`DELETE /profiles/:id`, `DELETE /accounts/:accountId/profiles/:profileId`, which delete its recordings too), and `recordings:delete` as well to change `retentionDays` (a shorter period deletes recordings). Keys with no scopes or with `*` skip these checks.
+- **`GET /calls/:id/recording`** answers `200`, or `206` for a `Range: bytes=…` request, with `Accept-Ranges: bytes` and `Cache-Control: private, no-store`.
+  - Only one range is served: a list is answered whole. A range past the end is `416`.
+  - `?download=1` adds `Content-Disposition: attachment`.
+  - Every read is audited (`call.recording.play`, `call.recording.download`, with the IP and user agent) before its first byte: once every 10 minutes per user, address, user agent, recording and action, whatever range it asks for, so a player's seeks do not flood the audit log and no range escapes it. A request that cannot be audited is refused with `503`.
+  - A `HEAD` answers the same headers without the audio, and is audited as a read.
+  - `404` when the call has no recording, it was deleted, its file is missing, or it is stored in another location than this server uses now (see [Call recordings](./18-configuration-reference.md#call-recordings)). `503` while the recordings storage is not configured, or when it does not answer (try again).
+- **`DELETE /calls/:id/recording`** deletes the file and answers `{ callId, recordingId, deletedAt }`. It is audited as `call.recording.delete` and sends the `call.recording.deleted` webhook. A recording already deleted is `404`, and one stored in another location `409`; while the recordings storage is not configured, the answer is `503`.
+- **A browser player** cannot point an `<audio>` element at this route: the route needs the `Authorization` (or `x-api-key`) header. Fetch the file with the header, then play what was fetched.
+
+**The answers.** Dates are ISO 8601 strings.
+
+| Route | Answer |
+|-------|--------|
+| `GET /calls` | `{ calls, nextCursor }`: a page of calls, newest first. Pass `nextCursor` as `cursor` for the next page; it is `null` on the last one |
+| `GET /calls/open-count` | `{ count }` |
+| `GET /calls/:id`, `PATCH /calls/:id`, `POST /calls/:id/reject` | the call |
+| `POST /calls/:id/reply` | `{ call, message }`: the call, and the message sent (`success`, `messageId`, `conversationId`, `status`, and `waMessageId` once it went out) |
+| `POST /calls/:id/call-link` | `{ call, message, link }` |
+| `GET /calls/media/status` | the readiness (below) |
+| `GET /calls/:id/recording` | the audio (above) |
+| `DELETE /calls/:id/recording` | `{ callId, recordingId, deletedAt }` |
+| `PUT /profiles/:id/calls-settings` | `{ profileId, answerInDashboard, recording, retentionDays, announcement }`, the settings as stored |
+| `POST /profiles/:id/calls-announcement` | `{ profileId, announcement: { mimeType, durationSec } }` |
+| `GET /profiles/:id/calls-announcement` | the audio, with its stored `Content-Type` |
+| `DELETE /profiles/:id/calls-announcement` | `{ profileId, announcement: null }` |
+
+A call:
+
+| Field | Meaning |
+|-------|---------|
+| `id`, `profileId`, `waCallId` | MultiWA's id of the call, its profile, and WhatsApp's id of the call |
+| `fromJid` | The caller: `628111000111@s.whatsapp.net`, or an `@lid` id when WhatsApp hides the number |
+| `isVideo`, `isGroup`, `direction` | `direction` is `incoming` |
+| `outcome` | `ringing`, `answered` (in the dashboard), `missed`, `rejected`, `answered_elsewhere` or `unknown` |
+| `rejectedBy` | `auto`, `agent` or `device`, for a rejected call |
+| `startedAt`, `endedAt` | When it started ringing, and when it stopped; for an answered call, when the conversation ended |
+| `followUp`, `assignedUserId`, `assignedUser` | The follow-up (`open`, `in_progress` or `done`), and who it is assigned to (`{ id, name }`) |
+| `answeredByUserId`, `answeredBy`, `answeredAt` | The agent who answered it in the dashboard (`{ id, name }`), once `outcome` is `answered` |
+| `endedBy`, `endReason`, `talkSeconds` | How an answered call ended: by the `agent`, the `caller` or the `server`; `hangup`, `caller_hangup`, `agent_lost`, `media_failed`, `time_limit` or `server_restart`; and the talk time in seconds (`null` when not known) |
+| `autoReplySentAt` | When the auto-reject reply was sent |
+| `conversationId`, `conversation` | The caller's chat (`{ id, name }`), once there is one |
+| `metadata` | Details, such as the call links sent |
+| `recording` | `null`, or the recording's facts (above) |
+| `createdAt`, `updatedAt` | |
+
+`PATCH /calls/:id` takes `followUp` and `assignedUserId`; `assignedUserId: null` unassigns the call, and an assignee must be an active owner, admin or member of the organization. It, `reject`, `reply` and `call-link` are for owners, admins and members; a viewer gets `403`. The media status, the recordings, the call settings and the announcement are for owners and admins.
+
+`GET /calls/media/status` (owner or admin) answers the media server's readiness, its recordings storage, and each profile of the organization:
+
+```json
+{
+  "server": {
+    "enabled": true,
+    "worker": "up",
+    "port": 40000,
+    "engineHost": "api",
+    "activeSessions": 0,
+    "videoCalls": { "active": 0, "max": 2 },
+    "recordings": { "storage": "local", "configured": true, "problem": null, "lastCheck": { "at": "2026-11-03T02:30:00.000Z", "ok": true } }
+  },
+  "profiles": [
+    { "profileId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "name": "Sales", "answerInDashboard": true, "recording": false, "retentionDays": 90, "announcement": null, "ready": true, "reasons": [], "video": true }
+  ]
+}
+```
+
+- `server.enabled` is `true` when `CALLS_MEDIA_ENABLED=true` and the engines run in the API (`ENGINE_HOST` is not `worker`); `worker` is `up` or `down`; `port` is `null` while disabled; `engineHost` must be `api` for answering in the dashboard; `activeSessions` counts the organization's calls connecting or connected in the dashboard; `videoCalls.active` counts those of them answered with video, and `videoCalls.max` is the server's cap (`CALLS_MAX_VIDEO_CALLS`), shared with every organization.
+- `server.recordings`: `storage` is `local` or `s3`; `configured: false` with `problem` naming the missing or refused setting; `lastCheck` is the last check that the storage refuses reads without credentials (its `reason` when it failed: `storage_not_private`, `storage_check_failed`, or `recordings_storage_unset` from the nightly check while no storage is configured).
+- Each profile has its call settings, `ready`, the `reasons` it is not ready, and `video`: whether its video calls are answered with video now (ready, and its WhatsApp Web can).
+
+Turning `answerInDashboard` on answers `409` with `reasons` when the profile is not ready: `engine_host_worker`, `media_disabled`, `media_server_down`, `auto_reject_on`, `profile_not_connected`, `engine_not_supported`, and those of its WhatsApp Web page: `not_ready`, `web_calling_disabled`, `voip_stack_unavailable`, `module_missing`, `hooks_missing`, `not_prepared` and `page_error`. [Calls answered in the dashboard](./23-calls.md#troubleshooting) says what each one means.
+
+Turning `recording` on answers `409` with `reasons` when it cannot be on:
+
+- `no_announcement`;
+- `recordings_storage_unset` (see [Call recordings](./18-configuration-reference.md#call-recordings));
+- `storage_not_private`: the storage serves its files without credentials, and recording is turned off on every profile;
+- `storage_check_failed`: the check proved nothing; try again.
+
+A `true` sent for a setting that is already on (`recording` or `answerInDashboard`) is left as it is, without a check, so a form may send every field. `DELETE /profiles/:id/calls-announcement` answers `409` (`recording_on`) while recording is on.
+
+The announcement upload answers `413` past 2 MB, `415` for another format or a file that cannot be read, `422` past 30 seconds (counted from the audio itself: an mp3's frames, a wav's samples; half a second more is allowed for encoders' padding) or for a file that does not say how long it is (a browser recording, for one), and `503` while two other announcements are being read or the recordings storage does not answer (as `GET /profiles/:id/calls-announcement` does then). It answers `400` without a file, and `409` (`recordings_storage_unset`) while the recordings storage is not configured. A new announcement replaces the profile's previous one, whose file, like a removed one's, goes at a nightly sweep once it is an hour old.
+
 ### Contacts (`/contacts`)
+
+Owners, admins and members add and edit contacts and tags; deleting, importing, syncing and exporting, and saving contacts to or deleting them from the WhatsApp address book, are for owners and admins. Every role may validate numbers.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -241,6 +426,35 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/contacts/profile/:profileId/save-to-whatsapp` | Save a contact into the WhatsApp account addressbook (whatsapp-web-js only) |
 | `DELETE` | `/contacts/profile/:profileId/whatsapp/:phone` | Delete a contact from the WhatsApp account addressbook (whatsapp-web-js only) |
 
+Contact lists answer at most 1000 rows per request (`limit`), and a bulk validation takes at most 1000 numbers.
+
+### Customers (`/customers`)
+
+The guide, with the lookup contract and an example endpoint: [Customers](./24-customers.md).
+
+A customer is an ID in the organization's own system, linked to WhatsApp numbers. Every role reads, but for the preview of an ID that is not linked yet, which owners, admins and members make. Owners, admins and members link numbers, write notes and change tags; a note is changed by its author, an owner or an admin. Owners and admins delete customers and change the lookup settings. Another organization's customer, link or note answers `404`.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/customers` | Search by ID (prefix), linked number or name (`q`); `page`, `pageSize` (at most 100) |
+| `GET` | `/customers/config` | The lookup settings: `idLabel`, `lookupUrl`, `hasSecret`, `timeoutMs`, `configured` (the secret is never sent) |
+| `PUT` | `/customers/config` | Change the lookup settings: an empty `lookupUrl` turns the lookup off, an omitted `secret` keeps it, an empty one clears it (owner or admin) |
+| `POST` | `/customers/config/test` | One lookup of an `externalId` with the saved settings, bypassing the cache (owner or admin) |
+| `GET` | `/customers/lookup` | Preview the lookup of an `externalId` that is not linked yet; stores nothing (owner, admin or member). At most 30 a minute for each user, or for each API key when the request came with one; past that, `429` "Too many lookups, try again shortly" |
+| `GET` | `/customers/by-phone/:phone` | The customers linked to a number, its default first |
+| `POST` | `/customers/links` | Link a number to a customer ID (`externalId`, `phone`): `201` with a new link, `200` with one that existed |
+| `POST` | `/customers/links/:linkId/use` | Make a link its number's default |
+| `DELETE` | `/customers/links/:linkId` | Remove a link; the customer, its notes and tags stay |
+| `GET` | `/customers/:id` | A customer with its links, tags, manual fields and 20 newest notes |
+| `PATCH` | `/customers/:id` | Change `tags`; `displayName` and `manualFields` only while no lookup is configured (else `409`) |
+| `DELETE` | `/customers/:id` | Delete a customer with its links and notes (owner or admin) |
+| `GET` | `/customers/:id/lookup` | The live lookup: `ok`, `not_found`, `unavailable` or `not_configured` (`refresh=true` skips the minute's cache) |
+| `GET` | `/customers/:id/history` | The organization's one-to-one chats and calls with the customer's numbers, newest first (`limit` at most 50) |
+| `GET` | `/customers/:id/notes` | The notes, newest first (`page`, `pageSize` at most 100) |
+| `POST` | `/customers/:id/notes` | Add a note (`body`, 1 to 2000 characters) |
+| `PATCH` | `/customers/:id/notes/:noteId` | Edit a note: its author, an owner or an admin |
+| `DELETE` | `/customers/:id/notes/:noteId` | Delete a note: its author, an owner or an admin |
+
 ### Templates (`/templates`)
 
 | Method | Endpoint | Description |
@@ -254,6 +468,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/templates/:id/duplicate` | Duplicate template |
 
 ### Webhooks (`/webhooks`)
+
+Owner and admin only, reads included (they carry the signing secret). A key with `webhooks:read` reads each webhook's signing secret and custom headers.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -280,9 +496,11 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `PUT` | `/automation/:id/toggle` | Toggle active flag |
 | `POST` | `/automation/:id/test` | Test a flow with sample input |
 | `GET` | `/automation/:id/stats` | Flow execution stats |
-| `POST` | `/automation/reorder` | Reorder flows |
+| `POST` | `/automation/reorder` | Reorder the profile's flows (an id that is not one of them: `404`, nothing changes) |
 
 ### Auto-reply (`/autoreply`)
+
+Every role lists and reads the rules and the quick replies. Owners and admins create, change, toggle and delete them, configure the two hooks, and read the hooks' settings (`GET /autoreply/webhook-reply/:profileId` and `GET /autoreply/ai-hook/:profileId`).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -319,10 +537,12 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api-keys` | List API keys |
-| `POST` | `/api-keys` | Create API key |
+| `POST` | `/api-keys` | Create API key (signed in; a request made with an API key gets `403`) |
 | `DELETE` | `/api-keys/:id` | Revoke API key |
 
 ### Settings (`/settings`)
+
+The server's owner only (the owner of the oldest organization).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -340,6 +560,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `POST` | `/uploads/media` | Upload media for use in messages |
 
 ### Integrations (`/integrations`)
+
+The server's owner only: the integrations configuration comes from the server's environment.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -360,6 +582,8 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `GET` | `/statistics/response-time` | Response-time stats |
 
 ### Audit (`/audit`)
+
+Owners and admins only.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -388,13 +612,15 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/organizations/current` | Get current organization |
-| `PUT` | `/organizations/current` | Update current organization |
+| `PUT` | `/organizations/current` | Update current organization. It keeps `settings.customers` whatever `settings` it is sent: only `PUT /customers/config` changes it |
 | `GET` | `/organizations/members` | List members |
 | `POST` | `/organizations/members` | Invite a member |
 | `PUT` | `/organizations/members/:id/role` | Change member role |
 | `DELETE` | `/organizations/members/:id` | Remove member |
 
 ### Workspaces (`/workspaces`)
+
+Every role reads. Owners and admins create, change and delete workspaces.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -404,32 +630,18 @@ The tables below mirror the `@Controller(...)` decorators in `apps/api/src/`. Us
 | `PUT` | `/workspaces/:id` | Update workspace |
 | `DELETE` | `/workspaces/:id` | Delete workspace |
 
-### RBAC (`/rbac`)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/rbac/permissions` | List permissions |
-| `POST` | `/rbac/roles` | Create role |
-| `GET` | `/rbac/roles` | List roles |
-| `GET` | `/rbac/roles/:id` | Get role |
-| `PUT` | `/rbac/roles/:id` | Update role |
-| `DELETE` | `/rbac/roles/:id` | Delete role |
-| `POST` | `/rbac/assign` | Assign role to user |
-| `DELETE` | `/rbac/users/:userId/organizations/:orgId` | Unassign user from organization |
-| `GET` | `/rbac/users/:userId/roles` | List user roles |
-| `GET` | `/rbac/users/:userId/permissions` | List user permissions |
-| `POST` | `/rbac/organizations/:id/seed` | Seed default roles for an organization |
-
 ### GDPR (`/account`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/account/export` | Export personal data |
-| `DELETE` | `/account/delete` | Delete account and personal data |
+| `GET` | `/account/export` | Export the caller's own data (user, sessions, notifications, push subscriptions, audit log) and the organization's profiles, messages (the newest 10000), contacts, automations and customers (with their links, notes and tags). Owners and admins only |
+| `DELETE` | `/account/delete` | Delete account and personal data. The organization stays, so an owner gets `403`: an owner deletes their account with `DELETE /auth/account`, which deletes the organization too |
 
 ---
 
 ## 7.5 Example: Send Bulk with Variables
+
+Bulk sends are for owners and admins: the key must be an owner's or an admin's, and, with a scope list, carry `broadcast:write`.
 
 ```bash
 curl -X POST http://localhost:3333/api/v1/bulk/send \

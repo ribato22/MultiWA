@@ -1,0 +1,1195 @@
+"""Every public SDK method sends the request the MultiWA API expects.
+
+Each case runs against both the sync and the async client through
+``httpx.MockTransport`` and checks the method, the path (with the base path),
+the query parameters, the JSON body or the multipart files, and that the route
+exists in ``scripts/api-routes.snapshot.json``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import io
+import json
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Callable, NamedTuple
+
+import httpx
+import pytest
+import rows
+
+from multiwa import AsyncMultiWA, MultiWA
+from multiwa.types import Broadcast, Contact, MessageResult, Profile, Webhook
+
+BASE_URL = "https://mw.test/api/v1"
+SNAPSHOT = Path(__file__).resolve().parents[3] / "scripts" / "api-routes.snapshot.json"
+
+
+def _route_patterns() -> list[tuple[str, re.Pattern[str]]]:
+    """Snapshot routes as (method, regex), with every ``:param`` as one segment."""
+    routes = json.loads(SNAPSHOT.read_text())["routes"]
+    return [
+        (
+            route["method"],
+            re.compile(
+                "/".join(
+                    "[^/]+" if part.startswith(":") else re.escape(part)
+                    for part in route["path"].split("/")
+                )
+                + "$"
+            ),
+        )
+        for route in routes
+    ]
+
+
+ROUTES = _route_patterns()
+
+
+def route_exists(method: str, path: str) -> bool:
+    return any(m == method and rx.match(path) for m, rx in ROUTES)
+
+
+class Sent(NamedTuple):
+    method: str
+    path: str
+    params: list[tuple[str, str]]
+    body: dict[str, Any] | None
+    # A multipart upload: field name -> (filename, the exact bytes).
+    files: dict[str, tuple[str, bytes]] | None = None
+
+
+class Case(NamedTuple):
+    name: str  # "<resource>.<method>"; the coverage test reads it
+    call: Callable[[Any], Any]
+    responses: list[Any]  # JSON bodies (200) or httpx.Response objects
+    sent: list[Sent]
+    check: Callable[[Any], bool] = lambda result: True
+
+
+def run(
+    kind: str,
+    call: Callable[[Any], Any],
+    responses: list[Any],
+    requests: list[httpx.Request] | None = None,
+) -> tuple[Any, list[httpx.Request]]:
+    """Run ``call`` on a fresh client; return (result, requests sent).
+
+    Pass ``requests`` to keep what was sent when ``call`` raises.
+    """
+    requests = [] if requests is None else requests
+    queue = [
+        # A copy for each run: a response read by the sync client cannot be read
+        # again by the async one.
+        (
+            httpx.Response(r.status_code, headers=r.headers, content=r.content)
+            if isinstance(r, httpx.Response)
+            else httpx.Response(200, json=r)
+        )
+        for r in responses
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return queue.pop(0)
+
+    transport = httpx.MockTransport(handler)
+    if kind == "sync":
+        with MultiWA(BASE_URL, "test-key", transport=transport) as client:
+            return call(client), requests
+
+    async def main():
+        async with AsyncMultiWA(BASE_URL, "test-key", transport=transport) as client:
+            result = call(client)
+            assert inspect.iscoroutine(result), "async client method must be async"
+            return await result
+
+    return asyncio.run(main()), requests
+
+
+def sent_files(request: httpx.Request) -> dict[str, tuple[str | None, bytes]]:
+    """A multipart body's parts: field name -> (filename, the exact bytes sent)."""
+    boundary = request.headers["content-type"].partition("boundary=")[2]
+    first, *parts, last = request.content.split(f"--{boundary}".encode())
+    assert (first, last) == (b"", b"--\r\n")
+    files: dict[str, tuple[str | None, bytes]] = {}
+    for part in parts:
+        head, _, content = part.partition(b"\r\n\r\n")
+        disposition = re.search(
+            'form-data; name="([^"]*)"(?:; filename="([^"]*)")?', head.decode()
+        )
+        assert disposition and content.endswith(b"\r\n")
+        files[disposition[1]] = (disposition[2], content[:-2])
+    return files
+
+
+V1 = "/api/v1"
+IN_A_YEAR = (datetime.now(timezone.utc) + timedelta(days=365)).replace(microsecond=0)
+
+CASES = [
+    # ---------------- messages ----------------
+    Case(
+        "messages.send_text",
+        lambda c: c.messages.send_text("p-1", "628111", "Hi", quoted_message_id="q-1"),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/text",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "text": "Hi",
+                    "quotedMessageId": "q-1",
+                },
+            )
+        ],
+        lambda r: isinstance(r, MessageResult) and r.wa_message_id is not None,
+    ),
+    Case(
+        "messages.send_image",
+        lambda c: c.messages.send_image(
+            "p-1", "628111", url="https://x.test/i.jpg", caption="Look"
+        ),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/image",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "url": "https://x.test/i.jpg",
+                    "caption": "Look",
+                },
+            )
+        ],
+    ),
+    Case(
+        "messages.send_video",
+        lambda c: c.messages.send_video(
+            "p-1", "628111", base64="AAAA", mimetype="video/mp4"
+        ),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/video",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "base64": "AAAA",
+                    "mimetype": "video/mp4",
+                },
+            )
+        ],
+    ),
+    Case(
+        "messages.send_audio",
+        lambda c: c.messages.send_audio(
+            "p-1", "628111", url="https://x.test/a.ogg", ptt=True
+        ),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/audio",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "url": "https://x.test/a.ogg",
+                    "ptt": True,
+                },
+            )
+        ],
+    ),
+    Case(
+        "messages.send_document",
+        lambda c: c.messages.send_document(
+            "p-1", "628111", "r.pdf", url="https://x.test/r.pdf"
+        ),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/document",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "filename": "r.pdf",
+                    "url": "https://x.test/r.pdf",
+                },
+            )
+        ],
+    ),
+    Case(
+        "messages.send_location",
+        lambda c: c.messages.send_location("p-1", "628111", -6.2, 106.8, name="HQ"),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/location",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "latitude": -6.2,
+                    "longitude": 106.8,
+                    "name": "HQ",
+                },
+            )
+        ],
+    ),
+    Case(
+        "messages.send_contact",
+        lambda c: c.messages.send_contact("p-1", "628111", "Bob", "+62822"),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/contact",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "contacts": [{"name": "Bob", "phone": "+62822"}],
+                },
+            )
+        ],
+    ),
+    Case(
+        "messages.send_poll",
+        lambda c: c.messages.send_poll("p-1", "628111", "Color?", ["Red", "Blue"]),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/poll",
+                [],
+                {
+                    "profileId": "p-1",
+                    "to": "628111",
+                    "question": "Color?",
+                    "options": ["Red", "Blue"],
+                    "allowMultipleAnswers": False,
+                },
+            )
+        ],
+    ),
+    Case(
+        "messages.send_reaction",
+        lambda c: c.messages.send_reaction("p-1", "m-1", "👍"),
+        [rows.SEND_RESULT],
+        [
+            Sent(
+                "POST",
+                f"{V1}/messages/reaction",
+                [],
+                {"profileId": "p-1", "messageId": "m-1", "emoji": "👍"},
+            )
+        ],
+    ),
+    Case(
+        "messages.list",
+        lambda c: c.messages.list("p-1", limit=10, offset=20, direction="incoming"),
+        [[{"id": "m-1"}]],
+        [
+            Sent(
+                "GET",
+                f"{V1}/messages/profile/p-1",
+                [("limit", "10"), ("offset", "20"), ("direction", "incoming")],
+                None,
+            )
+        ],
+        lambda r: r == [{"id": "m-1"}],
+    ),
+    # ---------------- contacts ----------------
+    Case(
+        "contacts.create",
+        lambda c: c.contacts.create("p-1", "628111", name="Ann", tags=["vip"]),
+        [rows.CONTACT_ROW],
+        [
+            Sent(
+                "POST",
+                f"{V1}/contacts",
+                [],
+                {"profileId": "p-1", "phone": "628111", "name": "Ann", "tags": ["vip"]},
+            )
+        ],
+        lambda r: isinstance(r, Contact) and r.id == "c-1",
+    ),
+    Case(
+        "contacts.get",
+        lambda c: c.contacts.get("c-1"),
+        [rows.CONTACT_ROW],
+        [Sent("GET", f"{V1}/contacts/c-1", [], None)],
+        lambda r: isinstance(r, Contact),
+    ),
+    Case(
+        "contacts.update",
+        lambda c: c.contacts.update("c-1", name="Ann B", metadata={"a": 1}),
+        [rows.CONTACT_ROW],
+        [
+            Sent(
+                "PUT", f"{V1}/contacts/c-1", [], {"name": "Ann B", "metadata": {"a": 1}}
+            )
+        ],
+        lambda r: isinstance(r, Contact),
+    ),
+    Case(
+        "contacts.delete",
+        lambda c: c.contacts.delete("c-1"),
+        [rows.OK],
+        [Sent("DELETE", f"{V1}/contacts/c-1", [], None)],
+        lambda r: r == {"success": True},
+    ),
+    Case(
+        "contacts.add_tags",
+        lambda c: c.contacts.add_tags("c-1", ["new"]),
+        [rows.CONTACT_ROW],
+        [Sent("POST", f"{V1}/contacts/c-1/tags", [], {"tags": ["new"]})],
+        lambda r: isinstance(r, Contact),
+    ),
+    Case(
+        "contacts.remove_tags",
+        lambda c: c.contacts.remove_tags("c-1", ["vip"]),
+        [rows.CONTACT_ROW],
+        [Sent("DELETE", f"{V1}/contacts/c-1/tags", [], {"tags": ["vip"]})],
+        lambda r: isinstance(r, Contact),
+    ),
+    Case(
+        "contacts.list",
+        lambda c: c.contacts.list("p-1", search="ann", tags=["vip", "lead"]),
+        [rows.CONTACT_PAGE],
+        [
+            Sent(
+                "GET",
+                f"{V1}/contacts",
+                [
+                    ("profileId", "p-1"),
+                    ("limit", "50"),
+                    ("offset", "0"),
+                    ("search", "ann"),
+                    ("tags", "vip"),
+                    ("tags", "lead"),
+                ],
+                None,
+            )
+        ],
+        lambda r: [c.id for c in r] == ["c-1"],
+    ),
+    # ---------------- broadcasts ----------------
+    Case(
+        "broadcasts.create",
+        lambda c: c.broadcasts.create(
+            "p-1", "Promo", ["628111", "628222"], message="Hi"
+        ),
+        [rows.BROADCAST_ROW],
+        [
+            Sent(
+                "POST",
+                f"{V1}/broadcast",
+                [],
+                {
+                    "profileId": "p-1",
+                    "name": "Promo",
+                    "message": {"type": "text", "text": "Hi"},
+                    "recipients": {"type": "contacts", "value": ["628111", "628222"]},
+                },
+            )
+        ],
+        lambda r: isinstance(r, Broadcast) and r.id == "b-1",
+    ),
+    Case(
+        "broadcasts.create (API objects, settings, schedule)",
+        lambda c: c.broadcasts.create(
+            "p-1",
+            "Promo",
+            {"type": "tags", "value": ["vip"]},
+            message={"type": "image", "url": "https://x.test/i.jpg", "text": "Sale"},
+            schedule_at=IN_A_YEAR,
+            settings={"delayMin": 5000, "delayMax": 15000},
+        ),
+        [rows.BROADCAST_ROW, {**rows.BROADCAST_ROW, "status": "scheduled"}],
+        [
+            Sent(
+                "POST",
+                f"{V1}/broadcast",
+                [],
+                {
+                    "profileId": "p-1",
+                    "name": "Promo",
+                    "message": {
+                        "type": "image",
+                        "url": "https://x.test/i.jpg",
+                        "text": "Sale",
+                    },
+                    "recipients": {"type": "tags", "value": ["vip"]},
+                    "settings": {"delayMin": 5000, "delayMax": 15000},
+                },
+            ),
+            Sent(
+                "POST",
+                f"{V1}/broadcast/b-1/schedule",
+                [],
+                {"scheduledAt": IN_A_YEAR.isoformat()},
+            ),
+        ],
+        lambda r: r.status == "scheduled",
+    ),
+    Case(
+        "broadcasts.get",
+        lambda c: c.broadcasts.get("b-1"),
+        [rows.BROADCAST_ROW],
+        [Sent("GET", f"{V1}/broadcast/b-1", [], None)],
+        lambda r: r.sent_count == 1,
+    ),
+    Case(
+        "broadcasts.schedule",
+        lambda c: c.broadcasts.schedule("b-1", "2030-01-01T09:00:00Z"),
+        [{**rows.BROADCAST_ROW, "status": "scheduled"}],
+        [
+            Sent(
+                "POST",
+                f"{V1}/broadcast/b-1/schedule",
+                [],
+                {"scheduledAt": "2030-01-01T09:00:00Z"},
+            )
+        ],
+        lambda r: r.status == "scheduled",
+    ),
+    Case(
+        "broadcasts.start",
+        lambda c: c.broadcasts.start("b-1"),
+        [
+            {"success": True, "message": "Broadcast started", "recipientCount": 2},
+            rows.BROADCAST_ROW,
+        ],
+        [
+            Sent("POST", f"{V1}/broadcast/b-1/start", [], None),
+            Sent("GET", f"{V1}/broadcast/b-1", [], None),
+        ],
+        lambda r: isinstance(r, Broadcast) and r.status == "running",
+    ),
+    Case(
+        "broadcasts.pause",
+        lambda c: c.broadcasts.pause("b-1"),
+        [{**rows.BROADCAST_ROW, "status": "paused"}],
+        [Sent("POST", f"{V1}/broadcast/b-1/pause", [], None)],
+        lambda r: r.status == "paused",
+    ),
+    Case(
+        "broadcasts.resume",
+        lambda c: c.broadcasts.resume("b-1"),
+        [{"success": True, "message": "Broadcast resumed"}, rows.BROADCAST_ROW],
+        [
+            Sent("POST", f"{V1}/broadcast/b-1/resume", [], None),
+            Sent("GET", f"{V1}/broadcast/b-1", [], None),
+        ],
+        lambda r: isinstance(r, Broadcast) and r.status == "running",
+    ),
+    Case(
+        "broadcasts.cancel",
+        lambda c: c.broadcasts.cancel("b-1"),
+        [{**rows.BROADCAST_ROW, "status": "failed"}],
+        [Sent("POST", f"{V1}/broadcast/b-1/cancel", [], None)],
+        lambda r: r.status == "failed",
+    ),
+    Case(
+        "broadcasts.delete",
+        lambda c: c.broadcasts.delete("b-1"),
+        [rows.OK],
+        [Sent("DELETE", f"{V1}/broadcast/b-1", [], None)],
+        lambda r: r == {"success": True},
+    ),
+    Case(
+        "broadcasts.stats",
+        lambda c: c.broadcasts.stats("b-1"),
+        [rows.BROADCAST_STATS],
+        [Sent("GET", f"{V1}/broadcast/b-1/stats", [], None)],
+        lambda r: r["stats"]["progress"] == 50,
+    ),
+    Case(
+        "broadcasts.list",
+        lambda c: c.broadcasts.list("p-1", status="running", limit=1, offset=1),
+        [
+            [
+                rows.BROADCAST_ROW,
+                {**rows.BROADCAST_ROW, "id": "b-2"},
+                {**rows.BROADCAST_ROW, "id": "b-3"},
+            ]
+        ],
+        [
+            Sent(
+                "GET",
+                f"{V1}/broadcast",
+                [("profileId", "p-1"), ("status", "running")],
+                None,
+            )
+        ],
+        lambda r: [b.id for b in r] == ["b-2"],
+    ),
+    # ---------------- profiles ----------------
+    Case(
+        "profiles.create",
+        lambda c: c.profiles.create("ws-1", "Main"),
+        [rows.PROFILE_ROW],
+        [
+            Sent(
+                "POST",
+                f"{V1}/profiles",
+                [],
+                {"workspaceId": "ws-1", "name": "Main", "engine": "whatsapp-web-js"},
+            )
+        ],
+        lambda r: isinstance(r, Profile) and r.name == "Main",
+    ),
+    Case(
+        "profiles.get",
+        lambda c: c.profiles.get("p-1"),
+        [rows.PROFILE_ROW],
+        [Sent("GET", f"{V1}/profiles/p-1", [], None)],
+        lambda r: r.name == "Main",
+    ),
+    Case(
+        "profiles.update",
+        lambda c: c.profiles.update("p-1", name="Renamed"),
+        [{**rows.PROFILE_ROW, "displayName": "Renamed"}],
+        [Sent("PUT", f"{V1}/profiles/p-1", [], {"name": "Renamed"})],
+        lambda r: r.name == "Renamed",
+    ),
+    Case(
+        "profiles.delete",
+        lambda c: c.profiles.delete("p-1"),
+        [rows.OK],
+        [Sent("DELETE", f"{V1}/profiles/p-1", [], None)],
+        lambda r: r == {"success": True},
+    ),
+    Case(
+        "profiles.connect",
+        lambda c: c.profiles.connect("p-1"),
+        [{"status": "connecting", "message": "Scan the QR code"}],
+        [Sent("POST", f"{V1}/profiles/p-1/connect", [], None)],
+        lambda r: r["status"] == "connecting",
+    ),
+    Case(
+        "profiles.disconnect",
+        lambda c: c.profiles.disconnect("p-1"),
+        [{"status": "disconnected"}],
+        [Sent("POST", f"{V1}/profiles/p-1/disconnect", [], None)],
+        lambda r: r == {"status": "disconnected"},
+    ),
+    Case(
+        "profiles.status",
+        lambda c: c.profiles.status("p-1"),
+        [rows.PROFILE_STATUS],
+        [Sent("GET", f"{V1}/profiles/p-1/status", [], None)],
+        lambda r: r["engineConnected"] is True,
+    ),
+    Case(
+        "profiles.list",
+        lambda c: c.profiles.list(workspace_id="ws-1"),
+        [[rows.PROFILE_LIST_ROW]],
+        [Sent("GET", f"{V1}/profiles", [("workspaceId", "ws-1")], None)],
+        lambda r: [p.name for p in r] == ["Main"],
+    ),
+    # ---------------- webhooks ----------------
+    Case(
+        "webhooks.create",
+        lambda c: c.webhooks.create(
+            "p-1", "https://hook.test/in", ["message.received"]
+        ),
+        [rows.WEBHOOK_ROW],
+        [
+            Sent(
+                "POST",
+                f"{V1}/webhooks",
+                [],
+                {
+                    "profileId": "p-1",
+                    "url": "https://hook.test/in",
+                    "events": ["message.received"],
+                },
+            )
+        ],
+        lambda r: isinstance(r, Webhook) and r.secret == "generated-secret",
+    ),
+    Case(
+        "webhooks.get",
+        lambda c: c.webhooks.get("wh-1"),
+        [rows.WEBHOOK_ROW],
+        [Sent("GET", f"{V1}/webhooks/wh-1", [], None)],
+        lambda r: r.is_active is True,
+    ),
+    Case(
+        "webhooks.update",
+        lambda c: c.webhooks.update("wh-1", events=["message.sent"], is_active=False),
+        [{**rows.WEBHOOK_ROW, "enabled": False}],
+        [
+            Sent(
+                "PUT",
+                f"{V1}/webhooks/wh-1",
+                [],
+                {"events": ["message.sent"], "enabled": False},
+            )
+        ],
+        lambda r: r.is_active is False,
+    ),
+    Case(
+        "webhooks.delete",
+        lambda c: c.webhooks.delete("wh-1"),
+        [rows.OK],
+        [Sent("DELETE", f"{V1}/webhooks/wh-1", [], None)],
+        lambda r: r == {"success": True},
+    ),
+    Case(
+        "webhooks.test",
+        lambda c: c.webhooks.test("wh-1"),
+        [{"success": True, "message": "Test webhook delivered successfully"}],
+        [Sent("POST", f"{V1}/webhooks/wh-1/test", [], None)],
+        lambda r: r["success"] is True,
+    ),
+    Case(
+        "webhooks.list",
+        lambda c: c.webhooks.list("p-1"),
+        [[rows.WEBHOOK_LIST_ROW]],
+        [Sent("GET", f"{V1}/webhooks", [("profileId", "p-1")], None)],
+        lambda r: [w.id for w in r] == ["wh-1"],
+    ),
+    # ---------------- calls ----------------
+    Case(
+        "calls.list",
+        lambda c: c.calls.list(
+            "p-1",
+            outcome="answered",
+            follow_up="done",
+            from_="628111",
+            since="2026-11-01T00:00:00Z",
+            limit=20,
+            cursor="c-9",
+        ),
+        [{"calls": [rows.CALL_ROW], "nextCursor": "c-1"}],
+        [
+            Sent(
+                "GET",
+                f"{V1}/calls",
+                [
+                    ("profileId", "p-1"),
+                    ("outcome", "answered"),
+                    ("followUp", "done"),
+                    ("from", "628111"),
+                    ("since", "2026-11-01T00:00:00Z"),
+                    ("limit", "20"),
+                    ("cursor", "c-9"),
+                ],
+                None,
+            )
+        ],
+        lambda r: r.next_cursor == "c-1"
+        and r.calls[0].answered_by.name == "Jane"
+        and r.calls[0].recording.duration_sec == 190,
+    ),
+    Case(
+        "calls.list since a timezone-aware datetime",
+        lambda c: c.calls.list(
+            "p-1", since=datetime(2026, 11, 1, 7, tzinfo=timezone(timedelta(hours=7)))
+        ),
+        [{"calls": [], "nextCursor": None}],
+        [
+            Sent(
+                "GET",
+                f"{V1}/calls",
+                [("profileId", "p-1"), ("since", "2026-11-01T07:00:00+07:00")],
+                None,
+            )
+        ],
+    ),
+    Case(
+        "calls.open_count",
+        lambda c: c.calls.open_count(),
+        [{"count": 3}],
+        [Sent("GET", f"{V1}/calls/open-count", [], None)],
+        lambda r: r == 3,
+    ),
+    Case(
+        "calls.get",
+        lambda c: c.calls.get("c-1"),
+        [rows.CALL_ROW],
+        [Sent("GET", f"{V1}/calls/c-1", [], None)],
+        lambda r: r.outcome == "answered" and r.talk_seconds == 192
+        # Tz-aware: a naive datetime is never equal to an aware one.
+        and r.started_at == datetime(2026, 10, 28, 10, tzinfo=timezone.utc),
+    ),
+    Case(
+        "calls.update",
+        lambda c: c.calls.update(
+            "c-1", follow_up="in_progress", assigned_user_id="u-2"
+        ),
+        [{**rows.CALL_ROW, "followUp": "in_progress", "assignedUserId": "u-2"}],
+        [
+            Sent(
+                "PATCH",
+                f"{V1}/calls/c-1",
+                [],
+                {"followUp": "in_progress", "assignedUserId": "u-2"},
+            )
+        ],
+        lambda r: r.assigned_user_id == "u-2",
+    ),
+    Case(
+        "calls.update unassign",
+        lambda c: c.calls.update("c-1", unassign=True),
+        [rows.CALL_ROW],
+        [Sent("PATCH", f"{V1}/calls/c-1", [], {"assignedUserId": None})],
+        lambda r: r.assigned_user_id is None,
+    ),
+    Case(
+        "calls.reject",
+        lambda c: c.calls.reject("c-1"),
+        [{**rows.CALL_ROW, "outcome": "rejected", "rejectedBy": "agent"}],
+        [Sent("POST", f"{V1}/calls/c-1/reject", [], None)],
+        lambda r: r.rejected_by == "agent",
+    ),
+    Case(
+        "calls.reply",
+        lambda c: c.calls.reply("c-1", "We will call you back"),
+        [{"call": rows.CALL_ROW, "message": rows.SEND_RESULT}],
+        [Sent("POST", f"{V1}/calls/c-1/reply", [], {"text": "We will call you back"})],
+        lambda r: r.message.wa_message_id is not None,
+    ),
+    Case(
+        "calls.reply with the profile's default",
+        lambda c: c.calls.reply("c-1"),
+        [{"call": rows.CALL_ROW, "message": rows.SEND_RESULT}],
+        [Sent("POST", f"{V1}/calls/c-1/reply", [], {})],
+    ),
+    Case(
+        "calls.send_call_link",
+        lambda c: c.calls.send_call_link("c-1", "voice", text="Tap to call us"),
+        [
+            {
+                "call": rows.CALL_ROW,
+                "message": rows.SEND_RESULT,
+                "link": "https://call.whatsapp.com/voice/x",
+            }
+        ],
+        [
+            Sent(
+                "POST",
+                f"{V1}/calls/c-1/call-link",
+                [],
+                {"type": "voice", "text": "Tap to call us"},
+            )
+        ],
+        lambda r: r.link.endswith("/voice/x"),
+    ),
+    Case(
+        "calls.media_status",
+        lambda c: c.calls.media_status(),
+        [rows.MEDIA_STATUS],
+        [Sent("GET", f"{V1}/calls/media/status", [], None)],
+        lambda r: r.server.engine_host == "api"
+        and r.server.recordings.last_check.ok is True
+        and r.profiles[0].reasons == ["auto_reject_on"],
+    ),
+    Case(
+        "calls.get_recording",
+        lambda c: c.calls.get_recording("c-1", download=True),
+        [
+            httpx.Response(
+                200, content=b"\x1aE\xdf\xa3", headers={"content-type": "audio/webm"}
+            )
+        ],
+        [Sent("GET", f"{V1}/calls/c-1/recording", [("download", "1")], None)],
+        lambda r: r.content == b"\x1aE\xdf\xa3" and r.content_type == "audio/webm",
+    ),
+    Case(
+        "calls.get_recording to play",
+        lambda c: c.calls.get_recording("c-1"),
+        [
+            httpx.Response(
+                200, content=b"\x1aE\xdf\xa3", headers={"content-type": "audio/webm"}
+            )
+        ],
+        [Sent("GET", f"{V1}/calls/c-1/recording", [], None)],
+    ),
+    Case(
+        "calls.delete_recording",
+        lambda c: c.calls.delete_recording("c-1"),
+        [{"callId": "c-1", "recordingId": "rec-1", "deletedAt": rows.AT}],
+        [Sent("DELETE", f"{V1}/calls/c-1/recording", [], None)],
+        lambda r: r.recording_id == "rec-1",
+    ),
+    Case(
+        "calls.update_settings",
+        lambda c: c.calls.update_settings(
+            "p-1", answer_in_dashboard=True, recording=True, retention_days=30
+        ),
+        [rows.CALLS_SETTINGS],
+        [
+            Sent(
+                "PUT",
+                f"{V1}/profiles/p-1/calls-settings",
+                [],
+                {"answerInDashboard": True, "recording": True, "retentionDays": 30},
+            )
+        ],
+        lambda r: r.retention_days == 30 and r.announcement.duration_sec == 6.2,
+    ),
+    Case(
+        "calls.upload_announcement",
+        lambda c: c.calls.upload_announcement("p-1", b"ID3\x04", filename="notice.mp3"),
+        [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+        [
+            Sent(
+                "POST",
+                f"{V1}/profiles/p-1/calls-announcement",
+                [],
+                None,
+                files={"file": ("notice.mp3", b"ID3\x04")},
+            )
+        ],
+        lambda r: r.announcement.mime_type == "audio/mpeg",
+    ),
+    Case(
+        "calls.get_announcement",
+        lambda c: c.calls.get_announcement("p-1"),
+        [
+            httpx.Response(
+                200, content=b"ID3\x04", headers={"content-type": "audio/mpeg"}
+            )
+        ],
+        [Sent("GET", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.content == b"ID3\x04" and r.content_type == "audio/mpeg",
+    ),
+    Case(
+        "calls.get_announcement without a Content-Type",
+        lambda c: c.calls.get_announcement("p-1"),
+        [httpx.Response(200, content=b"ID3\x04")],
+        [Sent("GET", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.content == b"ID3\x04"
+        and r.content_type == "application/octet-stream",
+    ),
+    Case(
+        "calls.delete_announcement",
+        lambda c: c.calls.delete_announcement("p-1"),
+        [{"profileId": "p-1", "announcement": None}],
+        [Sent("DELETE", f"{V1}/profiles/p-1/calls-announcement", [], None)],
+        lambda r: r.announcement is None,
+    ),
+    # ---------------- raw request ----------------
+    Case(
+        "client.request",
+        lambda c: c.request("GET", "/templates", params={"profileId": "p-1"}),
+        [[]],
+        [Sent("GET", f"{V1}/templates", [("profileId", "p-1")], None)],
+        lambda r: r == [],
+    ),
+]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize("case", CASES, ids=[case.name for case in CASES])
+def test_request(case: Case, kind: str):
+    result, requests = run(kind, case.call, case.responses)
+
+    assert len(requests) == len(case.sent)
+    for request, want in zip(requests, case.sent):
+        assert request.method == want.method
+        assert request.url.path == want.path
+        assert request.url.params.multi_items() == want.params
+        assert request.headers["x-api-key"] == "test-key"
+        if want.files is not None:
+            # A file upload is multipart, with the boundary httpx chose.
+            assert request.headers["content-type"].startswith("multipart/form-data")
+            assert sent_files(request) == want.files
+        elif want.body is None:
+            # A bodyless POST/DELETE with Content-Type: application/json gets a 400.
+            assert request.content == b""
+            assert "content-type" not in request.headers
+        else:
+            assert request.headers["content-type"] == "application/json"
+            assert json.loads(request.content) == want.body
+        assert route_exists(want.method, want.path), f"{want.method} {want.path}"
+    assert case.check(result)
+
+
+def _public_methods(cls: type) -> set[str]:
+    return {
+        name
+        for name, _ in inspect.getmembers(cls, inspect.isfunction)
+        if not name.startswith("_")
+    }
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_every_public_method_has_a_case(kind: str):
+    client_cls = MultiWA if kind == "sync" else AsyncMultiWA
+    client = client_cls(BASE_URL, "test-key")
+    covered = {case.name.split(" ")[0] for case in CASES}
+    for resource in (
+        "messages",
+        "contacts",
+        "broadcasts",
+        "profiles",
+        "webhooks",
+        "calls",
+    ):
+        for name in _public_methods(type(getattr(client, resource))):
+            if (resource, name) != (
+                "profiles",
+                "get_qr",
+            ):  # no route: test_get_qr_raises
+                assert f"{resource}.{name}" in covered
+
+
+def test_sync_and_async_clients_have_the_same_methods():
+    sync, aio = MultiWA(BASE_URL, "k"), AsyncMultiWA(BASE_URL, "k")
+    for resource in (
+        "messages",
+        "contacts",
+        "broadcasts",
+        "profiles",
+        "webhooks",
+        "calls",
+    ):
+        assert _public_methods(type(getattr(sync, resource))) == _public_methods(
+            type(getattr(aio, resource))
+        )
+
+
+def test_route_check_rejects_the_old_paths():
+    # The paths 1.2.0 called; the snapshot check must catch each of them.
+    for method, path in [
+        ("POST", f"{V1}/broadcasts"),
+        ("GET", f"{V1}/broadcasts/profile/p-1"),
+        ("GET", f"{V1}/contacts/profile/p-1"),
+        ("PATCH", f"{V1}/contacts/c-1"),
+        ("GET", f"{V1}/webhooks/profile/p-1"),
+        ("PATCH", f"{V1}/webhooks/wh-1"),
+        ("PATCH", f"{V1}/profiles/p-1"),
+        ("GET", f"{V1}/profiles/p-1/qr"),
+    ]:
+        assert not route_exists(method, path), f"{method} {path}"
+
+
+# ---------------- arguments the API cannot honour ----------------
+
+REFUSED = [
+    (
+        lambda c: c.broadcasts.create("p-1", "Promo", ["628111"], template_id="t-1"),
+        "template_id",
+    ),
+    (lambda c: c.broadcasts.create("p-1", "Promo", ["628111"]), "message is required"),
+    (
+        lambda c: c.broadcasts.create(
+            "p-1", "Promo", ["628111"], message="Hi", schedule_at=datetime(2030, 1, 1)
+        ),
+        "timezone-aware",
+    ),
+    (lambda c: c.broadcasts.schedule("b-1", datetime(2030, 1, 1)), "timezone-aware"),
+    # Sent without a zone, it would be read in the server's own.
+    (lambda c: c.calls.list("p-1", since=datetime(2026, 11, 1)), "timezone-aware"),
+    (lambda c: c.contacts.create("p-1", "628111", email="a@b.test"), "email"),
+    (lambda c: c.contacts.update("c-1", email="a@b.test"), "email"),
+    (
+        lambda c: c.webhooks.create(
+            "p-1", "https://hook.test/in", ["test"], secret="s"
+        ),
+        "secret",
+    ),
+    (lambda c: c.webhooks.update("wh-1", secret="s"), "secret"),
+    (lambda c: c.profiles.update("p-1", is_active=False), "active"),
+    (
+        lambda c: c.calls.update("c-1", assigned_user_id="u-2", unassign=True),
+        "not both",
+    ),
+]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(("call", "message"), REFUSED, ids=[m for _, m in REFUSED])
+def test_refused_argument_raises_before_any_request(call, message: str, kind: str):
+    with pytest.raises(ValueError, match=message):
+        run(kind, call, [])
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_get_qr_raises_and_points_to_websocket(kind: str):
+    with pytest.raises(NotImplementedError, match=r"qr:update.*connection\.qr"):
+        run(kind, lambda c: c.profiles.get_qr("p-1"), [])
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_refused_schedule_deletes_the_draft(kind: str):
+    refused = httpx.Response(
+        400, json={"message": "Scheduled time must be in the future"}
+    )
+    sent: list[httpx.Request] = []
+    with pytest.raises(httpx.HTTPStatusError):
+        run(
+            kind,
+            lambda c: c.broadcasts.create(
+                "p-1",
+                "Promo",
+                ["628111"],
+                message="Hi",
+                schedule_at="2020-01-01T00:00:00Z",
+            ),
+            [rows.BROADCAST_ROW, refused, rows.OK],
+            sent,
+        )
+    assert [(r.method, r.url.path) for r in sent] == [
+        ("POST", f"{V1}/broadcast"),
+        ("POST", f"{V1}/broadcast/b-1/schedule"),
+        ("DELETE", f"{V1}/broadcast/b-1"),
+    ]
+
+
+def test_error_status_raises_http_status_error():
+    client = MultiWA(
+        BASE_URL,
+        "k",
+        transport=httpx.MockTransport(lambda r: httpx.Response(404, json={})),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        client.contacts.get("missing")
+
+
+def test_base_url_with_trailing_slash_keeps_the_prefix():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        return httpx.Response(200, json=rows.PROFILE_ROW)
+
+    MultiWA(BASE_URL + "/", "k", transport=httpx.MockTransport(handler)).profiles.get(
+        "p-1"
+    )
+    assert seen == [f"{V1}/profiles/p-1"]
+
+
+def test_a_refused_call_setting_says_why():
+    refused = httpx.Response(
+        409,
+        json={
+            "message": "Recording calls is not available for this profile",
+            "reasons": ["no_announcement"],
+        },
+    )
+    client = MultiWA(BASE_URL, "k", transport=httpx.MockTransport(lambda r: refused))
+    with pytest.raises(httpx.HTTPStatusError) as refusal:
+        client.calls.update_settings("p-1", recording=True)
+    assert refusal.value.response.status_code == 409
+    assert refusal.value.response.json()["reasons"] == ["no_announcement"]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        (lambda c: c.calls.get_recording("c-1"), "This call has no recording"),
+        (
+            lambda c: c.calls.get_announcement("p-1"),
+            "This profile has no announcement",
+        ),
+    ],
+    ids=["get_recording", "get_announcement"],
+)
+def test_an_error_of_an_audio_route_raises_with_its_json(call, message: str, kind: str):
+    missing = httpx.Response(
+        404, json={"statusCode": 404, "message": message, "error": "Not Found"}
+    )
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        run(kind, call, [missing])
+    assert error.value.response.status_code == 404
+    assert error.value.response.json()["message"] == message
+
+
+# ---------------- what an announcement upload sends ----------------
+
+
+def named(name: object) -> io.BytesIO:
+    """A file object with a ``name``, as ``open()`` returns one."""
+    file = io.BytesIO(b"ID3\x04")
+    file.name = name
+    return file
+
+
+GREETING = "/srv/audio/greeting.mp3"
+
+# (the file, the options, the filename it goes out under); its bytes are ID3\x04.
+UPLOADS = [
+    pytest.param(lambda: b"ID3\x04", {}, "announcement", id="bytes"),
+    pytest.param(lambda: bytearray(b"ID3\x04"), {}, "announcement", id="bytearray"),
+    pytest.param(
+        lambda: memoryview(b"<ID3\x04>")[1:5],
+        {},
+        "announcement",
+        id="only a memoryview's bytes",
+    ),
+    pytest.param(lambda: io.BytesIO(b"ID3\x04"), {}, "announcement", id="file object"),
+    pytest.param(lambda: named(GREETING), {}, "greeting.mp3", id="its own base name"),
+    pytest.param(
+        lambda: named(GREETING),
+        {"filename": "notice.mp3"},
+        "notice.mp3",
+        id="the name given wins",
+    ),
+    pytest.param(
+        lambda: named(GREETING),
+        {"filename": ""},
+        "greeting.mp3",
+        id="an empty name given counts as none",
+    ),
+    pytest.param(lambda: named(""), {}, "announcement", id="an empty own name"),
+    pytest.param(lambda: named(3), {}, "announcement", id="a descriptor for a name"),
+]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(("file", "options", "sent_as"), UPLOADS)
+def test_an_announcement_goes_out_as_exactly_its_bytes(
+    file: Callable[[], Any], options: dict[str, Any], sent_as: str, kind: str
+):
+    _, requests = run(
+        kind,
+        lambda c: c.calls.upload_announcement("p-1", file(), **options),
+        [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+    )
+    assert [sent_files(request) for request in requests] == [
+        {"file": (sent_as, b"ID3\x04")}
+    ]
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+def test_an_uploaded_file_object_is_left_open_to_send_again(kind: str):
+    file = named(GREETING)
+    # The second time, a retry say, it is read again from its start.
+    for _ in range(2):
+        _, requests = run(
+            kind,
+            lambda c: c.calls.upload_announcement("p-1", file),
+            [{"profileId": "p-1", "announcement": rows.ANNOUNCEMENT}],
+        )
+        assert not file.closed
+        assert sent_files(requests[0]) == {"file": ("greeting.mp3", b"ID3\x04")}
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize("path", [GREETING, Path(GREETING)], ids=["str", "Path"])
+def test_an_announcement_given_as_a_path_raises_before_any_request(
+    path: object, kind: str
+):
+    # A str would go out as the file's content: the path's own text.
+    with pytest.raises(TypeError, match=r"open\(path, \"rb\"\)"):
+        run(kind, lambda c: c.calls.upload_announcement("p-1", path), [])

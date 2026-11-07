@@ -1,9 +1,10 @@
 // SendGateService unit tests
-// Proves per-profile serialization, the daily-limit 429, null=unlimited, and
-// that a failed/429 send does NOT wedge the per-profile queue (chain poisoning).
+// Proves per-profile serialization, the daily-limit 429, null=unlimited, that a
+// failed/429 send does NOT wedge the per-profile queue (chain poisoning), and that
+// a send that never settles does not either (504 SEND_TIMEOUT).
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { HttpException } from '@nestjs/common';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { HttpException, HttpStatus } from '@nestjs/common';
 
 vi.mock('@multiwa/database', () => ({
   prisma: {
@@ -12,7 +13,7 @@ vi.mock('@multiwa/database', () => ({
 }));
 
 import { prisma } from '@multiwa/database';
-import { SendGateService, nextMidnightWIB } from '@multiwa/engine-runtime';
+import { SendGateService, nextMidnightWIB, SEND_TIMEOUT_MS } from '@multiwa/engine-runtime';
 
 const FUTURE = new Date(Date.now() + 60 * 60 * 1000); // avoids the lazy-reset path
 
@@ -110,6 +111,107 @@ describe('SendGateService', () => {
     const ok = vi.fn().mockResolvedValue('ok');
     await expect(gate.executeWithGate('p1', ok)).resolves.toBe('ok');
     expect(ok).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not count a send the engine reports as failed', async () => {
+    vi.mocked(prisma.profile.findUnique).mockResolvedValue(profileRow() as any);
+    const failed = { success: false, error: 'Client not ready' };
+
+    await expect(gate.executeWithGate('p1', async () => failed)).resolves.toBe(failed);
+
+    expect(prisma.profile.update).not.toHaveBeenCalled(); // nothing went out
+  });
+});
+
+// 2026-11-01: a profile's send chain stopped moving: every later send waited behind a
+// stuck one, and 2,493 messages sat `pending` until a restart.
+describe('SendGateService send timeout', () => {
+  let gate: SendGateService;
+  const increments = () =>
+    vi.mocked(prisma.profile.update).mock.calls.filter(([a]: any[]) => a?.data?.dailyMessageCount?.increment === 1).length;
+  /** Starts a send that settles only when the test says so, and records how the gate answered. */
+  const startSend = () => {
+    const send: { outcome: unknown; finish: (r: unknown) => void; fail: (e: Error) => void } = {
+      outcome: 'pending',
+      finish: () => {},
+      fail: () => {},
+    };
+    gate
+      .executeWithGate('p1', () => new Promise((resolve, reject) => ((send.finish = resolve), (send.fail = reject))))
+      .then(
+        () => (send.outcome = 'resolved'),
+        (e) => (send.outcome = e),
+      );
+    return send;
+  };
+  const expectTimedOut = (outcome: unknown) => {
+    expect(outcome).toBeInstanceOf(HttpException);
+    expect((outcome as HttpException).getStatus()).toBe(HttpStatus.GATEWAY_TIMEOUT);
+    expect((outcome as HttpException).getResponse()).toMatchObject({ error: 'SEND_TIMEOUT' });
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.mocked(prisma.profile.findUnique).mockReset().mockResolvedValue(profileRow() as any);
+    vi.mocked(prisma.profile.update).mockReset().mockResolvedValue({} as any);
+    gate = new SendGateService();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('fails a send that never settles with 504 SEND_TIMEOUT and frees the profile', async () => {
+    const send = startSend();
+
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+
+    expectTimedOut(send.outcome);
+    expect(increments()).toBe(0); // it did not go out, so it does not count
+    // The next send of the same profile is no longer stuck behind it.
+    await expect(gate.executeWithGate('p1', async () => 'next')).resolves.toBe('next');
+  });
+
+  it('counts a timed-out send once it does finish, as it went out after all', async () => {
+    const send = startSend();
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expectTimedOut(send.outcome);
+    expect(increments()).toBe(0);
+
+    send.finish({ success: true, messageId: 'wa-late' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(increments()).toBe(1);
+  });
+
+  it('does not count a timed-out send that finishes as an engine failure', async () => {
+    const send = startSend();
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expectTimedOut(send.outcome);
+
+    send.finish({ success: false, error: 'Runtime.callFunctionOn timed out' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(increments()).toBe(0);
+  });
+
+  it('ignores a timed-out send that later throws (no count, no unhandled rejection)', async () => {
+    const send = startSend();
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expectTimedOut(send.outcome);
+
+    send.fail(new Error('Protocol error: Target closed'));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(increments()).toBe(0);
+  });
+
+  it('leaves no timer behind a send that finished in time', async () => {
+    await expect(gate.executeWithGate('p1', async () => ({ success: true }))).resolves.toEqual({ success: true });
+
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(SEND_TIMEOUT_MS);
+    expect(increments()).toBe(1); // counted once, never again by a stale timer
   });
 });
 

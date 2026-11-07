@@ -6,6 +6,8 @@ import { ApiTags, ApiOperation, ApiConsumes, ApiBearerAuth, ApiSecurity, ApiBody
 import { FastifyRequest } from 'fastify';
 import { UploadsService } from './uploads.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { AGENT_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiValidationError } from '../../common/decorators/api-responses';
 
 const MAX_FILE_SIZES: Record<string, number> = {
@@ -42,6 +44,7 @@ export class UploadsController {
   constructor(private readonly uploadsService: UploadsService) {}
 
   @Post('media')
+  @Roles(...AGENT_ROLES)
   @ApiOperation({
     summary: 'Upload media file to S3/MinIO',
     description:

@@ -5,7 +5,13 @@ title: "Documentation Index"
 
 # MultiWA Documentation
 
-Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp API Gateway designed for developers who need full control over their messaging infrastructure.
+Welcome to the MultiWA documentation. MultiWA is a free, open-source, self-hosted WhatsApp API gateway with a built-in team inbox, designed for developers who need full control over their messaging infrastructure.
+
+:::warning
+
+MultiWA is not affiliated with WhatsApp or Meta. It connects through WhatsApp Web, and WhatsApp can block or log out numbers that break its terms. Use a number you can afford to lose, and follow [WhatsApp's policies](https://www.whatsapp.com/legal).
+
+:::
 
 ## 📚 Documentation Index
 
@@ -28,6 +34,8 @@ Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp AP
 - [10 - Messaging](<features/messaging.md>) - Sending messages, media, polls
 - [11 - Groups](<features/groups.md>) - Group management API
 - [12 - Automation](<features/automation.md>) - Auto-reply and flow builder
+- [23 - Calls answered in the dashboard](<features/calls.md>) - Agents answer WhatsApp calls in the browser; recordings and their announcement
+- [24 - Customers](<features/customers.md>) - The customer behind a number: IDs linked to numbers, live data from your system, notes and tags
 
 ### SDKs & Integrations
 - [13 - Python SDK](<sdks/python-sdk.md>) - Installation and usage
@@ -59,7 +67,7 @@ Welcome to the MultiWA documentation. MultiWA is a free, open-source WhatsApp AP
 - **Python SDK source**: [`packages/sdk-python`](../packages/sdk-python)
 - **PHP SDK source**: [`packages/sdk-php`](../packages/sdk-php)
 
-> The TypeScript SDK is live on npm (`npm install @multiwa/sdk`), the Python SDK on PyPI (`pip install multiwa`), and the n8n community node on npm (`npm install n8n-nodes-multiwa`). The PHP SDK (`multiwa/sdk`) still ships as an in-repo package; its Packagist entry is tracked as a release follow-up — until then, install it from this repository or via the package's local path.
+> The TypeScript SDK is live on npm (`npm install @multiwa/sdk`), the Python SDK on PyPI (`pip install multiwa`), the PHP SDK on Packagist (`composer require multiwa/multiwa-php`), and the n8n community node on npm (`npm install n8n-nodes-multiwa`).
 
 ---
 

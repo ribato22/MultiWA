@@ -3,7 +3,7 @@
 
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { Fragment, useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -11,8 +11,12 @@ import {
   LayoutGrid,
   Smartphone,
   MessagesSquare,
+  PhoneIncoming,
+  PhoneMissed,
+  PhoneOff,
   MessageSquare,
   Users,
+  IdCard,
   LayoutTemplate,
   Megaphone,
   Zap,
@@ -37,27 +41,45 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { api, Notification } from '@/lib/api';
+import { canConfigure, currentUser, isServerOwner } from '@/lib/current-user';
+import { EmptyState } from '@/components/ui/empty-state';
 import { DemoBanner } from '@/components/demo-banner';
+import { CallsProvider, forgetStoredCall } from '@/components/calls/calls-provider';
+import { AvailabilityToggle } from '@/components/calls/availability-toggle';
+import { IncomingCallBanner } from '@/components/calls/incoming-call-banner';
+import { InCallBar } from '@/components/calls/in-call-bar';
+import { VideoTile } from '@/components/calls/video-tile';
 import { formatRelative, formatFull } from '@/lib/datetime';
 
-type MenuItem = { name: string; href: string; Icon: LucideIcon };
+// `admin`: every read of the page is an owner's or admin's, so the other roles get neither its link nor the page.
+// `serverOwner`: the page is the server owner's alone, as what it sets comes from the server's environment.
+type Gated = { href: string; admin?: boolean; serverOwner?: boolean };
+type MenuItem = Gated & { name: string; Icon: LucideIcon };
 
 const menuItems: MenuItem[] = [
   { name: 'Overview',     href: '/dashboard',              Icon: LayoutGrid },
   { name: 'Profiles',     href: '/dashboard/profiles',     Icon: Smartphone },
   { name: 'Chat',         href: '/dashboard/chat',         Icon: MessagesSquare },
+  { name: 'Calls',        href: '/dashboard/calls',        Icon: PhoneIncoming },
   { name: 'Messages',     href: '/dashboard/messages',     Icon: MessageSquare },
   { name: 'Contacts',     href: '/dashboard/contacts',     Icon: Users },
+  { name: 'Customers',    href: '/dashboard/customers',    Icon: IdCard },
   { name: 'Templates',    href: '/dashboard/templates',    Icon: LayoutTemplate },
   { name: 'Broadcast',    href: '/dashboard/broadcast',    Icon: Megaphone },
   { name: 'Automation',   href: '/dashboard/automation',   Icon: Zap },
   { name: 'Analytics',    href: '/dashboard/analytics',    Icon: BarChart3 },
-  { name: 'Webhooks',     href: '/dashboard/webhooks',     Icon: WebhookIcon },
-  { name: 'Integrations', href: '/dashboard/integrations', Icon: Puzzle },
+  { name: 'Webhooks',     href: '/dashboard/webhooks',     Icon: WebhookIcon, admin: true },
+  { name: 'Integrations', href: '/dashboard/integrations', Icon: Puzzle, serverOwner: true },
   { name: 'Knowledge',    href: '/dashboard/knowledge',    Icon: Brain },
   { name: 'API Keys',     href: '/dashboard/api-keys',     Icon: KeyRound },
-  { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList },
+  { name: 'Audit',        href: '/dashboard/audit',        Icon: ClipboardList, admin: true },
   { name: 'Settings',     href: '/dashboard/settings',     Icon: SettingsIcon },
+];
+
+// The pages that create what a link everyone has lists: the sidebar has no link to them, so only their address is shut.
+const createPages: Gated[] = [
+  { href: '/dashboard/profiles/new', admin: true },
+  { href: '/dashboard/automation/builder', admin: true },
 ];
 
 type NotifTypeInfo = { Icon: LucideIcon; tone: string };
@@ -69,7 +91,13 @@ const notifIcons: Record<string, NotifTypeInfo> = {
   automation:    { Icon: Zap,           tone: 'text-amber-300' },
   system:        { Icon: Wrench,        tone: 'text-muted-foreground' },
   security:      { Icon: Lock,          tone: 'text-rose-300' },
+  call:          { Icon: PhoneMissed,   tone: 'text-rose-300' },
 };
+// The call alerts (the media server died, a recording failed, the recording storage) come as `system`, with a kind
+// that starts `call_` or `calls_`.
+const CALL_ALERT: NotifTypeInfo = { Icon: PhoneOff, tone: 'text-amber-300' };
+const notifIcon = (n: Notification): NotifTypeInfo =>
+  (n.type === 'system' && /^calls?_/.test(String(n.metadata?.kind ?? '')) ? CALL_ALERT : notifIcons[n.type]) ?? { Icon: Bell, tone: 'text-muted-foreground' };
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -103,17 +131,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // Chat unread (org-wide) for the sidebar badge
   const [chatUnread, setChatUnread] = useState(0);
 
+  // Open call follow-ups (org-wide) for the sidebar Calls badge
+  const [callsOpen, setCallsOpen] = useState(0);
+
   // Account menu (top-right)
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
-    if (userData) {
-      setUser(JSON.parse(userData));
-    } else {
+    if (!userData) {
       router.push('/auth/login');
+      return;
     }
+    setUser(JSON.parse(userData));
+    // A role changed since sign-in reaches the UI without signing out: the server's answer updates the stored user.
+    api.me().then(({ data }) => {
+      const stored = currentUser();
+      if (!data?.role || !stored || stored.id !== data.id) return; // failed, or signed out or in as someone else since
+      if (data.role === stored.role && !!data.isServerOwner === !!stored.isServerOwner) return;
+      const next = { ...stored, role: data.role, isServerOwner: data.isServerOwner };
+      localStorage.setItem('user', JSON.stringify(next));
+      setUser(next);
+    });
   }, [router]);
 
   // Fetch unread count periodically
@@ -125,6 +165,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     try {
       const chat = await api.getChatUnreadCount();
       if (chat.data) setChatUnread(chat.data.count);
+    } catch {}
+    try {
+      const calls = await api.getCallsOpenCount();
+      if (calls.data) setCallsOpen(calls.data.count);
     } catch {}
   }, []);
 
@@ -157,6 +201,48 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  // Raised over the incoming-call banner while open, a menu left open would sit over a dialog too: Escape closes it (the
+  // focus in it goes back to its button), and so does the focus moving out of it (closeOnLeave).
+  useEffect(() => {
+    if (!showNotifDropdown && !showUserMenu) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      for (const ref of [notifRef, userRef]) {
+        if (ref.current?.contains(document.activeElement)) ref.current.querySelector('button')?.focus();
+      }
+      setShowNotifDropdown(false);
+      setShowUserMenu(false);
+    }
+    // A call that rang while the tab was behind another took the focus with no blur here: back in the tab, the menu
+    // goes, or it would hide the Answer that has the focus. Only then: Safari never focuses a menu's own button, so the
+    // focus is outside a menu opened with the mouse.
+    function onBack() {
+      if (!document.activeElement?.closest('[data-call-console]')) return;
+      setShowNotifDropdown(false);
+      setShowUserMenu(false);
+    }
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('focus', onBack);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('focus', onBack);
+    };
+  }, [showNotifDropdown, showUserMenu]);
+  // The incoming-call banner floats just below the header, which a call makes taller once its bar takes a row of its own.
+  const shellRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const resized = new ResizeObserver(() => shellRef.current?.style.setProperty('--header-height', `${header.offsetHeight}px`));
+    resized.observe(header);
+    return () => resized.disconnect();
+  }, [user]);
+  // No target is the focus going nowhere (a click on the menu's own text): clicks have the outside-click handler.
+  const closeOnLeave = (close: () => void) => (e: React.FocusEvent<HTMLDivElement>) => {
+    if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) close();
+  };
+
   const handleMarkAllRead = async () => {
     await api.markAllNotificationsRead();
     setUnreadCount(0);
@@ -170,6 +256,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   };
 
   const handleLogout = () => {
+    forgetStoredCall(user.id); // the next login in this tab must not rejoin this one's call
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
@@ -178,8 +265,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (!user) return null;
 
-  return (
-    <div className="min-h-screen bg-background">
+  const admin = canConfigure(user.role);
+  const serverOwner = isServerOwner(user);
+  // A page is shut to a user who is not what it asks for: the sidebar leaves its link out, and its address says so.
+  const shut = (page: Gated) => (page.admin && !admin) || (page.serverOwner && !serverOwner);
+  const blockedBy = [...menuItems, ...createPages].find((page) => shut(page) && pathname.startsWith(page.href));
+
+  const shell = (
+    <div ref={shellRef} className="min-h-screen bg-background">
       {/* Demo Mode Banner */}
       <DemoBanner />
 
@@ -223,10 +316,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {/* Menu */}
           <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto" aria-label="Dashboard sections">
-            {menuItems.map((item) => {
+            {menuItems.filter((item) => !shut(item)).map((item) => {
               const Icon = item.Icon;
               const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
-              const badge = item.href === '/dashboard/chat' ? chatUnread : 0;
+              const badge = item.href === '/dashboard/chat' ? chatUnread : item.href === '/dashboard/calls' ? callsOpen : 0;
               const badgeLabel = badge > 99 ? '99+' : String(badge);
               return (
                 <Link
@@ -255,7 +348,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {sidebarOpen && badge > 0 && (
                     <span
                       className="ml-auto min-w-[20px] h-5 bg-destructive text-destructive-foreground text-[11px] font-bold rounded-full flex items-center justify-center px-1.5 tabular-nums"
-                      aria-label={`${badge} unread`}
+                      aria-label={item.href === '/dashboard/calls' ? `${badge} open` : `${badge} unread`}
                     >
                       {badgeLabel}
                     </span>
@@ -268,15 +361,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Main Content: where the call console gives the focus back when it has nowhere better, never to the page itself.
+          It can take the focus only while it has that one (lib/call-console/focus.ts), and shows no ring. */}
       <main
-        className={`transition-all duration-300 ${
+        className={`outline-none transition-all duration-300 ${
           sidebarOpen ? 'md:ml-64' : 'md:ml-20'
         }`}
       >
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-md border-b border-border">
-          <div className="flex items-center justify-between px-6 py-4">
+        {/* The header is its menus' stacking context: while one is open, it goes over the incoming-call banner (z-[60]). */}
+        <header ref={headerRef} className={`sticky top-0 ${showUserMenu || showNotifDropdown ? 'z-[61]' : 'z-30'} bg-background/80 backdrop-blur-md border-b border-border`}>
+          <div className="flex flex-wrap items-center justify-between gap-y-3 px-6 py-4 [container-type:inline-size]">
             <button
               type="button"
               onClick={() => {
@@ -293,9 +388,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <Menu className="w-5 h-5" aria-hidden="true" />
             </button>
+            {/* The call's bar: on a row of its own under the header's controls, and between them once the header is
+                wide enough for all of it. min-w-0: a long name is cut, rather than push the controls off the screen. */}
+            <div className="order-last min-w-0 basis-full empty:hidden [@container(min-width:68rem)]:order-none [@container(min-width:68rem)]:flex [@container(min-width:68rem)]:flex-1 [@container(min-width:68rem)]:justify-center [@container(min-width:68rem)]:px-4">
+              <InCallBar />
+            </div>
             <div className="flex items-center gap-4">
+              <AvailabilityToggle />
               {/* Notification Bell */}
-              <div className="relative" ref={notifRef}>
+              <div className="relative" ref={notifRef} onBlur={closeOnLeave(() => setShowNotifDropdown(false))}>
                 <button
                   type="button"
                   className="inline-flex items-center justify-center min-h-[44px] min-w-[44px] md:min-h-9 md:min-w-9 p-2 rounded-lg hover:bg-secondary/60 text-muted-foreground hover:text-foreground relative transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
@@ -346,7 +447,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                         </div>
                       ) : (
                         notifications.map(notif => {
-                          const typeInfo = notifIcons[notif.type] ?? { Icon: Bell, tone: 'text-muted-foreground' };
+                          const typeInfo = notifIcon(notif);
                           const TypeIcon = typeInfo.Icon;
                           return (
                             <button
@@ -397,21 +498,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
 
               {/* Account menu */}
-              <div className="relative" ref={userRef}>
+              <div className="relative" ref={userRef} onBlur={closeOnLeave(() => setShowUserMenu(false))}>
+                {/* Named by the name and email it shows (a phone screen shows only the initial), then by what it opens:
+                    the visible text is part of the name (WCAG 2.5.3). */}
                 <button
                   type="button"
                   onClick={() => setShowUserMenu((v) => !v)}
-                  aria-label="Account menu"
                   aria-expanded={showUserMenu}
                   className="inline-flex items-center gap-2 rounded-lg p-1 sm:pr-2 hover:bg-secondary/60 transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
-                  <span className="w-9 h-9 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center font-medium flex-shrink-0">
+                  <span aria-hidden="true" className="w-9 h-9 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center font-medium flex-shrink-0">
                     {user.name?.[0]?.toUpperCase() || 'U'}
                   </span>
                   <span className="hidden sm:block max-w-[160px] text-left leading-tight">
                     <span className="block text-sm font-medium text-foreground truncate">{user.name}</span>
                     <span className="block text-xs text-muted-foreground truncate">{user.email}</span>
                   </span>
+                  <span className="sr-only">Account menu</span>
                   <ChevronDown className="hidden sm:block w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
                 </button>
 
@@ -452,9 +555,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Page Content */}
         <div className="p-6">
-          {children}
+          {blockedBy ? (
+            <EmptyState
+              icon={<Lock className="w-8 h-8" aria-hidden="true" />}
+              title="Not available for your role"
+              titleAs="h1"
+              description={blockedBy.serverOwner ? 'Only the server owner can open this page.' : 'Only an owner or an admin can open this page.'}
+              action={{ label: 'Back to the overview', href: '/dashboard' }}
+            />
+          ) : (
+            // A page reads the role once: a role changed since sign-in mounts it afresh, with the controls of the new one.
+            <Fragment key={`${user.role}:${serverOwner}`}>{children}</Fragment>
+          )}
         </div>
       </main>
+      <IncomingCallBanner />
+      <VideoTile />
     </div>
   );
+  // The call console wraps every dashboard page: a call outlives page changes.
+  return <CallsProvider user={user}>{shell}</CallsProvider>;
 }

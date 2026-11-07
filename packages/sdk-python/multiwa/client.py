@@ -4,14 +4,18 @@ MultiWA Python SDK - Core Client
 Main client class for synchronous and asynchronous API access.
 """
 
-from typing import Optional, Dict, Any
+from __future__ import annotations
+
+from typing import Any
+
 import httpx
 
-from .messages import MessagesClient, AsyncMessagesClient
-from .contacts import ContactsClient, AsyncContactsClient
-from .broadcasts import BroadcastsClient, AsyncBroadcastsClient
-from .profiles import ProfilesClient, AsyncProfilesClient
-from .webhooks import WebhooksClient, AsyncWebhooksClient
+from .broadcasts import AsyncBroadcastsClient, BroadcastsClient
+from .calls import AsyncCallsClient, CallsClient
+from .contacts import AsyncContactsClient, ContactsClient
+from .messages import AsyncMessagesClient, MessagesClient
+from .profiles import AsyncProfilesClient, ProfilesClient
+from .webhooks import AsyncWebhooksClient, WebhooksClient
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -22,6 +26,13 @@ def _normalize_base_url(base_url: str) -> str:
     (no leading slash) for the base path such as ``/api/v1`` to survive.
     """
     return base_url.rstrip("/") + "/"
+
+
+def _headers(api_key: str) -> dict[str, str]:
+    # No default Content-Type: httpx sets it when a request has a JSON body.
+    # A bodyless POST or DELETE that claims application/json is refused by the
+    # API with a 400 (Fastify: "Body cannot be empty when content-type is set").
+    return {"X-API-Key": api_key}
 
 
 class _MultiWAHttpClient(httpx.Client):
@@ -35,7 +46,7 @@ class _MultiWAHttpClient(httpx.Client):
     leading slash before httpx builds the request.
     """
 
-    def build_request(self, method, url, **kwargs):  # type: ignore[override]
+    def build_request(self, method, url, **kwargs):
         if isinstance(url, str) and url.startswith("/"):
             url = url.lstrip("/")
         return super().build_request(method, url, **kwargs)
@@ -44,7 +55,7 @@ class _MultiWAHttpClient(httpx.Client):
 class _MultiWAAsyncHttpClient(httpx.AsyncClient):
     """Async variant of ``_MultiWAHttpClient`` with the same behavior."""
 
-    def build_request(self, method, url, **kwargs):  # type: ignore[override]
+    def build_request(self, method, url, **kwargs):
         if isinstance(url, str) and url.startswith("/"):
             url = url.lstrip("/")
         return super().build_request(method, url, **kwargs)
@@ -60,6 +71,9 @@ class MultiWA:
             api_key="your-api-key",
         )
         result = client.messages.send_text(profile_id, to, "Hello!")
+
+    ``transport`` is passed to httpx (for example a ``httpx.MockTransport``
+    in tests, or ``httpx.HTTPTransport(retries=3)``).
     """
 
     def __init__(
@@ -67,6 +81,7 @@ class MultiWA:
         base_url: str,
         api_key: str,
         timeout: float = 30.0,
+        transport: httpx.BaseTransport | None = None,
     ):
         # Keep the externally-visible base_url unchanged (no trailing slash),
         # but pass a trailing-slash version to httpx so the API prefix is
@@ -77,11 +92,9 @@ class MultiWA:
 
         self._http = _MultiWAHttpClient(
             base_url=_normalize_base_url(base_url),
-            headers={
-                "X-API-Key": api_key,
-                "Content-Type": "application/json",
-            },
+            headers=_headers(api_key),
             timeout=timeout,
+            transport=transport,
         )
 
         # Initialize API clients
@@ -90,24 +103,20 @@ class MultiWA:
         self.broadcasts = BroadcastsClient(self._http)
         self.profiles = ProfilesClient(self._http)
         self.webhooks = WebhooksClient(self._http)
+        self.calls = CallsClient(self._http)
 
-    def close(self):
+    def close(self) -> None:
         """Close the HTTP client"""
         self._http.close()
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args: object) -> None:
         self.close()
 
-    def request(
-        self,
-        method: str,
-        path: str,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Make a raw API request"""
+    def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """Make a raw API request; ``path`` is relative to ``base_url``"""
         response = self._http.request(method, path, **kwargs)
         response.raise_for_status()
         return response.json()
@@ -130,6 +139,7 @@ class AsyncMultiWA:
         base_url: str,
         api_key: str,
         timeout: float = 30.0,
+        transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -137,11 +147,9 @@ class AsyncMultiWA:
 
         self._http = _MultiWAAsyncHttpClient(
             base_url=_normalize_base_url(base_url),
-            headers={
-                "X-API-Key": api_key,
-                "Content-Type": "application/json",
-            },
+            headers=_headers(api_key),
             timeout=timeout,
+            transport=transport,
         )
 
         # Initialize API clients
@@ -150,24 +158,20 @@ class AsyncMultiWA:
         self.broadcasts = AsyncBroadcastsClient(self._http)
         self.profiles = AsyncProfilesClient(self._http)
         self.webhooks = AsyncWebhooksClient(self._http)
+        self.calls = AsyncCallsClient(self._http)
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the HTTP client"""
         await self._http.aclose()
 
     async def __aenter__(self):
         return self
 
-    async def __aexit__(self, *args):
+    async def __aexit__(self, *args: object) -> None:
         await self.close()
 
-    async def request(
-        self,
-        method: str,
-        path: str,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """Make a raw API request"""
+    async def request(self, method: str, path: str, **kwargs: Any) -> Any:
+        """Make a raw API request; ``path`` is relative to ``base_url``"""
         response = await self._http.request(method, path, **kwargs)
         response.raise_for_status()
         return response.json()

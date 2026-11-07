@@ -19,17 +19,65 @@ export interface EngineConfig {
   onMessage?: (message: any) => void;
   onMessageAck?: (messageId: string, status: string) => void;
   onCall?: (call: IncomingCall) => void;
+  /**
+   * A WhatsApp call-log message ("Missed voice call"): the call's final outcome. whatsapp-web.js
+   * reports one only for a call it reported `ringing` since the last disconnect, with its `callId`.
+   */
+  onCallLog?: (entry: CallLogEntry) => void;
+  /**
+   * Call media (answering calls from the dashboard). Set from the SERVER switch CALLS_MEDIA_ENABLED,
+   * never per profile: it changes how the browser is launched, which only takes effect at launch.
+   */
+  callMedia?: { enabled: boolean };
 }
 
-/** Normalized incoming WhatsApp call, engine-agnostic. */
+/**
+ * What an engine reports about an incoming call. whatsapp-web.js reports only `ringing` and
+ * `ended` (the outcome comes as a call log, see `onCallLog`); Baileys reports all five and no call logs.
+ * - `ringing`: the incoming offer (Baileys calls it `offer`; Baileys' own `ringing` status is ignored)
+ * - `accepted`: Baileys: answered on another device of this account (we never answer)
+ * - `rejected`: Baileys: declined, by this account's phone or by us
+ * - `missed`: Baileys: the offer rang out unanswered (`timeout`)
+ * - `ended`: it stopped being the active call and the engine cannot tell how
+ */
+export type CallState = 'ringing' | 'accepted' | 'rejected' | 'missed' | 'ended';
+
+/**
+ * Normalized incoming WhatsApp call, engine-agnostic. `from`, `isVideo` and `isGroup` are
+ * reliable on `ringing`; on later states they are best-effort, so match a call by `id`.
+ */
 export interface IncomingCall {
   /** Engine call id, passed back to `rejectCall`. */
   id: string;
-  /** Caller JID (e.g. `628xxx@c.us`). */
+  /** Caller JID as the engine reports it (`…@c.us`, `…@s.whatsapp.net` or `…@lid`); may be empty on a later state. */
   from: string;
   isVideo: boolean;
   isGroup: boolean;
+  /** Absent = 'ringing' (the offer). */
+  state?: CallState;
 }
+
+/** Final outcome carried by a WhatsApp call-log message. */
+export type CallLogOutcome = 'missed' | 'rejected' | 'answered_elsewhere';
+
+/** A call-log message, normalized. Match it to a call by `callId` when present, otherwise by caller and time. */
+export interface CallLogEntry {
+  /** The call-log message id (dedupe key). */
+  messageId: string;
+  /**
+   * The engine call id this log belongs to, when WhatsApp's message id carries it (whatsapp-web.js:
+   * `<fromMe>_<peer>_<callId>[_<participant>]`, the participant field being there in group logs only).
+   * Match a call by it before falling back to caller and time.
+   */
+  callId?: string;
+  from: string;
+  isVideo: boolean;
+  outcome: CallLogOutcome;
+  timestamp: Date;
+}
+
+/** Kind of WhatsApp call link. */
+export type CallLinkType = 'voice' | 'video';
 
 export interface SendMessageOptions {
   quotedMessageId?: string;
@@ -135,6 +183,221 @@ export interface RecentChat {
   messages: RecentChatMessage[];
 }
 
+/** Why an engine cannot carry call audio right now. */
+export type CallMediaUnsupportedReason =
+  | 'not_ready'               // the WhatsApp Web page is not connected
+  | 'web_calling_disabled'    // WhatsApp Web's calling UI gate is off for this account
+  | 'voip_stack_unavailable'  // no voip stack, or not the in-browser one
+  | 'module_missing'          // a WhatsApp Web module the call recipes need is gone (WhatsApp changed)
+  | 'hooks_missing'           // our call-media hooks are not on this document (the init script did not run, or failed)
+  | 'not_prepared'            // the hooks are here, but the page setup (the microphone permission) has not succeeded
+  | 'page_error';             // the probe itself failed, or reported something this side does not know
+
+export interface CallMediaSupport {
+  supported: boolean;
+  reasons: CallMediaUnsupportedReason[];
+  /** WhatsApp Web build, when known. */
+  waVersion?: string | null;
+  /**
+   * WhatsApp Web has what a video answer needs: its video call UI and its camera mute. Apart from `supported`: a page
+   * without them still answers voice. Never true while `supported` is false: a video call needs everything a voice call
+   * does. Absent when the page could not be probed (not ready, or the probe failed): read it as false.
+   */
+  videoSupported?: boolean;
+}
+
+/**
+ * The call's media room as the WhatsApp Web page sees it: the server side of the in-page media bridge (a
+ * mediasoup-client peer). Values are mediasoup's JSON objects, opaque to the engine. The room decides what a peer
+ * may do: the page has one send and one receive transport, produces the caller's voice (and in a video room the
+ * caller's video), and may consume only the agent's, one consumer per kind.
+ */
+export interface CallMediaSignaling {
+  rtpCapabilities(): Promise<unknown>;
+  createTransport(direction: 'send' | 'recv'): Promise<unknown>;
+  connectTransport(transportId: string, dtlsParameters: unknown): Promise<void>;
+  produce(transportId: string, kind: string, rtpParameters: unknown): Promise<{ id: string }>;
+  consume(transportId: string, producerId: string, rtpCapabilities: unknown): Promise<unknown>;
+  resumeConsumer(consumerId: string): Promise<void>;
+  closeConsumer(consumerId: string): Promise<void>;
+}
+
+/**
+ * The call's media bridge in the page (CallMediaEngine.startCallMedia). Its operations run in call order, one at a time,
+ * in five queues: attachCaller on its own; connectAgent and disconnectAgent together; attachCallerVideo on its own;
+ * connectAgentVideo and disconnectAgentVideo together; and setCameraMuted on its own, so a voip stack that hangs on a
+ * mute never keeps the agent on the camera (setCameraMuted says in which order to switch the camera). No video step
+ * waits for an audio one, nor the other way round. A video step that fails leaves the call's audio as it is. A failure
+ * does not stop the next one; each rejects "Media bridge closed" once the bridge is closed. An operation the coordinator
+ * stopped waiting for is NOT cancelled: it still runs when its turn comes, unless the slot was closed, so a
+ * disconnectAgent() queued after a timed-out connectAgent() undoes it. The page refuses attachCaller, connectAgent and
+ * the video steps for a call that is not WhatsApp's active call ("Call is not the active call"), and releases the whole
+ * bridge by itself 250-500 ms after its call is over. The engine's slot stays held until close() or closeCallMedia().
+ */
+export interface CallMediaHandle {
+  /** The page's "caller" producer, for the agent to consume. It carries silence until attachCaller(). */
+  readonly callerProducerId: string;
+  /**
+   * The page's "callerVideo" producer, for the agent to consume: black until an attachCallerVideo() succeeds. The black
+   * is sent at least once a second, so an agent that consumes it first sees black within a second.
+   * Null on a voice bridge, and on a video bridge whose room refused the video (the engine logs why): the call is then a
+   * voice call.
+   */
+  readonly callerVideoProducerId: string | null;
+  /**
+   * Swap "caller" from silence to WhatsApp Web's playback of the caller (callerTap, waiting up to 5 s for it). Call it
+   * once the call is connected: WhatsApp Web plays the caller only after it accepted. Resolves with how the tap was
+   * chosen; more than one fresh candidate, or the fallback, means the pick was a guess. A tap whose track ends
+   * mid-call leaves the agent hearing silence: call attachCaller() again.
+   */
+  attachCaller(): Promise<{ via: 'element' | 'destination'; freshCandidates: number; fallback: boolean }>;
+  /**
+   * Feed the agent's producer into the call's microphone (`inputs.agent`). One agent at a time. A connect that fails
+   * undoes itself in the page and in the room (no consumer is left behind), so a retry starts clean. To connect an
+   * agent again (its browser reconnected and produced anew), call disconnectAgent() first: the page is not told when
+   * the room closes the agent's producer, so connectAgent() would otherwise reject "Agent already connected".
+   */
+  connectAgent(agentProducerId: string): Promise<void>;
+  /**
+   * Take the agent off the microphone, by disconnecting it (not by gain). Does nothing when no agent is connected.
+   * Rejects "No media bridge for this call" once the page has released the bridge (the call already ended, say): treat
+   * that as done.
+   */
+  disconnectAgent(): Promise<void>;
+  /**
+   * Swap "callerVideo" from black to WhatsApp Web's own drawing of the caller: the largest canvas of its call view,
+   * waited for up to 5 s ("No caller video" after that, and "callerVideo" stays as it was: black unless an earlier
+   * attach succeeded), and followed for the rest of the call when WhatsApp Web replaces it. Call it once a call
+   * answered with video is connected. After "No caller video" WhatsApp Web may still draw the caller later: call it
+   * again, while the call lasts. Resolves with the canvas's size. "No video on this call" on a voice bridge.
+   */
+  attachCallerVideo(): Promise<{ width: number; height: number }>;
+  /**
+   * Draw the agent's video into the injected camera, the one WhatsApp Web sends: it is black until then, and again after
+   * disconnectAgentVideo() (see there for when the caller of this API MUST call it). The agent has ONE video producer per
+   * join: the room has no operation that closes a producer, and refuses a second video produce from the same join. So
+   * the agent's browser turns its camera off and on with replaceTrack(null) and replaceTrack(track), and every camera-on
+   * connects that same producer again (see setCameraMuted). One at a time: to connect another producer (a rejoin's),
+   * disconnectAgentVideo() first, or this rejects "Agent video already connected". A connect that fails undoes itself,
+   * as connectAgent does. It does not unmute WhatsApp Web's camera: setCameraMuted(false) does.
+   */
+  connectAgentVideo(agentVideoProducerId: string): Promise<void>;
+  /**
+   * The injected camera goes black again, from its next frame, with nothing of WhatsApp Web involved. Does nothing when
+   * no agent video is connected. The caller of this API MUST call it together with the room's silenceAgent(), when the
+   * room closes the agent's video producer, and before a rejoin connects a new one. The page is not told when the
+   * agent's video stops coming (paused, cut off, closed): the caller would see the agent's last frame, frozen, until the
+   * camera draws black after a second without a new one, and a new producer would be refused "Agent video already
+   * connected". A dropped agent link needs nothing: the producer and its consumer outlive it, so the camera draws black
+   * a second after the agent's frames stop, and the agent again when they come back. Rejects "No media bridge for this
+   * call" once the page has released the bridge: treat that as done.
+   */
+  disconnectAgentVideo(): Promise<void>;
+  /**
+   * WhatsApp Web's own camera mute: muted, the caller gets no video from us; unmuted, the injected camera. Within 5 s
+   * ("The camera did not switch in time"; a switch WhatsApp Web had already started may still land after that); "No
+   * video on this call" on a voice bridge; "WhatsApp Web has no camera mute" when its voip stack lacks one.
+   * Camera off: disconnectAgentVideo() first (the injected camera is black from its next frame, whatever WhatsApp Web's
+   * voip stack does), then setCameraMuted(true). Camera on: connectAgentVideo() with the agent's one video producer of
+   * this join, then setCameraMuted(false). When that unmute rejects, call disconnectAgentVideo(): the unmute may still
+   * land late inside WhatsApp Web, and the injected camera it then sends stays black.
+   */
+  setCameraMuted(muted: boolean): Promise<void>;
+  /**
+   * Close the bridge in the page and free the engine's bridge slot. It can reject when the page is gone ("Target
+   * closed") and still frees the slot, so close the room regardless of the outcome: the room closes its own side. It
+   * does nothing once the bridge was closed (also by closeCallMedia), or when a newer bridge of the same call runs.
+   */
+  close(): Promise<void>;
+}
+
+/**
+ * Call-media primitives of an engine that runs WhatsApp Web in a browser (whatsapp-web.js only).
+ * Every method that takes a call id refuses another one: answer, hangUp, playAnnouncement, startRecording and
+ * startCallMedia act on WhatsApp's ACTIVE call only; stopRecording stops only the recording of that call (also after
+ * it ended).
+ * Every method runs in the browser page, and on a hung page any of them can wait up to puppeteer's protocol timeout
+ * (the adapter sets 240 s), whatever deadline it has inside the page: the coordinator puts its own deadline around
+ * these calls.
+ */
+export interface CallMediaEngine {
+  getSupport(): Promise<CallMediaSupport>;
+  /**
+   * Answer the ringing call; resolves once it is connected, rejects when it is not ringing or does not connect in
+   * time. WhatsApp's accept cannot be cancelled, so a call can still connect AFTER this rejected "did not connect in
+   * time". After that rejection the caller MUST call `hangUp(callId)`, ignore its error, and release the call.
+   * `video`: answered the way WhatsApp Web answers a video call (its video call UI first, so that it draws the caller),
+   * with the camera off: the handle's setCameraMuted(false) turns it on. A video call UI that does not load answers as
+   * voice instead, and `video` in the result says which it was. Without `video` any call is answered as voice: the
+   * engine never looks at the call type, so the coordinator decides which calls to answer, and how.
+   */
+  answer(callId: string, opts?: { timeoutMs?: number; video?: boolean }): Promise<{ connectedAfterMs: number; video: boolean }>;
+  /** End the call the way WhatsApp Web's End button does; rejects when the voip stack does not end it in time (10 s). */
+  hangUp(callId: string): Promise<void>;
+  /**
+   * Play audio to the caller through the call's microphone; the agent input is held silent meanwhile. One
+   * announcement at a time: a second one rejects ("Announcement already playing") and leaves the first alone. One that
+   * decodes longer than `opts.maxDurationMs` is refused before any of it plays ("Announcement too long: …"). It ends
+   * with its call, as a recording does: 250-500 ms after the call is over (500 ms into playing for one that ended
+   * during the decode) it is cut off and rejects ("The call ended"). One that has not ended 5 s after its own length
+   * (a suspended or torn-down audio context never reaches the end) rejects ("Announcement did not finish") and is cut
+   * off. Each way, the agent input gets its gain back and the line is free again.
+   */
+  playAnnouncement(callId: string, audio: Buffer, opts?: { maxDurationMs?: number }): Promise<{ durationMs: number }>;
+  /**
+   * Record the call in stereo (left: the caller, right: what the caller hears); WebM/Opus chunks go to onChunk in
+   * order. `video` (a call answered with video): WebM with VP8 too, of what each side saw: WhatsApp Web's picture of the
+   * caller, and the agent's camera in a corner while it is on (black where there is none). One recording at a time: another start rejects "Already recording" and leaves the running one alone.
+   * A recording ends with its call: it stops by itself 250-500 ms after its call is over (WhatsApp's active call is
+   * another call or none, or the engine's call tracking reported the call ended), so it never records the next call.
+   * That is a backstop: stop a recording when its call is reported `ended`, and never start one for a call that was.
+   * `stopRecording(callId)` is still required, to collect the last chunks, get `durationMs`, and free the slot (a
+   * start before that rejects "Already recording"). A recorder that fails stops the same way, and stopRecording then
+   * rejects.
+   * onChunk must not throw: a chunk it refuses is lost, and stopRecording reports the loss. The engine logs one
+   * warning (never audio) when it had to guess which stream is the caller; the left channel is then in doubt.
+   * A start that rejects may still have begun recording in the page (it timed out in Node after the page began). Then
+   * the caller MUST call `stopRecording(callId)`, ignore its error, before the next start, and discard the chunks that
+   * start received: they are not a recording. The exception depends on the caller's OWN state, never on the error text:
+   * while it holds a running recording of this call (an earlier start that resolved and was not stopped), a rejected
+   * second start must NOT be followed by a stop, which would end that recording. (The page says "Already recording"
+   * for an orphan recorder too, and there the stop is the cure.) Chunks are routed by call id, so another call's audio
+   * never reaches onChunk; a later recording of the SAME call, after a stop that failed, may begin with the last
+   * chunks of the earlier attempt.
+   */
+  startRecording(callId: string, onChunk: (chunk: Buffer) => void, opts?: { video?: boolean }): Promise<void>;
+  /**
+   * Stop recording; resolves after the last chunk was delivered, with `durationMs` up to the moment the recorder
+   * stopped (for one that ended with its call: 250-500 ms after the call ended, not this later stop). Rejects when the
+   * recorder failed or chunks were lost (the message says which, and how many of how many; both are reported
+   * together); the recorder is freed either way. ANY rejection can mean an incomplete recording, not only those:
+   * "Not recording" after a page reload, "Client not ready", a puppeteer error after the browser closed. Treat the
+   * file as partial. A stop never overtakes its own start: one that arrives while the start still runs waits for it.
+   * It needs no WhatsApp readiness, so it also works after a disconnect, while the page still holds the recorder.
+   */
+  stopRecording(callId: string): Promise<{ durationMs: number }>;
+  /**
+   * Start the call's media bridge in the page. It evaluates mediasoup-client into the page (once per document),
+   * loads the room's capabilities, creates the bridge's send and receive transports, and produces "caller" on silence.
+   * Call it while the call RINGS, before `answer`, so media is ready when the call connects; close the handle when
+   * the call ends. One bridge at a time: a second start rejects "Media bridge already running". A start that fails
+   * releases what it created in the page, but the ROOM keeps the transports the page opened: a retry needs a new room.
+   * Like every method here it runs in the page, so the coordinator bounds it with a deadline. A start it stopped
+   * waiting for can still finish: `closeCallMedia(callId)` then frees the slot at once, and the late start closes its
+   * page bridge and rejects, with "Media bridge closed", "No media bridge for this call" or a room error: do not
+   * depend on which.
+   * `opts.video`: the page also produces the caller's video (see callerVideoProducerId); give it a room opened for video.
+   */
+  startCallMedia(callId: string, signaling: CallMediaSignaling, opts?: { video?: boolean }): Promise<CallMediaHandle>;
+  /**
+   * The coordinator's teardown on EVERY end path, handle-less, so it also covers a start it gave up waiting for (which
+   * never produced a handle). Frees the engine's bridge slot when it belongs to `callId`, then closes the page's
+   * bridge of that call. It needs no WhatsApp readiness (after a disconnect the page can still hold the bridge), never
+   * rejects, and is idempotent. The room is the coordinator's to close.
+   */
+  closeCallMedia(callId: string): Promise<void>;
+}
+
 /**
  * Base interface for WhatsApp engines
  * All engine adapters must implement this interface
@@ -173,8 +436,16 @@ export interface IWhatsAppEngine {
   deleteForEveryone(chatId: string, messageId: string): Promise<void>;
 
   // Calls
-  /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). */
+  /** Reject an incoming call by its engine id (see `EngineConfig.onCall`). Rejects when the call is not ringing any more. */
   rejectCall(callId: string): Promise<void>;
+  /**
+   * Create a WhatsApp call link (https://call.whatsapp.com/...). It is a plain call link:
+   * anyone who has it can join, without approval. Resolves null only when this engine has
+   * no call-link API; rejects when the client is not ready or WhatsApp returns no link.
+   */
+  createCallLink(type: CallLinkType): Promise<string | null>;
+  /** Call media, when this engine has it AND the server switch is on; undefined otherwise (Baileys, mock). */
+  callMedia?: CallMediaEngine;
 
   // QR Code
   getQRCode(): Promise<string | null>;

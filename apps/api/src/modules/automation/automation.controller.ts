@@ -5,6 +5,8 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } fro
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { AutomationService } from './automation.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES, ANY_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { CreateAutomationDto, UpdateAutomationDto, TestAutomationDto } from './dto';
@@ -20,6 +22,7 @@ export class AutomationController {
   constructor(private readonly service: AutomationService) {}
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Create automation rule' })
   @ApiValidationError()
@@ -50,6 +53,7 @@ export class AutomationController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Update automation rule' })
   @ApiValidationError()
@@ -59,6 +63,7 @@ export class AutomationController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Delete automation rule' })
   @ApiNotFound('Automation')
@@ -67,6 +72,7 @@ export class AutomationController {
   }
 
   @Put(':id/toggle')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Toggle automation on/off' })
   @ApiNotFound('Automation')
@@ -75,6 +81,7 @@ export class AutomationController {
   }
 
   @Post(':id/test')
+  @Roles(...ANY_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'automation' })
   @ApiOperation({ summary: 'Test automation with sample message' })
   @ApiValidationError()
@@ -92,9 +99,11 @@ export class AutomationController {
   }
 
   @Post('reorder')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'body', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'Reorder automation priorities' })
   @ApiValidationError()
+  @ApiNotFound('Automation')
   async reorder(@Body() body: { profileId: string; order: string[] }) {
     return this.service.reorder(body.profileId, body.order);
   }

@@ -4,6 +4,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
 import { EmailService, PushService } from '@multiwa/engine-runtime';
+import { pageSize } from '../../common/page-size';
 
 export enum NotificationType {
   MESSAGE = 'message',
@@ -13,6 +14,7 @@ export enum NotificationType {
   AUTOMATION = 'automation',
   SYSTEM = 'system',
   SECURITY = 'security',
+  CALL = 'call',
 }
 
 export interface CreateNotificationDto {
@@ -62,11 +64,12 @@ export class NotificationsService {
   }
 
   /**
-   * Create notifications for all users in an organization
+   * Create notifications for all users in an organization, or only for those of the `roles` given (an alert only an
+   * owner or admin can act on)
    */
-  async createForOrg(orgId: string, type: NotificationType, title: string, body: string, metadata?: Record<string, any>) {
+  async createForOrg(orgId: string, type: NotificationType, title: string, body: string, metadata?: Record<string, any>, roles?: string[]) {
     const users = await prisma.user.findMany({
-      where: { organizationId: orgId, isActive: true },
+      where: { organizationId: orgId, isActive: true, ...(roles ? { role: { in: roles } } : {}) },
       select: { id: true, email: true, preferences: true },
     });
 
@@ -91,7 +94,7 @@ export class NotificationsService {
    * Get notifications for a user
    */
   async getAll(userId: string, options?: { unreadOnly?: boolean; limit?: number; offset?: number }) {
-    const { unreadOnly = false, limit = 50, offset = 0 } = options || {};
+    const { unreadOnly = false, limit, offset = 0 } = options || {};
 
     const where: any = { userId };
     if (unreadOnly) {
@@ -102,7 +105,7 @@ export class NotificationsService {
       prisma.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: limit,
+        take: pageSize(limit),
         skip: offset,
       }),
       prisma.notification.count({ where }),

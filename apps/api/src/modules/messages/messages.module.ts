@@ -7,6 +7,7 @@ import { MessagesController } from './messages.controller';
 import { MessagesService } from './messages.service';
 import { OtpService } from './otp.service';
 import { ScheduledMessageCron } from './scheduled-message.cron';
+import { QuietProfileCron } from './quiet-profile.cron';
 import { SendGateService } from '@multiwa/engine-runtime';
 import { DailyResetCron } from './daily-reset.cron';
 import { OutboundSendConsumer } from './outbound-send.consumer';
@@ -20,6 +21,7 @@ import { ProfilesModule } from '../profiles/profiles.module';
     MessagesService,
     OtpService,
     ScheduledMessageCron,
+    QuietProfileCron,
     SendGateService,
     DailyResetCron,
     OutboundSendConsumer,

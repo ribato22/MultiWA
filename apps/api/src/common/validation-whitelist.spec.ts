@@ -6,7 +6,6 @@ import 'reflect-metadata';
 import { describe, it, expect } from 'vitest';
 import { ValidationPipe, ArgumentMetadata } from '@nestjs/common';
 import { CreateAutoreplyDto } from '../modules/autoreply/dto';
-import { AssignRoleDto } from '../modules/rbac/dto';
 import { CreateAccountDto } from '../modules/accounts/dto';
 import { AddMemberDto } from '../modules/organizations/dto';
 
@@ -48,17 +47,6 @@ describe('ValidationPipe whitelist', () => {
   it('rejects a CreateAutoreplyDto missing now-required fields', async () => {
     // keywords + response are required — before decorators this passed and 500'd downstream.
     await expect(pipe.transform({ profileId: 'p1' }, bodyMeta(CreateAutoreplyDto))).rejects.toBeTruthy();
-  });
-
-  it('keeps AssignRoleDto ids and strips extras', async () => {
-    const out: any = await pipe.transform(
-      { userId: 'u1', roleId: 'r1', organizationId: 'forged', extra: 'x' },
-      bodyMeta(AssignRoleDto),
-    );
-    expect(out.userId).toBe('u1');
-    expect(out.roleId).toBe('r1');
-    expect('organizationId' in out).toBe(false); // not a field on AssignRoleDto → stripped
-    expect('extra' in out).toBe(false);
   });
 
   // DTOs that replaced `@Body() dto: any` (accounts/workspaces/organizations).

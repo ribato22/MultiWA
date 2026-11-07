@@ -12,8 +12,9 @@ const badgeVariants = cva(
           "border-transparent bg-primary text-primary-foreground shadow hover:bg-primary/80",
         secondary:
           "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        // The Button's darker red: white small text on the theme's destructive red fails the contrast minimum (WCAG AA).
         destructive:
-          "border-transparent bg-destructive text-destructive-foreground shadow hover:bg-destructive/80",
+          "border-transparent bg-red-600 text-white shadow hover:bg-red-600/80",
         outline: "text-foreground",
       },
     },

@@ -35,6 +35,7 @@ import {
   isDurableSend,
 } from './outbound-send';
 import { isWorkerEngine } from '../../common/engine-host';
+import { clampMessagePage } from '../../common/page-size';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 
 
@@ -358,7 +359,7 @@ export class MessagesService {
         // In production that made "why did 7% of sends fail?" unanswerable: the
         // failed rows were there, the logs were empty. The gate reason lives in
         // the exception body (DAILY_LIMIT_REACHED, COLD_DAILY_LIMIT_REACHED,
-        // COLD_CIRCUIT_OPEN, REPEAT_SUPPRESSED), which is what makes it useful.
+        // COLD_CIRCUIT_OPEN, REPEAT_SUPPRESSED, SEND_TIMEOUT), which is what makes it useful.
         // message.id is a generated uuid and the body is our own object, so
         // there is no untrusted text to sanitise here.
         this.logger.warn(`Send gate rejected message ${message.id}: ${JSON.stringify(error.getResponse())}`);
@@ -498,6 +499,12 @@ export class MessagesService {
         laneRow?.lane === 'cold',
         repeatDedupeText(type, content),
       );
+      // The engine reports most failures by returning { success: false }. Fail it
+      // without retry: the error may be ambiguous (a puppeteer timeout can still send).
+      if (result?.success === false) {
+        await this.markQueuedFailed(messageDbId, profileId, to, type, result.error);
+        return;
+      }
       await prisma.message.update({
         where: { id: messageDbId },
         data: { ...(result?.messageId ? { messageId: result.messageId } : {}), status: 'sent' },
@@ -513,6 +520,12 @@ export class MessagesService {
       // Daily-limit rejection is permanent for today — fail without retry.
       if (error instanceof HttpException && error.getStatus?.() === HttpStatus.TOO_MANY_REQUESTS) {
         await this.markQueuedFailed(messageDbId, profileId, to, type, 'DAILY_LIMIT_REACHED');
+        return;
+      }
+      // A timed-out send may still be delivered by the engine, so a retry could send it
+      // twice: fail it without retry (at most once).
+      if (error instanceof HttpException && error.getStatus?.() === HttpStatus.GATEWAY_TIMEOUT) {
+        await this.markQueuedFailed(messageDbId, profileId, to, type, 'SEND_TIMEOUT');
         return;
       }
       if (isLastAttempt) {
@@ -598,7 +611,7 @@ export class MessagesService {
     return prisma.message.findMany({
       where,
       orderBy: { timestamp: 'desc' },
-      take: options.limit || 50,
+      take: clampMessagePage(options.limit),
       skip: options.offset || 0,
       include: { conversation: true },
     });
@@ -621,11 +634,11 @@ export class MessagesService {
     const messages = await prisma.message.findMany({
       where,
       orderBy: { timestamp: 'desc' },
-      take: options.limit || 50,
+      take: clampMessagePage(options.limit),
     });
 
     messages.reverse();
-    return { messages, hasMore: messages.length === (options.limit || 50) };
+    return { messages, hasMore: messages.length === clampMessagePage(options.limit) };
   }
 
   /**

@@ -7,6 +7,9 @@ import { CreateContactDto, UpdateContactDto, ImportContactsDto, ImportCsvDto } f
 import { EngineManagerService } from '../profiles/engine-manager.service';
 import { EngineCommandsService } from '../engine-commands/engine-commands.service';
 import { isWorkerEngine } from '../../common/engine-host';
+import { likeLiteral } from '../../common/like-literal';
+import { pageSize } from '../../common/page-size';
+import { normalizePhone } from '../../common/phone';
 
 @Injectable()
 export class ContactsService {
@@ -18,7 +21,7 @@ export class ContactsService {
 
   // Create contact
   async create(dto: CreateContactDto) {
-    const phone = this.normalizePhone(dto.phone);
+    const phone = normalizePhone(dto.phone);
     
     const existing = await prisma.contact.findFirst({
       where: { profileId: dto.profileId, phone },
@@ -56,10 +59,11 @@ export class ContactsService {
     const where: any = { profileId };
     
     if (options.search) {
+      const text = likeLiteral(options.search);
       where.OR = [
-        { name: { contains: options.search, mode: 'insensitive' } },
-        { phone: { contains: options.search } },
-        { whatsappName: { contains: options.search, mode: 'insensitive' } },
+        { name: { contains: text, mode: 'insensitive' } },
+        { phone: { contains: text } },
+        { whatsappName: { contains: text, mode: 'insensitive' } },
       ];
     }
     
@@ -70,14 +74,14 @@ export class ContactsService {
     const [contacts, total] = await Promise.all([
       prisma.contact.findMany({
         where,
-        take: options.limit || 50,
+        take: pageSize(options.limit),
         skip: options.offset || 0,
         orderBy: { updatedAt: 'desc' },
       }),
       prisma.contact.count({ where }),
     ]);
 
-    return { contacts, total, limit: options.limit || 50, offset: options.offset || 0 };
+    return { contacts, total, limit: pageSize(options.limit), offset: options.offset || 0 };
   }
 
   // Get contact by ID
@@ -186,7 +190,7 @@ export class ContactsService {
     
     for (const contact of dto.contacts) {
       try {
-        const phone = this.normalizePhone(contact.phone);
+        const phone = normalizePhone(contact.phone);
         
         const existing = await prisma.contact.findFirst({
           where: { profileId: dto.profileId, phone },
@@ -254,7 +258,7 @@ export class ContactsService {
       }
 
       try {
-        const normalized = this.normalizePhone(phone);
+        const normalized = normalizePhone(phone);
         const name = nameIdx >= 0 ? cols[nameIdx] : undefined;
         const tags = tagsIdx >= 0 && cols[tagsIdx] 
           ? cols[tagsIdx].split(';').map(t => t.trim()).filter(Boolean)
@@ -355,7 +359,7 @@ export class ContactsService {
 
   // Validate phone number on WhatsApp
   async validatePhone(profileId: string, phone: string) {
-    const normalized = this.normalizePhone(phone);
+    const normalized = normalizePhone(phone);
     
     // Get profile to check engine status
     const profile = await prisma.profile.findUnique({ where: { id: profileId } });
@@ -401,7 +405,7 @@ export class ContactsService {
     lastName?: string,
     syncToPhone?: boolean,
   ) {
-    const normalized = this.normalizePhone(phone);
+    const normalized = normalizePhone(phone);
     const profile = await prisma.profile.findUnique({ where: { id: profileId } });
     if (!profile) throw new NotFoundException('Profile not found');
     if (profile.status !== 'connected') {
@@ -423,7 +427,7 @@ export class ContactsService {
   }
 
   async deleteFromWhatsApp(profileId: string, phone: string) {
-    const normalized = this.normalizePhone(phone);
+    const normalized = normalizePhone(phone);
     const engine = isWorkerEngine() ? null : this.engineManager.getEngine(profileId);
     if (!engine || typeof engine.deleteWhatsAppContact !== 'function') {
       throw new BadRequestException(
@@ -432,23 +436,6 @@ export class ContactsService {
     }
     await engine.deleteWhatsAppContact(normalized);
     return { success: true, phone: normalized, deletedFromWhatsAppAddressbook: true };
-  }
-
-  // Normalize phone number
-  private normalizePhone(phone: string): string {
-    let normalized = phone.replace(/\D/g, '');
-    
-    // Indonesian number handling
-    if (normalized.startsWith('0')) {
-      normalized = '62' + normalized.slice(1);
-    }
-    
-    // Handle +62 prefix
-    if (normalized.startsWith('+')) {
-      normalized = normalized.slice(1);
-    }
-    
-    return normalized;
   }
 
   // Parse CSV line (handles quoted fields)

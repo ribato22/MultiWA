@@ -52,6 +52,33 @@ sum(rate(multiwa_messages_failed_total[5m]))
   / sum(rate(multiwa_messages_sent_total[5m]) + rate(multiwa_messages_failed_total[5m]))
 ```
 
+## Calls metrics (API)
+
+Calls answered in the dashboard ([Calls answered in the dashboard](../23-calls.md)). The privacy checks, the
+recording uploads and the recorder failures start every label at 0 when the API starts, so an `increase(...) > 0`
+alert on them fires on the first event too. The media failures and the ended calls show a `reason` only from its
+first event on, which `increase()` does not count.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `multiwa_calls_dashboard_rings_total` | counter | — | incoming calls offered to agents in the dashboard |
+| `multiwa_calls_dashboard_answers_total` | counter | — | calls answered in the dashboard |
+| `multiwa_calls_dashboard_answer_seconds` | histogram | — | speed of answer: from the first ring to WhatsApp connecting the agent (buckets 1 to 90 s) |
+| `multiwa_calls_media_failures_total` | counter | `reason` | answered calls whose audio did not connect or broke (`page_start_failed`, `connect_timeout`, `answer_failed`, `attach_failed`, `agent_connect_failed`, `worker_died`, `engine_lost`); the call rang again, or ended |
+| `multiwa_calls_dashboard_ended_total` | counter | `reason` | answered calls that ended, by end reason (`hangup`, `caller_hangup`, `agent_lost`, `media_failed`, `time_limit`, `server_restart`) |
+| `multiwa_calls_media_worker_deaths_total` | counter | — | deaths of the media server's worker; each one cut the audio of every call it carried, and the API restarts it |
+| `multiwa_calls_recordings_privacy_checks_total` | counter | `result` | checks that the recordings storage refuses reads without credentials: `ok`, `not_private` (anyone can read the recordings), `check_failed` |
+| `multiwa_calls_recording_uploads_total` | counter | `result` | recordings stored (`ok`), and not stored after their tries (`failed`: kept on the server for the next try) |
+| `multiwa_calls_recorder_failures_total` | counter | `stage` | calls with recording on that went on unrecorded: the recorder did not `start`, or the `announcement` did not play |
+
+```promql
+# Share of the calls offered in the dashboard that agents answered (1 h)
+sum(increase(multiwa_calls_dashboard_answers_total[1h])) / clamp_min(sum(increase(multiwa_calls_dashboard_rings_total[1h])), 1)
+
+# Median speed of answer
+histogram_quantile(0.5, sum by (le) (rate(multiwa_calls_dashboard_answer_seconds_bucket[1h])))
+```
+
 ## Setup
 
 1. Point Prometheus at the endpoints — see [`prometheus.yml`](./prometheus.yml)
@@ -76,6 +103,12 @@ actually took MultiWA down and were invisible until a human noticed:
 | `WhatsAppHighSendFailureRate` | send failure ratio > 20% for 10m | warning |
 | `HighHttpErrorRate` | 5xx ratio > 5% for 5m | warning |
 | `HighHttpLatencyP95` | p95 latency > 1s for 10m | warning |
+| `MultiWAGroupListDegraded` | the group list is served from the database fallback for 15m | warning |
+| `MultiWAAcksDropped` | more than 10 delivery acks dropped in 15m, for 15m (outbound status frozen) | warning |
+| `CallsMediaWorkerDied` | the call media server's worker died (any, in 15m) | critical |
+| `CallRecordingsStoragePublic` | a privacy check found the recordings storage readable without credentials (any, in 1h) | critical |
+| `CallRecordingUploadFailed` | a recording was not stored after its tries (any, in 1h) | warning |
+| `CallRecorderFailed` | a call with recording on went on unrecorded (any, in 1h) | warning |
 
 Target **SLOs** (tune to your traffic): availability — < 1 % of requests return 5xx;
 latency — p95 < 500 ms; WhatsApp — at least one profile connected and outbound sends

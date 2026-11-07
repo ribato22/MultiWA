@@ -23,6 +23,9 @@ const ACTION_MAP: Record<string, AuditAction | string> = {
   'ProfilesController.delete': AuditAction.PROFILE_DELETE,
   'ProfilesController.connect': AuditAction.PROFILE_CONNECT,
   'ProfilesController.disconnect': AuditAction.PROFILE_DISCONNECT,
+  'ProfileCallsController.updateCallSettings': 'profile.calls_settings',
+  'ProfileCallsController.uploadAnnouncement': 'profile.calls_announcement',
+  'ProfileCallsController.deleteAnnouncement': 'profile.calls_announcement_delete',
   
   // Messages
   'MessagesController.send': AuditAction.MESSAGE_SEND,
@@ -79,12 +82,6 @@ const ACTION_MAP: Record<string, AuditAction | string> = {
   'GroupsController.addParticipants': 'group.add_participant',
   'GroupsController.removeParticipants': 'group.remove_participant',
   'GroupsController.leave': 'group.leave',
-  
-  // RBAC
-  'RbacController.assignRole': 'user.role_change',
-  'RbacController.removeRole': 'user.role_change',
-  'RbacController.inviteMember': AuditAction.USER_INVITE,
-  'RbacController.removeMember': AuditAction.USER_REMOVE,
 
   // Bulk
   'BulkController.send': AuditAction.MESSAGE_BULK_SEND,
@@ -102,6 +99,11 @@ const SKIP_PATTERNS = [
   /\.getActions$/,
   /^StatisticsController\./,
   /^UploadsController\./,
+  // Audited by CallRecordingsService as a play and retention's deletes are (resourceType call, with the recording's id).
+  /^CallsController\.deleteRecording$/,
+  // Audited by CustomersService with the ids of the customer, link or note it made or changed, which a request alone
+  // does not carry.
+  /^CustomersController\./,
 ];
 
 @Injectable()
@@ -114,8 +116,8 @@ export class AuditInterceptor implements NestInterceptor {
     const req = context.switchToHttp().getRequest();
     const method = req.method;
     
-    // Only audit mutating requests
-    if (method === 'GET') return next.handle();
+    // Only audit mutating requests. Fastify answers a HEAD with the GET route's handler: a read too.
+    if (method === 'GET' || method === 'HEAD') return next.handle();
     
     const controllerName = context.getClass().name;
     const handlerName = context.getHandler().name;
@@ -140,6 +142,9 @@ export class AuditInterceptor implements NestInterceptor {
     if (body.type) metadata.type = body.type;
     if (body.profileId) metadata.profileId = body.profileId;
     if (body.triggerType) metadata.triggerType = body.triggerType;
+    if (typeof body.answerInDashboard === 'boolean') metadata.answerInDashboard = body.answerInDashboard;
+    if (typeof body.recording === 'boolean') metadata.recording = body.recording;
+    if (Number.isInteger(body.retentionDays)) metadata.retentionDays = body.retentionDays;
     if (params.id) metadata.targetId = params.id;
     
     // User info

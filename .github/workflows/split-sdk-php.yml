@@ -1,0 +1,66 @@
+name: Split PHP SDK
+
+# Packagist reads composer.json from a repository root, and the PHP SDK lives in
+# packages/sdk-php. On a `sdk-php-v<version>` tag (e.g. sdk-php-v1.0.0) this
+# splits that directory's history out with `git subtree split`, pushes it to the
+# read-only mirror github.com/ribato22/multiwa-php as `main`, and tags it there as
+# `v<version>`, which Packagist publishes. composer.json has no `version` field:
+# the tag is the version.
+#
+# Needs the repository secret SPLIT_REPO_TOKEN, a fine-grained personal access
+# token with Contents: read and write on ribato22/multiwa-php only (GITHUB_TOKEN
+# cannot push to another repository). See docs/21-releasing-and-distribution.md.
+
+on:
+  push:
+    tags:
+      - 'sdk-php-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: split-sdk-php
+  cancel-in-progress: false
+
+jobs:
+  split:
+    name: Push packages/sdk-php to ribato22/multiwa-php
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Check the token and the tag
+        env:
+          SPLIT_REPO_TOKEN: ${{ secrets.SPLIT_REPO_TOKEN }}
+        run: |
+          if [ -z "$SPLIT_REPO_TOKEN" ]; then
+            echo "::error::The secret SPLIT_REPO_TOKEN is not set. Add a fine-grained token with Contents: read and write on ribato22/multiwa-php as a repository secret (docs/21-releasing-and-distribution.md)."
+            exit 1
+          fi
+          if ! [[ "$TAG" =~ ^sdk-php-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::Tag $TAG is not sdk-php-v<semver>, e.g. sdk-php-v1.0.0."
+            exit 1
+          fi
+
+      # Full history: subtree split rebuilds the mirror's commits from it.
+      # persist-credentials false: the checkout's GITHUB_TOKEN header would
+      # otherwise be sent to github.com instead of SPLIT_REPO_TOKEN.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Split packages/sdk-php
+        run: git subtree split --prefix=packages/sdk-php -b sdk-php-split
+
+      # Not forced: the mirror only ever receives these splits, so main moves
+      # forward. Both refs go in one push; if main cannot fast-forward (a tag on
+      # an older commit) the version tag still lands and the job fails loudly.
+      - name: Push main and the version tag
+        env:
+          SPLIT_REPO_TOKEN: ${{ secrets.SPLIT_REPO_TOKEN }}
+        run: |
+          git push "https://x-access-token:${SPLIT_REPO_TOKEN}@github.com/ribato22/multiwa-php.git" \
+            sdk-php-split:refs/heads/main \
+            "sdk-php-split:refs/tags/v${TAG#sdk-php-v}"

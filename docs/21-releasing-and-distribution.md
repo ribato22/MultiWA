@@ -14,7 +14,7 @@ from the monorepo-wide `v*` GitHub Release (`.github/workflows/release.yml`).
 | `multiwa` (Python) | PyPI | `publish-sdk-python.yml` | tag `sdk-python-v*` | ✅ Trusted Publishing |
 | `n8n-nodes-multiwa` | npm | `publish-n8n-node.yml` | tag `n8n-v*` | ✅ OIDC + provenance |
 | api / admin / worker images | GHCR (+ Docker Hub) | `docker-publish.yml` | GitHub Release / dispatch | ✅ cosign + SLSA provenance |
-| `multiwa/multiwa-php` (PHP) | Packagist | _deferred_ (needs split repo) | tag `v*` | GitHub App webhook |
+| `multiwa/multiwa-php` (PHP) | Packagist | `split-sdk-php.yml` → mirror repo | tag `sdk-php-v*` | ⚠️ one PAT (`SPLIT_REPO_TOKEN`); Packagist itself via webhook |
 | WordPress plugin | WordPress.org | _deferred_ (needs review) | — | ❌ SVN user/pass |
 
 ---
@@ -26,13 +26,12 @@ from the monorepo-wide `v*` GitHub Release (`.github/workflows/release.yml`).
    packages). Confirm the scope is free: `npm view @multiwa/sdk`. If taken,
    rename the package (e.g. `@ribato22/multiwa-sdk`) in `packages/sdk/package.json`.
 2. Enable 2FA (auth-and-writes) on the npm account.
-3. **Bootstrap the first publish** (OIDC can only attach to a package that already
-   exists): create a Granular Access Token scoped to `@multiwa/*` with publish
-   rights, add it as the repo secret `NPM_TOKEN`. The workflow's `NODE_AUTH_TOKEN`
-   fallback uses it for the first release.
-4. After the package exists, switch to keyless: npmjs.com → @multiwa/sdk →
-   Settings → **Trusted Publishing** → add a GitHub Actions publisher for
-   `ribato22/MultiWA`, workflow `publish-sdk.yml`. Then delete `NPM_TOKEN`.
+3. **Trusted Publishing** (in place since 1.3.0): npmjs.com → @multiwa/sdk →
+   Settings → **Trusted Publisher** → GitHub Actions, `ribato22` / `MultiWA`,
+   workflow `publish-sdk.yml`, no environment, **Allow npm publish** (stage
+   publish is always allowed; dist-tag is not needed). The repository holds no npm
+   token. A new connection must publish once within 48 hours to be validated, and
+   a run started before the connection was saved fails: re-run it afterwards.
 
 **Each release:** bump `version` in `packages/sdk/package.json`, then
 `git tag sdk-v<version> && git push origin sdk-v<version>`.
@@ -55,11 +54,43 @@ from the monorepo-wide `v*` GitHub Release (`.github/workflows/release.yml`).
 
 ## npm — n8n community node (`n8n-nodes-multiwa`)
 
-Same model as the TS SDK (Trusted Publisher for `publish-n8n-node.yml`, or
-`NPM_TOKEN` bootstrap). Once live on npm it is installable via n8n → Settings →
+Same model as the TS SDK: a Trusted Publisher for `publish-n8n-node.yml` (its own
+connection on the `n8n-nodes-multiwa` package), no token. Once live on npm it is installable via n8n → Settings →
 Community Nodes; optionally submit it to n8n's verified-node program.
 
 **Each release:** bump the package version, `git tag n8n-v<version> && git push origin n8n-v<version>`.
+
+## Packagist — PHP SDK (`multiwa/multiwa-php`)
+
+Packagist reads `composer.json` from a **repository root**, but the SDK lives in
+`packages/sdk-php` of this monorepo. `split-sdk-php.yml` therefore mirrors that
+directory to the read-only repo `ribato22/multiwa-php`, and Packagist watches the
+mirror. On a `sdk-php-v<version>` tag the workflow runs
+`git subtree split --prefix=packages/sdk-php`, pushes the result to the mirror's
+`main`, and tags it there as `v<version>`. `composer.json` has no `version`
+field: the tag is the version. `sdk-php.yml` validates, analyses and tests the
+package on PHP 8.1–8.4 for every change to it.
+
+**One-time (maintainer):**
+1. Create the public repository `ribato22/multiwa-php`, **empty** (no README,
+   license or .gitignore), so the first split push lands cleanly. Treat it as
+   read-only: every change goes through `packages/sdk-php` here.
+2. Create a fine-grained personal access token with access to **only**
+   `ribato22/multiwa-php` and the permission **Contents: Read and write**, and
+   add it to this repository as the Actions secret `SPLIT_REPO_TOKEN`. It is the
+   only long-lived secret in the release setup (`GITHUB_TOKEN` cannot push to
+   another repository); without it the workflow stops with an error naming it.
+3. Push the first tag (below). The mirror then has `composer.json` at its root
+   and the tag `v1.3.0`.
+4. Submit `https://github.com/ribato22/multiwa-php` on packagist.org (**Submit**).
+5. Enable auto-update: log in to packagist.org with GitHub and grant the
+   Packagist application access, so it installs its push webhook on the mirror
+   (the package page warns while it is missing). Each new tag then appears on
+   Packagist without a token in this repository.
+
+**Each release:** the version comes from the tag only, so there is nothing to
+bump: `git tag sdk-php-v<version> && git push origin sdk-php-v<version>`
+(the first release is `sdk-php-v1.3.0`; SDK versions follow the project version).
 
 ## Docker images (GHCR primary, Docker Hub optional)
 
@@ -96,20 +127,6 @@ gh attestation verify oci://ghcr.io/ribato22/multiwa-api:latest --owner ribato22
 ---
 
 ## Deferred (need external infrastructure — separate follow-up)
-
-### Packagist — PHP SDK (`multiwa/multiwa-php`)
-Packagist reads `composer.json` from a **repo root**, but the SDK lives in
-`packages/sdk-php` of this JS monorepo, so the monorepo URL cannot be submitted.
-Path to publish:
-1. Create a standalone read-only repo (e.g. `ribato22/multiwa-php`).
-2. Add a **subtree-split** workflow (`split-sdk-php.yml`, on `v*`) that pushes
-   `packages/sdk-php` + the semver tag to that repo. It needs a fine-grained PAT
-   with `contents:write` on the split repo as `SPLIT_REPO_TOKEN` (the only
-   long-lived secret — `GITHUB_TOKEN` can't push cross-repo).
-3. Submit the standalone repo once on packagist.org and install the **Packagist
-   GitHub App** on it (secretless auto-update on every tag).
-4. Also fix the README error-handling example, which references
-   `MultiWA\Exceptions\*` classes that don't exist yet.
 
 ### WordPress.org plugin directory
 No OIDC/keyless path exists. Requires a **one-time manual Plugins Team review**

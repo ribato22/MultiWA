@@ -1,0 +1,32 @@
+// The signed-in user as the login stored it (localStorage), for what the UI shows: the API checks every action itself.
+export interface CurrentUser {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  organizationId?: string;
+  isServerOwner?: boolean;
+}
+
+export function currentUser(): CurrentUser | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return JSON.parse(localStorage.getItem('user') ?? 'null');
+  } catch {
+    return null;
+  }
+}
+
+// The API's role classes, mirrored for what the UI shows. Agent: owner, admin and member do the daily work (send,
+// chat, calls, contacts); a viewer only reads. Admin: owner and admin change the configuration.
+export const canAct = (role?: string) => role === 'owner' || role === 'admin' || role === 'member';
+export const canConfigure = (role?: string) => role === 'owner' || role === 'admin';
+
+/** The owner of the server's oldest organization: alone sets what is server-wide, the storage, the SMTP and the integrations. */
+export const isServerOwner = (user?: CurrentUser | null) => user?.isServerOwner === true;
+
+/** Owner, admin and member answer calls; a viewer does not. */
+export const canAnswerCalls = canAct;
+
+/** Owner and admin manage a profile's calls settings and its recordings. */
+export const canManageCalls = canConfigure;

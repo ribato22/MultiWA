@@ -38,6 +38,15 @@ describe('ApiKeyStrategy', () => {
     await expect(validate({})).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
+  it("does not carry the organization's customer lookup secret", async () => {
+    db.apiKey.findUnique.mockResolvedValue(
+      key({}, { organization: { id: 'o1', settings: { theme: 'dark', customers: { idLabel: 'ID Pelanggan', lookupSecretEnc: 'iv:tag:data' } } } }),
+    );
+    const user = await validate({ 'x-api-key': RAW });
+    expect(JSON.stringify(user)).not.toContain('lookupSecretEnc');
+    expect(user.organization.settings).toEqual({ theme: 'dark', customers: { idLabel: 'ID Pelanggan' } });
+  });
+
   it('refuses an unknown key', async () => {
     db.apiKey.findUnique.mockResolvedValue(null);
     await expect(validate({ 'x-api-key': RAW })).rejects.toBeInstanceOf(UnauthorizedException);

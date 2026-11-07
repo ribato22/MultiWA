@@ -2,8 +2,10 @@
 // apps/api/src/modules/notifications/notifications.controller.ts
 
 import { Controller, Get, Post, Patch, Delete, Param, Query, Body, UseGuards, Request, Headers } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiSecurity } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ANY_ROLES } from '../auth/roles';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 import { NotificationsService } from './notifications.service';
 import { PushService, PushSubscriptionPayload } from '@multiwa/engine-runtime';
@@ -12,7 +14,6 @@ import { PushService, PushSubscriptionPayload } from '@multiwa/engine-runtime';
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth()
-@ApiSecurity('api-key')
 @ApiAuthErrors()
 export class NotificationsController {
   constructor(
@@ -69,6 +70,7 @@ export class NotificationsController {
   }
 
   @Post('push/subscribe')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Subscribe to push notifications' })
   @ApiResponse({ status: 201, description: 'Subscription saved' })
   @ApiValidationError()
@@ -82,6 +84,7 @@ export class NotificationsController {
   }
 
   @Post('push/unsubscribe')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Unsubscribe from push notifications' })
   @ApiResponse({ status: 200, description: 'Subscription removed' })
   @ApiValidationError()
@@ -94,6 +97,7 @@ export class NotificationsController {
   }
 
   @Post('push/test')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Send a test push notification with diagnostics' })
   @ApiResponse({ status: 200, description: 'Test push sent with diagnostics' })
   async testPush(@Request() req: any) {
@@ -111,6 +115,7 @@ export class NotificationsController {
   // =============================
 
   @Patch(':id/read')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Mark a notification as read' })
   @ApiResponse({ status: 200, description: 'Notification marked as read' })
   @ApiNotFound('Notification')
@@ -120,6 +125,7 @@ export class NotificationsController {
   }
 
   @Patch('read-all')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Mark all notifications as read' })
   @ApiResponse({ status: 200, description: 'All notifications marked as read' })
   async markAllAsRead(@Request() req: any) {
@@ -128,6 +134,7 @@ export class NotificationsController {
   }
 
   @Delete(':id')
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Delete a notification' })
   @ApiResponse({ status: 200, description: 'Notification deleted' })
   @ApiNotFound('Notification')
@@ -137,6 +144,7 @@ export class NotificationsController {
   }
 
   @Delete()
+  @Roles(...ANY_ROLES)
   @ApiOperation({ summary: 'Clear all notifications' })
   @ApiResponse({ status: 200, description: 'All notifications cleared' })
   async clearAll(@Request() req: any) {

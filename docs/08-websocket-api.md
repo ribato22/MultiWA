@@ -1,162 +1,188 @@
 # 08 - WebSocket API
 
-Real-time event streaming via WebSocket.
+Real-time events over Socket.IO: the QR code while a profile links, connection status, incoming messages, delivery acks and calls. The server is Socket.IO, so connect with a Socket.IO client (`socket.io-client` 4.x, `python-socketio`, …); a plain `WebSocket` cannot talk to it.
 
 ---
 
 ## 8.1 Connection
 
-```javascript
-const ws = new WebSocket('ws://localhost:3001/ws?apiKey=YOUR_API_KEY');
-```
+| Setting | Value |
+|---------|-------|
+| URL | The API origin plus the namespace `/ws`: `http://localhost:3333/ws` with the Docker defaults, `https://wa.example.com/ws` behind the bundled nginx |
+| Socket.IO path | `/socket.io/`, the default (the bundled nginx proxies it to the API) |
+| Transports | `websocket` and `polling` |
+| Browser origins | Must be listed in `CORS_ORIGINS` |
 
-### Connection Acknowledgment
-```json
-{
-  "type": "ack",
-  "payload": {
-    "message": "Connected to MultiWA WebSocket API",
-    "clientId": "abc123",
-    "timestamp": "2026-02-05T10:00:00.000Z"
-  }
-}
-```
+Credentials go in the handshake, as one of:
+
+- **JWT** — the `accessToken` from `POST /api/v1/auth/login`: `auth: { token }`, an `Authorization: Bearer <token>` header, or `?token=`.
+- **API key** — `auth: { apiKey }`, an `X-API-Key` header, or `?apiKey=`.
+
+The user must be active, a JWT's login session must still be live (as on the REST API, logging out or revoking the session ends it), and an API key must not have expired. API-key scopes are not checked here, except that a key with a scope list needs `profiles:write` for the pairing QR (8.3); any valid key of the organization can listen to the rest.
+
+A socket without valid credentials is accepted and then disconnected at once: the client sees `connect`, then `disconnect` with the reason `io server disconnect`. Socket.IO does not reconnect by itself after that reason; call `socket.connect()` once the credentials are fixed. The token itself is only checked in the handshake, so pass `auth` as a function when you use JWTs: every reconnect then sends the current token instead of an expired one.
+
+A socket does not outlive its credentials. It is disconnected the same way (`io server disconnect`) when:
+
+- its API key is deleted, or expires;
+- its JWT's login session is logged out, revoked (`DELETE /auth/sessions/:id`, or `DELETE /auth/sessions`, which ends every session but the caller's) or expires;
+- its user is removed from the organization (`DELETE /organizations/members/:id`), deleted or deactivated.
+
+Deleting an API key, logging out, revoking a session and removing a member close their sockets at once. The server also checks every socket's credentials again every minute, which covers the rest (an expiry, a deactivated user, a user who erased their own account): a revoked device or integration stops receiving events, and calls, within a minute.
+
+If the server cannot check the credentials (its database is unavailable), it closes the connection after a few seconds instead: the client sees `disconnect` with the reason `transport close`, and Socket.IO then reconnects by itself. Until then the socket gets no events, a `join` answers `Unavailable` and a [call command](#calls-answered-in-the-dashboard) `unavailable`: send them again after the next `connect`.
 
 ---
 
-## 8.2 Message Protocol
+## 8.2 Choosing profiles
 
-### Subscribe to Events
+Events are sent per profile, to the sockets that joined it. After every `connect` (rooms do not survive a reconnect), join each profile you want:
+
+| Client emits | Body | Acknowledgement |
+|--------------|------|-----------------|
+| `join` (alias `subscribe:profile`) | `{ "profileId": "…" }` | `{ "success": true, "profileId": "…" }`, or `{ "success": false, "error": "Forbidden" }` when the profile is not in your organization, or `{ "success": false, "error": "Unavailable" }` when the server could not check the credentials (join again after the next `connect`) |
+| `unsubscribe:profile` | `{ "profileId": "…" }` | `{ "success": true, "profileId": "…" }` |
+
+A joined socket receives every event of that profile (you cannot pick events), except the pairing QR, which reaches owners and admins only. Socket.IO keeps the connection alive itself, so there is no application-level ping.
+
+---
+
+## 8.3 Events
+
+| Event | Sent when | Payload |
+|-------|-----------|---------|
+| `qr:update` | A new QR code is shown while the profile links (owners and admins only) | `{ profileId, qrCode }` |
+| `connection:status` | The engine connects, disconnects, retries or fails | `{ profileId, status, phoneNumber?, phone?, reason? }` |
+| `message` | An incoming message was stored | `{ type: "message:received", message, conversation }` |
+| `message:ack` | WhatsApp reports a new status for an outgoing message | `{ profileId, messageId, status }` |
+| `call:update` | An incoming call rings, is rejected or ends, or its outcome, follow-up or assignee changes | The call, plus `profileId` |
+| `call:ringing`, `call:claimed`, `call:announcing`, `call:active`, `call:ended`, `call:availability` | Calls answered in the dashboard (below) | See below |
+
+### qr:update
+
+`qrCode` is a PNG data URL (`data:image/png;base64,…`) to put in an `<img>`; if rendering the image failed it is the raw QR text instead. A new code replaces the previous one every 20 seconds or so until it is scanned.
+
+The event reaches owners and admins only: a dashboard sign-in of one qualifies, and so does an API key of one with `profiles:write` (or no scope list). The other sockets that joined the profile never get it.
+
+### connection:status
+
+| `status` | Meaning |
+|----------|---------|
+| `connected` | Ready to send and receive. `phoneNumber` holds the number; `phone` repeats it for older clients |
+| `disconnected` | The engine stopped: logged out, closed, or a QR that was not scanned in time |
+| `reconnecting (n/max)` | An automatic reconnect attempt, e.g. `reconnecting (2/5)` |
+| `error` | With `reason`: the scanned number is not this profile's number, and the link was undone. Without `reason`: the engine failed to start |
+
+```json
+{ "profileId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "status": "connected", "phoneNumber": "628123456789", "phone": "628123456789" }
+```
+
+### message
+
+Incoming messages only; what you send is not echoed. `message` is the stored message and `conversation` the conversation it belongs to (abridged):
+
 ```json
 {
-  "type": "subscribe",
-  "payload": {
-    "profileId": "profile-123",
-    "events": ["message.received", "session.status"]
+  "type": "message:received",
+  "message": {
+    "id": "5d0c9a8e-2b1f-4a77-9c3e-1f2a3b4c5d6e",
+    "profileId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41",
+    "conversationId": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+    "messageId": "false_628123456789@c.us_3EB0ABC123",
+    "direction": "incoming",
+    "senderJid": "628123456789@s.whatsapp.net",
+    "type": "text",
+    "content": { "text": "Hello!" },
+    "status": "received",
+    "timestamp": "2026-10-28T10:00:00.000Z"
   },
-  "requestId": "req_001"
-}
-```
-
-### Unsubscribe
-```json
-{
-  "type": "unsubscribe",
-  "requestId": "req_002"
-}
-```
-
-### Keep-Alive Ping
-```json
-{
-  "type": "ping",
-  "requestId": "ping_001"
-}
-```
-
-### Pong Response
-```json
-{
-  "type": "pong",
-  "payload": { "timestamp": "2026-02-05T10:00:00.000Z" },
-  "requestId": "ping_001"
-}
-```
-
----
-
-## 8.3 Event Types
-
-| Event | Description |
-|-------|-------------|
-| `qr.updated` | New QR code generated |
-| `session.status` | Connection status changed |
-| `message.received` | Incoming message |
-| `message.ack` | Message status (sent/delivered/read) |
-| `*` | Subscribe to all events |
-
----
-
-## 8.4 Event Payloads
-
-### message.received
-```json
-{
-  "type": "event",
-  "payload": {
-    "event": "message.received",
-    "profileId": "profile-123",
-    "data": {
-      "id": "true_628xxx_3EB0ABC",
-      "from": "628123456789@c.us",
-      "body": "Hello!",
-      "type": "chat",
-      "timestamp": "2026-02-05T10:00:00.000Z",
-      "hasMedia": false
-    },
-    "timestamp": "2026-02-05T10:00:00.000Z"
+  "conversation": {
+    "id": "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4",
+    "jid": "628123456789@s.whatsapp.net",
+    "name": "Budi",
+    "type": "user",
+    "unreadCount": 1
   }
 }
 ```
 
-### session.status
+### message:ack
+
+`messageId` is the WhatsApp message id: the `messageId` field of the stored message (not its `id`), which a direct send also returns as `waMessageId`. A queued send (`status: "queued"`) gets its WhatsApp id only once it goes out, so match those through the stored message. `status` is one of `pending`, `sent`, `delivered`, `read`, `played` (a voice note was played) or `failed`.
+
 ```json
-{
-  "type": "event",
-  "payload": {
-    "event": "session.status",
-    "profileId": "profile-123",
-    "data": {
-      "status": "connected",
-      "phone": "628123456789"
-    },
-    "timestamp": "2026-02-05T10:00:00.000Z"
-  }
-}
+{ "profileId": "0b6c1e1a-3f5a-4c1e-9a52-7d1f5c3e8b41", "messageId": "true_628123456789@c.us_3EB0DEF456", "status": "read" }
 ```
+
+### call:update
+
+The call with the same fields as the `data` of the [`call.*` webhooks](./09-webhook-events.md#call-events) (`callId`, `from`, `outcome`, `followUp`, …), plus `profileId`. It is sent on every change, so keep the newest one per `callId`. The update sent when a call's recording is stored also carries `hasRecording: true`.
+
+### Calls answered in the dashboard
+
+When a profile has dashboard answering on (`PUT /profiles/:id/calls-settings`), its incoming calls ring the agents online on `/ws`: every active owner, admin and member of its organization who is available and not on a call. These events go to all of an agent's sockets, whatever profiles they subscribed to. Every command is acked `{ ok: true, … }` or `{ ok: false, reason }`; besides each command's own reasons, any command can answer `error` (it failed on the server) or `unavailable` (the server could not check the credentials: it closes the socket in a few seconds, and Socket.IO reconnects by itself; send the command again after the next `connect`). `not_allowed` means the login may not take calls, or not this one: an API key, a viewer, an inactive user, a session that was logged out or revoked, a call of another organization. `not_in_call` means the call is not, or no longer, yours. Calls are answered in the dashboard: only dashboard logins (JWT) are rung, count as online, and may send these commands. A socket on an API key gets none of these events, and its commands are refused.
+
+| Direction | Event | Payload / ack |
+|---|---|---|
+| server → agent | `call:ringing` | `{ callId, profileId, profileName, caller: { name, number }, conversationId, startedAt, isVideo, video?, answerable, unavailableReason?, recorded }`. `conversationId`: the caller's chat, or null. `isVideo: true`: a video call. `video` says how it is answered: `available` (with video, the camera off), or as voice because `server_busy` (`CALLS_MAX_VIDEO_CALLS` video calls already), `unsupported` (this WhatsApp Web cannot) or `disabled` (`CALLS_MAX_VIDEO_CALLS=0`). `answerable: false`: answer on the phone; `unavailableReason` says why: `group_call`, or the first reason the profile is not ready (the `reasons` of [`GET /calls/media/status`](./07-api-specification.md#calls-calls)). `recorded: true`: the call is recorded, from before an announcement the caller hears first |
+| server → agent | `call:claimed` | `{ callId, byUserId, byUserName }`: an agent took the call. Sent to every agent it rang, that one included (their other tabs stop ringing too): compare `byUserId` with your own |
+| server → agent | `call:announcing` | `{ callId, durationSec }`: on a recorded call, the caller hears the profile's announcement first. You hear the caller meanwhile; `call:active` follows when it has played |
+| server → agent | `call:ended` | `{ callId, outcome }` when the call stopped ringing; for the agent's own call `{ callId, endedBy, endReason, talkSeconds }`, or `{ callId, endReason }` (`media_failed` or `cancelled`) when it ended before its audio connected |
+| server → agent | `call:active` | `{ callId, answeredAt, agentProducerId, video }`: the agent is on the call. `video: false`: answered as voice (also a video call whose video did not come up). `agentProducerId` is the agent's voice on it: the id of the `produce` reply of the tab that has the call's audio. Sent to every tab of the agent after an answer and after each `call:rejoin`: a tab whose own producer differs lets go of its audio (another tab or browser of the agent took the call) |
+| server → agent | `call:availability` | `{ available }`, to all of the agent's tabs when it changes |
+| client → server | `call:answer` | `{ callId }` → `{ ok: true, callId, callerProducerId, callerVideoProducerId, iceServers }`, or a reason: `not_allowed`, `not_ringing`, `already_claimed`, `busy`, `media_unavailable`, `media_failed`. `callerVideoProducerId`: the caller's picture to consume (black until WhatsApp Web draws the caller), or null on a voice call |
+| client → server | `call:media` | `{ callId, op, … }`, mediasoup signalling (`rtpCapabilities`, `createTransport`, `connectTransport`, `produce`, `consume`, `resumeConsumer`, `closeConsumer`) → `{ ok: true, result }`, or a reason: `not_allowed`, `not_in_call`, `media_error` (with `message`) |
+| client → server | `call:rejoin` | `{ callId, ifProducerId? }` after a page reload, after the call's audio failed, and to take the call into this tab → `{ ok: true, callId, callerProducerId, callerVideoProducerId, cameraOn, iceServers }`, or a reason: `not_allowed`, `not_in_call`, `media_failed`, `moved`, `answer_undone`. `ifProducerId` is for a rejoin the tab makes by itself (a reload, its audio failed): the id of the `produce` reply it had on the call. If another tab or device of the agent has the call's audio by now, the answer is `moved`, and the call stays there. While a take is still connecting (the call has no producer yet), a rejoin with `ifProducerId` is not refused: a rejoin the tab makes by itself then takes the call. Without `ifProducerId` the call is taken into this tab, wherever it is. A rejoin while the answer itself is still connecting (WhatsApp has not answered the call yet) gives the answer up, as `call:hangup` does, and is answered `answer_undone`: the call rings again, or is hung up if WhatsApp was already answering it. Its `call:ended` (`endReason: cancelled`), and the new `call:ringing` when it rings again, come before the reply. `cameraOn: true`: the agent's camera was on. Produce the camera again and send `call:camera { on: true }`; WhatsApp Web sends black until then |
+| client → server | `call:hangup` | `{ callId }` → `{ ok: true }`, or a reason: `not_allowed`, `not_in_call`. On a recorded call the reply can take up to about 30 s: the recorder is stopped before the media closes |
+| client → server | `call:camera` | `{ callId, on }` on a call answered with video → `{ ok: true, on }`, or a reason: `not_allowed`, `not_in_call`, `invalid`, `no_video` (a voice call), `no_video_producer` (this tab has not produced its camera: `call:media` `produce` with `kind: 'video'`, once per join), `camera_failed` (with `message`; the camera stays off). Produce the camera once and switch it with `replaceTrack`: turn it on, then send `{ on: true }`; send `{ on: false }` and turn it off at the same time. The caller sees black from the moment the server has the `{ on: false }` |
+| client → server | `call:availability` | `{ available? }` → `{ ok: true, available }`; without `available` it only reads the state (for a new tab). Or `not_allowed`, or `invalid` when `available` is given and is not a boolean |
+
+The agent's audio must connect within `CALLS_CONNECT_TIMEOUT_MS` of the answer, or the answer is undone (`call:ended` with `endReason: media_failed`) and the call rings again, unless WhatsApp was already answering it: it is hung up then. An agent with no socket, or whose audio link is down, for `CALLS_AGENT_GRACE_MS` is hung up (`endReason: agent_lost`). From the moment a call starts to end, whatever ended it, the agent's voice no longer reaches the caller or the recording, from any tab or device of the agent.
+
+An agent who turned calls off stays unavailable until they turn them back on, or until they have had no socket for `CALLS_AGENT_GRACE_MS`: a reload keeps it, and closing the dashboard ends it. The API keeps it in memory, so a restart of the API (a deploy too) forgets it: every agent who had turned calls off is available, and rung, again.
 
 ---
 
-## 8.5 JavaScript Client Example
+## 8.4 Example (Node.js)
 
 ```javascript
-const ws = new WebSocket('ws://localhost:3001/ws?apiKey=YOUR_API_KEY');
-let pingInterval;
+import { io } from 'socket.io-client';
 
-ws.onopen = () => {
-  console.log('Connected');
-  
-  // Subscribe to events
-  ws.send(JSON.stringify({
-    type: 'subscribe',
-    payload: {
-      profileId: 'profile-123',
-      events: ['message.received', 'session.status']
-    },
-    requestId: 'sub_001'
-  }));
+const profileId = 'YOUR_PROFILE_ID';
+const socket = io('http://localhost:3333/ws', {
+  auth: { apiKey: process.env.MULTIWA_API_KEY },
+  transports: ['websocket'],
+});
 
-  // Keep-alive ping every 30s
-  pingInterval = setInterval(() => {
-    ws.send(JSON.stringify({ type: 'ping', requestId: `ping_${Date.now()}` }));
-  }, 30000);
-};
+socket.on('connect', () => {
+  socket.emit('join', { profileId }, (res) => {
+    if (!res?.success) console.error('join refused:', res?.error);
+  });
+});
+socket.on('disconnect', (reason) => console.log('disconnected:', reason)); // 'io server disconnect' = bad or revoked credentials
 
-ws.onmessage = (event) => {
-  const msg = JSON.parse(event.data);
-  
-  if (msg.type === 'event') {
-    console.log('Event:', msg.payload.event, msg.payload.data);
-  } else if (msg.type === 'ack') {
-    console.log('Ack:', msg.payload);
-  }
-};
-
-ws.onclose = () => {
-  if (pingInterval) clearInterval(pingInterval);
-  console.log('Disconnected');
-};
+socket.on('message', ({ message, conversation }) => console.log(conversation.jid, message.content));
+socket.on('message:ack', ({ messageId, status }) => console.log(messageId, status));
+socket.on('connection:status', ({ status, phoneNumber, reason }) => console.log(status, phoneNumber ?? reason ?? ''));
+socket.on('qr:update', ({ qrCode }) => { /* show qrCode (a data URL) in an <img> */ });
+socket.on('call:update', (call) => console.log(call.callId, call.outcome));
 ```
+
+In a browser with a JWT, read the token at every (re)connect:
+
+```javascript
+const socket = io('https://wa.example.com/ws', {
+  auth: (cb) => cb({ token: localStorage.getItem('accessToken') }),
+});
+```
+
+---
+
+## 8.5 WebSocket or webhooks
+
+The socket is for live screens. It keeps nothing for you: an event sent while you were disconnected is gone, so read the REST API after a reconnect. For server-to-server delivery with retries and HMAC signatures, use [webhooks](./09-webhook-events.md).
+
+With `ENGINE_HOST=worker` the worker produces these events and the API forwards them to the same sockets, with the same names and payloads.
 
 ---
 

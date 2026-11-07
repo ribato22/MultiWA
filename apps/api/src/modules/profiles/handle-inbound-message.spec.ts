@@ -19,6 +19,9 @@ vi.mock('@multiwa/database', () => ({
   },
 }));
 
+// EngineManagerService imports MessagesService (the send-gated reply of an auto-rejected call); nothing here sends.
+vi.mock('../messages/messages.service', () => ({ MessagesService: class {} }));
+
 import { prisma } from '@multiwa/database';
 import { EngineManagerService } from './engine-manager.service';
 
@@ -29,7 +32,7 @@ function makeService() {
   const ruleEngine = { processMessage: vi.fn().mockResolvedValue([]) };
   const notifications = { createForOrg: vi.fn() };
   const eventEmitter = { emit: vi.fn() };
-  const service = new EngineManagerService(realtime as any, ruleEngine as any, notifications as any, eventEmitter as any);
+  const service = new EngineManagerService(realtime as any, ruleEngine as any, notifications as any, eventEmitter as any, {} as any);
 
   const engine = { resolveIdentity: vi.fn(), markAsRead: vi.fn(), getGroupInfo: vi.fn() };
   (service as any).engines = new Map([[PROFILE, { engine, profileId: PROFILE, status: 'connected' }]]);
@@ -43,7 +46,7 @@ function makeService() {
 }
 
 function dm(overrides: Record<string, any> = {}): any {
-  return { fromMe: false, type: 'chat', from: '628111017195@c.us', body: 'hello', timestamp: 1700000000, _data: {}, ...overrides };
+  return { fromMe: false, type: 'chat', from: '628123456789@c.us', body: 'hello', timestamp: 1700000000, _data: {}, ...overrides };
 }
 
 const call = (svc: any, message: any) => (svc as any).handleInboundMessage(message, PROFILE);
@@ -81,7 +84,7 @@ describe('EngineManagerService.handleInboundMessage (characterization)', () => {
   it('3) DM from a new sender: creates a user conversation, persists the message, bumps unread, emits + notifies + creates the contact', async () => {
     const { service, realtime, emitEvent, notifyOrgUsers } = makeService();
     await call(service, dm());
-    expect(created(prisma.conversation.create)).toMatchObject({ profileId: PROFILE, jid: '628111017195@s.whatsapp.net', type: 'user' });
+    expect(created(prisma.conversation.create)).toMatchObject({ profileId: PROFILE, jid: '628123456789@s.whatsapp.net', type: 'user' });
     const msg = created(prisma.message.create);
     expect(msg).toMatchObject({ direction: 'incoming', type: 'text', status: 'received', conversationId: 'conv-1' });
     expect(msg.content).toEqual({ text: 'hello' });
@@ -107,7 +110,7 @@ describe('EngineManagerService.handleInboundMessage (characterization)', () => {
 
   it('5) group message uses the resolved group subject and does NOT create a contact', async () => {
     const { service, resolveGroupName } = makeService();
-    await call(service, dm({ from: '120363@g.us', author: '628111017195@c.us' }));
+    await call(service, dm({ from: '120363@g.us', author: '628123456789@c.us' }));
     expect(resolveGroupName).toHaveBeenCalled();
     expect(created(prisma.conversation.create)).toMatchObject({ type: 'group', name: 'Group Subject' });
     expect(prisma.contact.create).not.toHaveBeenCalled();
@@ -116,7 +119,7 @@ describe('EngineManagerService.handleInboundMessage (characterization)', () => {
   it('6) group with an existing conversation backfills the authoritative subject', async () => {
     const { service } = makeService();
     (prisma.conversation.findFirst as any).mockResolvedValue({ id: 'conv-9', name: 'Old pushName', jid: '120363@g.us' });
-    await call(service, dm({ from: '120363@g.us', author: '628111017195@c.us' }));
+    await call(service, dm({ from: '120363@g.us', author: '628123456789@c.us' }));
     expect(prisma.conversation.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'conv-9' }, data: { name: 'Group Subject' } }));
   });
 
@@ -143,7 +146,7 @@ describe('EngineManagerService.handleInboundMessage (characterization)', () => {
     const { service, engine } = makeService();
     await call(service, dm());
     expect((prisma.conversation.update as any).mock.calls[0][0].data.unreadCount).toBe(0);
-    expect(engine.markAsRead).toHaveBeenCalledWith('628111017195@s.whatsapp.net');
+    expect(engine.markAsRead).toHaveBeenCalledWith('628123456789@s.whatsapp.net');
   });
 
   it('10) AUTO_READ off (default): increments unread, never marks read', async () => {
@@ -189,7 +192,7 @@ describe('EngineManagerService.handleInboundMessage (characterization)', () => {
     await call(service, dm());
     expect(ruleEngine.processMessage).toHaveBeenCalledOnce();
     expect(ruleEngine.processMessage.mock.calls[0][0]).toMatchObject({
-      profileId: PROFILE, conversationId: 'conv-1', senderJid: '628111017195@s.whatsapp.net', isGroup: false, isNewContact: true, messageType: 'text',
+      profileId: PROFILE, conversationId: 'conv-1', senderJid: '628123456789@s.whatsapp.net', isGroup: false, isNewContact: true, messageType: 'text',
     });
   });
 

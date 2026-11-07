@@ -21,6 +21,8 @@ vi.mock('@multiwa/database', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -32,7 +34,12 @@ vi.mock('bcrypt', () => ({
 
 import { prisma } from '@multiwa/database';
 import * as bcrypt from 'bcrypt';
+import type { EventsGateway } from '../events/events.gateway';
 import { OrganizationsService } from './organizations.service';
+
+const OWNER = { id: 'u-owner', role: 'owner' };
+const gateway = { disconnectUser: vi.fn() };
+const newService = () => new OrganizationsService(gateway as unknown as EventsGateway);
 
 describe('OrganizationsService — member-management invariants', () => {
   let service: OrganizationsService;
@@ -44,13 +51,14 @@ describe('OrganizationsService — member-management invariants', () => {
     vi.mocked(prisma.user.update).mockReset();
     vi.mocked(prisma.user.delete).mockReset();
     vi.mocked(bcrypt.hash).mockClear();
-    service = new OrganizationsService();
+    gateway.disconnectUser.mockReset();
+    service = newService();
   });
 
   describe('assertAssignableRole (via addMember / updateMemberRole)', () => {
     it('addMember rejects the "owner" role — ownership is not mintable here', async () => {
       await expect(
-        service.addMember('org-1', { email: 'a@x.io', name: 'A', role: 'owner' }),
+        service.addMember('org-1', OWNER, { email: 'a@x.io', name: 'A', role: 'owner' }),
       ).rejects.toThrow(BadRequestException);
       // Bailed out before any DB lookup / write.
       expect(prisma.user.findUnique).not.toHaveBeenCalled();
@@ -59,14 +67,14 @@ describe('OrganizationsService — member-management invariants', () => {
 
     it('addMember rejects an unknown role', async () => {
       await expect(
-        service.addMember('org-1', { email: 'a@x.io', name: 'A', role: 'superadmin' }),
+        service.addMember('org-1', OWNER, { email: 'a@x.io', name: 'A', role: 'superadmin' }),
       ).rejects.toThrow(/Invalid role/);
       expect(prisma.user.create).not.toHaveBeenCalled();
     });
 
     it('updateMemberRole rejects the "owner" role before touching the member', async () => {
       await expect(
-        service.updateMemberRole('org-1', 'm-1', 'owner'),
+        service.updateMemberRole('org-1', OWNER, 'm-1', 'owner'),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.findFirst).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
@@ -77,7 +85,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('rejects a duplicate email and never creates a user', async () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValueOnce({ id: 'dupe' } as any);
       await expect(
-        service.addMember('org-1', { email: 'taken@x.io', name: 'Dup' }),
+        service.addMember('org-1', OWNER, { email: 'taken@x.io', name: 'Dup' }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.create).not.toHaveBeenCalled();
     });
@@ -93,7 +101,7 @@ describe('OrganizationsService — member-management invariants', () => {
         createdAt: new Date(0),
       } as any);
 
-      const result = await service.addMember('org-1', { email: 'new@x.io', name: 'New' });
+      const result = await service.addMember('org-1', OWNER, { email: 'new@x.io', name: 'New' });
 
       // A temp password is returned to the caller...
       expect(typeof result.temporaryPassword).toBe('string');
@@ -114,8 +122,8 @@ describe('OrganizationsService — member-management invariants', () => {
       vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
       vi.mocked(prisma.user.create).mockResolvedValue({ id: 'x' } as any);
 
-      const a = await service.addMember('org-1', { email: 'a@x.io', name: 'A' });
-      const b = await service.addMember('org-1', { email: 'b@x.io', name: 'B' });
+      const a = await service.addMember('org-1', OWNER, { email: 'a@x.io', name: 'A' });
+      const b = await service.addMember('org-1', OWNER, { email: 'b@x.io', name: 'B' });
       expect(a.temporaryPassword).not.toBe(b.temporaryPassword);
     });
   });
@@ -124,7 +132,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('throws NotFound when the member is absent', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
       await expect(
-        service.updateMemberRole('org-1', 'ghost', 'admin'),
+        service.updateMemberRole('org-1', OWNER, 'ghost', 'admin'),
       ).rejects.toThrow(NotFoundException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
@@ -132,7 +140,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('refuses to re-role an existing owner (Forbidden) even for a valid target role', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'owner-1', role: 'owner' } as any);
       await expect(
-        service.updateMemberRole('org-1', 'owner-1', 'admin'),
+        service.updateMemberRole('org-1', OWNER, 'owner-1', 'admin'),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
@@ -140,7 +148,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('updates a normal member to a valid role', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
       vi.mocked(prisma.user.update).mockResolvedValueOnce({ id: 'm-1', role: 'admin' } as any);
-      const out = await service.updateMemberRole('org-1', 'm-1', 'admin');
+      const out = await service.updateMemberRole('org-1', OWNER, 'm-1', 'admin');
       expect(out).toEqual({ id: 'm-1', role: 'admin' });
       expect(prisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'm-1' }, data: { role: 'admin' } }),
@@ -151,7 +159,7 @@ describe('OrganizationsService — member-management invariants', () => {
   describe('removeMember', () => {
     it('refuses self-removal before any DB read', async () => {
       await expect(
-        service.removeMember('org-1', 'me', 'me'),
+        service.removeMember('org-1', { id: 'me', role: 'owner' }, 'me'),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.user.findFirst).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
@@ -160,7 +168,7 @@ describe('OrganizationsService — member-management invariants', () => {
     it('refuses to remove the organization owner (Forbidden)', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'owner-1', role: 'owner' } as any);
       await expect(
-        service.removeMember('org-1', 'admin-1', 'owner-1'),
+        service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'owner-1'),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.user.delete).not.toHaveBeenCalled();
     });
@@ -168,9 +176,93 @@ describe('OrganizationsService — member-management invariants', () => {
     it('deletes a normal member and returns success', async () => {
       vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
       vi.mocked(prisma.user.delete).mockResolvedValueOnce({ id: 'm-1' } as any);
-      const out = await service.removeMember('org-1', 'admin-1', 'm-1');
+      const out = await service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'm-1');
       expect(out).toEqual({ success: true });
       expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'm-1' } });
     });
+
+    // Closed before the delete, a socket could reconnect as the member, who still exists then.
+    it("closes the member's sockets, a login's and an API key's, once the member is deleted, not before", async () => {
+      const order: string[] = [];
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
+      vi.mocked(prisma.user.delete).mockImplementationOnce((async () => void order.push('delete')) as any);
+      gateway.disconnectUser.mockImplementationOnce(() => void order.push('disconnect'));
+
+      await service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'm-1');
+
+      expect(gateway.disconnectUser).toHaveBeenCalledWith('m-1');
+      expect(order).toEqual(['delete', 'disconnect']);
+    });
+
+    it('closes no socket when the removal is refused (yourself, the owner, an admin by an admin, no such member) or fails', async () => {
+      await expect(service.removeMember('org-1', { id: 'me', role: 'owner' }, 'me')).rejects.toThrow(BadRequestException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'owner-1', role: 'owner' } as any);
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'owner-1')).rejects.toThrow(ForbiddenException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'admin-2', role: 'admin' } as any);
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'admin-2')).rejects.toThrow(ForbiddenException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null);
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'nobody')).rejects.toThrow(NotFoundException);
+      vi.mocked(prisma.user.findFirst).mockResolvedValueOnce({ id: 'm-1', role: 'member' } as any);
+      vi.mocked(prisma.user.delete).mockRejectedValueOnce(new Error('connection refused'));
+      await expect(service.removeMember('org-1', { id: 'admin-1', role: 'admin' }, 'm-1')).rejects.toThrow('connection refused');
+
+      expect(gateway.disconnectUser).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('OrganizationsService — the customer lookup settings in settings.customers', () => {
+  const db = prisma as any;
+  const stored = { theme: 'dark', customers: { lookupUrl: 'https://crm.example.com/lookup', lookupSecretEnc: 'aa:bb:cc', timeoutMs: 5000 } };
+  beforeEach(() => {
+    db.organization.findUnique.mockReset().mockResolvedValue({ id: 'org-1', name: 'Org', settings: stored });
+    db.organization.update.mockReset().mockImplementation(async (args: any) => ({ id: 'org-1', name: args.data.name, settings: args.data.settings }));
+    // A transaction's callback runs on the mocked client.
+    db.$transaction.mockReset().mockImplementation((run: (tx: unknown) => unknown) => run(db));
+    db.$queryRaw.mockReset().mockResolvedValue([{ id: 'org-1' }]);
+  });
+
+  it('an update keeps them, whatever settings it is sent: PUT /customers/config writes them', async () => {
+    await newService().update('org-1', { settings: { theme: 'light', customers: { lookupUrl: 'https://elsewhere.example.com/' } } });
+    expect(db.organization.update).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      data: { name: undefined, settings: { theme: 'light', customers: stored.customers } },
+    });
+  });
+
+  it('an update with settings locks the organization row, then reads, merges and writes inside the one transaction', async () => {
+    // The transaction's client apart from `db`: a read or a write of the row on `db` would not wait for the lock.
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: 'org-1' }]),
+      organization: { findUnique: vi.fn().mockResolvedValue({ settings: stored }), update: vi.fn().mockResolvedValue({ id: 'org-1', settings: {} }) },
+    };
+    db.$transaction.mockImplementation((run: (client: unknown) => unknown) => run(tx));
+    await newService().update('org-1', { name: 'Renamed', settings: { theme: 'light' } });
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    const [sql, ...values] = tx.$queryRaw.mock.calls[0];
+    expect([sql.join('?'), values]).toEqual(['SELECT id FROM organizations WHERE id = ? FOR UPDATE', ['org-1']]);
+    const at = (fn: ReturnType<typeof vi.fn>) => fn.mock.invocationCallOrder[0];
+    expect(at(tx.$queryRaw)).toBeLessThan(at(tx.organization.findUnique));
+    expect(at(tx.organization.findUnique)).toBeLessThan(at(tx.organization.update));
+    expect(tx.organization.update).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      data: { name: 'Renamed', settings: { theme: 'light', customers: stored.customers } },
+    });
+    expect(db.organization.findUnique).not.toHaveBeenCalled();
+    expect(db.organization.update).not.toHaveBeenCalled();
+  });
+
+  it('an update without settings leaves them alone and reads nothing', async () => {
+    await newService().update('org-1', { name: 'Renamed' });
+    expect(db.organization.update).toHaveBeenCalledWith({ where: { id: 'org-1' }, data: { name: 'Renamed', settings: undefined } });
+    expect(db.organization.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('no answer carries the encrypted secret', async () => {
+    const service = newService();
+    for (const org of [await service.findById('org-1'), await service.update('org-1', { settings: { theme: 'light' } })]) {
+      expect(JSON.stringify(org)).not.toContain('aa:bb:cc');
+      expect((org.settings as any).customers).toEqual({ lookupUrl: 'https://crm.example.com/lookup', timeoutMs: 5000 });
+    }
   });
 });

@@ -60,6 +60,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { ProfileCallsSettings } from '@/components/calls/profile-calls-settings';
+import { canConfigure, currentUser } from '@/lib/current-user';
+
+// "628…, 628…" → ['628…', '628…'] for the quiet-profile alarm recipients. Only commas, semicolons and newlines
+// separate: a number may hold spaces or dashes ("+62 812-3456-7890").
+const splitRecipients = (s: string) => s.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean);
 
 interface Profile {
   id: string;
@@ -73,7 +79,7 @@ interface Profile {
   dailyMessageLimit?: number | null;
   dailyMessageCount?: number;
   warmupEnabled?: boolean;
-  settings?: { autoRejectCalls?: boolean; autoRejectCallMessage?: string };
+  settings?: { autoRejectCalls?: boolean; autoRejectCallMessage?: string; callReplyMessage?: string; quietAlarmHours?: number | null; quietAlarmNotify?: string[] };
   warmupStartPerDay?: number | null;
   warmupRampDays?: number | null;
   warmupStartedAt?: string | null;
@@ -224,6 +230,9 @@ export default function ProfileDetailPage() {
   const [warmupEnabled, setWarmupEnabled] = useState(false);
   const [autoRejectCalls, setAutoRejectCalls] = useState(false);
   const [autoRejectCallMessage, setAutoRejectCallMessage] = useState('');
+  const [callReplyMessage, setCallReplyMessage] = useState('');
+  const [quietAlarmHours, setQuietAlarmHours] = useState('');
+  const [quietAlarmNotify, setQuietAlarmNotify] = useState('');
   const [warmupStart, setWarmupStart] = useState<string>(''); // per-day start, string for number input
   const [warmupRampDays, setWarmupRampDays] = useState<string>('');
   const [coldDailyLimit, setColdDailyLimit] = useState<string>(''); // '' = fall back to default
@@ -231,7 +240,10 @@ export default function ProfileDetailPage() {
   const [savingGuardrails, setSavingGuardrails] = useState(false);
 
   const profileId = params.id as string;
-  const autoConnect = searchParams.get('action') === 'connect';
+  // Connecting, disconnecting, deleting and the guardrails are an owner's or admin's; everyone else reads the profile.
+  const [admin] = useState(() => canConfigure(currentUser()?.role));
+  // A link to connect (`?action=connect`) starts nothing for a role that may not connect.
+  const autoConnect = admin && searchParams.get('action') === 'connect';
 
   // WebSocket connection for real-time updates
   useEffect(() => {
@@ -468,6 +480,9 @@ export default function ProfileDetailPage() {
     setWarmupEnabled(profile.warmupEnabled ?? false);
     setAutoRejectCalls(profile.settings?.autoRejectCalls ?? false);
     setAutoRejectCallMessage(profile.settings?.autoRejectCallMessage ?? '');
+    setCallReplyMessage(profile.settings?.callReplyMessage ?? '');
+    setQuietAlarmHours(profile.settings?.quietAlarmHours ? String(profile.settings.quietAlarmHours) : '');
+    setQuietAlarmNotify((profile.settings?.quietAlarmNotify ?? []).join(', '));
     setWarmupStart(profile.warmupStartPerDay != null ? String(profile.warmupStartPerDay) : '');
     setWarmupRampDays(profile.warmupRampDays != null ? String(profile.warmupRampDays) : '');
     setColdDailyLimit(profile.coldDailyLimit != null ? String(profile.coldDailyLimit) : '');
@@ -511,6 +526,17 @@ export default function ProfileDetailPage() {
         return;
       }
     }
+    // Quiet-profile alarm. Blank hours turns it off and is sent as null: an empty string would become 0 and be refused.
+    const parsedQuietHours = quietAlarmHours.trim() === '' ? null : Number(quietAlarmHours);
+    if (parsedQuietHours != null && (!Number.isInteger(parsedQuietHours) || parsedQuietHours < 1 || parsedQuietHours > 72)) {
+      toast({ title: 'Invalid alarm hours', description: 'Enter a whole number of hours from 1 to 72, or leave empty to turn the alarm off.', variant: 'destructive' });
+      return;
+    }
+    const quietRecipients = splitRecipients(quietAlarmNotify);
+    if (quietRecipients.length > 5) {
+      toast({ title: 'Too many alarm numbers', description: 'Enter at most 5 numbers to send the alarm to.', variant: 'destructive' });
+      return;
+    }
     setSavingGuardrails(true);
     try {
       const token = localStorage.getItem('accessToken');
@@ -530,7 +556,10 @@ export default function ProfileDetailPage() {
           coldDailyLimit: parsedCold,
           serviceWindowHours: parsedWindow ?? 24,
           autoRejectCalls,
-          autoRejectCallMessage: autoRejectCallMessage.trim() || undefined,
+          autoRejectCallMessage: autoRejectCallMessage.trim(),
+          callReplyMessage: callReplyMessage.trim(),
+          quietAlarmHours: parsedQuietHours,
+          quietAlarmNotify: quietRecipients,
         }),
       });
       if (res.ok) {
@@ -668,7 +697,10 @@ export default function ProfileDetailPage() {
     jitterMs !== (profile.messageDelayJitterMs ?? 0) ||
     warmupEnabled !== (profile.warmupEnabled ?? false) ||
     autoRejectCalls !== (profile.settings?.autoRejectCalls ?? false) ||
-    autoRejectCallMessage !== (profile.settings?.autoRejectCallMessage ?? '') ||
+    autoRejectCallMessage.trim() !== (profile.settings?.autoRejectCallMessage ?? '') ||
+    callReplyMessage.trim() !== (profile.settings?.callReplyMessage ?? '') ||
+    (quietAlarmHours.trim() ? Number(quietAlarmHours) : null) !== (profile.settings?.quietAlarmHours ?? null) ||
+    splitRecipients(quietAlarmNotify).join(',') !== (profile.settings?.quietAlarmNotify ?? []).join(',') ||
     (warmupStartN ?? null) !== (profile.warmupStartPerDay ?? null) ||
     (warmupRampN ?? null) !== (profile.warmupRampDays ?? null) ||
     (coldLimitN ?? null) !== (profile.coldDailyLimit ?? null) ||
@@ -794,8 +826,9 @@ export default function ProfileDetailPage() {
           </div>
         )}
 
-        {/* QR section (visible when connecting or QR ready, and not connected) */}
-        {(qrCode || isConnecting) && !isConnected && (
+        {/* QR section (visible when connecting or QR ready, and not connected). Owner's and admin's only: the server
+            sends the QR to their sockets alone, and only they connect. */}
+        {admin && (qrCode || isConnecting) && !isConnected && (
           <div className="px-6 pb-6">
             <div
               className="rounded-xl border border-slate-800 bg-slate-950/40 p-6"
@@ -892,26 +925,29 @@ export default function ProfileDetailPage() {
         </DetailCell>
       </section>
 
-      {/* Sending guardrails */}
+      {/* Sending guardrails: an owner or admin changes them, everyone else reads them. The disabled fieldset disables
+          every field in it; the two selects are told too. */}
       <section
         aria-label="Sending guardrails"
-        className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 space-y-4"
+        className="rounded-xl border border-slate-800 bg-slate-900/50 p-5"
       >
+        <fieldset disabled={!admin} aria-labelledby="guardrails-title" className="min-w-0 space-y-4">
         <div className="flex items-center gap-2">
           <Gauge className="w-4 h-4 text-slate-400" />
-          <h2 className="text-sm font-semibold text-slate-100">Sending guardrails</h2>
+          <h2 id="guardrails-title" className="text-sm font-semibold text-slate-100">Sending guardrails</h2>
         </div>
         <p className="text-xs text-slate-400 max-w-2xl">
           Pace outbound messages and cap daily volume to lower the risk of WhatsApp
           rate-locks (error 463). The send gate applies these per message; a recently
           rate-locked number should stay conservative.
         </p>
+        {!admin && <p className="text-xs text-slate-300">Your role can read these guardrails but not change them.</p>}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="space-y-1.5">
             <Label htmlFor="delay" className="text-xs text-slate-300">
               Inter-message delay
             </Label>
-            <Select value={String(delayMs)} onValueChange={(v) => setDelayMs(Number(v))}>
+            <Select value={String(delayMs)} onValueChange={(v) => setDelayMs(Number(v))} disabled={!admin}>
               <SelectTrigger
                 id="delay"
                 className="bg-slate-950/40 border-slate-800 text-slate-100"
@@ -936,7 +972,7 @@ export default function ProfileDetailPage() {
             <Label htmlFor="jitter" className="text-xs text-slate-300">
               Delay jitter
             </Label>
-            <Select value={String(jitterMs)} onValueChange={(v) => setJitterMs(Number(v))}>
+            <Select value={String(jitterMs)} onValueChange={(v) => setJitterMs(Number(v))} disabled={!admin}>
               <SelectTrigger
                 id="jitter"
                 className="bg-slate-950/40 border-slate-800 text-slate-100"
@@ -1139,6 +1175,61 @@ export default function ProfileDetailPage() {
           )}
         </div>
 
+        {/* Default reply for the Calls queue */}
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-1.5">
+          <Label htmlFor="callReplyMessage" className="text-xs font-medium text-slate-200">
+            Missed-call reply
+          </Label>
+          <Input
+            id="callReplyMessage"
+            type="text"
+            maxLength={4096}
+            placeholder="Maaf, kami melewatkan panggilan Anda. Ada yang bisa kami bantu?"
+            value={callReplyMessage}
+            onChange={(e) => setCallReplyMessage(e.target.value)}
+            className="bg-slate-950/40 border-slate-800 text-slate-100"
+          />
+          <p className="text-[11px] text-slate-500">Prefilled when an agent replies to a call from the Calls page.</p>
+        </div>
+
+        {/* Quiet-profile alarm */}
+        <div className="rounded-lg border border-slate-800/80 bg-slate-950/30 p-4 space-y-3">
+          <div>
+            <p className="text-xs font-medium text-slate-200">Quiet-profile alarm</p>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Alert when this profile stays connected but receives no messages. Silence counts only within the server&apos;s active hours.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+            <div className="space-y-1.5">
+              <Label htmlFor="quietAlarmHours" className="text-xs text-slate-300">After (hours)</Label>
+              <Input
+                id="quietAlarmHours"
+                type="number"
+                min={1}
+                max={72}
+                step={1}
+                placeholder="Off"
+                value={quietAlarmHours}
+                onChange={(e) => setQuietAlarmHours(e.target.value)}
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="quietAlarmNotify" className="text-xs text-slate-300">WhatsApp the alarm to</Label>
+              <Input
+                id="quietAlarmNotify"
+                type="text"
+                placeholder="628123456789, 628123456780"
+                value={quietAlarmNotify}
+                onChange={(e) => setQuietAlarmNotify(e.target.value)}
+                className="bg-slate-950/40 border-slate-800 text-slate-100"
+              />
+              <p className="text-[11px] text-slate-500">Up to 5 numbers, sent through another connected profile. The admin bell always gets it.</p>
+            </div>
+          </div>
+        </div>
+
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <p className="text-[11px] text-slate-500">
             Sent today:{' '}
@@ -1158,27 +1249,35 @@ export default function ProfileDetailPage() {
               </>
             )}
           </p>
-          <Button
-            onClick={handleSaveGuardrails}
-            disabled={savingGuardrails || !guardrailsDirty}
-            className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium disabled:opacity-50"
-          >
-            {savingGuardrails ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
-                Saving…
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4 mr-2" />
-                Save guardrails
-              </>
-            )}
-          </Button>
+          {admin && (
+            <Button
+              onClick={handleSaveGuardrails}
+              disabled={savingGuardrails || !guardrailsDirty}
+              className="bg-[#22C55E] text-[#0F172A] hover:bg-[#16A34A] font-medium disabled:opacity-50"
+            >
+              {savingGuardrails ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Save guardrails
+                </>
+              )}
+            </Button>
+          )}
         </div>
+        </fieldset>
       </section>
 
-      {/* Actions bar */}
+      {/* Its checklist names the connection and auto-reject (above): a change of either here reads it again. */}
+      <ProfileCallsSettings profileId={profileId} refreshKey={`${profile.status} ${!!profile.settings?.autoRejectCalls}`} />
+
+      {/* Actions bar: connecting, disconnecting and deleting are an owner's or admin's; Open Chat is everyone's, so a
+          disconnected profile has no bar below admin. */}
+      {(admin || isConnected) && (
       <section
         aria-label="Profile actions"
         className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 flex flex-wrap items-center gap-3"
@@ -1191,24 +1290,26 @@ export default function ProfileDetailPage() {
                 Open Chat
               </Button>
             </Link>
-            <Button
-              variant="outline"
-              onClick={handleDisconnect}
-              disabled={disconnecting}
-              className="border-slate-700 text-slate-200 hover:bg-slate-800"
-            >
-              {disconnecting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
-                  Disconnecting…
-                </>
-              ) : (
-                <>
-                  <WifiOff className="w-4 h-4 mr-2" />
-                  Disconnect
-                </>
-              )}
-            </Button>
+            {admin && (
+              <Button
+                variant="outline"
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                className="border-slate-700 text-slate-200 hover:bg-slate-800"
+              >
+                {disconnecting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 mw-spin" aria-hidden="true" />
+                    Disconnecting…
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-4 h-4 mr-2" />
+                    Disconnect
+                  </>
+                )}
+              </Button>
+            )}
           </>
         ) : (
           <Button
@@ -1230,15 +1331,18 @@ export default function ProfileDetailPage() {
           </Button>
         )}
 
-        <Button
-          variant="outline"
-          onClick={() => setShowDeleteDialog(true)}
-          className="ml-auto border-red-500/40 text-red-300 hover:bg-red-500/10"
-        >
-          <Trash2 className="w-4 h-4 mr-2" />
-          Delete profile
-        </Button>
+        {admin && (
+          <Button
+            variant="outline"
+            onClick={() => setShowDeleteDialog(true)}
+            className="ml-auto border-red-500/40 text-red-300 hover:bg-red-500/10"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete profile
+          </Button>
+        )}
       </section>
+      )}
 
       {/* Quick tips (only when connected) */}
       {isConnected && (

@@ -1,0 +1,13 @@
+diff --git a/core.js b/core.js
+index d653e66a4056c27cca777d4e25222acae3b2ec85..f3440a15464a1018a5b2028dd75e3adbc32520e7 100644
+--- a/core.js
++++ b/core.js
+@@ -1076,6 +1076,8 @@ async function _fromTokenizer(tokenizer) {
+ 		while (tokenizer.position + 24 < tokenizer.fileInfo.size) {
+ 			const header = await readHeader();
+ 			let payload = header.size - 24;
++			// PATCH (MultiWA): an object smaller than its own 24-byte header made ignore() rewind, looping forever (fixed upstream in file-type 21).
++			if (!Number.isFinite(payload) || payload < 0) break;
+ 			if (_check(header.id, [0x91, 0x07, 0xDC, 0xB7, 0xB7, 0xA9, 0xCF, 0x11, 0x8E, 0xE6, 0x00, 0xC0, 0x0C, 0x20, 0x53, 0x65])) {
+ 				// Sync on Stream-Properties-Object (B7DC0791-A9B7-11CF-8EE6-00C00C205365)
+ 				const typeId = Buffer.alloc(16);

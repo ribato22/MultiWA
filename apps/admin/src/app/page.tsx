@@ -11,9 +11,9 @@ import {
   Webhook as WebhookIcon,
   BarChart3,
   Github,
-  ArrowRight,
   type LucideIcon,
 } from 'lucide-react';
+import { SignUpLink } from '@/components/sign-up-link';
 
 type Feature = { Icon: LucideIcon; tone: string; title: string; description: string };
 
@@ -21,8 +21,8 @@ const features: Feature[] = [
   {
     Icon: Plug,
     tone: 'text-primary',
-    title: 'Multi-Engine',
-    description: 'Choose between whatsapp-web.js (stable) or Baileys (performance) per profile.',
+    title: 'Pluggable Engines',
+    description: 'whatsapp-web.js by default, or an experimental Baileys adapter, chosen per profile.',
   },
   {
     Icon: Megaphone,
@@ -87,13 +87,12 @@ export default function HomePage() {
             >
               Login
             </Link>
-            <Link
-              href="/auth/register"
+            <SignUpLink
+              label="Get Started"
+              hideWhenClosed
               className="inline-flex items-center gap-1.5 px-5 py-2.5 bg-primary text-primary-foreground text-sm font-medium rounded-xl hover:bg-primary/90 hover:shadow-lg hover:shadow-primary/25 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
-            >
-              Get Started
-              <ArrowRight className="w-4 h-4" aria-hidden="true" />
-            </Link>
+              iconClassName="w-4 h-4"
+            />
           </nav>
         </div>
       </header>
@@ -103,7 +102,7 @@ export default function HomePage() {
         <section className="container mx-auto px-6 py-20 text-center">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/30 text-primary text-sm font-medium mb-8">
             <span className="w-2 h-2 rounded-full bg-primary animate-pulse" aria-hidden="true" />
-            Open Source · Self-Hosted · Multi-Engine
+            Open Source · Self-Hosted · Team Inbox
           </div>
 
           <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 text-foreground">
@@ -113,18 +112,16 @@ export default function HomePage() {
           </h1>
 
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-12">
-            The most complete open-source WhatsApp Business API gateway.
-            Multi-engine support, broadcast, automation, and enterprise-ready features.
+            Self-hosted WhatsApp API gateway with a built-in team inbox.
+            Broadcast, automation, webhooks, and SDKs.
           </p>
 
           <div className="flex flex-wrap justify-center gap-4">
-            <Link
-              href="/auth/register"
+            <SignUpLink
+              label="Start Free Trial"
               className="inline-flex items-center gap-2 px-8 py-4 bg-primary text-primary-foreground font-semibold rounded-2xl hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/25 transform hover:-translate-y-0.5 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 focus:ring-offset-background"
-            >
-              Start Free Trial
-              <ArrowRight className="w-5 h-5" aria-hidden="true" />
-            </Link>
+              iconClassName="w-5 h-5"
+            />
             <a
               href="https://github.com/ribato22/MultiWA"
               target="_blank"

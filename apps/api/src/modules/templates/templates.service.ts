@@ -3,6 +3,7 @@
 
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { prisma } from '@multiwa/database';
+import { likeLiteral } from '../../common/like-literal';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto';
 
 @Injectable()
@@ -40,7 +41,7 @@ export class TemplatesService {
     
     if (options.search) {
       where.OR = [
-        { name: { contains: options.search, mode: 'insensitive' } },
+        { name: { contains: likeLiteral(options.search), mode: 'insensitive' } },
       ];
     }
 

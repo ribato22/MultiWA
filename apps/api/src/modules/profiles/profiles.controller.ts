@@ -6,13 +6,18 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '
 import { ProfilesService } from './profiles.service';
 import { CreateProfileDto, UpdateProfileDto } from './dto';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiValidationError, ApiNotFound } from '../../common/decorators/api-responses';
 
 @ApiTags('Profiles')
 @Controller('profiles')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
+@RequireScope('profiles:write')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -20,6 +25,8 @@ export class ProfilesController {
   constructor(private readonly profilesService: ProfilesService) {}
 
   @Get()
+  @RequireScope('profiles:read')
+  @RequireTenant({ from: 'query', key: 'workspaceId', resource: 'workspace', optional: true })
   @ApiOperation({ summary: 'List all profiles in workspace' })
   @ApiResponse({ status: 200, description: 'List of profiles' })
   async findAll(@Request() req: any, @Query('workspaceId') workspaceId?: string) {
@@ -27,6 +34,7 @@ export class ProfilesController {
   }
 
   @Get(':id')
+  @RequireScope('profiles:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get profile by ID' })
   @ApiResponse({ status: 200, description: 'Profile details' })
@@ -36,6 +44,7 @@ export class ProfilesController {
   }
 
   @Post()
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Create a new WhatsApp profile' })
   @ApiResponse({ status: 201, description: 'Profile created' })
   @ApiValidationError()
@@ -44,6 +53,7 @@ export class ProfilesController {
   }
 
   @Put(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Update profile' })
   @ApiResponse({ status: 200, description: 'Profile updated' })
@@ -53,7 +63,10 @@ export class ProfilesController {
     return this.profilesService.update(id, dto);
   }
 
+  // Deleting a profile deletes every recording file of it, which only an owner or admin may: so an owner or admin only,
+  // and an API key with a scope list needs profiles:write.
   @Delete(':id')
+  @Roles('owner', 'admin')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Delete profile' })
   @ApiResponse({ status: 200, description: 'Profile deleted' })
@@ -64,6 +77,7 @@ export class ProfilesController {
 
   // WhatsApp Connection
   @Post(':id/connect')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Connect WhatsApp profile (QR code sent via WebSocket)' })
   @ApiResponse({ status: 200, description: 'Connection initiated - listen on WebSocket /ws namespace for qr:update event' })
@@ -73,6 +87,7 @@ export class ProfilesController {
   }
 
   @Post(':id/disconnect')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Disconnect WhatsApp profile' })
   @ApiResponse({ status: 200, description: 'Disconnected' })
@@ -85,6 +100,7 @@ export class ProfilesController {
   // SSE endpoint removed in favor of WebSocket for real-time updates
 
   @Get(':id/status')
+  @RequireScope('profiles:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'profile' })
   @ApiOperation({ summary: 'Get connection status' })
   @ApiResponse({ status: 200, description: 'Connection status' })

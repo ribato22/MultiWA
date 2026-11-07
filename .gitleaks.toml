@@ -1,13 +1,27 @@
 # MultiWA gitleaks configuration.
 #
-# Extends the default gitleaks rule set. Only the `curl-auth-header` rule is
-# customized: documentation curl examples use placeholder tokens
-# (e.g. `YOUR_TOKEN`), which the stock rule flags despite being non-secrets.
-# The allowlist is scoped by path to the two documentation trees so real
-# secrets anywhere else are still detected.
+# Extends the default gitleaks rule set, with two narrow exceptions for values
+# that are not secrets. Real secrets anywhere else are still detected.
+# - The `curl-auth-header` rule is customized: documentation curl examples use
+#   placeholder tokens (e.g. `YOUR_TOKEN`), which the stock rule flags. Its
+#   allowlist is scoped by path to the two documentation trees.
+# - The global allowlist below covers the admin e2e's fake backend.
 
 [extend]
 useDefault = true
+
+# The admin e2e's fake backend (apps/admin/e2e). Its API keys are made up:
+# `mwa_live_` and four digits, while a real key is `mwa_` and 64 hex characters,
+# so no real key can match. Its mediasoup file replays the transport parameters
+# of a local test call, whose ICE credentials were good for that call only.
+# The tests' ENCRYPTION_KEY is `0123456789abcdef` four times, the same key CI
+# runs with: the unit specs pin ciphertexts under it. The public-boundary scan's
+# self-test writes secret-shaped lines into a throwaway repo on purpose: they are
+# what that scan must catch.
+[allowlist]
+description = "Test fixtures: made-up API keys, the tests' fixed ENCRYPTION_KEY, the boundary scan's self-test, and a replayed test call's mediasoup parameters"
+paths = ['''^apps/admin/e2e/support/mediasoup\.json$''', '''^scripts/check-public-boundary\.test\.sh$''']
+regexes = ['''^mwa_live_\d{4}$''', '''^(?:0123456789abcdef){4}$''']
 
 [[rules]]
 id = "curl-auth-header"

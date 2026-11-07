@@ -51,5 +51,6 @@ export class TokenResponseDto {
     name: string;
     role: string;
     organizationId: string;
+    isServerOwner?: boolean;
   };
 }

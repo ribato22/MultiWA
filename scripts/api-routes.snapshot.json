@@ -7,7 +7,7 @@
     "@ApiExcludeController()",
     "@ApiExcludeEndpoint()"
   ],
-  "routeCount": 217,
+  "routeCount": 239,
   "routes": [
     {
       "method": "DELETE",
@@ -182,6 +182,10 @@
       "path": "/api/v1/auth/register"
     },
     {
+      "method": "GET",
+      "path": "/api/v1/auth/registration"
+    },
+    {
       "method": "DELETE",
       "path": "/api/v1/auth/sessions"
     },
@@ -347,6 +351,46 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/calls"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls/:id"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/calls/:id"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/calls/:id/call-link"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/calls/:id/recording"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls/:id/recording"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/calls/:id/reject"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/calls/:id/reply"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls/media/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/calls/open-count"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/contacts"
     },
     {
@@ -452,6 +496,78 @@
     {
       "method": "GET",
       "path": "/api/v1/conversations/unread-count"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/customers/:id"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/history"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/lookup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/:id/notes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/:id/notes"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/:id/notes/:noteId"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/customers/:id/notes/:noteId"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/by-phone/:phone"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/customers/config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/config/test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/links"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/customers/links/:linkId"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/customers/links/:linkId/use"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/customers/lookup"
     },
     {
       "method": "POST",
@@ -694,6 +810,22 @@
       "path": "/api/v1/profiles/:id"
     },
     {
+      "method": "DELETE",
+      "path": "/api/v1/profiles/:id/calls-announcement"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/profiles/:id/calls-announcement"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/profiles/:id/calls-announcement"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/profiles/:id/calls-settings"
+    },
+    {
       "method": "POST",
       "path": "/api/v1/profiles/:id/connect"
     },
@@ -704,50 +836,6 @@
     {
       "method": "GET",
       "path": "/api/v1/profiles/:id/status"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/rbac/assign"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/rbac/organizations/:id/seed"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/permissions"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/roles"
-    },
-    {
-      "method": "POST",
-      "path": "/api/v1/rbac/roles"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/v1/rbac/roles/:id"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/roles/:id"
-    },
-    {
-      "method": "PUT",
-      "path": "/api/v1/rbac/roles/:id"
-    },
-    {
-      "method": "DELETE",
-      "path": "/api/v1/rbac/users/:userId/organizations/:orgId"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/users/:userId/permissions"
-    },
-    {
-      "method": "GET",
-      "path": "/api/v1/rbac/users/:userId/roles"
     },
     {
       "method": "GET",

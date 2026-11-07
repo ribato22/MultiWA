@@ -5,6 +5,8 @@ import { Controller, Get, Query, Request, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { AuditAction, AuditService } from './audit.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES } from '../auth/roles';
 import { ApiAuthErrors } from '../../common/decorators/api-responses';
 
 // Audit logs are scoped to the caller's organization, always derived from the
@@ -20,6 +22,7 @@ export class AuditController {
   constructor(private readonly service: AuditService) {}
 
   @Get('logs')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Query audit logs for the caller organization' })
   @ApiQuery({ name: 'userId', required: false })
   @ApiQuery({ name: 'action', required: false, description: 'Filter by action prefix (e.g., "auth", "profile")' })
@@ -54,6 +57,7 @@ export class AuditController {
   }
 
   @Get('summary')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'Get audit summary statistics for the caller organization' })
   @ApiQuery({ name: 'days', required: false, type: Number, description: 'Last N days (default: 30)' })
   async getSummary(
@@ -64,6 +68,7 @@ export class AuditController {
   }
 
   @Get('actions')
+  @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'List available audit actions' })
   getActions() {
     return Object.entries(AuditAction).map(([key, value]) => ({

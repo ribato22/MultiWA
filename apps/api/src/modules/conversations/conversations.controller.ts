@@ -5,13 +5,20 @@ import { Controller, Get, Put, Delete, Param, Query, UseGuards, Request } from '
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiSecurity, ApiQuery } from '@nestjs/swagger';
 import { ConversationsService } from './conversations.service';
 import { JwtOrApiKeyGuard } from '../auth/guards/jwt-auth.guard';
+import { ApiKeyScopeGuard } from '../auth/guards/api-key-scope.guard';
+import { RequireScope } from '../auth/decorators/require-scope.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { ADMIN_ROLES, AGENT_ROLES } from '../auth/roles';
 import { TenantGuard } from '../../common/tenant/tenant.guard';
 import { RequireTenant } from '../../common/tenant/require-tenant.decorator';
 import { ApiAuthErrors, ApiNotFound } from '../../common/decorators/api-responses';
 
 @ApiTags('Conversations')
 @Controller('conversations')
-@UseGuards(JwtOrApiKeyGuard, TenantGuard)
+// A conversation's reads answer its messages, so an API key with a scope list needs the messages scopes here, as on
+// /messages: messages:write by default, messages:read for the reads.
+@UseGuards(JwtOrApiKeyGuard, ApiKeyScopeGuard, TenantGuard)
+@RequireScope('messages:write')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
 @ApiAuthErrors()
@@ -19,6 +26,7 @@ export class ConversationsController {
   constructor(private readonly service: ConversationsService) {}
 
   @Get()
+  @RequireScope('messages:read')
   @RequireTenant({ from: 'query', key: 'profileId', resource: 'profile' })
   @ApiOperation({ summary: 'List conversations' })
   @ApiQuery({ name: 'profileId', required: true })
@@ -36,6 +44,7 @@ export class ConversationsController {
 
   // NOTE: must be declared BEFORE @Get(':id') so the literal path isn't captured by :id.
   @Get('unread-count')
+  @RequireScope('messages:read')
   @ApiOperation({ summary: 'Total unread message count across the org' })
   async unreadCount(@Request() req: any) {
     const count = await this.service.getOrgUnreadCount(req.user.organizationId);
@@ -43,6 +52,7 @@ export class ConversationsController {
   }
 
   @Get(':id')
+  @RequireScope('messages:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Get conversation with messages' })
   @ApiNotFound('Conversation')
@@ -55,6 +65,7 @@ export class ConversationsController {
   }
 
   @Put(':id/read')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Mark conversation as read' })
   @ApiNotFound('Conversation')
@@ -63,6 +74,7 @@ export class ConversationsController {
   }
 
   @Put(':id/archive')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Archive conversation' })
   @ApiNotFound('Conversation')
@@ -71,6 +83,7 @@ export class ConversationsController {
   }
 
   @Put(':id/unarchive')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Unarchive conversation' })
   @ApiNotFound('Conversation')
@@ -79,6 +92,7 @@ export class ConversationsController {
   }
 
   @Put(':id/mute')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle mute conversation' })
   @ApiNotFound('Conversation')
@@ -87,6 +101,7 @@ export class ConversationsController {
   }
 
   @Put(':id/pin')
+  @Roles(...AGENT_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Toggle pin conversation' })
   @ApiNotFound('Conversation')
@@ -95,6 +110,7 @@ export class ConversationsController {
   }
 
   @Delete(':id/messages')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Clear all messages in conversation' })
   @ApiNotFound('Conversation')
@@ -103,6 +119,7 @@ export class ConversationsController {
   }
 
   @Delete(':id')
+  @Roles(...ADMIN_ROLES)
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Delete conversation and messages' })
   @ApiNotFound('Conversation')
@@ -111,6 +128,7 @@ export class ConversationsController {
   }
 
   @Get(':id/messages')
+  @RequireScope('messages:read')
   @RequireTenant({ from: 'param', key: 'id', resource: 'conversation' })
   @ApiOperation({ summary: 'Get messages in conversation' })
   @ApiNotFound('Conversation')

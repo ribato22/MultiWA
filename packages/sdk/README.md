@@ -4,22 +4,11 @@ TypeScript SDK for the MultiWA Gateway API.
 
 ## Installation
 
-The SDK is available in this repository today. Public registry publishing
-(`@multiwa/sdk` on NPM) is tracked as a release follow-up and is **not yet
-verified**, so do not assume `npm install @multiwa/sdk` resolves to this
-package on the registry.
-
-Until the registry release is verified, install from this repository:
-
 ```bash
-# Inside the MultiWA monorepo, the SDK is already part of the workspace
-pnpm install
-
-# In an external project, install from a local path
-pnpm add file:../multiwa/packages/sdk
-# or directly from a git ref
-pnpm add github:ribato22/MultiWA#main
+npm install @multiwa/sdk
 ```
+
+Inside the MultiWA monorepo, the SDK is already part of the workspace (`pnpm install`).
 
 ## Quick Start
 
@@ -148,8 +137,10 @@ const webhook = await client.webhooks.create({
 });
 
 await client.webhooks.test(id);
-const logs = await client.webhooks.getLogs(id);
 ```
+
+The API exposes no webhook delivery log, so `client.webhooks.getLogs()` is
+deprecated and always rejects with an `Error`.
 
 ### Automations
 
@@ -169,6 +160,62 @@ const result = await client.automations.test(id, 'hi there');
 await client.automations.toggle(id);
 ```
 
+### Calls
+
+> `client.calls` is in SDK 1.4.0 and later.
+
+Incoming WhatsApp calls: the follow-up queue, the readiness of answering them in
+the dashboard, the recordings and the announcement
+([Calls answered in the dashboard](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md)).
+
+```typescript
+import { readFile, writeFile } from 'node:fs/promises';
+
+// A page of a profile's calls, newest first; pass nextCursor back for the next page
+const page = await client.calls.list(profileId, { outcome: 'answered', limit: 50 });
+if (page.nextCursor) await client.calls.list(profileId, { outcome: 'answered', cursor: page.nextCursor });
+
+await client.calls.openCount();                              // { count }: the open follow-ups in the organization
+const call = await client.calls.get(callId);                 // call.recording: null, or its facts
+await client.calls.update(callId, { followUp: 'done' });     // or { assignedUserId: '…' }
+await client.calls.update(callId, { assignedUserId: null }); // unassign
+await client.calls.reject(callId);                           // a call that still rings
+await client.calls.reply(callId, 'We will call you back');   // no text: the profile's default reply
+await client.calls.sendCallLink(callId, 'voice', 'Tap to call us');
+
+// Owners and admins
+const status = await client.calls.mediaStatus();             // the server, its recordings storage, each profile
+// Recording needs the announcement first: bytes, a Blob, or a File, which keeps its own name
+await client.calls.uploadAnnouncement(profileId, await readFile('notice.mp3'), 'notice.mp3');
+await client.calls.updateSettings(profileId, { answerInDashboard: true, recording: true, retentionDays: 30 });
+const notice = await client.calls.getAnnouncement(profileId); // { data: Uint8Array, contentType }
+
+const audio = await client.calls.getRecording(callId, { download: true }); // audio/webm
+await writeFile(`call-${callId}.webm`, audio.data);
+await client.calls.deleteRecording(callId);
+
+await client.calls.updateSettings(profileId, { recording: false });
+await client.calls.deleteAnnouncement(profileId);            // refused with 409 while recording is on
+```
+
+Everything above `// Owners and admins` is for owners, admins and members (a
+viewer's key gets 403), except `list()`, `openCount()` and `get()`, which a
+viewer's key may call too; the rest is for owners and admins. An API key acts
+with its user's role, and a key with a scope list also needs `messages:write`
+for `reply()` and `sendCallLink()`, `recordings:read` to fetch a recording,
+`recordings:delete` to delete one, and `profiles:write` for the settings and the
+announcement, with
+`recordings:delete` too for `retentionDays`
+([API keys](https://github.com/ribato22/MultiWA/blob/main/docs/23-calls.md#api-keys)).
+The client's `timeout` covers a whole download: a long recording may need a
+larger one.
+
+The SDK has no realtime events for calls: answering is for people signed in to
+the dashboard, and an API key never gets the agents' events. Follow calls with
+the `call.*` [webhooks](https://github.com/ribato22/MultiWA/blob/main/docs/09-webhook-events.md#call-events),
+or the [WebSocket](https://github.com/ribato22/MultiWA/blob/main/docs/08-websocket-api.md#83-events)
+`call:update` event.
+
 ## Error Handling
 
 ```typescript
@@ -185,14 +232,27 @@ try {
 }
 ```
 
+A calls setting that cannot be turned on is refused with 409, and `details.reasons`
+says why:
+
+```typescript
+try {
+  await client.calls.updateSettings(profileId, { recording: true });
+} catch (error) {
+  if (error instanceof MultiWAError && error.statusCode === 409) {
+    console.log(error.details.reasons); // e.g. ['no_announcement']
+  }
+}
+```
+
 ## Configuration
 
 ```typescript
 const client = new MultiWAClient({
   apiKey: 'your-api-key',
-  baseUrl: 'http://localhost:3000',  // API server URL
-  timeout: 30000,                     // Request timeout (ms)
-  headers: {                          // Custom headers
+  baseUrl: 'http://localhost:3000/api/v1', // API base URL, including /api/v1
+  timeout: 30000,                          // Request timeout (ms)
+  headers: {                               // Custom headers
     'X-Custom-Header': 'value',
   },
 });

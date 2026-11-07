@@ -33,6 +33,16 @@ export const AppEvents = {
   CONTACT: {
     UPDATE: 'contact.update',
   },
+  CALL: {
+    RECEIVED: 'call.received',
+    ANSWERED: 'call.answered',
+    REJECTED: 'call.rejected',
+    ENDED: 'call.ended',
+    UPDATED: 'call.updated',
+    /** A call's recording is stored (after its call ended): the ids and its facts, never its audio or a key. */
+    RECORDING_READY: 'call.recording.ready',
+    RECORDING_DELETED: 'call.recording.deleted',
+  },
 } as const;
 
 // Recursively extract the leaf string-literal values (the event names).

@@ -14,6 +14,7 @@ export type RealtimeMessage =
   | { type: 'connection:status'; profileId: string; payload: { status: string; phoneOrReason?: string } }
   | { type: 'message'; profileId: string; payload: any }
   | { type: 'message:ack'; profileId: string; payload: { messageId: string; status: string } }
+  | { type: 'call:update'; profileId: string; payload: Record<string, unknown> }
   | { type: 'heartbeat'; profileId: string; payload: { ts: number; workerPid: number } };
 
 /**
@@ -29,6 +30,7 @@ export interface RealtimeEmitter {
   emitConnectionStatus(profileId: string, status: string, phoneOrReason?: string): void;
   emitMessage(profileId: string, message: any): void;
   emitMessageAck(profileId: string, messageId: string, status: string): void;
+  emitCallUpdate(profileId: string, call: Record<string, unknown>): void;
 }
 
 /** DI token for the RealtimeEmitter implementation. */

@@ -5,13 +5,12 @@
 <h1 align="center">MultiWA</h1>
 
 <p align="center">
-  <strong>Open Source WhatsApp Business API Gateway</strong><br />
-  Multi-engine • Self-hosted • Enterprise-ready
+  <strong>Self-hosted WhatsApp API gateway with a built-in team inbox</strong>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.2.0-green.svg" alt="Version" /></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-2.0.0-green.svg" alt="Version" /></a>
   <a href="https://ribato22.github.io/MultiWA/"><img src="https://img.shields.io/badge/🌐_Website-Live-brightgreen.svg" alt="Website" /></a>
   <a href="docker-compose.yml"><img src="https://img.shields.io/badge/docker-one--click-2496ED.svg" alt="Docker" /></a>
   <a href="https://hub.docker.com/r/ribato/multiwa-api"><img src="https://img.shields.io/docker/pulls/ribato/multiwa-api.svg" alt="Docker Pulls" /></a>
@@ -36,6 +35,9 @@
 
 ---
 
+> [!WARNING]
+> MultiWA is not affiliated with WhatsApp or Meta. It connects through WhatsApp Web, and WhatsApp can block or log out numbers that break its terms. Use a number you can afford to lose, and follow [WhatsApp's policies](https://www.whatsapp.com/legal).
+
 ## 🎯 What is MultiWA?
 
 **MultiWA** is a fully self-hosted, open-source WhatsApp API gateway that lets you connect multiple WhatsApp numbers through a single unified REST + WebSocket API. It runs as a `docker compose up` stack on your own server, ships an admin dashboard for QR onboarding and live chat, and exposes official SDKs for TypeScript, Python, and PHP.
@@ -47,7 +49,7 @@ If you want to send and receive WhatsApp messages from your own backend without 
 | Feature | MultiWA | WhatsApp Cloud API | Evolution API |
 |---------|---------|-------------------|---------------|
 | **Self-hosted** | ✅ Full control | ❌ Meta-hosted | ✅ |
-| **Multi-engine** | ✅ whatsapp-web.js (Baileys adapter experimental) | ❌ Single | ❌ Fixed |
+| **WhatsApp connection** | WhatsApp Web via whatsapp-web.js (a Baileys adapter is experimental) | Meta's official Cloud API | Baileys or the official Cloud API |
 | **Admin Dashboard** | ✅ Full-featured | ❌ None | ⚠️ Basic |
 | **Visual Automation** | ✅ Drag & drop builder | ❌ | ❌ |
 | **Knowledge Base AI** | ✅ OpenAI-compatible | ❌ | ❌ |
@@ -118,12 +120,16 @@ pnpm --filter admin dev   # Admin on http://localhost:3001
 - 📱 **Multi-Session Management** — Connect unlimited WhatsApp accounts
 - 🔌 **Pluggable Engine Adapters** — Clean engine interface with per-profile engine selection: whatsapp-web.js (default, production) or a Baileys adapter (experimental — not production-validated; `sendReaction` and `resolveIdentity` are stubs and history sync / WhatsApp-addressbook contact save are whatsapp-web.js-only; see [Engine Abstraction](docs/06-engine-abstraction.md))
 - 📨 **Unified Messaging API** — Send text, media, documents, contacts, locations
+- 📞 **Call Management** — Incoming call history and a follow-up queue (reply, call link, assign, done), reject or auto-reject with an optional reply (at most one per caller per 24 hours), missed-call notifications, and `call.*` webhooks; call links need whatsapp-web.js (see [Webhook Events](docs/09-webhook-events.md#call-events))
+- 🎧 **Calls in the Dashboard** (opt-in) — Agents answer WhatsApp voice calls in the browser, on whatsapp-web.js profiles, once the server has HTTPS and one media port open to them. Calls can also be recorded, and the caller then always hears an announcement first; recordings stay private, for owners and admins, and every play, download and delete is audited (see [Calls answered in the dashboard](docs/23-calls.md))
 - 📡 **Real-time WebSocket** — Live session status, QR codes, and events via Socket.IO
+- 🔕 **Quiet-Profile Alarm** — A connected profile that stops receiving messages raises one alarm (admin bell + WhatsApp to your ops numbers through another profile) and a notice when it recovers
 - 🔐 **JWT Authentication** — Secure API access with refresh tokens
 
 ### Admin Dashboard
 - 🖥️ **Modern UI** — Next.js 14 with dark mode, responsive design
 - 💬 **Live Chat** — Real-time chat interface with message history
+- 👤 **Customer Profile** — the customer behind a number, beside the chat and in calls: your ID, live data from your system, notes and tags
 - 📊 **Analytics** — Message volume, delivery rates, session metrics
 - 🔍 **Audit Trail** — Complete logging of all operations
 
@@ -237,16 +243,15 @@ curl -X POST http://localhost:3333/api/v1/accounts/YOUR_ACCOUNT_ID/profiles/YOUR
 ## 📦 SDKs
 
 The TypeScript SDK is published on npm (`npm install @multiwa/sdk`), the
-Python SDK on PyPI (`pip install multiwa`), and the n8n community node on npm
-(`npm install n8n-nodes-multiwa`). The PHP SDK is included in the repository
-today; its Packagist publishing is tracked as a release follow-up — until then,
-install it from this repo or via the local workspace path.
+Python SDK on PyPI (`pip install multiwa`), the PHP SDK on Packagist
+(`composer require multiwa/multiwa-php`), and the n8n community node on npm
+(`npm install n8n-nodes-multiwa`).
 
 | Language | Source | Status |
 |----------|--------|--------|
 | TypeScript/Node.js | [`packages/sdk`](packages/sdk) | Published on npm · `npm install @multiwa/sdk` |
 | Python | [`packages/sdk-python`](packages/sdk-python) | Published on PyPI · `pip install multiwa` |
-| PHP | [`packages/sdk-php`](packages/sdk-php) | Included in repository · registry publishing pending |
+| PHP | [`packages/sdk-php`](packages/sdk-php) | Published on Packagist · `composer require multiwa/multiwa-php` |
 | n8n community node | [`packages/n8n-nodes-multiwa`](packages/n8n-nodes-multiwa) | Published on npm · `npm install n8n-nodes-multiwa` |
 
 ### TypeScript SDK Example

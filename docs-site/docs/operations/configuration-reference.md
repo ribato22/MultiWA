@@ -15,18 +15,33 @@ Complete documentation of environment variables for MultiWA Gateway.
 | `REDIS_URL` | ✅ | - | Redis connection string |
 | `JWT_SECRET` | ✅ | - | Secret key for JWT access tokens |
 | `JWT_REFRESH_SECRET` | ✅ | - | Secret key for JWT refresh tokens |
+| `ALLOW_REGISTRATION` | ❌ | `false` | Anyone may register (create an organization) after the first owner |
 | `SESSIONS_DIR` | ❌ | `/data/sessions` (Docker) | WhatsApp session storage path (env name in compose is `SESSIONS_DIR`) |
 | `API_PORT` | ❌ | `3000` (code) / `3333` (Docker compose) | API server port |
 | `API_HOST` | ❌ | `0.0.0.0` | API bind address |
 | `NODE_ENV` | ❌ | `development` | Environment mode |
 | `CORS_ORIGINS` | ❌ | `http://localhost:3001,http://localhost:3333` (Docker) | Comma-separated allowed origins |
+| `TRUST_PROXY` | ❌ | - (`172.16.0.0/12` in `docker-compose.production.yml`) | Address of the reverse proxy in front of the API, so rate limits and logins see the client's address |
 | `NEXT_PUBLIC_API_URL` | ❌ | `http://localhost:3333` (Docker) | URL the browser uses to reach the API. **Build-time** in the admin image. |
 | `DEFAULT_ENGINE` | ❌ | `whatsapp-web-js` | WhatsApp engine (`whatsapp-web-js` or `baileys`) |
 | `ENGINE_HOST` | ❌ | `api` | Where the engine runs: `api` or `worker` |
 | `DURABLE_SEND` | ❌ | `false` | Enqueue outbound sends in Redis (BullMQ) with retry |
 | `OUTBOUND_SEND_CONCURRENCY` | ❌ | `10` | Max concurrent durable send deliveries |
+| `SEND_TIMEOUT_MS` | ❌ | `60000` | The longest one WhatsApp send may take before it fails with `504 SEND_TIMEOUT` |
+| `WWEBJS_MEMORY_LIMIT_MB` | ❌ | `2500` | Memory (MB) above which a profile's Chromium is restarted from its session; `0` = off |
 | `WEBHOOK_TIMEOUT_MS` | ❌ | `30000` | Webhook delivery timeout |
-| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook/AI targets on private networks (SSRF guard) |
+| `WEBHOOK_ALLOW_PRIVATE_TARGETS` | ❌ | `false` | Allow webhook, AI and customer lookup targets on private networks (SSRF guard) |
+| `QUIET_ALARM_ACTIVE_HOURS` | ❌ | `07:00-22:00` | Daily window in which a connected profile's silence counts toward its quiet-profile alarm |
+| `QUIET_ALARM_TIMEZONE` | ❌ | `Asia/Jakarta` | Time zone of that window |
+| `CALL_RING_TIMEOUT_MS` | ❌ | `90000` | A call still ringing after this long is closed as `unknown` |
+| `CALL_LOG_GRACE_MS` | ❌ | `60000` | How long a call that stopped ringing as `unknown` waits for WhatsApp's call log before the team is told about an unanswered call |
+| `CALLS_MEDIA_ENABLED` | ❌ | `false` | Answering calls in the dashboard: the media server's switch |
+| `CALLS_MEDIA_ANNOUNCED_ADDRESS` | with `CALLS_MEDIA_ENABLED` | - | The address agents' browsers reach the media port on |
+| `CALLS_MAX_TALK_MINUTES` | ❌ | `120` | A call answered in the dashboard is hung up after this long |
+| `CALLS_MAX_VIDEO_CALLS` | ❌ | `2` | How many calls the server answers with video at once; past it, and with `0`, video calls are answered as voice |
+| `CALL_RECORDINGS_STORAGE` | ❌ | `STORAGE_TYPE`, else `local` | Where call recordings go: `local` or `s3` |
+| `CALL_RECORDINGS_PATH` | for local recordings | - (Docker: `/data/call-recordings`) | The directory of local call recordings |
+| `CALL_RECORDINGS_TMP` | for recording | - (Docker: `/data/call-recordings-tmp`) | The directory of recordings in progress |
 
 ---
 
@@ -100,6 +115,10 @@ Key for encrypting sensitive data (API keys, credentials).
 openssl rand -hex 16
 ```
 
+### `ALLOW_REGISTRATION`
+
+Whether anyone may create an account, and with it a new organization. The first person on a new server always may: they become its owner, and the owner of the server's settings (SMTP, storage, integrations). Until that first account exists, anyone who reaches the server can claim it, so create it before you expose the server. After that, registration is closed unless `ALLOW_REGISTRATION=true`, and owners and admins add people in Settings → Team. The value must be exactly `true`: any other value (`TRUE`, `1`, `yes`) keeps registration closed. Set it to `true` only for a server that hosts many organizations on purpose.
+
 ---
 
 ## API Server
@@ -127,6 +146,18 @@ CORS_ORIGINS=http://localhost:3000,http://localhost:3001
 CORS_ORIGINS=https://admin.yourdomain.com,https://app.yourdomain.com
 ```
 
+### `TRUST_PROXY`
+**Optional** | String (comma-separated IP addresses or CIDRs) | Default: unset (`172.16.0.0/12` in `docker-compose.production.yml`)
+
+The address of the reverse proxy in front of the API. Without it, behind nginx every request comes from nginx's address: every client shares one rate limit, and logins record nginx's address. With it, the API takes the client address that proxy appended to `X-Forwarded-For`.
+
+Only the hop that connects to the API is trusted, and only from a listed address, so a client cannot choose its address by sending its own `X-Forwarded-For`. Keep client networks out of the list: a client that connects to the API port directly from a listed address is taken for the proxy. A value that is not an address list, such as `1` or `true`, stops the API at boot.
+
+```env
+# nginx on a Docker network of the stock compose files
+TRUST_PROXY=172.16.0.0/12
+```
+
 ---
 
 ## WhatsApp Sessions
@@ -150,23 +181,10 @@ SESSIONS_DIR=/data/sessions
 
 ## Rate Limiting
 
-### `RATE_LIMIT_TTL`
-**Optional** | Number | Default: `60`
-
-Time window in seconds for rate limiting.
-
-### `RATE_LIMIT_MAX`
-**Optional** | Number | Default: `100`
-
-Maximum requests per time window.
-
-### Advanced Rate Limiting (Production)
-
-```env
-RATE_LIMIT_SHORT=10/1s    # 10 requests per second
-RATE_LIMIT_MEDIUM=100/1m  # 100 requests per minute
-RATE_LIMIT_LONG=1000/1h   # 1000 requests per hour
-```
+The API allows **120 requests per minute per route and client address** (the global
+`ThrottlerGuard`; some routes, such as `POST /auth/register`, allow fewer). The limit
+is not set by an environment variable. Behind a reverse proxy, set
+[`TRUST_PROXY`](#trust_proxy) so the client address is the caller's, not the proxy's.
 
 ---
 
@@ -200,8 +218,53 @@ Selects the process that owns the WhatsApp engine sessions:
   operations over BullMQ. The worker must be running and share the API's
   sessions volume.
 
+The API and the worker must see the same value. The stock Compose files with a
+worker give both services the one in `.env`.
+
 ```env
 ENGINE_HOST=api
+```
+
+---
+
+## WhatsApp Web Engine
+
+A profile on the `whatsapp-web-js` engine runs its own headless Chromium. When that page crashes or the
+browser dies (for example when the host runs out of memory and the kernel kills it), the profile's engine is
+restarted from its stored session automatically, without a QR, and the other profiles are not touched.
+
+### `WWEBJS_MEMORY_LIMIT_MB`
+**Optional** | Number (MB) | Default: `2500`
+
+The memory a profile's Chromium (the browser and its pages) may hold before that profile's engine is restarted
+from its session, checked every minute while the profile is online. A WhatsApp Web page grows over days; on a
+small host one page can take enough memory for the kernel to kill processes. `0` turns the check off. It is
+measured on Linux only. The restart briefly takes that profile offline (up to a few minutes). A profile on a
+call (its audio in the dashboard, or being recorded) is restarted only once the call ends, if it is still over
+the limit then. A profile restarted for memory is not restarted for memory again within 30 minutes, so a limit
+below its normal size cannot keep it offline; raise the limit if the log says so. A crash is still recovered in
+that time.
+
+```env
+WWEBJS_MEMORY_LIMIT_MB=2500
+```
+
+---
+
+## Send Timeout
+
+### `SEND_TIMEOUT_MS`
+**Optional** | Number (ms) | Default: `60000`
+
+The longest one WhatsApp send may take. A profile's sends go out one after another,
+so a send that hangs would hold every later send of that profile.
+Past this bound the send fails with `504 SEND_TIMEOUT` and the next one goes. The
+message is stored as `failed`, but WhatsApp may still deliver it, so the gateway
+never retries a timed-out send. A normal send takes seconds; raise this for large
+media over a slow link.
+
+```env
+SEND_TIMEOUT_MS=60000
 ```
 
 ---
@@ -256,18 +319,222 @@ historical fixed policy of 30s.
 ### `WEBHOOK_ALLOW_PRIVATE_TARGETS`
 **Optional** | Boolean | Default: `false`
 
-SSRF guard for tenant-controlled URLs (webhook targets, custom-AI endpoints).
-By default targets that resolve to loopback, private, link-local or reserved
-addresses are **blocked** (cloud metadata `169.254.169.254` is always blocked,
-even when this is `true`). Self-hosted deployments that deliver to internal
-services on the same network (Chatwoot, Typebot, n8n, localhost) set this to
-`true` to allow private targets. Leave `false` for public / multi-tenant
-deployments.
+SSRF guard for tenant-controlled URLs (webhook targets, custom-AI endpoints,
+the customer lookup URL). By default targets that resolve to loopback, private,
+link-local or reserved addresses are **blocked** (cloud metadata
+`169.254.169.254` is always blocked, even when this is `true`). Self-hosted
+deployments that deliver to internal services on the same network (Chatwoot,
+Typebot, n8n, localhost) set this to `true` to allow private targets. With it
+set, a `localhost` or `127.0.0.1` host is first rewritten to
+`host.docker.internal`, which must resolve from MultiWA's containers: under
+Docker, name the target by its service name or LAN address instead. Leave
+`false` for public / multi-tenant deployments.
 
 ```env
 # Allow webhooks to reach internal services on the same network
 WEBHOOK_ALLOW_PRIVATE_TARGETS=true
 ```
+
+---
+
+## Quiet-Profile Alarm
+
+A profile can stay `connected` while WhatsApp has stopped delivering messages to
+it, and nothing reports a disconnect. The quiet-profile alarm catches this: when
+a connected profile receives no incoming message for a set number of hours, it
+raises **one** alarm (an admin bell notification, plus a WhatsApp message to your
+ops numbers through another connected profile of the same organization) and
+**one** notice when messages resume. Profiles are checked every 5 minutes. A
+disconnected profile never raises the alarm: the disconnect alert covers that.
+
+The alarm is set per profile, on the profile page or with
+`PUT /api/v1/profiles/:id`:
+
+- `quietAlarmHours` — whole hours, 1 to 72, of silence before the alarm. `null`
+  (or blank on the profile page) turns it off, which is the default.
+- `quietAlarmNotify` — up to 5 WhatsApp numbers that get the message. The
+  profile's own number is skipped, and `@broadcast` and `@newsletter` addresses
+  are refused.
+
+Set it on profiles that normally receive messages throughout the active hours: a
+profile that is quiet for long stretches will raise and recover regularly.
+
+Silence is counted only inside a daily active window, so a quiet night does not
+raise an alarm. Two variables set that window. The stock compose files do not
+forward them: add them under `environment:` of the API service to override the
+defaults.
+
+### `QUIET_ALARM_ACTIVE_HOURS`
+**Optional** | `HH:MM-HH:MM` | Default: `07:00-22:00`
+
+Daily window in which a connected profile's silence counts, in the time zone
+below. The start is included, the end is not, the window cannot cross midnight
+and it must last at least an hour. An invalid value falls back to the default.
+
+### `QUIET_ALARM_TIMEZONE`
+**Optional** | IANA time zone | Default: `Asia/Jakarta`
+
+Time zone of that window, also used for the times written in the alarm message.
+An unknown zone falls back to the default.
+
+```env
+# Count silence from 08:00 to 20:00 Jakarta time
+QUIET_ALARM_ACTIVE_HOURS=08:00-20:00
+QUIET_ALARM_TIMEZONE=Asia/Jakarta
+```
+
+---
+
+## Calls
+
+Timers for incoming WhatsApp calls. They are read by the process that hosts the engine: the API by default, the worker with `ENGINE_HOST=worker`. The stock Compose files do not pass them through, so add them to the `environment:` of that service. A value that is not a positive number falls back to the default.
+
+### `CALL_RING_TIMEOUT_MS`
+**Optional** | Number (milliseconds) | Default: `90000`
+
+How long a call may stay `ringing` before MultiWA gives up on it and closes it as `unknown`, and tells your team about an unanswered call. It is the safety net for a call whose end the engine never reported. WhatsApp's call log can still settle the call afterwards (a `call.updated` webhook).
+
+### `CALL_LOG_GRACE_MS`
+**Optional** | Number (milliseconds) | Default: `60000`
+
+A call that stopped ringing as `unknown` usually gets its real outcome (missed, rejected, answered on another device) from WhatsApp's call-log message within moments. If none has arrived after this long, MultiWA tells your team about an unanswered call. The call stays `unknown` until a call log settles it.
+
+```env
+CALL_RING_TIMEOUT_MS=90000
+CALL_LOG_GRACE_MS=60000
+```
+
+The timers live in memory. When the engine host starts, every call still `ringing` is closed as `unknown` at once, whatever its age, and no `call.ended` webhook is sent for it. It stays `unknown`, since an engine passes on only the call log of a call it saw ringing since it last connected.
+
+---
+
+## Calls answered in the dashboard
+
+Agents can answer a profile's incoming calls in the dashboard (`PUT /profiles/:id/calls-settings`) through a media server in the API. It runs only where the API hosts the engines (`ENGINE_HOST=api`). The stock Compose files pass these settings to the API, except the last two (add those to the `environment:` of the API service); publish the media port by adding `docker-compose.calls-media.yml`.
+
+### `CALLS_MEDIA_ENABLED`
+**Optional** | `true` / `false` | Default: `false`
+
+The server switch. Off, the media server never starts and no profile can turn dashboard answering on. Changing it needs an API restart.
+
+### `CALLS_MEDIA_PORT`
+**Optional** | Port | Default: `40000`
+
+The one UDP+TCP port of all call audio. Agents' PCs must reach it (UDP preferred, TCP as the fallback).
+
+### `CALLS_MEDIA_ANNOUNCED_ADDRESS`
+**Required when `CALLS_MEDIA_ENABLED=true`** | IP address or host name
+
+The address agents' browsers reach the media port on, e.g. the server's LAN address. The API does not start without it.
+
+### `CALLS_MEDIA_LISTEN_IP`
+**Optional** | IPv4 address | Default: the first external interface
+
+The local address the media server listens on. Set it when the host has several interfaces or the API uses host networking.
+
+### `CALLS_MEDIA_ICE_SERVERS`
+**Optional** | JSON
+
+ICE servers for agents' browsers, e.g. a TURN server for agents outside the LAN: `[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]`.
+
+### `CALLS_MAX_TALK_MINUTES`
+**Optional** | Number (minutes) | Default: `120`
+
+A call answered in the dashboard is hung up after this long (`endReason: time_limit`).
+
+### `CALLS_CONNECT_TIMEOUT_MS`
+**Optional** | Number (milliseconds) | Default: `10000`
+
+From an agent's Answer to its audio connected. Past it the answer is undone and the call rings again for every agent, unless WhatsApp was already answering it: it is hung up then.
+
+### `CALLS_AGENT_GRACE_MS`
+**Optional** | Number (milliseconds) | Default: `15000`
+
+An agent whose browser has no connection to the API, or whose audio link is down, for this long is hung up (`endReason: agent_lost`). A reloaded agent page rejoins its call within it. The WhatsApp Web page's own audio link down for as long ends the call too (`endReason: media_failed`). It is also how long an agent's "unavailable" outlives their last socket: a reload keeps it, and closing the dashboard ends it. The API keeps it in memory, so a restart of the API (a deploy too) forgets it: every agent who had turned calls off is available, and rung, again.
+
+### `CALLS_MAX_VIDEO_CALLS`
+**Optional** | Number (0 or more) | Default: `2`
+
+How many calls the server answers with video at once, for every organization. A video call past it is answered as voice, and its banner says the server is busy. `0` answers every video call as voice. Each video call costs the WhatsApp Web page about 1 GB of memory and close to a CPU core (Chromium encodes VP8 without a GPU), so raise it only on a server with room for that.
+
+```env
+CALLS_MEDIA_ENABLED=true
+CALLS_MEDIA_ANNOUNCED_ADDRESS=192.0.2.10
+CALLS_MAX_TALK_MINUTES=120
+```
+
+---
+
+## Call recordings
+
+Calls answered in the dashboard can be recorded (`PUT /profiles/:id/calls-settings` with `recording: true`), always with an announcement the caller hears first (`POST /profiles/:id/calls-announcement`). Recordings and announcements are private:
+
+- nothing serves them without the login of an owner or admin of their organization;
+- every play and download is audited;
+- recording cannot be turned on unless the storage refuses reads without credentials. The API checks this then, and again every night at 02:30 server time (`TZ`). When a check finds the storage public (the nightly one, or the one run to turn recording on), recording is turned off on every profile, and every organization with recording on or recordings stored is alerted: its owners and admins get a bell notification, and the [quiet-profile alarm](#quiet-profile-alarm) numbers of its profiles (`quietAlarmNotify`) a WhatsApp message. A nightly check that proves nothing alerts the organizations whose profiles record the same way, and leaves recording on.
+
+A recorded call is recorded in stereo, from before the announcement: left the caller, right what the caller heard (the announcement, then the agent). The agent is connected once the announcement has played. When the recorder does not start, or the announcement does not play, the call goes on unrecorded with the agent connected, and the owners and admins are told the same way (each at most once an hour per profile).
+
+When recording is on for a profile but this server's recordings storage, or `CALL_RECORDINGS_TMP`, is not set up, its calls are not recorded, and every night its organization's owners and admins are reminded.
+
+A recording is written to `CALL_RECORDINGS_TMP` while its call lasts, and stored when the call ends, with four tries over about 40 seconds. When they all fail, it stays on the server, the owners and admins are told, and it is tried again at the next start and every night. It is never stored to a storage last found public, and it is deleted unstored once older than its profile's retention period. A recording cut short by a restart is stored at the next start, marked `partial`.
+
+The same nightly job deletes the recordings older than each profile's retention period (`retentionDays`, 90 by default). It also deletes the files nothing points at any more (for one, those of a deleted workspace or organization; a deleted profile's files are deleted with it). The stock Compose files pass all six settings below to the API.
+
+> ⚠️ **One recordings location per MultiWA database**: never point two installations, or a restored copy, at the same bucket and prefix or the same directory — each night each would delete the other's files.
+
+### `CALL_RECORDINGS_STORAGE`
+**Optional** | `local` / `s3` | Default: `STORAGE_TYPE`, else `local`
+
+Where recordings go. Media can stay local while recordings go to a bucket, or the other way round. Changing it leaves the recordings already stored behind: this server can neither play nor delete them until it uses that storage again (retention skips them, and the log says how many).
+
+### `CALL_RECORDINGS_PATH`
+**Required for local recordings** | Path | Docker Compose: `/data/call-recordings` (volume `call_recordings`)
+
+A directory of their own, on a persistent volume.
+
+- It must not be inside or around `STORAGE_PATH` (served without a login) or `SESSIONS_DIR` (its backups would carry every recording), nor around the API's working directory (the nightly sweep would walk the whole application).
+- It must belong to the API's user alone. It is made 0700; one of another user, a shared (sticky) directory such as `/tmp`, or a symlink is refused. The API image runs as root, so a named Docker volume is made 0700; a bind mount must belong to the container's user.
+- Unset or refused, recording cannot be turned on. `GET /calls/media/status` says why, in `server.recordings.problem`.
+
+### `CALL_RECORDINGS_BUCKET`
+**Optional** | Bucket name | Default: `S3_BUCKET`
+
+- S3 recordings need `S3_ENDPOINT`, `S3_ACCESS_KEY` and `S3_SECRET_KEY`, and use `S3_REGION` (default `us-east-1`).
+- A private bucket of their own is strongly advised. Objects are written without an ACL, so they are as private as the bucket.
+- The check fetches a probe without credentials at `S3_ENDPOINT`, and at `S3_PUBLIC_URL` when it is set (a loopback `S3_PUBLIC_URL`, such as the dev compose's `http://localhost:9000`, is the same server and is not fetched twice). A refusal (`400`, `401`, `403` or `404`) or a page that is not the probe (a login page) passes, the probe's own bytes are `storage_not_private`, and any other answer, or none within 5 seconds, is `storage_check_failed`.
+- The check sees only those addresses. Turn off every other public way to the recordings bucket: a public bucket URL (Cloudflare R2's `r2.dev`, a custom domain) or a CDN that reads the bucket on its own credentials.
+- Keep versioning off on the recordings bucket, or expire noncurrent versions with a lifecycle rule: with versioning on, a deleted recording stays as a noncurrent version.
+- Compatible stores: AWS S3, MinIO, Wasabi, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, and Google Cloud Storage (XML API).
+
+### `CALL_RECORDINGS_PREFIX`
+**Optional** | Key prefix | Default: `call-recordings/`
+
+Letters, digits, `.`, `_`, `-` and `/` only, without a `.` or `..` segment; another value leaves recording unavailable (`server.recordings.problem` says why).
+
+Changing it, the bucket or `CALL_RECORDINGS_PATH` leaves the recordings already stored behind: each recording remembers its location (`s3:<bucket>/<prefix>` or `local:<path>`), and this server neither plays nor deletes one stored elsewhere (retention skips them, and the log says how many). To move them, copy the objects to the new location first, then point their rows at it: `UPDATE call_recordings SET "storageLocation" = '<new>' WHERE "storageLocation" = '<old>';`. Another provider with the same bucket and prefix keeps the same location (the endpoint is not part of it): copy the objects before switching, or deletes and retention would mark rows deleted while their files stay at the old provider.
+
+### `CALL_RECORDINGS_SSE`
+**Optional** | `AES256` / `aws:kms`
+
+Server-side encryption of every object, for stores that support it. Another value leaves recording unavailable.
+
+```env
+CALL_RECORDINGS_STORAGE=s3
+CALL_RECORDINGS_BUCKET=multiwa-call-recordings
+CALL_RECORDINGS_SSE=AES256
+```
+
+### `CALL_RECORDINGS_TMP`
+**Required for recording** | Path | Docker Compose: `/data/call-recordings-tmp` (volume `call_recordings_tmp`)
+
+Where a recording is written while its call lasts, whatever `CALL_RECORDINGS_STORAGE` is. It holds about 0.5 MB a minute per recorded call, and as much again for a moment while that call's recording is stored.
+
+- On a persistent volume, a recording cut short by a restart is stored at the next start (`partial`). Elsewhere, it is lost with the container.
+- The same rules as `CALL_RECORDINGS_PATH` apply: not inside or around `STORAGE_PATH`, `SESSIONS_DIR` or `CALL_RECORDINGS_PATH`, nor around the API's working directory.
+- It must belong to the API's user alone. It is made 0700; one of another user, a shared (sticky) directory such as `/tmp`, or a symlink is refused. The API image runs as root, so a named Docker volume is made 0700; a bind mount must belong to the container's user.
+- Unset or refused, recording cannot be turned on, and `GET /calls/media/status` says why, in `server.recordings.problem`. Recordings already stored stay playable, deletable and under retention.
+- One per API process: two processes sharing one would take each other's recordings in progress for leftovers. (The engines run in one API process; that is the supported setup.)
 
 ---
 

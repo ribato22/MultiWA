@@ -7,7 +7,7 @@ import { SetMetadata } from '@nestjs/common';
  * the tenancy tree and scope to the org directly (or via Workspace):
  *   - workspace: Workspace.organizationId
  *   - account:   Account -> Workspace.organizationId
- *   - role:      Role.organizationId
+ *   - call:      Call.profile.workspace.organizationId
  */
 export type TenantResource =
   | 'profile'
@@ -20,9 +20,9 @@ export type TenantResource =
   | 'message'
   | 'scheduledMessage'
   | 'knowledgeDocument'
+  | 'call'
   | 'workspace'
-  | 'account'
-  | 'role';
+  | 'account';
 
 export interface TenantCheck {
   /** Where to read the id from on the request. */
