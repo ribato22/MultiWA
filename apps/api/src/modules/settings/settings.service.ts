@@ -55,7 +55,8 @@ export class SettingsService {
 
     // Default: check env vars
     const envConfig: StorageConfig = {
-      type: process.env.S3_ENDPOINT ? 's3' : 'local',
+      // What uploads use (uploads.module.ts): S3_ENDPOINT may be set for call recordings alone.
+      type: process.env.STORAGE_TYPE === 's3' ? 's3' : 'local',
       s3Endpoint: process.env.S3_ENDPOINT,
       s3Bucket: process.env.S3_BUCKET,
       s3Region: process.env.S3_REGION || 'us-east-1',

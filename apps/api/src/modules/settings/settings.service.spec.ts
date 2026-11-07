@@ -35,3 +35,17 @@ describe('SettingsService secrets', () => {
     expect((await new SettingsService().getSmtpConfig()).pass).toBe('p4ss-w0rd');
   });
 });
+
+describe('SettingsService storage type', () => {
+  beforeEach(() => db.systemSettings.findUnique.mockReset().mockResolvedValue(null));
+  afterEach(() => vi.unstubAllEnvs());
+
+  // Uploads go where STORAGE_TYPE says. S3_ENDPOINT alone may be there for call recordings (CALL_RECORDINGS_STORAGE=s3).
+  it('reports the storage STORAGE_TYPE picks for uploads, not S3 because an S3 endpoint is set', async () => {
+    vi.stubEnv('S3_ENDPOINT', 'https://s3.example.com');
+    vi.stubEnv('STORAGE_TYPE', 'local');
+    expect((await new SettingsService().getStorageConfig()).type).toBe('local');
+    vi.stubEnv('STORAGE_TYPE', 's3');
+    expect((await new SettingsService().getStorageConfig()).type).toBe('s3');
+  });
+});
