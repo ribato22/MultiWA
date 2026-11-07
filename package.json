@@ -91,7 +91,7 @@
       "@humanfs/node@>=0.16.0 <0.16.8": "^0.16.8",
       "bn.js@>=4.0.0 <4.12.3": "^4.12.3",
       "http-cache-semantics@>=4.0.0 <4.3.0": "^4.3.0",
-      "@whiskeysockets/baileys>music-metadata": "11.16.0"
+      "@whiskeysockets/baileys>music-metadata": "11.16.1"
     },
     "neverBuiltDependencies": [
       "isolated-vm"
