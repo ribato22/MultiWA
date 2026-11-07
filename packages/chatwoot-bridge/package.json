@@ -1,6 +1,6 @@
 {
   "name": "@multiwa/chatwoot-bridge",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Bridge between MultiWA WhatsApp Gateway and Chatwoot",
   "main": "dist/index.js",

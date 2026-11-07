@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-11-07
+
 ### Added
 
 - **Video calls answered with video.** A one-to-one video call is answered with WhatsApp Web's video call UI while the server has a video slot free (`CALLS_MAX_VIDEO_CALLS`, default 2) and the profile's WhatsApp Web can. The agent's camera starts off, and `call:camera` turns it on and off. `call:ringing` says how a video call will be answered (`video`), `call:answer` carries the caller's picture (`callerVideoProducerId`), and `GET /calls/media/status` reports `videoCalls` and each profile's `video`. Video is best effort: whatever of it fails, the call goes on as voice.
@@ -17,16 +19,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A video call can be answered in the dashboard. Without a free video slot, or where WhatsApp Web cannot answer with video, it is answered as a voice call: the agent speaks, and the caller sees no video. Its banner says so, and `call:ringing` carries `isVideo`. It no longer rings with `unavailableReason: video_call`. Group calls still ring with **Answer on the phone**.
+- The README, the dashboard, the landing pages, the docs, and the SDK and n8n package descriptions call MultiWA a self-hosted WhatsApp API gateway with a built-in team inbox, not a "WhatsApp Business API" gateway (the name of Meta's official API). They also say that MultiWA is not affiliated with WhatsApp or Meta, and that WhatsApp can block or log out a number.
+- The calls media server runs mediasoup 3.32.1, and the images fetch its worker binary 3.32.1. The dashboard and the WhatsApp Web page use mediasoup-client 3.26.0.
 
 ### Fixed
 
 - Settings → Storage reports the storage uploads really use (`STORAGE_TYPE`). It said S3 whenever `S3_ENDPOINT` was set, which is also the case when only call recordings go to S3 (`CALL_RECORDINGS_STORAGE=s3`). The uploads' S3 region now defaults to `us-east-1`, like the call recordings'.
 - **Auto-reject rejects calls again.** Since WhatsApp Web 2.3000.1053x (rolled out around 2026-11-05) its voip stack has no `rejectCall`, so a profile with auto-reject on let every call ring until the caller gave up, logged as missed (its auto-reply still went out). MultiWA now rejects the way WhatsApp Web's own decline button does (`rejectCallWithEndReason`), and still uses `rejectCall` on older builds.
 - A `%`, `_` or `\` typed in the contacts or templates search, or in the audit log's action filter, now matches itself. Prisma hands these to `LIKE` as wildcards, so a search for `%` matched everything.
+- A profile whose number WhatsApp keeps off web calling now says so in the calls readiness (`web_calling_disabled`: "WhatsApp has not enabled calling on WhatsApp Web for this number"). It said that WhatsApp Web had changed or was still loading (`voip_stack_unavailable`).
+- The Quick Start (docs/03) reads the default workspace and creates its profile there. It sent no `workspaceId` and got `400`.
 
 ### Security
 
-- music-metadata 11.16.0 (from 7.14.0), which reads an uploaded call announcement and, for Baileys, a voice note's length. It closes six advisories in its parsers (ASF, DSF, EBML, ID3v2, MP4 and APEv2): crafted files that loop for ever or allocate without bound. The file-type 16.5.4 patch goes with it: music-metadata 11 uses file-type 21, which has that fix.
+- Dependencies with security fixes, each inside its major: fastify 5.12.7 (header validation bypass), fast-uri 3.1.9 and 4.2.3, follow-redirects 1.16.2 (credential headers kept on cross-origin redirects), body-parser 1.20.9 in the Chatwoot bridge, and postcss-selector-parser 6.1.5 in the dashboard build.
+- music-metadata 11.16.1 (from 7.14.0), which reads an uploaded call announcement and, for Baileys, a voice note's length. It closes six advisories in its parsers (ASF, DSF, EBML, ID3v2, MP4 and APEv2): crafted files that loop for ever or allocate without bound. The file-type 16.5.4 patch goes with it: music-metadata 11 uses file-type 21, which has that fix.
 - A socket on `/ws` is disconnected when its API key is deleted or expires, when its login session is logged out, revoked or expires, and when its user is removed or deactivated. Deleting an API key, logging out, revoking a session and removing a member close their sockets at once; the server also checks every socket again each minute. See docs/08.
 
 ## [2.0.0] - 2026-11-05
