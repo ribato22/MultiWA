@@ -28,7 +28,7 @@ describe('call media path (real mediasoup worker + headless Chrome)', () => {
     vi.stubEnv('CALLS_MEDIA_ENABLED', 'true');
     vi.stubEnv('CALLS_MEDIA_ANNOUNCED_ADDRESS', '127.0.0.1');
     vi.stubEnv('CALLS_MEDIA_LISTEN_IP', '127.0.0.1');
-    vi.stubEnv('CALLS_MEDIA_PORT', String(45000 + Math.floor(Math.random() * 3000)));
+    vi.stubEnv('CALLS_MEDIA_PORT', String(23000 + Math.floor(Math.random() * 3000)));
     service = new CallMediaService(new EventEmitter2());
     await service.onModuleInit();
     expect(service.status().worker).toBe('up');

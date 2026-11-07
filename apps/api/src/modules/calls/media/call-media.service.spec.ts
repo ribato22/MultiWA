@@ -53,7 +53,9 @@ describe('CallMediaService', () => {
     vi.stubEnv('CALLS_MEDIA_ENABLED', 'true');
     vi.stubEnv('CALLS_MEDIA_ANNOUNCED_ADDRESS', '127.0.0.1');
     vi.stubEnv('CALLS_MEDIA_LISTEN_IP', '127.0.0.1');
-    vi.stubEnv('CALLS_MEDIA_PORT', String(42000 + Math.floor(Math.random() * 3000)));
+    // Below the ephemeral ports (Linux hands out 32768-60999, macOS 49152-65535), which an outgoing socket of another
+    // test can hold: there the worker could not bind, and started with no pid.
+    vi.stubEnv('CALLS_MEDIA_PORT', String(20000 + Math.floor(Math.random() * 3000)));
   };
   /** The transports the WebRtcServer still holds (mediasoup's test accessor). */
   const inServer = () => (service['server'] as any).webRtcTransportsForTesting.size as number;
