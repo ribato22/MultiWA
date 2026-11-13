@@ -1,6 +1,8 @@
 // MultiWA Gateway API - Main Entry Point
 // apps/api/src/main.ts
 
+// Sentry first, before anything it hooks into is loaded (a no-op without SENTRY_DSN).
+import './instrument';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';

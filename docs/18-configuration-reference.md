@@ -584,9 +584,20 @@ NEXT_PUBLIC_API_URL=https://api.example.com
 
 ### Sentry (Error Tracking)
 
+Optional. With `SENTRY_DSN` set, the API and the worker send their errors to that Sentry project (sentry.io or
+self-hosted): an error behind a `500` that Nest did not expect, a crash of the process, and a queue job's last failed
+attempt (an attempt BullMQ retries is not sent). Errors only: no tracing, no profiling. Unset, nothing is sent.
+
 ```env
-SENTRY_DSN=https://key@sentry.io/project
+SENTRY_DSN=https://<public-key>@sentry.example.com/<project-id>
+# Optional, default NODE_ENV
+SENTRY_ENVIRONMENT=production
 ```
+
+Each event carries the tag `service` (`api` or `worker`) and the release `multiwa@<version>`. Nothing personal is sent:
+a request keeps its method and path (no query string, headers, cookies or body), no user is set, phone numbers, chat
+ids and emails are replaced in every message, a Prisma error keeps its first line and its reason (not the query
+between them), and log lines are not sent as breadcrumbs. Both containers must reach the DSN's host over HTTPS.
 
 ### MinIO (S3-compatible Storage)
 
