@@ -69,6 +69,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://multiwa:${DB_PASSWORD:-multiwa123}@postgres:5432/${DB_NAME:-multiwa}?schema=public
       REDIS_URL: redis://redis:6379
+      # Optional: Sentry, errors only (docs/18); unset: off
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       API_PORT: 3333
       API_HOST: 0.0.0.0
       # Leave unset to auto-generate strong, persistent secrets on first boot
@@ -156,6 +159,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://multiwa:${DB_PASSWORD:-multiwa123}@postgres:5432/${DB_NAME:-multiwa}?schema=public
       REDIS_URL: redis://redis:6379
+      # Optional: Sentry, errors only (docs/18); unset: off
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       ENGINE_HOST: ${ENGINE_HOST:-api}
       WHATSAPP_ENGINE: ${DEFAULT_ENGINE:-whatsapp-web-js}
       DEFAULT_ENGINE: ${DEFAULT_ENGINE:-whatsapp-web-js}

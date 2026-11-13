@@ -2,7 +2,8 @@
 // apps/api/src/app.module.ts
 
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { SentryGlobalFilter, SentryModule } from '@sentry/nestjs/setup';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { DemoGuard } from './common/guards/demo.guard';
@@ -51,6 +52,8 @@ import { MetricsModule } from './metrics/metrics.module';
 
 @Module({
   imports: [
+    // Sentry (src/instrument.ts): a no-op without SENTRY_DSN.
+    SentryModule.forRoot(),
     // Prometheus metrics at GET /metrics (default runtime metrics)
     MetricsModule,
     // Rate limiting — global default; tighten per-route with @Throttle()
@@ -126,6 +129,11 @@ import { MetricsModule } from './metrics/metrics.module';
   ],
   controllers: [RootController, HealthController],
   providers: [
+    // Reports what Nest answers 500 for (an error it did not expect) to Sentry; the answer itself stays Nest's.
+    {
+      provide: APP_FILTER,
+      useClass: SentryGlobalFilter,
+    },
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,

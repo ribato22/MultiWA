@@ -95,6 +95,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${DB_USER:-multiwa}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-multiwa}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      # Optional: Sentry, errors only (docs/18); unset: off
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       # Must match the API upstream port in docker/nginx/nginx.conf (api:3333).
       API_PORT: 3333
       API_HOST: 0.0.0.0
@@ -182,6 +185,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${DB_USER:-multiwa}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-multiwa}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      # Optional: Sentry, errors only (docs/18); unset: off
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       ENGINE_HOST: ${ENGINE_HOST:-api}
       WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-whatsapp-web.js}
       DEFAULT_ENGINE: ${WHATSAPP_ENGINE:-whatsapp-web.js}

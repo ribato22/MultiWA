@@ -1,5 +1,6 @@
 // apps/worker/src/main.ts
 import 'reflect-metadata'; // MUST be first — required for NestJS DI decorator metadata
+import { reportFinalFailure } from './instrument'; // Sentry next, before the rest is loaded
 import { Worker, Queue } from 'bullmq';
 import Redis from 'ioredis';
 import http from 'node:http';
@@ -147,6 +148,7 @@ messageWorker.on('completed', (job) => {
 
 messageWorker.on('failed', (job, err) => {
   logger.error({ jobId: job?.id, queue: 'messages', error: err.message }, 'Job failed');
+  reportFinalFailure('messages', job, err);
 });
 
 automationWorker.on('completed', (job) => {
@@ -155,6 +157,7 @@ automationWorker.on('completed', (job) => {
 
 automationWorker.on('failed', (job, err) => {
   logger.error({ jobId: job?.id, queue: 'automation', error: err.message }, 'Job failed');
+  reportFinalFailure('automation', job, err);
 });
 
 webhookWorker.on('completed', (job) => {
@@ -166,6 +169,7 @@ webhookWorker.on('failed', (job, err) => {
     { jobId: job?.id, attempt: job?.attemptsMade, queue: 'webhooks', error: err.message },
     'Webhook delivery failed',
   );
+  reportFinalFailure('webhooks', job, err);
 });
 
 scheduledWorker.on('completed', (job, result) => {
@@ -174,6 +178,7 @@ scheduledWorker.on('completed', (job, result) => {
 
 scheduledWorker.on('failed', (job, err) => {
   logger.error({ jobId: job?.id, error: err.message }, 'Scheduled processing failed');
+  reportFinalFailure('scheduled', job, err);
 });
 
 // Schedule periodic job for checking scheduled messages (every minute)
@@ -273,6 +278,7 @@ const start = async () => {
     );
     engineCommandWorker.on('failed', (job, err) => {
       logger.error({ jobId: job?.id, name: job?.name, error: err.message }, 'Engine command failed');
+      reportFinalFailure('engine-commands', job, err);
     });
 
     // Durable outbound sends drained through the per-profile send gate. Concurrency
@@ -288,6 +294,7 @@ const start = async () => {
     );
     outboundSendWorker.on('failed', (job, err) => {
       logger.warn({ jobId: job?.id, attempt: job?.attemptsMade, error: err.message }, 'Queued send failed');
+      reportFinalFailure('outbound-send', job, err);
     });
 
     logger.info('🛰️  Engine command + outbound send workers started (ENGINE_HOST=worker)');
