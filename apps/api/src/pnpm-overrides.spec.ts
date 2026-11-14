@@ -17,6 +17,11 @@
 //     no fix for its parser advisories. It gets the version apps/api pins, so one copy is
 //     installed: 11, an ES module that Node 24 require()s, which still has the parseBuffer and
 //     parseStream Baileys reads a voice note's length with (tested below).
+//   - "get-uri>basic-ftp": get-uri, which fetches a proxy auto-config file for Puppeteer's
+//     browser download, asks for basic-ftp ^5, a line with no fix for two advisories that crash
+//     the process. 6.0's one breaking change refuses a data connection to a host other than the
+//     server's unless allowSeparateTransferHost is set; the calls get-uri makes are unchanged
+//     (tested below).
 //   - The two https tarballs are the SSH-lockfile guard (see the Dependabot lockfile notes).
 //
 // Remove an entry once every parent asks for a range that already excludes the vulnerable
@@ -69,5 +74,13 @@ describe('pnpm.overrides', () => {
     const wav = path.join(__dirname, 'modules', 'calls', 'recordings', 'fixtures', 'tone.wav'); // one second
     expect(await getAudioDuration(readFileSync(wav))).toBeCloseTo(1, 3); // parseBuffer
     expect(await getAudioDuration(wav)).toBeCloseTo(1, 3); // parseStream
+  });
+
+  it('give get-uri a basic-ftp 6 that it still connects with', async () => {
+    const store = createRequire(path.join(REPO_ROOT, 'node_modules', '.pnpm', 'node_modules', 'index.js'));
+    const fromGetUri = createRequire(store.resolve('get-uri'));
+    expect(fromGetUri('basic-ftp/package.json').version).toMatch(/^6\./);
+    const { getUri } = store('get-uri');
+    await expect(getUri('ftp://127.0.0.1:1/proxy.pac')).rejects.toHaveProperty('code', 'ECONNREFUSED');
   });
 });

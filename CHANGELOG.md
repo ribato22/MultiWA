@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Sentry, optional.** With `SENTRY_DSN` set, the API and the worker send their errors to Sentry: an error behind a `500` that Nest did not expect, a crash of the process, and a queue job's last failed attempt (not each retry). Errors only, no tracing. Nothing personal is sent: phone numbers, chat ids and emails are replaced, a request keeps its method and path, a Prisma error keeps its first line and its reason, and log lines are not sent. `SENTRY_ENVIRONMENT` names the environment (default `NODE_ENV`). The docs listed `SENTRY_DSN` before, but nothing read it.
 
+### Security
+
+- basic-ftp 6.2.6 (from 5.3.1), which Puppeteer reaches only when a proxy variable points its browser download at a `pac+ftp://` URL. It closes two advisories that crash the process: a password with a line break, and a crafted directory listing. Both fixes exist only in the new major; its one breaking change, no data connection to a host other than the server by default, does not touch that use.
+
 ## [2.1.0] - 2026-11-07
 
 ### Added
