@@ -1,8 +1,89 @@
 diff --git a/src/Client.js b/src/Client.js
-index 800109ebf7720d5f0f29091518a8a25f7fd8e381..e04971b6c73ac37b20dd7b3fa899a3fe44a618dd 100644
+index 800109ebf7720d5f0f29091518a8a25f7fd8e381..b694bf9b8c56b49f7d35de7c8e972a25858213ab 100644
 --- a/src/Client.js
 +++ b/src/Client.js
-@@ -893,6 +893,30 @@ class Client extends EventEmitter {
+@@ -143,7 +143,27 @@ class Client extends EventEmitter {
+ 
+         await this.pupPage.evaluate(ExposeAuthStore);
+ 
+-        const needAuthentication = await this.pupPage.evaluate(async () => {
++        const needAuthentication = await this.pupPage.evaluate(
++            async (authTimeoutMs) => {
++            // MultiWA patch (adapted from wwebjs/whatsapp-web.js#201990): WhatsApp Web
++            // >= 2.3000.1055852612 sends a logged-out session to /login/, which has no
++            // WAWebSocketModel; read the socket state from WAWebBackendEventBus there.
++            // Chosen by route, as upstream does: every other page runs the original
++            // logic below, unchanged, even if the module were missing for a moment.
++            if (window.location.pathname.startsWith('/login')) {
++                const bus = window.require('WAWebBackendEventBus').BackendEventBus;
++                const settling = (s) =>
++                    !s || s === 'OPENING' || s === 'UNLAUNCHED' || s === 'PAIRING';
++                const started = Date.now();
++                while (settling(bus.socketState)) {
++                    if (Date.now() - started > authTimeoutMs) {
++                        throw new Error('auth timeout');
++                    }
++                    await new Promise((r) => setTimeout(r, 200));
++                }
++                const busState = bus.socketState;
++                return busState == 'UNPAIRED' || busState == 'UNPAIRED_IDLE';
++            }
+             let state = window.require('WAWebSocketModel').Socket.state;
+ 
+             if (
+@@ -177,7 +197,9 @@ class Client extends EventEmitter {
+             }
+             state = window.require('WAWebSocketModel').Socket.state;
+             return state == 'UNPAIRED' || state == 'UNPAIRED_IDLE';
+-        });
++            },
++            this.options.authTimeoutMs,
++        );
+ 
+         if (needAuthentication) {
+             const { failed, failureEventPayload, restart } =
+@@ -398,16 +420,33 @@ class Client extends EventEmitter {
+             },
+         );
+         await this.pupPage.evaluate(() => {
+-            window
+-                .require('WAWebSocketModel')
+-                .Socket.on('change:state', (_AppState, state) => {
++            if (!window.location.pathname.startsWith('/login')) {
++                window
++                    .require('WAWebSocketModel')
++                    .Socket.on('change:state', (_AppState, state) => {
++                        window.onAuthAppStateChangedEvent(state);
++                    });
++                window
++                    .require('WAWebSocketModel')
++                    .Socket.on('change:hasSynced', () => {
++                        window.onAppStateHasSyncedEvent();
++                    });
++            } else {
++                // MultiWA patch (adapted from wwebjs/whatsapp-web.js#201990): /login/ route.
++                const bus = window.require('WAWebBackendEventBus').BackendEventBus;
++                bus.on('set_socket_state', (state) => {
+                     window.onAuthAppStateChangedEvent(state);
+                 });
+-            window
+-                .require('WAWebSocketModel')
+-                .Socket.on('change:hasSynced', () => {
+-                    window.onAppStateHasSyncedEvent();
++                // Only once the main app is loaded. /login/ has no WAWebCollections: a run
++                // of onAppStateHasSyncedEvent there would set window.WWebJS and then fail in
++                // attachEventListeners, and a later re-inject would skip the injection and
++                // report ready with no event listeners attached.
++                bus.on('open_socket_stream', () => {
++                    if (window.require('WAWebCollections')) {
++                        window.onAppStateHasSyncedEvent();
++                    }
+                 });
++            }
+             const Cmd = window.require('WAWebCmd').Cmd;
+             Cmd.on('offline_progress_update_from_bridge', () => {
+                 window.onOfflineProgressUpdateEvent(
+@@ -893,6 +932,30 @@ class Client extends EventEmitter {
              this.emit(Events.INCOMING_CALL, cll);
          });
  
@@ -33,7 +114,7 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..e04971b6c73ac37b20dd7b3fa899a3fe
          await exposeFunctionIfAbsent(
              this.pupPage,
              'onReaction',
-@@ -1074,26 +1098,104 @@ class Client extends EventEmitter {
+@@ -1074,26 +1137,104 @@ class Client extends EventEmitter {
                  WAWebCallCollection &&
                  typeof WAWebCallCollection.on === 'function'
              ) {
@@ -154,7 +235,22 @@ index 800109ebf7720d5f0f29091518a8a25f7fd8e381..e04971b6c73ac37b20dd7b3fa899a3fe
              }
              Chat.on('remove', async (chat) => {
                  window.onRemoveChatEvent(
-@@ -3209,10 +3311,73 @@ class Client extends EventEmitter {
+@@ -1288,7 +1429,13 @@ class Client extends EventEmitter {
+      */
+     async logout() {
+         await this.pupPage.evaluate(() => {
+-            return window.require('WAWebSocketModel').Socket.logout();
++            // MultiWA patch (adapted from wwebjs/whatsapp-web.js#201990): /login/ has
++            // no WAWebSocketModel.
++            return window.location.pathname.startsWith('/login')
++                ? window
++                      .require('WAWebBackendEventBus')
++                      .BackendEventBus.triggerLogout()
++                : window.require('WAWebSocketModel').Socket.logout();
+         });
+         await this.pupBrowser.close();
+ 
+@@ -3209,10 +3356,73 @@ class Client extends EventEmitter {
  
          return await this.pupPage.evaluate(
              async (startTimeTs, callType) => {
@@ -259,6 +355,22 @@ index dd977e85b0c0c40d2625cd337264fc9ae3bed17b..6c1ca6ba736f23d50e82d5e672622ff5
              }
          }, this.id._serialized);
  
+diff --git a/src/util/Injected/AuthStore/AuthStore.js b/src/util/Injected/AuthStore/AuthStore.js
+index 9c4644d7d9b0ccb360c3a0c21b0568da19d276ff..4fafb960c0e7f949813c8687971e0cba1c006ba4 100644
+--- a/src/util/Injected/AuthStore/AuthStore.js
++++ b/src/util/Injected/AuthStore/AuthStore.js
+@@ -2,7 +2,10 @@
+ 
+ exports.ExposeAuthStore = () => {
+     window.AuthStore = {};
+-    window.AuthStore.AppState = window.require('WAWebSocketModel').Socket;
++    // MultiWA patch (adapted from wwebjs/whatsapp-web.js#201990): WhatsApp Web
++    // >= 2.3000.1055852612 sends a logged-out session to /login/, which has no
++    // WAWebSocketModel. AppState is not read anywhere, so it must not throw here.
++    window.AuthStore.AppState = window.require('WAWebSocketModel')?.Socket;
+     window.AuthStore.Cmd = window.require('WAWebCmd').Cmd;
+     window.AuthStore.Conn = window.require('WAWebConnModel').Conn;
+     window.AuthStore.OfflineMessageHandler = window.require(
 diff --git a/src/util/Injected/Utils.js b/src/util/Injected/Utils.js
 index 540078a9d07b3df07ccd51b030556a72af4cf650..982eff3a6578ab6e96625fa1c3aa5853b1f6aff6 100644
 --- a/src/util/Injected/Utils.js

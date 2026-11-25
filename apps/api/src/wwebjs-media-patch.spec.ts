@@ -717,3 +717,159 @@ describe('whatsapp-web.js createCallLink behaviour', () => {
     });
   });
 });
+
+// WhatsApp Web 2.3000.1055852612+ sends a logged-out session to /login/, where
+// `window.require('WAWebSocketModel')` is null. 1.34.7 read `.Socket` off it in ExposeAuthStore and
+// in inject(), so no QR was ever made: the profile page showed "Connection failed" and the engine
+// logged `Cannot read properties of null (reading 'Socket')` (wwebjs/whatsapp-web.js#201988). The
+// patch, adapted from #201990, reads WAWebBackendEventBus on the /login route only, chosen by route as
+// upstream does: every other page, including every logged-in one, runs the original code.
+const installedAuthStoreJs = () =>
+  installedFile(['src', 'util', 'Injected', 'AuthStore', 'AuthStore.js'], "require('WAWebSocketModel')?.Socket");
+
+/** A slice of the installed Client.js between two markers, run as a page function against a fake window. */
+function clientBlock(from: string, to: string): string {
+  const src = readFileSync(installedClientJs()!, 'utf8');
+  const start = src.indexOf(from);
+  const end = src.indexOf(to, start);
+  expect(start, `marker not found in Client.js: ${from}`).toBeGreaterThan(-1);
+  expect(end, `marker not found in Client.js: ${to}`).toBeGreaterThan(start);
+  return src.slice(start, end);
+}
+
+/** A fake page at `pathname`. `modules` answers window.require; a module given as an Error throws when required. */
+function loginPage(modules: Record<string, unknown>, pathname = '/login/') {
+  const handlers: Record<string, Array<(...a: any[]) => void>> = {};
+  const emitter = () => ({
+    on: (ev: string, fn: (...a: any[]) => void) => (handlers[ev] ||= []).push(fn),
+    off: () => {},
+  });
+  const synced: number[] = [];
+  const states: string[] = [];
+  const win: any = {
+    location: { pathname },
+    require: (name: string) => {
+      const m = modules[name];
+      if (m instanceof Error) throw m;
+      return m;
+    },
+    onAppStateHasSyncedEvent: () => synced.push(1),
+    onAuthAppStateChangedEvent: (s: string) => states.push(s),
+  };
+  return { win, handlers, emitter, synced, states, fire: (ev: string, ...a: any[]) => handlers[ev]?.forEach((fn) => fn(...a)) };
+}
+
+describe('whatsapp-web.js /login/ socket patch', () => {
+  const untouched = new Error('WAWebBackendEventBus must not be used outside /login');
+
+  it('the patch carries the WAWebBackendEventBus fallback', () => {
+    const patch = readFileSync(PATCH_FILE, 'utf8');
+    expect(patch).toMatch(/^\+\s+window\.AuthStore\.AppState = window\.require\('WAWebSocketModel'\)\?\.Socket;$/m);
+    expect(patch).toMatch(/^\+\s+if \(window\.location\.pathname\.startsWith\('\/login'\)\) \{$/m);
+    expect(patch).toMatch(/^\+\s+bus\.on\('open_socket_stream'/m);
+    expect(patch).toMatch(/BackendEventBus\.triggerLogout\(\)/);
+  });
+
+  it('is actually APPLIED to the installed Client.js and AuthStore.js', () => {
+    expect(installedClientJs(), 'no installed whatsapp-web.js@1.34.7 found — run pnpm install').not.toBeNull();
+    expect(readFileSync(installedClientJs()!, 'utf8')).toMatch(/if \(window\.location\.pathname\.startsWith\('\/login'\)\) \{/);
+    expect(installedAuthStoreJs()).not.toBeNull();
+    expect(readFileSync(installedAuthStoreJs()!, 'utf8')).toMatch(/require\('WAWebSocketModel'\)\?\.Socket;/);
+  });
+
+  describe('ExposeAuthStore, the first call that threw', () => {
+    const expose = () => createRequire(__filename)(installedAuthStoreJs()!).ExposeAuthStore as () => void;
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('does not throw on /login/, where WAWebSocketModel is null', () => {
+      const { win } = loginPage({ WAWebSocketModel: null, WAWebCmd: {}, WAWebConnModel: {}, WAWebOfflineHandler: {} });
+      vi.stubGlobal('window', win);
+      expect(() => expose()()).not.toThrow();
+      expect(win.AuthStore.AppState).toBeUndefined();
+    });
+
+    it('keeps AppState on a page that still has WAWebSocketModel', () => {
+      const Socket = { state: 'CONNECTED' };
+      const { win } = loginPage({ WAWebSocketModel: { Socket }, WAWebCmd: {}, WAWebConnModel: {}, WAWebOfflineHandler: {} });
+      vi.stubGlobal('window', win);
+      expose()();
+      expect(win.AuthStore.AppState).toBe(Socket);
+    });
+  });
+
+  describe('needAuthentication', () => {
+    const needAuth = (win: any, authTimeoutMs = 5000): Promise<boolean> =>
+      new Function('window', `return (${clientBlock('async (authTimeoutMs) => {', '\n            this.options.authTimeoutMs,').trim().replace(/,$/, '')})`)(win)(authTimeoutMs);
+    const bus = (...states: string[]) => ({ get socketState() { return states.length > 1 ? states.shift() : states[0]; } });
+
+    it('on /login/ waits for the bus to settle, then asks for a QR', async () => {
+      const { win } = loginPage({ WAWebSocketModel: null, WAWebBackendEventBus: { BackendEventBus: bus('UNLAUNCHED', 'PAIRING', 'UNPAIRED') } });
+      await expect(needAuth(win)).resolves.toBe(true);
+    });
+
+    it('on a logged-in page answers from the bus without a QR', async () => {
+      const { win } = loginPage({ WAWebSocketModel: null, WAWebBackendEventBus: { BackendEventBus: bus('CONNECTED') } });
+      await expect(needAuth(win)).resolves.toBe(false);
+    });
+
+    it('gives up after authTimeoutMs instead of waiting for ever', async () => {
+      const { win } = loginPage({ WAWebSocketModel: null, WAWebBackendEventBus: { BackendEventBus: bus('PAIRING') } });
+      await expect(needAuth(win, 50)).rejects.toThrow('auth timeout');
+    });
+
+    it('any page outside /login keeps the original path and never reads the bus', async () => {
+      const { win } = loginPage({ WAWebSocketModel: { Socket: { state: 'UNPAIRED' } }, WAWebBackendEventBus: untouched }, '/');
+      await expect(needAuth(win)).resolves.toBe(true);
+    });
+
+    it('outside /login a missing WAWebSocketModel is NOT quietly answered from the bus', async () => {
+      // Chosen by route, not by the module: a logged-in page whose module is missing for a moment must
+      // fail loudly as before, not register bus listeners and then hang without ever reporting ready.
+      const { win } = loginPage({ WAWebSocketModel: null, WAWebBackendEventBus: untouched }, '/');
+      await expect(needAuth(win)).rejects.toThrow(/Socket/);
+    });
+  });
+
+  describe('auth listeners', () => {
+    const register = (win: any) =>
+      new Function('window', clientBlock("if (!window.location.pathname.startsWith('/login')) {", "const Cmd = window.require('WAWebCmd').Cmd;"))(win);
+
+    it('on /login/ listens on the bus, and reports "synced" only once the main app is loaded', () => {
+      const page = loginPage({}, '/login/');
+      const modules: Record<string, unknown> = { WAWebSocketModel: null, WAWebBackendEventBus: { BackendEventBus: page.emitter() } };
+      page.win.require = (name: string) => modules[name];
+      register(page.win);
+
+      page.fire('set_socket_state', 'UNPAIRED');
+      expect(page.states).toEqual(['UNPAIRED']);
+
+      // /login/ has no WAWebCollections: running the ready path here would leave window.WWebJS set
+      // with no event listeners, and a later re-inject would then report ready with none.
+      page.fire('open_socket_stream');
+      expect(page.synced).toEqual([]);
+
+      modules.WAWebCollections = {};
+      page.fire('open_socket_stream');
+      expect(page.synced).toEqual([1]);
+    });
+
+    it('any page outside /login registers the original listeners and never touches the bus', () => {
+      const page = loginPage({}, '/');
+      const Socket = page.emitter();
+      page.win.require = (name: string) => {
+        if (name === 'WAWebBackendEventBus') throw untouched;
+        return name === 'WAWebSocketModel' ? { Socket } : undefined;
+      };
+      register(page.win);
+      page.fire('change:state', null, 'CONNECTED');
+      page.fire('change:hasSynced');
+      expect(page.states).toEqual(['CONNECTED']);
+      expect(page.synced).toEqual([1]);
+    });
+
+    it('outside /login a missing WAWebSocketModel throws as before instead of registering bus listeners', () => {
+      const page = loginPage({ WAWebSocketModel: null, WAWebBackendEventBus: untouched }, '/');
+      expect(() => register(page.win)).toThrow(/Socket/);
+    });
+  });
+});
