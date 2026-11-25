@@ -63,6 +63,11 @@ RUN pnpm install --frozen-lockfile --filter @multiwa/api...
 # getRecentChats all die with the minified `r`), so this must never ship quietly.
 RUN test "$(grep -c getMsgKeyId packages/engines/node_modules/whatsapp-web.js/src/util/Injected/Utils.js)" -ge 1 \
     || (echo "::error::whatsapp-web.js patch NOT applied (patches/whatsapp-web.js@1.34.7.patch)" && exit 1)
+# Same for the /login/ fallback: without it a logged-out profile never gets a QR on
+# WhatsApp Web >= 2.3000.1055852612 ("Cannot read properties of null (reading 'Socket')").
+RUN grep -q "WAWebSocketModel')?.Socket;" packages/engines/node_modules/whatsapp-web.js/src/util/Injected/AuthStore/AuthStore.js \
+    && grep -q "if (window.location.pathname.startsWith('/login')) {" packages/engines/node_modules/whatsapp-web.js/src/Client.js \
+    || (echo "::error::whatsapp-web.js /login/ socket patch NOT applied (patches/whatsapp-web.js@1.34.7.patch)" && exit 1)
 
 # Fail the build if the bullmq patch did not apply. Unpatched, BullMQ 6's blocking-read
 # watchdog calls bclient.disconnect(false) even when the client is already 'reconnecting',
